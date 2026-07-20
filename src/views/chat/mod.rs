@@ -692,11 +692,30 @@ pub fn ChatPanel(
         .cloned()
         .collect();
     let visible_channels_empty = visible_channels.is_empty();
-    let selected_channel_info = visible_channels
+    let mut selected_channel_info = visible_channels
         .iter()
         .find(|channel| channel.strand_id == selected_channel_value)
         .cloned()
         .or_else(|| visible_channels.first().cloned());
+    // The dedicated Sidecar route already carries the authoritative Circle id
+    // returned by the ensure aggregate. Account projection can arrive one
+    // render later than navigation, so hydrate that known scope immediately
+    // instead of temporarily presenting the private Strand as Realm-scoped.
+    // This also keeps the message accent/scope diagnostics truthful while the
+    // ordinary channel projection catches up.
+    if let (Some(session), Some(channel)) =
+        (sidecar_session.as_ref(), selected_channel_info.as_mut())
+        && channel.strand_id == session.private_strand_id
+    {
+        channel.is_private_sidecar = true;
+        if channel.scope_circle.is_none() {
+            channel.scope_circle = Some(StrandScopeCircle {
+                circle_id: session.private_circle_id.clone(),
+                title: "Private Sidecar".to_owned(),
+                member_count: session.addressed_agent_ids.len().saturating_add(1) as u32,
+            });
+        }
+    }
     let selected_channel_name = if let Some(session) = sidecar_session.as_ref() {
         session.addressed_agent_label.clone()
     } else if embedded {
@@ -834,15 +853,25 @@ pub fn ChatPanel(
     // AKP-0007 P3B.2.4 — per-strand Circle-scope lookup used by the
     // message accent rail. We index by `strand_id` once instead of
     // searching the `channels` Vec for every rendered message.
-    let strand_scope_lookup: std::collections::BTreeMap<String, StrandScopeCircle> = all_channels
-        .iter()
-        .filter_map(|channel| {
-            channel
-                .scope_circle
-                .clone()
-                .map(|circle| (channel.strand_id.clone(), circle))
-        })
-        .collect();
+    let mut strand_scope_lookup: std::collections::BTreeMap<String, StrandScopeCircle> =
+        all_channels
+            .iter()
+            .filter_map(|channel| {
+                channel
+                    .scope_circle
+                    .clone()
+                    .map(|circle| (channel.strand_id.clone(), circle))
+            })
+            .collect();
+    if let Some(session) = sidecar_session.as_ref() {
+        strand_scope_lookup
+            .entry(session.private_strand_id.clone())
+            .or_insert_with(|| StrandScopeCircle {
+                circle_id: session.private_circle_id.clone(),
+                title: "Private Sidecar".to_owned(),
+                member_count: session.addressed_agent_ids.len().saturating_add(1) as u32,
+            });
+    }
     let visible_message_count = visible_messages.len();
     let messages_for_reply_lookup = &all_messages_snapshot;
     let left_open = !embedded && !direct_mode && left_panel_open();
@@ -998,6 +1027,38 @@ pub fn ChatPanel(
         && visible_message_count == 0
         && !token().trim().is_empty()
         && !initial_sync_finished();
+    // Connection details must describe observed state, not hard-coded
+    // placeholders. A durable `ak:event:*` row is evidence that the message
+    // submit completed. Notification fanout is performed server-side after
+    // acceptance and the current protocol exposes no Agent delivery receipt,
+    // so label those facts explicitly instead of claiming "Not started" or
+    // "Not received".
+    let sidecar_delivery_diagnostics = sidecar_session.as_ref().map(|session| {
+        let latest = visible_messages
+            .iter()
+            .filter(|message| {
+                message.sender == account_did
+                    && message
+                        .created_at
+                        .is_none_or(|created_at| created_at >= session.opened_at)
+            })
+            .max_by_key(|message| message.created_at);
+        let (submit, fanout, receipt) = match latest {
+            Some(message) if message.failed => ("Failed", "Not queued", "Not reported"),
+            Some(message) if message.pending => ("Submitting", "Not queued", "Not reported"),
+            Some(message) if message.id.starts_with("ak:event:") => {
+                ("Accepted", "Server-managed", "Not reported")
+            }
+            Some(_) => ("Accepted locally", "Pending acceptance", "Not reported"),
+            None => ("Not started", "Not started", "Not reported"),
+        };
+        let last_updated = latest
+            .and_then(|message| message.created_at)
+            .unwrap_or(session.opened_at)
+            .format("%H:%M:%S")
+            .to_string();
+        (submit, fanout, receipt, last_updated)
+    });
     rsx! {
         div {
             class: "{shell_class}",
@@ -2085,7 +2146,9 @@ pub fn ChatPanel(
                             {if sidecar_mode { "Connection details".to_owned() } else { crate::i18n::tr("chat.tabs.settings") }}
                         }
                     }
-                    if let Some(session) = sidecar_session.as_ref() {
+                    if let (Some(session), Some((submit, fanout, receipt, last_updated))) =
+                        (sidecar_session.as_ref(), sidecar_delivery_diagnostics.as_ref())
+                    {
                         div { class: "discussion-detail-section sidecar-diagnostics-section", "data-testid": "sidecar-connection-details",
                             div { class: "detail-row", span { "Trace ID" } strong { class: "mono", "{session.trace_id}" } }
                             div { class: "detail-row", span { "Ensure" } strong { "Complete" } }
@@ -2093,10 +2156,10 @@ pub fn ChatPanel(
                                 if session.membership_ready() { "Complete" } else { "Reconciling" }
                             } }
                             div { class: "detail-row", span { "Encryption" } strong { {sidecar_security_label.unwrap_or("Opening")} } }
-                            div { class: "detail-row", span { "Message submit" } strong { "Not started" } }
-                            div { class: "detail-row", span { "Notification fanout" } strong { "Not started" } }
-                            div { class: "detail-row", span { "Agent receipt" } strong { "Not received" } }
-                            div { class: "detail-row", span { "Last updated" } strong { {session.opened_at.format("%H:%M:%S").to_string()} } }
+                            div { class: "detail-row", span { "Message submit" } strong { "{submit}" } }
+                            div { class: "detail-row", span { "Notification fanout" } strong { "{fanout}" } }
+                            div { class: "detail-row", span { "Agent receipt" } strong { "{receipt}" } }
+                            div { class: "detail-row", span { "Last updated" } strong { "{last_updated}" } }
                             div { class: "actions",
                                 Button {
                                     variant: ButtonVariant::Secondary,
@@ -2104,6 +2167,10 @@ pub fn ChatPanel(
                                     onclick: {
                                         let summary = session.diagnostic_summary(
                                             sidecar_security_label.unwrap_or("Opening"),
+                                            submit,
+                                            fanout,
+                                            receipt,
+                                            last_updated,
                                         );
                                         move |_| yoface::utils::dom::copy_text_to_clipboard(&summary)
                                     },

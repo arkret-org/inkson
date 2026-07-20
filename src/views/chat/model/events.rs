@@ -831,7 +831,15 @@ pub(crate) fn decrypt_chat_encrypted_content(
 /// (the chat render path is synchronous); a cache miss yields
 /// [`ChatProofVerdict::Unresolved`] so the message is flagged, not silently
 /// trusted.
+#[cfg(test)]
 pub(crate) fn verify_chat_envelope_proof(event: &Value) -> ChatProofVerdict {
+    verify_chat_envelope_proof_with_local_identity(event, None)
+}
+
+fn verify_chat_envelope_proof_with_local_identity(
+    event: &Value,
+    local_identity: Option<(&str, &str)>,
+) -> ChatProofVerdict {
     // Locate the envelope layer that actually carries `actor_id` + `proofs`.
     // Projected chat events nest the signed envelope under `event` / `envelope`
     // / `raw`; scan the same candidate layers used elsewhere.
@@ -902,7 +910,40 @@ pub(crate) fn verify_chat_envelope_proof(event: &Value) -> ChatProofVerdict {
             }
         }
         crate::identity::device_directory::CacheLookup::NegativeHit => ChatProofVerdict::Rejected,
-        crate::identity::device_directory::CacheLookup::Miss => ChatProofVerdict::Unresolved,
+        crate::identity::device_directory::CacheLookup::Miss => {
+            // The synchronous render path normally verifies against the
+            // authoritative device-directory cache. Immediately after this
+            // device authors an event, however, account sync can project the
+            // accepted event before the async directory prefetch has warmed
+            // that cache. In that narrow self-authored case we can still do a
+            // real cryptographic verification with the exact active device
+            // key that signed the event. This is not a trust downgrade: the
+            // actor, device id, active signer binding and detached proof must
+            // all agree, and a directory NegativeHit (revoked/absent device)
+            // is never overridden.
+            let local_key = local_identity.and_then(|(local_actor, local_device)| {
+                if local_actor != proof_controller || local_device != device {
+                    return None;
+                }
+                let signer = crate::event_signer::active_signer()?;
+                if signer.device_id() != Some(device) {
+                    return None;
+                }
+                let multibase = signer.public_key_multibase()?;
+                crate::identity::device_directory::public_key_from_directory_value(&multibase)
+            });
+            match local_key {
+                Some(key)
+                    if crate::identity::device_directory::verify_persistent_envelope_proofs(
+                        envelope, &key,
+                    ) =>
+                {
+                    ChatProofVerdict::Verified
+                }
+                Some(_) => ChatProofVerdict::Rejected,
+                None => ChatProofVerdict::Unresolved,
+            }
+        }
     }
 }
 
@@ -926,7 +967,7 @@ pub(crate) fn verify_chat_envelope_proof_for_realm(
     {
         return verify_minimal_metadata_chat_author(store, realm_id, event, decrypt_identity);
     }
-    verify_chat_envelope_proof(event)
+    verify_chat_envelope_proof_with_local_identity(event, decrypt_identity)
 }
 
 /// The §2.10.3 minimal-metadata branch: bind the Event proof to exactly one

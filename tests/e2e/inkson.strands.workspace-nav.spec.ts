@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
+  DEMO_BOARD_SPACE,
+  DEMO_REALM,
   registerStrandsBeforeEach,
   latestTestId,
   dismissBlockingRecoveryModal,
@@ -70,12 +72,22 @@ test("workspace sidebar separates contact-based direct chats", async ({ page }) 
   await expect(
     shell.getByTestId("contact-sidebar-agent-row").filter({ hasText: "Bob Helper" }).locator(".contact-sidebar-agent-avatar img"),
   ).toHaveCount(1);
-  await expect(shell.getByTestId("direct-conversation-row").filter({ hasText: "bob:example.com" })).toContainText(
-    "DM",
+  const bobContactRow = shell
+    .getByTestId("direct-conversation-row")
+    .filter({ hasText: "bob:example.com" });
+  await expect(bobContactRow).toContainText("DM");
+  await expect(bobContactRow).toHaveAttribute(
+    "aria-label",
+    "Chat with bob:example.com",
   );
   await expect(shell.getByTestId("direct-conversation-row").filter({ hasText: "carol:example.com" })).toContainText(
     "pending",
   );
+  await bobContactRow.click();
+  await expect(page).toHaveURL(
+    /\/direct\/ak:realm:01964137-0000-7000-8000-00000000d0b1\/ak:strand:01964137-0000-7000-8000-00000000d0b2$/,
+  );
+  await shell.getByTestId("realm-sidebar-tab-direct").click();
   await shell.getByTestId("contact-sidebar-agent-row").filter({ hasText: "Bob Helper" }).click();
   await expect(page).toHaveURL(/\/direct\/.*0000000000b1\/.*0000000000b2$/);
   await shell.getByTestId("realm-sidebar-tab-direct").click();
@@ -86,20 +98,53 @@ test("workspace sidebar separates contact-based direct chats", async ({ page }) 
 });
 
 test("owned agent ensure opens the dedicated private Sidecar shell", async ({ page }) => {
+  await gotoAndDismissRecovery(page, `/kanban/${DEMO_REALM}/board/${DEMO_BOARD_SPACE}`);
   const shell = latestTestId(page, "client-shell");
-  await dismissBlockingRecoveryModal(page);
   await shell.getByTestId("realm-sidebar-tab-direct").click();
 
+  let releaseEnsure!: () => void;
+  let ensureRequestBody: Record<string, any> | null = null;
+  const ensureGate = new Promise<void>((resolve) => {
+    releaseEnsure = resolve;
+  });
+  await page.route("**/_arkret/self/agent-sidecar-threads:ensure", async (route) => {
+    ensureRequestBody = await route.request().postDataJSON();
+    await ensureGate;
+    await route.fallback();
+  });
+
+  const ownedAgentRow = shell
+    .getByTestId("contact-sidebar-agent-row")
+    .filter({ hasText: "Alice Assistant" });
+  await expect(ownedAgentRow).toHaveAttribute(
+    "aria-label",
+    "Chat with Alice Assistant",
+  );
   const ensureResponse = page.waitForResponse(
     (response) =>
       response.url().includes("/_arkret/self/agent-sidecar-threads:ensure"),
     { timeout: 20_000 },
   );
-  const ownedAgentRow = shell
-    .getByTestId("contact-sidebar-agent-row")
-    .filter({ hasText: "Alice Assistant" });
-  await ownedAgentRow.click();
+  const contextResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes(`/_arkret/self/realms/${DEMO_REALM}/strands`),
+    { timeout: 20_000 },
+  );
+  try {
+    await ownedAgentRow.click();
+    const projectedStrands = await contextResponse;
+    expect(projectedStrands.ok()).toBeTruthy();
+    await expect(ownedAgentRow).toHaveAttribute("aria-busy", "true");
+    await expect(ownedAgentRow).toBeDisabled();
+    await expect(ownedAgentRow).toContainText("Opening...");
+  } finally {
+    releaseEnsure();
+  }
   await expect((await ensureResponse).ok()).toBeTruthy();
+  expect(ensureRequestBody?.context_ref).toEqual({
+    realm_id: DEMO_REALM,
+    strand_id: "ak:strand:0196419b-0000-7000-8000-000000000101",
+  });
 
   await expect(page).toHaveURL(
     /\/direct\/.*\/ak:strand:01964137-0000-7000-8000-0000000000a2$/,

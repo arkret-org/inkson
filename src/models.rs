@@ -659,6 +659,44 @@ mod tests {
     }
 
     #[test]
+    fn contact_list_sidebar_fixture_decodes_direct_chat_targets() {
+        let value = serde_json::json!({
+            "contacts": [{
+                "peer": "did:web:bob.example",
+                "state": "accepted",
+                "granted_by_me": ["direct_message"],
+                "granted_to_me": ["direct_message"],
+                "bidirectional_scopes": ["direct_message"],
+                "effective_scopes": ["direct_message"],
+                "direct_conversation": {
+                    "realm_id": "ak:realm:01964137-0000-7000-8000-00000000d0b1",
+                    "main_strand_id": "ak:strand:01964137-0000-7000-8000-00000000d0b2",
+                    "binding_event_ref": "ak:event:0196419b-0000-7000-8000-000000000103",
+                    "state": "active"
+                },
+                "agents": [{
+                    "agent_id": "did:web:agents.example:bob-helper",
+                    "controller_id": "did:web:bob.example",
+                    "display_name": "Bob Helper",
+                    "agent_slug": "helper",
+                    "avatar_blob_ref": "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+                    "direct_conversation": {
+                        "realm_id": "ak:realm:01964137-0000-7000-8000-0000000000b1",
+                        "main_strand_id": "ak:strand:01964137-0000-7000-8000-0000000000b2",
+                        "binding_event_ref": "ak:event:01964137-0000-7000-8000-0000000000b3",
+                        "state": "active"
+                    }
+                }]
+            }],
+            "next_cursor": null,
+            "has_more": false
+        });
+        let decoded: arkret_sdk::ContactList = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.contacts.len(), 1);
+        assert_eq!(decoded.contacts[0].agents.len(), 1);
+    }
+
+    #[test]
     fn submit_event_outcome_rejects_removed_flat_wire() {
         // renames.json rejection policy: the removed flat `{event_id,
         // sync_token, …}` shape MUST NOT decode — canonical-only parser.

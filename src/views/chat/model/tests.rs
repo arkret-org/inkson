@@ -158,6 +158,60 @@ mod device_identity_proof_tests {
     }
 
     #[test]
+    fn cache_miss_verifies_self_authored_message_with_active_device_key() {
+        let actor = "did:web:chat-local.example";
+        let device = "ak:device:chat-local-1";
+        let seed = 57u8;
+        let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
+            [seed; 32], actor, device,
+        ));
+        let envelope = signed_message_envelope(&signer, actor, device);
+        crate::identity::device_directory::invalidate(actor, device);
+        let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
+
+        assert_eq!(
+            verify_chat_envelope_proof_for_realm(
+                "ak:realm:r",
+                &envelope,
+                None,
+                Some((actor, device)),
+            ),
+            ChatProofVerdict::Verified
+        );
+        let message = chat_message_from_event_with_sidecar(
+            "ak:realm:r",
+            &envelope,
+            None,
+            Some((actor, device)),
+        )
+        .expect("self-authored message must verify with its active device key");
+        assert_eq!(message.crypto_state, MessageCryptoState::Plaintext);
+    }
+
+    #[test]
+    fn local_device_key_does_not_override_directory_revocation() {
+        let actor = "did:web:chat-local-revoked.example";
+        let device = "ak:device:chat-local-revoked-1";
+        let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
+            [58u8; 32], actor, device,
+        ));
+        let envelope = signed_message_envelope(&signer, actor, device);
+        crate::identity::device_directory::seed_negative_for_test(actor, device);
+        let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
+
+        assert_eq!(
+            verify_chat_envelope_proof_for_realm(
+                "ak:realm:r",
+                &envelope,
+                None,
+                Some((actor, device)),
+            ),
+            ChatProofVerdict::Rejected
+        );
+        crate::identity::device_directory::invalidate(actor, device);
+    }
+
+    #[test]
     fn standard_event_without_device_id_uses_proof_fragment_device() {
         let actor = "did:web:chat-fran.example";
         let device = "ak:device:chat-f1";

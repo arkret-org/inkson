@@ -6,6 +6,84 @@
 
 use dioxus::prelude::*;
 
+use crate::routes::Route;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SidecarContextHint {
+    pub realm_id: String,
+    pub preferred_strand_id: Option<String>,
+    pub board_space_id: Option<String>,
+}
+
+/// Resolve the strongest context carried by the current route. Sidebar Agent
+/// entry points must never invent a default Strand id: the Sidecar endpoint
+/// validates that `context_ref` points at a real projected Strand.
+pub fn sidecar_context_hint(route: &Route, active_realm_id: &str) -> Option<SidecarContextHint> {
+    let realm_id = route
+        .realm_id()
+        .map(str::to_owned)
+        .filter(|realm_id| !realm_id.trim().is_empty())
+        .or_else(|| (!active_realm_id.trim().is_empty()).then(|| active_realm_id.to_owned()))?;
+    let preferred_strand_id = match route {
+        Route::DirectConversation { strand_id, .. }
+        | Route::KanbanBoardTask {
+            task_id: strand_id, ..
+        }
+        | Route::KanbanTask {
+            task_id: strand_id, ..
+        } => Some(strand_id.clone()),
+        _ => None,
+    };
+    let board_space_id = match route {
+        Route::KanbanBoard { board_id, .. } | Route::KanbanBoardTask { board_id, .. } => {
+            Some(board_id.clone())
+        }
+        _ => None,
+    };
+    Some(SidecarContextHint {
+        realm_id,
+        preferred_strand_id,
+        board_space_id,
+    })
+}
+
+/// Select only a server-confirmed active Strand. Preference order preserves
+/// the user's visible context: current task/direct thread, current board,
+/// Realm default, then the first active Strand returned by the projection.
+pub fn select_sidecar_context_strand(
+    projection: &arkret_sdk::ProjectionStrandList,
+    hint: &SidecarContextHint,
+) -> Option<String> {
+    if projection.realm_id.as_str() != hint.realm_id {
+        return None;
+    }
+    let active = projection
+        .strands
+        .iter()
+        .filter(|strand| strand.state == arkret_sdk::ProjectionObjectState::Active)
+        .collect::<Vec<_>>();
+    hint.preferred_strand_id
+        .as_deref()
+        .and_then(|preferred| {
+            active
+                .iter()
+                .find(|strand| strand.strand_id.as_str() == preferred)
+        })
+        .or_else(|| {
+            hint.board_space_id.as_deref().and_then(|board_id| {
+                active.iter().find(|strand| {
+                    strand
+                        .board_space_id
+                        .as_ref()
+                        .is_some_and(|candidate| candidate.as_str() == board_id)
+                })
+            })
+        })
+        .or_else(|| active.iter().find(|strand| strand.is_default))
+        .or_else(|| active.first())
+        .map(|strand| strand.strand_id.to_string())
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SidecarSession {
     pub trace_id: String,
@@ -35,9 +113,16 @@ impl SidecarSession {
         self.pending_member_reconciliations.len()
     }
 
-    pub fn diagnostic_summary(&self, encryption_state: &str) -> String {
+    pub fn diagnostic_summary(
+        &self,
+        encryption_state: &str,
+        message_submit_state: &str,
+        notification_fanout_state: &str,
+        agent_receipt_state: &str,
+        last_updated: &str,
+    ) -> String {
         format!(
-            "Trace ID: {}\nEnsure: complete\nCircle membership: {}\nEncryption: {}\nMessage submit: not started\nNotification fanout: not started\nAgent receipt: not received",
+            "Trace ID: {}\nEnsure: complete\nCircle membership: {}\nEncryption: {}\nMessage submit: {}\nNotification fanout: {}\nAgent receipt: {}\nLast updated: {}",
             self.trace_id,
             if self.membership_ready() {
                 "complete".to_owned()
@@ -48,6 +133,10 @@ impl SidecarSession {
                 )
             },
             encryption_state,
+            message_submit_state,
+            notification_fanout_state,
+            agent_receipt_state,
+            last_updated,
         )
     }
 }
@@ -58,6 +147,102 @@ pub struct SidecarSessionContext(pub Signal<Option<SidecarSession>>);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const REALM: &str = "ak:realm:019f0000-0000-7000-8000-000000000010";
+    const BOARD: &str = "ak:space:019f0000-0000-7000-8000-000000000011";
+    const OTHER_BOARD: &str = "ak:space:019f0000-0000-7000-8000-000000000012";
+    const BOARD_STRAND: &str = "ak:strand:019f0000-0000-7000-8000-000000000013";
+    const DEFAULT_STRAND: &str = "ak:strand:019f0000-0000-7000-8000-000000000014";
+
+    fn strand(id: &str, board_id: &str, is_default: bool) -> arkret_sdk::ProjectionStrandRow {
+        arkret_sdk::ProjectionStrandRow {
+            strand_id: arkret_sdk::StrandId::new(id.to_owned()).unwrap(),
+            realm_id: arkret_sdk::RealmId::new(REALM.to_owned()).unwrap(),
+            state: arkret_sdk::ProjectionObjectState::Active,
+            state_changed_at: None,
+            title: None,
+            summary: None,
+            board_space_id: Some(arkret_sdk::SpaceId::new(board_id.to_owned()).unwrap()),
+            list_space_id: None,
+            rank: None,
+            assigned_actor_ids: Vec::new(),
+            assigned_to_relations: Vec::new(),
+            created_by: None,
+            created_at: None,
+            updated_by: None,
+            updated_at: None,
+            is_default,
+        }
+    }
+
+    #[test]
+    fn board_route_uses_real_realm_and_board_context() {
+        let hint = sidecar_context_hint(
+            &Route::KanbanBoard {
+                realm_id: REALM.to_owned(),
+                board_id: BOARD.to_owned(),
+            },
+            "",
+        )
+        .unwrap();
+        assert_eq!(hint.realm_id, REALM);
+        assert_eq!(hint.board_space_id.as_deref(), Some(BOARD));
+        assert_eq!(hint.preferred_strand_id, None);
+    }
+
+    #[test]
+    fn sidecar_context_selects_current_board_before_realm_default() {
+        let projection = arkret_sdk::ProjectionStrandList {
+            realm_id: arkret_sdk::RealmId::new(REALM.to_owned()).unwrap(),
+            strands: vec![
+                strand(DEFAULT_STRAND, OTHER_BOARD, true),
+                strand(BOARD_STRAND, BOARD, false),
+            ],
+            total: 2,
+            next_cursor: None,
+            has_more: false,
+        };
+        let hint = SidecarContextHint {
+            realm_id: REALM.to_owned(),
+            preferred_strand_id: None,
+            board_space_id: Some(BOARD.to_owned()),
+        };
+        assert_eq!(
+            select_sidecar_context_strand(&projection, &hint).as_deref(),
+            Some(BOARD_STRAND)
+        );
+    }
+
+    #[test]
+    fn projected_strand_contract_decodes_for_sidecar_context() {
+        let projection: arkret_sdk::ProjectionStrandList =
+            serde_json::from_value(serde_json::json!({
+                "realm_id": REALM,
+                "strands": [{
+                    "strand_id": BOARD_STRAND,
+                    "realm_id": REALM,
+                    "state": "active",
+                    "title": "Board task",
+                    "board_space_id": BOARD,
+                    "list_space_id": "ak:space:019f0000-0000-7000-8000-000000000015",
+                    "assigned_actor_ids": ["did:web:alice.example"],
+                    "is_default": false
+                }],
+                "total": 1,
+                "next_cursor": null,
+                "has_more": false
+            }))
+            .unwrap();
+        let hint = SidecarContextHint {
+            realm_id: REALM.to_owned(),
+            preferred_strand_id: None,
+            board_space_id: Some(BOARD.to_owned()),
+        };
+        assert_eq!(
+            select_sidecar_context_strand(&projection, &hint).as_deref(),
+            Some(BOARD_STRAND)
+        );
+    }
 
     fn session(pending: Vec<arkret_sdk::PendingMemberReconciliationItem>) -> SidecarSession {
         SidecarSession {
@@ -86,7 +271,13 @@ mod tests {
         assert_eq!(session.pending_reconciliation_count(), 1);
         assert!(
             session
-                .diagnostic_summary("Reconciling access")
+                .diagnostic_summary(
+                    "Reconciling access",
+                    "not started",
+                    "not started",
+                    "not reported",
+                    "12:00:00",
+                )
                 .contains("reconciling (1 pending)")
         );
     }
