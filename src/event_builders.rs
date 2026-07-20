@@ -805,44 +805,70 @@ pub fn build_realm_state_event(
     kind: EventKind,
     value: Value,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    let cell_family = match &kind {
-        EventKind::RealmJoinRule => "ak.component.realm.join_rule.v1",
-        EventKind::RealmHistoryVisibility => "ak.component.realm.history_visibility.v1",
-        EventKind::RealmHistorySharingPolicy => "ak.component.realm.history_sharing_policy.v1",
-        EventKind::RealmPreviewPolicy => "ak.component.realm.preview_policy.v1",
-        EventKind::RealmDiscovery => "ak.component.realm.discovery.v1",
-        EventKind::RealmSchema => "ak.component.realm.schema.v1",
-        EventKind::RealmPolicyComponents => "ak.component.realm.policy_components.v1",
-        other => {
-            return Err(anyhow::anyhow!(
-                "unsupported Realm state event kind {}",
-                other.as_str()
-            ));
-        }
-    };
+    if !matches!(
+        kind,
+        EventKind::RealmJoinRule
+            | EventKind::RealmHistoryVisibility
+            | EventKind::RealmHistorySharingPolicy
+            | EventKind::RealmPreviewPolicy
+            | EventKind::RealmDiscovery
+            | EventKind::RealmSchema
+            | EventKind::RealmPolicyComponents
+    ) {
+        return Err(anyhow::anyhow!(
+            "unsupported Realm state event kind {}",
+            kind.as_str()
+        ));
+    }
+    let descriptor = kind
+        .descriptor()
+        .filter(|descriptor| {
+            descriptor.reducer_input
+                && descriptor.lattice == Some("cas_register")
+                && descriptor.cell_subject_rule.is_none()
+        })
+        .ok_or_else(|| anyhow::anyhow!("unsupported Realm state event kind {}", kind.as_str()))?;
+    let cell_family = descriptor.cell_family.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Realm state event kind {} has no registry cell family",
+            kind.as_str()
+        )
+    })?;
     let created_at = event_timestamp();
     let realm_id_wire = trim_realm_id(realm_id);
     let cell = space_cell(cell_family, &realm_id_wire);
     let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
     let effects = vec![set_effect(&cell, value.clone())?];
+    // For the closed enum facets, route authoring through SDK strong types.
+    // The generated registry remains the sole source for the target cell.
     // For `ak.realm.history_visibility` the body is the spec
     // `history_visibility_payload` (`{value, restricted_policy_digest?,
     // reason?}`, additionalProperties:false). Route it through the SDK strong
     // type so the enum value + the `restricted ⇒ restricted_policy_digest`
     // conditional are checked at construction; the cell effect keeps the bare
-    // enum string. Other facets (`join_rule`/`discovery`/...) have no dedicated
-    // spec payload def and keep the generic `{value}` body.
-    let body = if kind == EventKind::RealmHistoryVisibility {
-        let visibility = value
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("history_visibility value must be a string"))?;
-        let typed: arkret_sdk::HistoryVisibility =
-            serde_json::from_value(Value::String(visibility.to_owned())).map_err(|err| {
-                anyhow::anyhow!("invalid history_visibility {visibility:?}: {err}")
-            })?;
-        arkret_sdk::HistoryVisibilityPayload::new(typed).to_value()?
-    } else {
-        json!({ "value": value })
+    // enum string.
+    let body = match kind {
+        EventKind::RealmJoinRule => {
+            let typed: arkret_sdk::RealmJoinRuleValue = serde_json::from_value(value.clone())
+                .map_err(|err| anyhow::anyhow!("invalid Realm join_rule {value}: {err}"))?;
+            arkret_sdk::RealmJoinRulePayload::new(typed).to_value()?
+        }
+        EventKind::RealmDiscovery => {
+            let typed: arkret_sdk::RealmDiscoveryValue = serde_json::from_value(value.clone())
+                .map_err(|err| anyhow::anyhow!("invalid Realm discovery {value}: {err}"))?;
+            arkret_sdk::RealmDiscoveryPayload::new(typed).to_value()?
+        }
+        EventKind::RealmHistoryVisibility => {
+            let visibility = value
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("history_visibility value must be a string"))?;
+            let typed: arkret_sdk::HistoryVisibility =
+                serde_json::from_value(Value::String(visibility.to_owned())).map_err(|err| {
+                    anyhow::anyhow!("invalid history_visibility {visibility:?}: {err}")
+                })?;
+            arkret_sdk::HistoryVisibilityPayload::new(typed).to_value()?
+        }
+        _ => json!({ "value": value }),
     };
     OperationBuilder::new(realm_id, actor_id, kind)
         .body(body)

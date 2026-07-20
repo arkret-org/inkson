@@ -6,11 +6,11 @@ use crate::ephemeral::{
 };
 use crate::event_builders::{
     build_device_message_envelope, build_member_state_transition_event,
-    build_realm_bootstrap_events, build_realm_create_event, build_signed_device_verification_proof,
-    build_space_create_event, ensure_device_verification_proof_is_signed,
-    recommended_history_sharing_policy_for_visibility,
+    build_realm_bootstrap_events, build_realm_create_event, build_realm_state_event,
+    build_signed_device_verification_proof, build_space_create_event,
+    ensure_device_verification_proof_is_signed, recommended_history_sharing_policy_for_visibility,
 };
-use crate::operation::OperationBuilder;
+use crate::operation::{EventKind, OperationBuilder};
 use crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR;
 use crate::realm_helpers::{patch_touches_create_locked_encryption_profile, validate_join_rule_v1};
 use crate::state::projection_views::{
@@ -370,6 +370,11 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     assert_eq!(
         founding.payload["grant"]["resources"][0]["match_scope"],
         "realm_wide"
+    );
+    assert_eq!(
+        founding.payload["grant"]["capability_action_registry_digest"],
+        serde_json::to_value(arkret_sdk::current_capability_action_registry_digest().unwrap())
+            .unwrap()
     );
 
     // Bootstrap order: create, founding grant, encryption floor policy, join_rule,
@@ -782,6 +787,53 @@ fn realm_bootstrap_payloads_match_spec_schema() {
             );
         }
     }
+}
+
+#[test]
+fn realm_join_and_discovery_authoring_rejects_values_outside_spec_enums() {
+    let _signer_guard =
+        crate::event_signer::ActiveSignerTestGuard::replace(Some(std::sync::Arc::new(
+            crate::event_signer::build_ed25519_signer([43_u8; 32], "did:web:alice.example"),
+        )));
+    let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000001";
+    let actor_id = "did:web:alice.example";
+
+    assert!(
+        build_realm_state_event(
+            realm_id,
+            actor_id,
+            EventKind::RealmJoinRule,
+            json!("members_only")
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("invalid Realm join_rule")
+    );
+    assert!(
+        build_realm_state_event(
+            realm_id,
+            actor_id,
+            EventKind::RealmDiscovery,
+            json!("discoverable")
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("invalid Realm discovery")
+    );
+    build_realm_state_event(
+        realm_id,
+        actor_id,
+        EventKind::RealmJoinRule,
+        json!("knock_restricted"),
+    )
+    .unwrap();
+    build_realm_state_event(
+        realm_id,
+        actor_id,
+        EventKind::RealmDiscovery,
+        json!("invite_only"),
+    )
+    .unwrap();
 }
 
 /// R3 — `build_device_message_envelope` MUST emit the canonical

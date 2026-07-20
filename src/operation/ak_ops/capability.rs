@@ -73,6 +73,18 @@ pub fn capability_grant_actions(
         "issued_at": crate::clock::now_rfc3339_secs(),
         "proofs": [],
     });
+    let carries_aggregate_admin = actions.iter().any(|action| {
+        arkret_sdk::schema::embedded_capability_action(action)
+            .ok()
+            .flatten()
+            .is_some_and(|descriptor| descriptor.event_mapping_kind == "aggregate_admin")
+    });
+    if carries_aggregate_admin {
+        grant["capability_action_registry_digest"] = json!(
+            arkret_sdk::current_capability_action_registry_digest()
+                .expect("embedded capability-action registry must be available to author grants")
+        );
+    }
     if let Some(expires_at) = expires_at {
         grant["expires_at"] = json!(expires_at);
     }
@@ -98,6 +110,8 @@ pub fn capability_grant_actions(
 /// `ak.realm.create`.
 pub fn realm_founding_grant(realm_id: &str, actor: &str, grant_id: &str) -> OperationBuilder {
     let realm = trim_realm_id(realm_id);
+    let registry_digest = arkret_sdk::current_capability_action_registry_digest()
+        .expect("embedded capability-action registry must be available to author Realm genesis");
     OperationBuilder::new(
         &realm,
         actor,
@@ -113,6 +127,7 @@ pub fn realm_founding_grant(realm_id: &str, actor: &str, grant_id: &str) -> Oper
             "issuer": actor,
             "subject": actor,
             "actions": arkret_sdk::realm::bootstrap::REALM_FOUNDING_GRANT_ACTIONS,
+            "capability_action_registry_digest": registry_digest,
             "resources": [{
                 "kind": "realm",
                 "realm_id": realm,
@@ -122,4 +137,30 @@ pub fn realm_founding_grant(realm_id: &str, actor: &str, grant_id: &str) -> Oper
             "proofs": []
         }
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aggregate_admin_grant_authorship_binds_the_registry_snapshot() {
+        let event = capability_grant_actions(
+            "ak:realm:019f9000-0000-7000-8000-000000000001",
+            "did:web:issuer.example",
+            "ak:grant:019f9000-0000-7000-8000-000000000002",
+            "did:web:subject.example",
+            &["ak.realm.admin"],
+            None,
+            Value::Null,
+        )
+        .build_sdk_event("inkson")
+        .unwrap();
+
+        assert_eq!(
+            event.payload["grant"]["capability_action_registry_digest"],
+            serde_json::to_value(arkret_sdk::current_capability_action_registry_digest().unwrap())
+                .unwrap()
+        );
+    }
 }
