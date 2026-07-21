@@ -88,6 +88,7 @@ fn realm_tree_node_from_preview(preview: arkret_sdk::models::RealmPreview) -> Re
             Some("public" | "listed")
         ),
         category: None,
+        direct_conversation: false,
         parent_space_id: None,
         child_space_ids: Vec::new(),
         kind: RealmTreeNodeKind::Realm,

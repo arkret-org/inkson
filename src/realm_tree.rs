@@ -795,27 +795,11 @@ fn realm_tree_node_is_collaboration_pin_candidate(
 ) -> bool {
     node.kind == RealmTreeNodeKind::Realm
         && pinned_realm_ids.contains(node.id.as_str())
-        && !realm_tree_node_looks_like_direct_conversation(node)
+        && !realm_tree_node_is_direct_conversation(node)
 }
 
-pub(crate) fn realm_tree_node_looks_like_direct_conversation(node: &RealmTreeNode) -> bool {
-    let category = node.category.as_deref().unwrap_or_default();
-    direct_conversation_marker(category)
-        || node
-            .tags
-            .iter()
-            .any(|tag| direct_conversation_marker(tag.as_str()))
-}
-
-fn direct_conversation_marker(value: &str) -> bool {
-    let normalized = value
-        .trim()
-        .to_ascii_lowercase()
-        .replace(['-', ' ', '.'], "_");
-    matches!(
-        normalized.as_str(),
-        "dm" | "direct" | "direct_message" | "direct_conversation"
-    )
+pub(crate) fn realm_tree_node_is_direct_conversation(node: &RealmTreeNode) -> bool {
+    node.direct_conversation
 }
 
 pub fn realm_tree_nodes_from_sync_realms(realms: &BTreeMap<String, Value>) -> Vec<RealmTreeNode> {
@@ -844,6 +828,13 @@ pub fn realm_tree_nodes_from_sync_realms(realms: &BTreeMap<String, Value>) -> Ve
                 RealmTreeNodeKind::Space => projection_home_realm_id(body).unwrap_or_default(),
             };
             let parent_space_id = extract_parent_space_id(id, body);
+            let direct_conversation = body
+                .pointer("/state_at_window_start/realm_metadata/collaboration_role")
+                .cloned()
+                .and_then(|value| {
+                    serde_json::from_value::<arkret_sdk::CollaborationRealmRole>(value).ok()
+                })
+                == Some(arkret_sdk::CollaborationRealmRole::DirectConversation);
             RealmTreeNode {
                 id: id.clone(),
                 title,
@@ -854,6 +845,7 @@ pub fn realm_tree_nodes_from_sync_realms(realms: &BTreeMap<String, Value>) -> Ve
                     .get("category")
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned),
+                direct_conversation,
                 parent_space_id,
                 child_space_ids: extract_child_space_ids(id, body),
                 kind,
@@ -986,6 +978,7 @@ mod tests {
             tags: Default::default(),
             public: true,
             category: None,
+            direct_conversation: false,
             parent_space_id: parent.map(ToOwned::to_owned),
             child_space_ids: Vec::new(),
             kind,
@@ -1291,7 +1284,7 @@ mod tests {
     #[test]
     fn pinned_sort_does_not_promote_direct_conversation_realms() {
         let mut dm = preview("ak:realm:dm", "DM", None);
-        dm.category = Some("direct_conversation".to_owned());
+        dm.direct_conversation = true;
         let nodes = vec![
             dm,
             preview("ak:realm:work", "Work", None),
@@ -1303,6 +1296,30 @@ mod tests {
         let ids: Vec<_> = items.iter().map(|item| item.node.id.as_str()).collect();
 
         assert_eq!(ids, vec!["ak:realm:later", "ak:realm:dm", "ak:realm:work"]);
+    }
+
+    #[test]
+    fn direct_conversation_role_uses_typed_sync_projection_not_category_or_tags() {
+        let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000701";
+        let strong = realm_tree_nodes_from_sync_realms(&BTreeMap::from([(
+            realm_id.to_owned(),
+            json!({
+                "state_at_window_start": {
+                    "realm_metadata": {
+                        "title": "Conversation",
+                        "collaboration_role": "direct_conversation"
+                    },
+                    "e2ee_epoch": null
+                }
+            }),
+        )]));
+        assert!(realm_tree_node_is_direct_conversation(&strong[0]));
+
+        let heuristic_only = realm_tree_nodes_from_sync_realms(&BTreeMap::from([(
+            realm_id.to_owned(),
+            json!({"summary": {"category": "direct_conversation", "tags": ["dm"]}}),
+        )]));
+        assert!(!realm_tree_node_is_direct_conversation(&heuristic_only[0]));
     }
 
     #[test]

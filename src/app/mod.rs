@@ -25,7 +25,7 @@ use crate::models::{
 // resolving without a sync_engine edit.
 pub(crate) use crate::realm_tree::{
     descendant_node_ids, full_sync_projection_keep_set, realm_tree_items_with_pinned_realms,
-    realm_tree_node_looks_like_direct_conversation, realm_tree_nodes_from_sync_realms,
+    realm_tree_node_is_direct_conversation, realm_tree_nodes_from_sync_realms,
 };
 use crate::routes::Route;
 use crate::state::projection::ProjectionEvent;
@@ -718,7 +718,7 @@ fn AppBootstrap() -> Element {
         .iter()
         .filter(|node| {
             node.kind == RealmTreeNodeKind::Realm
-                && (realm_tree_node_looks_like_direct_conversation(node)
+                && (realm_tree_node_is_direct_conversation(node)
                     || self_realm_id.as_deref() == Some(node.id.as_str()))
         })
         .flat_map(|node| descendant_node_ids(&loaded_realm_tree_nodes, &node.id))
@@ -2414,7 +2414,6 @@ fn AppBootstrap() -> Element {
                                                                     if matches!(
                                                                         response.state,
                                                                         arkret_sdk::DirectConversationResolveState::Found
-                                                                            | arkret_sdk::DirectConversationResolveState::Created
                                                                     )
                                                                         && let (Some(realm_id), Some(strand_id)) = (response.realm_id, response.main_strand_id)
                                                                     {
@@ -2651,7 +2650,6 @@ fn AppBootstrap() -> Element {
                                                                             Ok(response) if matches!(
                                                                                 response.state,
                                                                                 arkret_sdk::DirectConversationResolveState::Found
-                                                                                    | arkret_sdk::DirectConversationResolveState::Created
                                                                             ) => {
                                                                                 if let (Some(realm_id), Some(strand_id)) =
                                                                                     (response.realm_id, response.main_strand_id)
@@ -2785,7 +2783,7 @@ fn AppBootstrap() -> Element {
                                     .is_some_and(|r| !r.local_name.trim().is_empty());
                                 let is_pinned_realm = remark.as_ref().is_some_and(|r| r.pinned);
                                 let can_pin_realm = item_node.kind == RealmTreeNodeKind::Realm
-                                    && !realm_tree_node_looks_like_direct_conversation(&item_node);
+                                    && !realm_tree_node_is_direct_conversation(&item_node);
                                 let pin_action_label = if is_pinned_realm {
                                     crate::i18n::tr("realm.unpin")
                                 } else {

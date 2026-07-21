@@ -238,9 +238,40 @@ pub async fn direct_conversation_resolve(
         create,
         idempotency_key: None,
     };
-    http.direct_conversation_resolve(&body)
+    let mut outcome = http
+        .direct_conversation_resolve(&body)
         .await
-        .map_err(anyhow::Error::from)
+        .map_err(anyhow::Error::from)?;
+    if let Some(binding_event) = outcome.binding_event.take() {
+        if outcome.state != arkret_sdk::DirectConversationResolveState::AuthoringRequired {
+            anyhow::bail!(
+                "direct conversation resolver returned a binding Event draft outside authoring_required state"
+            );
+        }
+        crate::event_submit::EventSubmitter::new(http.clone())
+            .submit_sdk_event(&binding_event)
+            .await?;
+        let confirmed = http
+            .direct_conversation_resolve(&arkret_sdk::DirectConversationResolveRequestBody {
+                peer: did_for_request_field("peer", peer)?,
+                create: false,
+                idempotency_key: None,
+            })
+            .await
+            .map_err(anyhow::Error::from)?;
+        if confirmed.state != arkret_sdk::DirectConversationResolveState::Found {
+            anyhow::bail!(
+                "canonical direct conversation binding was not projected after signed Event submission"
+            );
+        }
+        return Ok(confirmed);
+    }
+    if outcome.state == arkret_sdk::DirectConversationResolveState::AuthoringRequired {
+        anyhow::bail!(
+            "direct conversation resolver requires authoring but omitted the binding Event draft"
+        );
+    }
+    Ok(outcome)
 }
 
 /// List the holder-private consent cells visible to the authenticated

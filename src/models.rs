@@ -491,6 +491,7 @@ pub struct RealmTreeNode {
     pub tags: std::collections::BTreeSet<String>,
     pub public: bool,
     pub category: Option<String>,
+    pub direct_conversation: bool,
     pub parent_space_id: Option<String>,
     pub child_space_ids: Vec<String>,
     /// Realm vs Space classification used by the sidebar to render
@@ -508,7 +509,7 @@ impl Serialize for RealmTreeNode {
     {
         use serde::ser::SerializeStruct;
 
-        let mut state = serializer.serialize_struct("RealmTreeNode", 10)?;
+        let mut state = serializer.serialize_struct("RealmTreeNode", 11)?;
         match self.kind {
             RealmTreeNodeKind::Realm => state.serialize_field("realm_id", &self.id)?,
             RealmTreeNodeKind::Space => {
@@ -521,6 +522,7 @@ impl Serialize for RealmTreeNode {
         state.serialize_field("tags", &self.tags)?;
         state.serialize_field("public", &self.public)?;
         state.serialize_field("category", &self.category)?;
+        state.serialize_field("direct_conversation", &self.direct_conversation)?;
         state.serialize_field("parent_space_id", &self.parent_space_id)?;
         state.serialize_field("child_space_ids", &self.child_space_ids)?;
         state.serialize_field("kind", &self.kind)?;
@@ -545,6 +547,8 @@ impl<'de> Deserialize<'de> for RealmTreeNode {
             tags: std::collections::BTreeSet<String>,
             public: bool,
             category: Option<String>,
+            #[serde(default)]
+            direct_conversation: bool,
             #[serde(default)]
             parent_space_id: Option<String>,
             #[serde(default)]
@@ -577,6 +581,7 @@ impl<'de> Deserialize<'de> for RealmTreeNode {
             tags: wire.tags,
             public: wire.public,
             category: wire.category,
+            direct_conversation: wire.direct_conversation,
             parent_space_id: wire.parent_space_id,
             child_space_ids: wire.child_space_ids,
             kind: wire.kind,
@@ -741,6 +746,7 @@ mod tests {
             tags: Default::default(),
             public: true,
             category: None,
+            direct_conversation: false,
             parent_space_id: parent.map(ToOwned::to_owned),
             child_space_ids: Vec::new(),
             kind,
