@@ -38,6 +38,13 @@ pub(crate) struct RealmProjectionInput {
     /// (e.g. `mls_rfc9420`). Written through verbatim — the optimistic
     /// body must match exactly what the user chose.
     pub encryption_profile: String,
+    /// Effective Realm content capability selected at creation time. The
+    /// optimistic projection is authoritative for local writes until account
+    /// sync replaces it, so omitting this field would silently downgrade
+    /// shared-history content to the `mls-rfc9420` scheme.
+    pub content_scheme: String,
+    /// Initial history visibility selected at creation time.
+    pub history_visibility: String,
     pub plaintext_visible_services: Vec<String>,
     /// Recommended content/metadata floor (e.g. `e2ee_required`), or `None`
     /// to omit the floor keys entirely. The caller decides this via
@@ -84,6 +91,8 @@ impl OptimisticRealmTreeProjection {
             summary,
             discoverability,
             encryption_profile,
+            content_scheme,
+            history_visibility,
             plaintext_visible_services,
             encryption_floor,
         } = input;
@@ -95,6 +104,8 @@ impl OptimisticRealmTreeProjection {
             admins: admins.clone(),
             members: members.clone(),
             encryption_profile: encryption_profile.clone(),
+            content_scheme: content_scheme.clone(),
+            history_visibility: history_visibility.clone(),
             plaintext_visible_services: plaintext_visible_services.clone(),
             content_encryption_floor: encryption_floor.clone(),
             metadata_encryption_floor: encryption_floor.clone(),
@@ -105,6 +116,8 @@ impl OptimisticRealmTreeProjection {
                 tags: Vec::new(),
                 discoverability,
                 encryption_profile,
+                content_scheme,
+                history_visibility,
                 plaintext_visible_services,
                 owner,
                 admins,
@@ -150,6 +163,8 @@ pub(crate) struct RealmProjectionBody {
     admins: Vec<String>,
     members: Vec<String>,
     encryption_profile: String,
+    content_scheme: String,
+    history_visibility: String,
     plaintext_visible_services: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     content_encryption_floor: Option<String>,
@@ -168,6 +183,8 @@ struct RealmProjectionSummary {
     tags: Vec<String>,
     discoverability: String,
     encryption_profile: String,
+    content_scheme: String,
+    history_visibility: String,
     plaintext_visible_services: Vec<String>,
     owner: String,
     admins: Vec<String>,
@@ -230,6 +247,125 @@ fn state_event_values(body: &Value) -> impl Iterator<Item = &Value> {
                 .into_iter()
                 .flatten(),
         )
+}
+
+fn projected_state_event_values(body: &Value) -> impl Iterator<Item = &Value> {
+    body.get("state_after")
+        .and_then(|state| state.get("events"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .chain(state_event_values(body))
+}
+
+fn normalized_history_visibility(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
+}
+
+/// Resolve the Realm's effective history-visibility projection without
+/// treating the immutable create snapshot as newer than its per-facet state.
+/// `state_after` is the timeline-end state, followed by the current `state`
+/// container. Materialized reducer fields are compatibility snapshots; the
+/// create event is only an initial-state fallback when no facet is projected.
+pub(crate) fn realm_projection_history_visibility(body: &Value) -> Option<String> {
+    let facet_value = projected_state_event_values(body)
+        .filter(|event| {
+            event
+                .get("kind")
+                .or_else(|| event.get("type"))
+                .and_then(Value::as_str)
+                == Some("ak.realm.history_visibility")
+        })
+        .find_map(|event| {
+            normalized_history_visibility(event.pointer("/payload/value"))
+                .or_else(|| normalized_history_visibility(event.pointer("/content/value")))
+        });
+    if facet_value.is_some() {
+        return facet_value;
+    }
+
+    let null = Value::Null;
+    for container in [
+        body,
+        body.get("summary").unwrap_or(&null),
+        body.get("object").unwrap_or(&null),
+        body.get("realm").unwrap_or(&null),
+        body.get("metadata").unwrap_or(&null),
+    ] {
+        if let Some(value) = normalized_history_visibility(container.get("history_visibility")) {
+            return Some(value);
+        }
+    }
+
+    projected_state_event_values(body)
+        .filter(|event| {
+            event
+                .get("kind")
+                .or_else(|| event.get("type"))
+                .and_then(Value::as_str)
+                == Some(arkret_sdk::events::EventKind::REALM_CREATE)
+        })
+        .find_map(|event| {
+            normalized_history_visibility(event.pointer("/payload/object/history_visibility"))
+                .or_else(|| {
+                    normalized_history_visibility(
+                        event.pointer("/content/object/history_visibility"),
+                    )
+                })
+        })
+}
+
+/// Resolve the Realm's effective content scheme from the reducer-derived
+/// policy-components facet. `state_after` represents the timeline-end state
+/// and therefore precedes the current `state` container. Materialized fields
+/// are projection snapshots; the create event is only an initial-state
+/// fallback when no current policy-components facet is available.
+pub(crate) fn realm_projection_content_scheme(body: &Value) -> Option<String> {
+    let facet_value = projected_state_event_values(body)
+        .filter(|event| {
+            event
+                .get("kind")
+                .or_else(|| event.get("type"))
+                .and_then(Value::as_str)
+                == Some("ak.realm.policy_components")
+        })
+        .find_map(|event| {
+            non_empty_string(event.pointer("/payload/value/content_scheme"))
+                .or_else(|| non_empty_string(event.pointer("/content/value/content_scheme")))
+        });
+    if facet_value.is_some() {
+        return facet_value;
+    }
+
+    let null = Value::Null;
+    for container in [
+        body,
+        body.get("summary").unwrap_or(&null),
+        body.get("object").unwrap_or(&null),
+        body.get("realm").unwrap_or(&null),
+        body.get("metadata").unwrap_or(&null),
+    ] {
+        if let Some(scheme) = string_field(container, &["content_scheme"]) {
+            return Some(scheme);
+        }
+    }
+
+    projected_state_event_values(body)
+        .filter(|event| {
+            event
+                .get("kind")
+                .or_else(|| event.get("type"))
+                .and_then(Value::as_str)
+                == Some(arkret_sdk::events::EventKind::REALM_CREATE)
+        })
+        .find_map(|event| {
+            non_empty_string(event.pointer("/payload/object/content_scheme"))
+                .or_else(|| non_empty_string(event.pointer("/content/object/content_scheme")))
+        })
 }
 
 fn nested_string_field(value: &Value, parent: &str, keys: &[&str]) -> Option<String> {
@@ -892,6 +1028,16 @@ pub fn should_retain_projection_after_full_sync(
     if server_set.contains(id) {
         return true;
     }
+    // Realm creation writes this local-only discriminant only after the
+    // server accepts the create transaction. A catch-up full sync can race
+    // the server's account projection and omit that newly accepted Realm for
+    // a few frames. Preserve the optimistic body until an authoritative body
+    // replaces it (and therefore removes `__kind`); otherwise the first local
+    // encrypted write loses its effective policy fields and silently falls
+    // back to the default content scheme.
+    if id.starts_with("ak:realm:") && body.get("__kind").and_then(Value::as_str) == Some("realm") {
+        return true;
+    }
     if !id.starts_with("ak:space:")
         || projection_tree_node_kind(id, body) != RealmTreeNodeKind::Space
     {
@@ -1012,6 +1158,80 @@ mod tests {
     }
 
     #[test]
+    fn history_visibility_prefers_current_facet_state_over_create_snapshot() {
+        let projection = json!({
+            "object": {"history_visibility": "joined"},
+            "state": {"events": [
+                {
+                    "kind": "ak.realm.create",
+                    "payload": {"object": {"history_visibility": "joined"}}
+                },
+                {
+                    "kind": "ak.realm.history_visibility",
+                    "payload": {"value": "shared"}
+                }
+            ]}
+        });
+
+        assert_eq!(
+            realm_projection_history_visibility(&projection).as_deref(),
+            Some("shared")
+        );
+    }
+
+    #[test]
+    fn history_visibility_falls_back_to_canonical_create_state() {
+        let projection = json!({
+            "state": {"events": [{
+                "kind": "ak.realm.create",
+                "payload": {"object": {"history_visibility": "invited"}}
+            }]}
+        });
+
+        assert_eq!(
+            realm_projection_history_visibility(&projection).as_deref(),
+            Some("invited")
+        );
+    }
+
+    #[test]
+    fn content_scheme_prefers_current_policy_components_over_create_snapshot() {
+        let projection = json!({
+            "object": {"content_scheme": "mls-rfc9420"},
+            "state_after": {"events": [
+                {
+                    "kind": "ak.realm.create",
+                    "payload": {"object": {"content_scheme": "mls-rfc9420"}}
+                },
+                {
+                    "kind": "ak.realm.policy_components",
+                    "payload": {"value": {"content_scheme": "mls-exporter-aead-v1"}}
+                }
+            ]}
+        });
+
+        assert_eq!(
+            realm_projection_content_scheme(&projection).as_deref(),
+            Some("mls-exporter-aead-v1")
+        );
+    }
+
+    #[test]
+    fn content_scheme_falls_back_to_canonical_create_state() {
+        let projection = json!({
+            "state": {"events": [{
+                "kind": "ak.realm.create",
+                "payload": {"object": {"content_scheme": "mls-exporter-aead-v1"}}
+            }]}
+        });
+
+        assert_eq!(
+            realm_projection_content_scheme(&projection).as_deref(),
+            Some("mls-exporter-aead-v1")
+        );
+    }
+
+    #[test]
     fn projection_title_hint_fills_missing_summary_title() {
         let id = "ak:realm:01904100-0000-7000-8000-000000000003";
         let body = json!({
@@ -1052,6 +1272,8 @@ mod tests {
             summary: "Launch planning".to_owned(),
             discoverability: "restricted".to_owned(),
             encryption_profile: "mls_rfc9420".to_owned(),
+            content_scheme: "mls-exporter-aead-v1".to_owned(),
+            history_visibility: "shared".to_owned(),
             plaintext_visible_services: vec!["directory".to_owned()],
             encryption_floor: Some("e2ee_required".to_owned()),
         })
@@ -1066,6 +1288,10 @@ mod tests {
             body["summary"]["metadata_encryption_floor"],
             "e2ee_required"
         );
+        assert_eq!(body["content_scheme"], "mls-exporter-aead-v1");
+        assert_eq!(body["summary"]["content_scheme"], "mls-exporter-aead-v1");
+        assert_eq!(body["history_visibility"], "shared");
+        assert_eq!(body["summary"]["history_visibility"], "shared");
         assert_eq!(body["timeline"]["events"], json!([]));
     }
 
@@ -1079,6 +1305,8 @@ mod tests {
             summary: String::new(),
             discoverability: "public".to_owned(),
             encryption_profile: "none".to_owned(),
+            content_scheme: "mls-rfc9420".to_owned(),
+            history_visibility: "joined".to_owned(),
             plaintext_visible_services: Vec::new(),
             encryption_floor: None,
         })
@@ -1554,6 +1782,31 @@ mod tests {
         assert!(keep.contains("ak:realm:root"));
         assert!(keep.contains("ak:space:child"));
         assert!(!keep.contains("ak:space:stale"));
+    }
+
+    #[test]
+    fn full_sync_keep_set_preserves_acknowledged_optimistic_realm() {
+        let server_set = BTreeSet::from(["ak:realm:control".to_owned()]);
+        let cached = BTreeMap::from([
+            (
+                "ak:realm:optimistic".to_owned(),
+                json!({
+                    "__kind": "realm",
+                    "content_scheme": "mls-exporter-aead-v1",
+                    "history_visibility": "shared"
+                }),
+            ),
+            (
+                "ak:realm:stale".to_owned(),
+                json!({"summary": {"title": "Stale authoritative projection"}}),
+            ),
+        ]);
+
+        let keep = full_sync_projection_keep_set(&server_set, &cached);
+
+        assert!(keep.contains("ak:realm:control"));
+        assert!(keep.contains("ak:realm:optimistic"));
+        assert!(!keep.contains("ak:realm:stale"));
     }
 
     #[test]

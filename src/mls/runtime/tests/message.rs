@@ -112,9 +112,36 @@ async fn authoring_exporter_aead_content_retains_history_secret() {
     ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
         .unwrap()
         .expect("creator snapshot");
-    // Declare the history-shareable content scheme so the encrypt path routes
-    // through exporter-aead and must retain the epoch's history_secret.
-    state.save_realm_tree_projection(realm, json!({ "content_scheme": "mls-exporter-aead-v1" }));
+    // Use the same optimistic projection written immediately after Realm
+    // creation. Account sync may not have delivered the authoritative
+    // projection before the first content write, so this local shape must
+    // carry the scheme all the way into encryption dispatch.
+    let optimistic = crate::realm_tree::OptimisticRealmTreeProjection::realm(
+        crate::realm_tree::RealmProjectionInput {
+            owner: actor.to_owned(),
+            admins: vec![actor.to_owned()],
+            members: vec![actor.to_owned()],
+            title: "Shared history".to_owned(),
+            summary: String::new(),
+            discoverability: "restricted".to_owned(),
+            encryption_profile: "mls_rfc9420".to_owned(),
+            content_scheme: "mls-exporter-aead-v1".to_owned(),
+            history_visibility: "shared".to_owned(),
+            plaintext_visible_services: Vec::new(),
+            encryption_floor: Some("e2ee_required".to_owned()),
+        },
+    )
+    .into_value();
+    state.save_realm_tree_projection(realm, optimistic);
+    // Reproduce the account catch-up race: the next full frame can predate
+    // the newly accepted Realm. Reconcile must retain its optimistic body
+    // until the authoritative Realm projection arrives.
+    let keep = crate::realm_tree::full_sync_projection_keep_set(
+        &std::collections::BTreeSet::from(["ak:realm:control".to_owned()]),
+        &state.load().realm_tree_projections,
+    );
+    state.retain_realm_tree_projections(|id| keep.contains(id));
+    assert!(realm_content_scheme_is_exporter_aead(&state, realm));
 
     // No secret is retained before any content is authored.
     assert!(state.history_secret_for(realm, 0).is_none());
@@ -132,6 +159,10 @@ async fn authoring_exporter_aead_content_retains_history_secret() {
     let pending = encrypted
         .5
         .expect("exporter-aead authoring must prepare history secret");
+    assert_eq!(
+        encrypted.2[0]["scheme"],
+        serde_json::Value::String("mls-exporter-aead-v1".to_owned())
+    );
     pending.persist(&secure).await.unwrap();
     state.publish_history_secrets(pending);
 

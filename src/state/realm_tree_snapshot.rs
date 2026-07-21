@@ -200,7 +200,7 @@ impl LocalStateStore {
         self.load()
             .realm_tree_projections
             .get(realm_id)
-            .is_some_and(realm_tree_projection_value_is_mls_encrypted)
+            .is_some_and(crate::realm_tree::realm_projection_is_encrypted)
     }
 
     /// The effective `durability_policy` (RRK, realm-and-space.md §2.3.1) for
@@ -226,7 +226,16 @@ impl LocalStateStore {
         self.load()
             .realm_tree_projections
             .get(realm_id.trim())
-            .and_then(super::realm_tree_projection_value_content_scheme)
+            .and_then(crate::realm_tree::realm_projection_content_scheme)
+    }
+
+    /// The effective `history_visibility` from the current projected facet
+    /// state, with materialized/create snapshots used only as fallbacks.
+    pub fn realm_history_visibility(&self, realm_id: &str) -> Option<String> {
+        self.load()
+            .realm_tree_projections
+            .get(realm_id.trim())
+            .and_then(crate::realm_tree::realm_projection_history_visibility)
     }
 
     /// True when `realm_id`'s effective durability policy is RRK-active: a

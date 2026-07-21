@@ -606,6 +606,62 @@ fn should_ack_mls_welcome_batch(
         && persist_error.is_none()
 }
 
+fn to_device_envelope_dedup_key(message: &Value) -> Result<(&str, &str, &str), String> {
+    let required = |field: &str| {
+        message
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| format!("durable to-device envelope omits {field}"))
+    };
+    Ok((
+        required("sender_principal_id")?,
+        required("sender_device_id")?,
+        required("message_id")?,
+    ))
+}
+
+fn merge_durable_local_mls_welcomes_for_realm(
+    messages_value: &mut Value,
+    local_inbox: &[Value],
+    realm_id: &str,
+) -> Result<usize, String> {
+    // Account subscribe and the explicit query are two views of one queue. The
+    // sync dispatcher may durably journal an envelope and ACK the remote batch
+    // before this realm-specific bootstrap runs, so recovery must replay that
+    // same journal rather than depend on a second server fetch.
+    let messages = messages_value
+        .get_mut("messages")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "device messages response omits messages array".to_owned())?;
+    let mut merged = 0;
+    let now = crate::clock::now_utc();
+
+    for local in crate::mls::runtime::collect_mls_welcome_messages_for_realm(local_inbox, realm_id)
+    {
+        if crate::state::to_device_message_expired(&local, now) {
+            continue;
+        }
+        let local_key = to_device_envelope_dedup_key(&local)?;
+        let duplicate = messages.iter().find(|message| {
+            to_device_envelope_dedup_key(message).is_ok_and(|message_key| message_key == local_key)
+        });
+        if let Some(existing) = duplicate {
+            if existing != &local {
+                return Err(format!(
+                    "device_message_conflict: envelope changed for {}|{}|{}",
+                    local_key.0, local_key.1, local_key.2
+                ));
+            }
+            continue;
+        }
+        messages.push(local);
+        merged += 1;
+    }
+
+    Ok(merged)
+}
+
 pub(crate) async fn bootstrap_mls_welcome_for_realm(
     base_url: String,
     session_credential: String,
@@ -639,14 +695,28 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     // the wasm branch discarded the device messages and returned the default
     // outcome, which is why a fresh browser never applied a pending Welcome
     // and showed empty/locked encrypted Realms.
-    let messages_value =
+    let mut messages_value =
         serde_json::to_value(&messages).map_err(|error| format!("device messages: {error}"))?;
+    let local_inbox = state_store.read().to_device_inbox();
+    let replayed_local_welcomes =
+        merge_durable_local_mls_welcomes_for_realm(&mut messages_value, &local_inbox, &realm_id)?;
+    if replayed_local_welcomes > 0 {
+        tracing::debug!(
+            realm = %realm_id,
+            replayed_local_welcomes,
+            "replayed MLS welcome envelopes from the durable to-device dispatcher inbox"
+        );
+    }
     let api = crate::transport::auth::authed_api(&base_url, session_credential.clone())
         .map_err(|error| format!("MLS governance proof client: {error}"))?;
-    let has_welcome = messages
-        .messages
-        .iter()
-        .any(|message| message.kind == "ak.mls.welcome");
+    let has_welcome = messages_value
+        .get("messages")
+        .and_then(Value::as_array)
+        .is_some_and(|messages| {
+            messages.iter().any(|message| {
+                message.get("kind").and_then(Value::as_str) == Some("ak.mls.welcome")
+            })
+        });
     if has_welcome {
         let seal_view = api
             .event_submitter()
@@ -806,6 +876,23 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
 mod tests {
     use super::*;
 
+    fn durable_welcome(message_id: &str, realm_id: &str) -> Value {
+        serde_json::json!({
+            "message_id": message_id,
+            "kind": "ak.mls.welcome",
+            "sender_principal_id": "did:webvh:alice.example",
+            "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
+            "recipient_principal_id": "did:webvh:bob.example",
+            "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
+            "sent_at": "2099-01-01T00:00:00Z",
+            "expires_at": "2100-01-01T00:00:00Z",
+            "content": {
+                "mls_group_id": crate::mls::runtime::mls_group_id_for_realm(realm_id),
+                "ciphertext": "welcome-ciphertext"
+            }
+        })
+    }
+
     fn welcome_outcome(
         applied: usize,
         failed: usize,
@@ -845,5 +932,85 @@ mod tests {
 
         let empty = welcome_outcome(0, 0, 0);
         assert!(!should_ack_mls_welcome_batch(true, &empty, true, None));
+    }
+
+    #[test]
+    fn bootstrap_merges_realm_welcome_from_durable_dispatcher_inbox() {
+        let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000011";
+        let welcome = durable_welcome(
+            "ak:device_message:0196419b-0000-7000-8000-000000000021",
+            realm_id,
+        );
+        let mut messages = serde_json::json!({ "messages": [] });
+
+        assert_eq!(
+            merge_durable_local_mls_welcomes_for_realm(
+                &mut messages,
+                std::slice::from_ref(&welcome),
+                realm_id,
+            )
+            .expect("merge durable welcome"),
+            1
+        );
+        assert_eq!(messages["messages"], serde_json::json!([welcome]));
+    }
+
+    #[test]
+    fn bootstrap_deduplicates_identical_durable_welcome_and_rejects_conflict() {
+        let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000012";
+        let welcome = durable_welcome(
+            "ak:device_message:0196419b-0000-7000-8000-000000000022",
+            realm_id,
+        );
+        let mut messages = serde_json::json!({ "messages": [welcome.clone()] });
+
+        assert_eq!(
+            merge_durable_local_mls_welcomes_for_realm(
+                &mut messages,
+                std::slice::from_ref(&welcome),
+                realm_id,
+            )
+            .expect("deduplicate durable welcome"),
+            0
+        );
+        assert_eq!(messages["messages"].as_array().map(Vec::len), Some(1));
+
+        let mut conflicting = welcome;
+        conflicting["content"]["ciphertext"] = Value::String("changed".to_owned());
+        let error =
+            merge_durable_local_mls_welcomes_for_realm(&mut messages, &[conflicting], realm_id)
+                .expect_err("same durable dedup key with changed content must fail closed");
+        assert!(error.contains("device_message_conflict"));
+    }
+
+    #[test]
+    fn bootstrap_ignores_unrelated_and_expired_local_messages() {
+        let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000013";
+        let mut other_kind = durable_welcome(
+            "ak:device_message:0196419b-0000-7000-8000-000000000023",
+            realm_id,
+        );
+        other_kind["kind"] = Value::String("ak.secret.send".to_owned());
+        let other_realm = durable_welcome(
+            "ak:device_message:0196419b-0000-7000-8000-000000000024",
+            "ak:realm:0196419b-0000-7000-8000-000000000099",
+        );
+        let mut expired = durable_welcome(
+            "ak:device_message:0196419b-0000-7000-8000-000000000025",
+            realm_id,
+        );
+        expired["expires_at"] = Value::String("2000-01-01T00:00:00Z".to_owned());
+        let mut messages = serde_json::json!({ "messages": [] });
+
+        assert_eq!(
+            merge_durable_local_mls_welcomes_for_realm(
+                &mut messages,
+                &[other_kind, other_realm, expired],
+                realm_id,
+            )
+            .expect("ignore non-matching durable messages"),
+            0
+        );
+        assert_eq!(messages["messages"], serde_json::json!([]));
     }
 }

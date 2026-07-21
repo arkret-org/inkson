@@ -2083,30 +2083,6 @@ fn history_visibility_admits_prejoin_pull(history_visibility: &str) -> bool {
     )
 }
 
-/// Read the Realm's projected `history_visibility`, scanning the same nested
-/// containers (`summary`/`object`/`realm`/`metadata`) the encryption-state
-/// reader walks, since the local projection nests the realm body. Returns the
-/// trimmed lowercased value, or `None` when the projection carries no hint.
-fn projected_history_visibility_for_realm(
-    store: &LocalStateStore,
-    realm_id: &str,
-) -> Option<String> {
-    let state = store.load();
-    let body = state.realm_tree_projections.get(realm_id)?;
-    let null = Value::Null;
-    let containers = [
-        body,
-        body.get("summary").unwrap_or(&null),
-        body.get("object").unwrap_or(&null),
-        body.get("realm").unwrap_or(&null),
-        body.get("metadata").unwrap_or(&null),
-    ];
-    containers.into_iter().find_map(|container| {
-        crate::realm_tree::string_field(container, &["history_visibility"])
-            .map(|value| value.trim().to_ascii_lowercase())
-    })
-}
-
 /// A planned `ak.realm_key.request`: the provider device to ask and the epoch
 /// range whose `history_secret`s are missing locally.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2295,8 +2271,7 @@ pub(crate) fn history_key_request_diagnostics(
         .map(|(epoch, _)| epoch)
         .collect();
     installed_epochs.sort_unstable();
-    let history_visibility =
-        projected_history_visibility_for_realm(store, realm_id).unwrap_or_default();
+    let history_visibility = store.realm_history_visibility(realm_id).unwrap_or_default();
     let inbox = store.to_device_inbox();
     let providers = provider_candidates_from_inbox(&inbox, realm_id, actor_id);
     let plan = join_epoch.and_then(|epoch| {
@@ -2356,8 +2331,9 @@ pub(crate) async fn request_history_keys_for_realm(
             .map(|(epoch, _)| epoch)
             .collect();
         // `joined` / unknown visibility ⇒ no pre-join window ⇒ skip cheaply.
-        let history_visibility =
-            projected_history_visibility_for_realm(&store, &realm_id).unwrap_or_default();
+        let history_visibility = store
+            .realm_history_visibility(&realm_id)
+            .unwrap_or_default();
         let inbox = store.to_device_inbox();
         let providers = provider_candidates_from_inbox(&inbox, &realm_id, &actor_id);
         let plan = plan_history_key_request(
@@ -5365,11 +5341,20 @@ mod tests {
             realm,
             json!({
                 "schema": "ak.schema.realm.v1",
-                "object": {
-                    "history_visibility": "shared",
-                    "encryption_profile": "mls_rfc9420",
-                    "content_scheme": "mls-exporter-aead-v1"
-                }
+                "state": {"events": [
+                    {
+                        "kind": "ak.realm.create",
+                        "payload": {"object": {
+                            "history_visibility": "joined",
+                            "encryption_profile": "mls_rfc9420",
+                            "content_scheme": "mls-exporter-aead-v1"
+                        }}
+                    },
+                    {
+                        "kind": "ak.realm.history_visibility",
+                        "payload": {"value": "shared"}
+                    }
+                ]}
             }),
         );
         let mut snapshot = dummy_mls_snapshot(realm);

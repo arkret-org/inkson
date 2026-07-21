@@ -195,44 +195,6 @@ impl LocalStatePersistBarrier {
     }
 }
 
-fn realm_tree_projection_value_is_mls_encrypted(body: &Value) -> bool {
-    fn normalized_profile(value: &str) -> String {
-        value.trim().to_ascii_lowercase().replace(['-', ' '], "_")
-    }
-
-    // YOU-05-008: shared "first non-empty string under candidate keys"
-    // helper lives in `crate::realm_tree`.
-    use crate::realm_tree::string_field;
-
-    let null = Value::Null;
-    let summary = body.get("summary").unwrap_or(&null);
-    for container in [
-        body,
-        summary,
-        body.get("object").unwrap_or(&null),
-        body.get("realm").unwrap_or(&null),
-        body.get("metadata").unwrap_or(&null),
-    ] {
-        if container
-            .get("encrypted")
-            .or_else(|| container.get("is_encrypted"))
-            .or_else(|| container.get("e2ee"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
-            return true;
-        }
-        if let Some(profile) = string_field(container, &["encryption_profile"]) {
-            let profile = normalized_profile(&profile);
-            if matches!(profile.as_str(), "mls" | "mls_rfc9420" | "e2ee") {
-                return true;
-            }
-        }
-    }
-
-    false
-}
-
 /// Extract the effective `durability_policy` (RRK, realm-and-space.md §2.3.1)
 /// from a cached realm-tree projection body, if present. Scans the same nested
 /// containers as the encryption-state reader since the local projection nests
@@ -255,26 +217,6 @@ fn realm_tree_projection_value_durability_policy(
                 serde_json::from_value::<arkret_sdk::models::DurabilityPolicy>(policy.clone())
         {
             return Some(parsed);
-        }
-    }
-    None
-}
-
-/// Extract the effective `content_scheme` selector from a cached realm-tree
-/// projection body. RRK durability is only effective when this is
-/// `mls-exporter-aead-v1` (encryption-and-audit.md §2.10.8 scheme constraint).
-fn realm_tree_projection_value_content_scheme(body: &Value) -> Option<String> {
-    use crate::realm_tree::string_field;
-    let null = Value::Null;
-    for container in [
-        body,
-        body.get("summary").unwrap_or(&null),
-        body.get("object").unwrap_or(&null),
-        body.get("realm").unwrap_or(&null),
-        body.get("metadata").unwrap_or(&null),
-    ] {
-        if let Some(scheme) = string_field(container, &["content_scheme"]) {
-            return Some(scheme);
         }
     }
     None

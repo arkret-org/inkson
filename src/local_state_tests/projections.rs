@@ -61,6 +61,28 @@ fn mls_encrypted_projection_detects_epoch_pause_scope() {
 }
 
 #[test]
+fn mls_encrypted_projection_reads_canonical_realm_create_state_event() {
+    let path = temp_state_path("mls-encrypted-state-event-projection");
+    let mut store = LocalStateStore::with_path(path);
+    let realm = "ak:realm:0196419b-0000-7000-8000-0000000000f0";
+    store.save_realm_tree_projection(
+        realm,
+        json!({
+            "summary": {"joined_member_count": 2},
+            "state": {"events": [{
+                "kind": "ak.realm.create",
+                "payload": {"object": {
+                    "encryption_profile": "mls_rfc9420",
+                    "history_visibility": "shared"
+                }}
+            }]}
+        }),
+    );
+
+    assert!(store.realm_projection_is_mls_encrypted(realm));
+}
+
+#[test]
 fn minimal_metadata_projection_detected_from_profiles_arrays() {
     // SEC-08 — the committer reads minimal-metadata status off the cached
     // projection. Recognised under `profiles[]` / `active_profiles[]` at the

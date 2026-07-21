@@ -13,6 +13,7 @@ pub(super) struct MlsRuntimeEffectState {
     pub device_id: Signal<String>,
     pub server_description: Signal<Option<ServiceDescribe>>,
     pub sync_bootstrap_complete: Signal<bool>,
+    pub sync_cursor: Signal<String>,
     pub realm_live_epoch: Signal<u64>,
     pub mls_admission_reconcile_in_flight: Signal<bool>,
     pub mls_admission_reconcile_pending: Signal<bool>,
@@ -20,6 +21,7 @@ pub(super) struct MlsRuntimeEffectState {
     pub mls_admission_diag_last: Signal<String>,
     pub realm_events_route_enabled: Signal<bool>,
     pub selected_realm_id: Signal<String>,
+    pub device_queue: Signal<usize>,
     pub realm_key_sharing_in_flight: Signal<bool>,
     pub realm_key_request_dedup: Signal<Option<String>>,
     pub realm_key_answer_backoff_until: Signal<crate::keyed_cooldown::KeyedCooldown>,
@@ -46,6 +48,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         device_id,
         server_description,
         sync_bootstrap_complete,
+        sync_cursor,
         realm_live_epoch,
         mls_admission_reconcile_in_flight,
         mls_admission_reconcile_pending,
@@ -53,6 +56,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         mls_admission_diag_last,
         realm_events_route_enabled,
         selected_realm_id,
+        device_queue,
         realm_key_sharing_in_flight,
         realm_key_request_dedup,
         realm_key_answer_backoff_until,
@@ -384,9 +388,21 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         let mut share_answer_backoff = realm_key_answer_backoff_until;
         let mut share_pull_retry_key = realm_key_pull_retry_key;
         let mut share_pull_retry_attempt = realm_key_pull_retry_attempt;
+        let mut share_realm_live_epoch = realm_live_epoch;
+        let share_device_queue = device_queue;
+        let share_sync_cursor = sync_cursor;
         let secure_store_ready_for_share = secure_store_bootstrap_ready;
         let share_did_cache = did_cache;
         use_effect(move || {
+            // Account sync publishes the durable to-device inbox length through
+            // `device_queue`. Subscribe explicitly so a newly delivered key
+            // share schedules an install pass even when the active Realm and
+            // every other MLS signal remain unchanged.
+            let _pending_to_device_messages = share_device_queue();
+            // The queue length can remain stable when one durable envelope is
+            // replaced by another. The account-sync cursor is the monotonic
+            // projection freshness edge, so subscribe to it as well.
+            let _to_device_projection_cursor = share_sync_cursor();
             if !secure_store_ready_for_share() {
                 return;
             }
@@ -567,6 +583,14 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                                 installed_share_ids.push(operation_id);
                             }
                         }
+                    }
+                    if !installed_by_realm.is_empty() {
+                        // A newly durable history secret changes the local
+                        // decrypt projection even though no Realm Event was
+                        // ingested. Advance the same freshness axis consumed by
+                        // Kanban/chat projection effects so existing locked
+                        // ciphertext is immediately reprojected and decrypted.
+                        share_realm_live_epoch.with_mut(|epoch| *epoch = epoch.wrapping_add(1));
                     }
                     for operation_id in installed_share_ids {
                         let _ = share_state_store

@@ -1282,10 +1282,10 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             let mut store = state_store.write();
                             store.save_sync_cursor(sync.cursor.clone());
                             // Server-authoritative reconcile for top-level
-                            // Realm membership. Nested Space containers are
-                            // not always returned as top-level sync entries,
-                            // so keep local container projections while their
-                            // home Realm is still present.
+                            // Realm membership. Keep acknowledged optimistic
+                            // Realms until their first account projection and
+                            // nested Space containers while their home Realm
+                            // is still present.
                             let server_set: BTreeSet<String> =
                                 sync.realm_projections.keys().cloned().collect();
                             let keep_set = full_sync_projection_keep_set(
