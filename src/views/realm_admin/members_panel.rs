@@ -1054,7 +1054,7 @@ fn MemberRowActions(
                                             .realm_projection_is_mls_encrypted(&realm);
                                         if mls_encrypted {
                                             state_store.write().record_move_submission(
-                                                resp.event_id.clone(),
+                                                format!("mls-binding:{}", resp.event_id),
                                                 realm.clone(),
                                                 "mls_member_remove",
                                                 MoveSubmissionState::PendingMlsBinding,
@@ -1115,7 +1115,7 @@ fn MemberRowActions(
                                             .realm_projection_is_mls_encrypted(&realm);
                                         if mls_encrypted {
                                             state_store.write().record_move_submission(
-                                                resp.event_id.clone(),
+                                                format!("mls-binding:{}", resp.event_id),
                                                 realm.clone(),
                                                 "mls_member_remove",
                                                 MoveSubmissionState::PendingMlsBinding,
@@ -4198,7 +4198,7 @@ pub fn RealmMembersPanel(
                                                                                                             .realm_projection_is_mls_encrypted(&realm);
                                                                                                         if mls_encrypted {
                                                                                                             state_store.write().record_move_submission(
-                                                                                                                resp.event_id.clone(),
+                                                                                                                format!("mls-binding:{}", resp.event_id),
                                                                                                                 realm.clone(),
                                                                                                                 "mls_member_remove",
                                                                                                                 MoveSubmissionState::PendingMlsBinding,

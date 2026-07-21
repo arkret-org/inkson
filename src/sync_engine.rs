@@ -573,6 +573,30 @@ fn to_device_backfill_cursor(updates: &arkret_sdk::SyncUpdates) -> Option<String
         .flatten()
 }
 
+fn scope_rotate_realm_ids(
+    response: &AccountSyncStep,
+    state_store: &LocalStateStore,
+) -> Vec<String> {
+    let mut realm_ids = response
+        .updates
+        .realm_updates
+        .iter()
+        .filter(|update| realm_update_has_durable_projection(update))
+        .map(|update| update.realm_id.as_str().to_owned())
+        .collect::<BTreeSet<_>>();
+    realm_ids.extend(
+        state_store
+            .all_move_submissions()
+            .into_iter()
+            .filter(|record| {
+                record.kind == "mls_member_remove"
+                    && record.state == crate::state::MoveSubmissionState::PendingMlsBinding
+            })
+            .map(|record| record.realm_id),
+    );
+    realm_ids.into_iter().collect()
+}
+
 impl InksonAccountPostCommit {
     fn active(&self) -> bool {
         self.generation.get() == self.start_generation && !self.ctx.effect.is_cancelled()
@@ -686,26 +710,11 @@ impl AccountPostCommitHook<crate::client_core::InksonAccountTransport> for Inkso
         // retry on a later bounded poll, however, even when that poll carries
         // no new durable Realm delta (for example after a transient proof
         // fetch failure).
-        let mut realm_ids = response
-            .updates
-            .realm_updates
-            .iter()
-            .filter(|update| realm_update_has_durable_projection(update))
-            .map(|update| update.realm_id.as_str().to_owned())
-            .collect::<BTreeSet<_>>();
-        realm_ids.extend(self.ctx.state_store.read(|store| {
-            store
-                .all_move_submissions()
-                .into_iter()
-                .filter(|record| {
-                    record.kind == "mls_member_remove"
-                        && record.state == crate::state::MoveSubmissionState::PendingMlsBinding
-                })
-                .map(|record| record.realm_id)
-                .collect::<BTreeSet<_>>()
-        }));
+        let realm_ids = self
+            .ctx
+            .state_store
+            .read(|store| scope_rotate_realm_ids(&response, store));
         if !realm_ids.is_empty() {
-            let realm_ids = realm_ids.into_iter().collect::<Vec<_>>();
             run_circle_scope_rotate_pass(
                 self.start_generation,
                 self.generation.clone(),
@@ -2859,6 +2868,30 @@ mod tests {
         let mut truncated = projection;
         truncated["members_limited"] = json!(true);
         assert!(realm_membership_removal_basis(&truncated).is_none());
+    }
+
+    #[test]
+    fn pending_mls_binding_retries_on_empty_account_poll_until_resolved() {
+        let realm_id = "ak:realm:0196419b-0000-7000-8000-0000000000cc";
+        let response = empty_response("ak:cursor:mls-retry");
+        let mut store = temp_store("mls-remove-empty-poll-retry");
+
+        assert!(scope_rotate_realm_ids(&response, &store).is_empty());
+        store.record_move_submission(
+            "ak:event:0196419b-0000-7000-8000-0000000000cd",
+            realm_id,
+            "mls_member_remove",
+            crate::state::MoveSubmissionState::PendingMlsBinding,
+            Some("epoch_update_required".to_owned()),
+            None,
+        );
+
+        assert_eq!(
+            scope_rotate_realm_ids(&response, &store),
+            vec![realm_id.to_owned()]
+        );
+        assert_eq!(store.resolve_member_remove_mls_bindings(realm_id), 1);
+        assert!(scope_rotate_realm_ids(&response, &store).is_empty());
     }
 
     fn empty_response(cursor: &str) -> AccountSyncStep {

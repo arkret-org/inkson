@@ -120,21 +120,39 @@ fn move_submission_pending_mls_binding_drives_toast() {
     assert!(!store.realm_has_paused_notary(realm));
 
     assert_eq!(store.resolve_member_remove_mls_bindings(realm), 0);
+    let membership_event = "ak:event:0196419b-0000-7000-8000-000000000003";
+    let binding_tracking_id = format!("mls-binding:{membership_event}");
     store.record_move_submission(
-        "sha256:333",
+        binding_tracking_id.clone(),
         realm,
         "mls_member_remove",
         MoveSubmissionState::PendingMlsBinding,
         Some("epoch_update_required".to_owned()),
         None,
     );
+    // The governance Event becoming effective is not evidence that the MLS
+    // epoch advanced. Its event_state must not resolve the independently keyed
+    // reconciliation record.
+    assert_eq!(
+        store.ingest_move_event_states(
+            realm,
+            &serde_json::json!({
+                "event_states": [{
+                    "event_id": membership_event,
+                    "event_state": "effective"
+                }]
+            }),
+        ),
+        0
+    );
+    assert!(store.realm_has_pending_mls_binding(realm));
     assert_eq!(store.resolve_member_remove_mls_bindings(realm), 1);
     assert!(store.realm_has_pending_mls_binding(realm));
     assert_eq!(
         store
             .move_submissions_for_realm(realm)
             .into_iter()
-            .find(|record| record.move_id == "sha256:333")
+            .find(|record| record.move_id == binding_tracking_id)
             .map(|record| (record.state, record.reason)),
         Some((MoveSubmissionState::Effective, None))
     );
