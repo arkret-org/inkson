@@ -232,7 +232,6 @@ fn materialized_did_handle_shape(did: &str) -> Option<String> {
         return None;
     }
     let authority = segments[authority_start..marker_index].join(":");
-    let authority = authority.replace("%3A", ":").replace("%3a", ":");
     let candidate = format!("{localpart}:{authority}");
     crate::identity::handle::parse_user_handle(&candidate).map(|handle| handle.display)
 }
@@ -826,10 +825,10 @@ mod tests {
             materialized_did_handle_shape("did:web:acme.example:users:alice").as_deref(),
             Some("alice:acme.example")
         );
-        assert_eq!(
-            materialized_did_handle_shape("did:web:acme.example%3A8443:users:bob").as_deref(),
-            Some("bob:acme.example:8443")
-        );
+        // DID web method identifiers may encode a port, but Arkret canonical
+        // handle domains do not. Such a DID therefore has no handle-shaped
+        // avatar seed.
+        assert!(materialized_did_handle_shape("did:web:acme.example%3A8443:users:bob").is_none());
         assert_eq!(
             materialized_did_handle_shape("did:webvh:zQmScid:acme.example:users:carol").as_deref(),
             Some("carol:acme.example")

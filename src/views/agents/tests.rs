@@ -474,7 +474,7 @@ mod personal_agent_tests {
             "status": "pending_runtime_key",
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "pairing_code": "12345678",
-            "pairing_expires_at": "2026-07-06T00:15:00.000123Z",
+            "pairing_expires_at": "2026-07-06T00:15:00.000Z",
             "requested_scope": scope,
         });
         let raw = serde_json::json!({

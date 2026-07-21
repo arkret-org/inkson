@@ -1080,10 +1080,15 @@ mod tests {
             recovery_localpart_from_handles(&["alice:example.com".to_owned()]),
             "alice"
         );
-        // Ported authority: localpart is still just the user part.
+        // Punctuation allowed by the canonical localpart profile is preserved.
         assert_eq!(
-            recovery_localpart_from_handles(&["bob.smith_1:example.com:8443".to_owned()]),
+            recovery_localpart_from_handles(&["bob.smith_1:example.com".to_owned()]),
             "bob.smith_1"
+        );
+        // A port is not part of the canonical handle domain.
+        assert_eq!(
+            recovery_localpart_from_handles(&["bob:example.com:8443".to_owned()]),
+            ""
         );
         // First parseable handle wins; junk is skipped.
         assert_eq!(

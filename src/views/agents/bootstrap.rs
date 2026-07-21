@@ -1429,12 +1429,8 @@ mod tests {
         )
         .unwrap();
         let public_multikey = crate::identity::did_key::encode_x25519_multibase(&public_key);
-        let issued_at = chrono::DateTime::parse_from_rfc3339("2026-07-17T00:00:00.000Z")
-            .unwrap()
-            .with_timezone(&chrono::Utc);
-        let expires_at = chrono::DateTime::parse_from_rfc3339("2036-07-17T00:00:00.000Z")
-            .unwrap()
-            .with_timezone(&chrono::Utc);
+        let issued_at = "2026-07-17T00:00:00.000Z";
+        let expires_at = "2036-07-17T00:00:00.000Z";
         let policy_id = "ak:policy:01964137-0000-7000-8000-000000000071";
         let policy: crate::recovery_strand::ActiveRecoveryPolicy = serde_json::from_value(json!({
             "policy_id": policy_id,

@@ -1149,7 +1149,7 @@ mod tests {
                         "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002",
                         "match_scope": "realm_wide"
                     }],
-                    "issued_at": "2026-07-21T08:00:00Z",
+                    "issued_at": "2026-07-21T08:00:00.000Z",
                     "proofs": []
                 }
             },

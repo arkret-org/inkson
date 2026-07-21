@@ -25,7 +25,7 @@ use arkret_sdk::{
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD as B64;
-use chrono::{Timelike, Utc};
+use chrono::Utc;
 use ed25519_dalek::{SECRET_KEY_LENGTH, Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -526,7 +526,7 @@ impl CrossSigningExecutor {
             // `InitialSetup` and `Some(prev)` for `Reset`.
             expected_previous_generation: self.plan.previous_generation.unwrap_or(0),
             generation,
-            issued_at: canonical_utc_now(),
+            issued_at: arkret_sdk::canonical::normalize_timestamp_canonical(Utc::now()),
         };
         let ssk_input = publish_content
             .self_signing_binding_input()
@@ -561,11 +561,6 @@ fn generate_ed25519_signing_key() -> anyhow::Result<SigningKey> {
     let mut seed = [0u8; SECRET_KEY_LENGTH];
     getrandom::fill(&mut seed).map_err(|err| anyhow::anyhow!("rng fill: {err}"))?;
     Ok(SigningKey::from_bytes(&seed))
-}
-
-fn canonical_utc_now() -> chrono::DateTime<Utc> {
-    let now = Utc::now();
-    now - chrono::Duration::nanoseconds(i64::from(now.nanosecond()))
 }
 
 #[cfg(test)]
@@ -658,19 +653,17 @@ mod tests {
     }
 
     #[test]
-    fn executor_serializes_issued_at_as_canonical_utc_seconds() {
+    fn executor_serializes_issued_at_as_canonical_utc_milliseconds() {
         let principal = Did::new("did:web:alice.example".to_owned()).unwrap();
         let plan = CrossSigningSetupPlan::build_initial(principal.as_str(), "ak:device:01a");
         let executor = CrossSigningExecutor::new(plan, principal, test_trust_domain());
         let out = executor.run().expect("local steps must succeed");
 
-        assert_eq!(out.publish_content.issued_at.nanosecond(), 0);
         let serialized = serde_json::to_value(&out.publish_content).unwrap();
         let issued_at = serialized["issued_at"]
             .as_str()
             .expect("issued_at serializes as a string");
-        assert!(issued_at.ends_with('Z'));
-        assert!(!issued_at.contains('.'));
+        arkret_sdk::canonical::validate_timestamp_canonical(issued_at).unwrap();
     }
 
     #[test]

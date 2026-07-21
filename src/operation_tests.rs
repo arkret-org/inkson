@@ -642,9 +642,7 @@ fn space_create_emits_canonical_space_object() {
     assert_eq!(op.payload["object"]["rank"], "U");
     assert_eq!(op.payload["object"]["created_by"], "did:web:alice");
     let created_at = op.payload["object"]["created_at"].as_str().unwrap();
-    assert_eq!(created_at.len(), 20);
-    assert!(created_at.ends_with('Z'));
-    assert!(!created_at.contains('.'));
+    arkret_sdk::canonical::validate_timestamp_canonical(created_at).unwrap();
     let event_wire = serde_json::to_value(&op).unwrap();
     arkret_sdk::canonical::validate_timestamp_canonical(event_wire["created_at"].as_str().unwrap())
         .unwrap();
