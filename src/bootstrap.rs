@@ -893,6 +893,25 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     .await
     .map_err(|error| error.display())?;
 
+    if applied > 0 || welcome_outcome.skipped_stale > 0 {
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        let base_scope = server_key(&base_url);
+        crate::mls::runtime::delete_mls_key_package_publish_marker(
+            secure_store.as_ref(),
+            &base_scope,
+            &actor_id,
+            &device_id,
+        )
+        .map_err(|error| format!("clear claimed MLS KeyPackage publish marker: {error}"))?;
+        ensure_local_mls_key_package_published(
+            base_url.clone(),
+            session_credential.clone(),
+            actor_id,
+            device_id,
+        )
+        .await?;
+    }
+
     let persist_error = state_store.read().persist_error();
     if should_ack_mls_welcome_batch(
         can_ack_welcome_batch,
@@ -909,20 +928,6 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         .await
     {
         tracing::debug!(?error, "failed to ack durable MLS welcome device messages");
-    }
-
-    if applied > 0 {
-        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        let base_scope = server_key(&base_url);
-        crate::mls::runtime::delete_mls_key_package_publish_marker(
-            secure_store.as_ref(),
-            &base_scope,
-            &actor_id,
-            &device_id,
-        )
-        .map_err(|error| format!("clear claimed MLS KeyPackage publish marker: {error}"))?;
-        ensure_local_mls_key_package_published(base_url, session_credential, actor_id, device_id)
-            .await?;
     }
 
     Ok(MlsWelcomeBootstrapOutcome {
