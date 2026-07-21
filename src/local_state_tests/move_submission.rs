@@ -118,6 +118,26 @@ fn move_submission_pending_mls_binding_drives_toast() {
     );
     assert!(store.realm_has_pending_mls_binding(realm));
     assert!(!store.realm_has_paused_notary(realm));
+
+    assert_eq!(store.resolve_member_remove_mls_bindings(realm), 0);
+    store.record_move_submission(
+        "sha256:333",
+        realm,
+        "mls_member_remove",
+        MoveSubmissionState::PendingMlsBinding,
+        Some("epoch_update_required".to_owned()),
+        None,
+    );
+    assert_eq!(store.resolve_member_remove_mls_bindings(realm), 1);
+    assert!(store.realm_has_pending_mls_binding(realm));
+    assert_eq!(
+        store
+            .move_submissions_for_realm(realm)
+            .into_iter()
+            .find(|record| record.move_id == "sha256:333")
+            .map(|record| (record.state, record.reason)),
+        Some((MoveSubmissionState::Effective, None))
+    );
 }
 
 #[test]

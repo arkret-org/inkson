@@ -110,7 +110,40 @@ pub fn build_mls_remove_commit_for_effective_scope(
     ),
     MlsRuntimeError,
 > {
+    build_mls_remove_members_commit_for_effective_scope(
+        state_store,
+        secure_store,
+        realm_id,
+        circle_id,
+        actor_id,
+        device_id,
+        std::slice::from_ref(&target_principal_id),
+        revocation_membership_frontier,
+    )
+}
+
+pub fn build_mls_remove_members_commit_for_effective_scope(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    actor_id: &str,
+    device_id: &str,
+    target_principal_ids: &[&str],
+    revocation_membership_frontier: &[arkret_sdk::EventId],
+) -> Result<
+    (
+        arkret_sdk::MlsRemoveMemberResult,
+        crate::mls::persistence::MlsSnapshotEnvelope,
+    ),
+    MlsRuntimeError,
+> {
     canonical_mls_remove_membership_frontier(revocation_membership_frontier)?;
+    if target_principal_ids.is_empty() {
+        return Err(MlsRuntimeError::Commit(
+            "MLS Remove commit requires at least one target principal".to_owned(),
+        ));
+    }
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
@@ -119,8 +152,13 @@ pub fn build_mls_remove_commit_for_effective_scope(
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let target = arkret_sdk::Did::new(target_principal_id.to_owned())
-        .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
+    let targets: Vec<arkret_sdk::Did> = target_principal_ids
+        .iter()
+        .map(|target| {
+            arkret_sdk::Did::new((*target).to_owned())
+                .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))
+        })
+        .collect::<Result<_, _>>()?;
     // COR-04: bind the commit to the Seal-view epoch floor so a stale / rolled-back
     // local snapshot can't silently fork the group from an outdated epoch.
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
@@ -139,7 +177,7 @@ pub fn build_mls_remove_commit_for_effective_scope(
         crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
             .map_err(MlsRuntimeError::Commit)?;
     let remove = group
-        .remove_member_by_principal_with_governance_binding(&target, &governance_binding)
+        .remove_members_by_principal_with_governance_binding(&targets, &governance_binding)
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
     let post_state = group
         .export_state_record()

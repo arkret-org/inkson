@@ -1053,9 +1053,8 @@ fn MemberRowActions(
                                             .read()
                                             .realm_projection_is_mls_encrypted(&realm);
                                         if mls_encrypted {
-                                            state_store.write().record_move_submission_with_event_id(
+                                            state_store.write().record_move_submission(
                                                 resp.event_id.clone(),
-                                                Some(resp.event_id.clone()),
                                                 realm.clone(),
                                                 "mls_member_remove",
                                                 MoveSubmissionState::PendingMlsBinding,
@@ -1115,9 +1114,8 @@ fn MemberRowActions(
                                             .read()
                                             .realm_projection_is_mls_encrypted(&realm);
                                         if mls_encrypted {
-                                            state_store.write().record_move_submission_with_event_id(
+                                            state_store.write().record_move_submission(
                                                 resp.event_id.clone(),
-                                                Some(resp.event_id.clone()),
                                                 realm.clone(),
                                                 "mls_member_remove",
                                                 MoveSubmissionState::PendingMlsBinding,
@@ -4199,9 +4197,8 @@ pub fn RealmMembersPanel(
                                                                                                             .read()
                                                                                                             .realm_projection_is_mls_encrypted(&realm);
                                                                                                         if mls_encrypted {
-                                                                                                            state_store.write().record_move_submission_with_event_id(
+                                                                                                            state_store.write().record_move_submission(
                                                                                                                 resp.event_id.clone(),
-                                                                                                                Some(resp.event_id.clone()),
                                                                                                                 realm.clone(),
                                                                                                                 "mls_member_remove",
                                                                                                                 MoveSubmissionState::PendingMlsBinding,
