@@ -349,11 +349,11 @@ impl From<arkret_sdk::ProjectionStrandRow> for StrandProjectionView {
             created_by: row.created_by.map(|did| did.as_str().to_owned()),
             created_at: row
                 .created_at
-                .map(|created_at| created_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+                .map(arkret_sdk::canonical::format_timestamp_canonical),
             updated_by: row.updated_by.map(|did| did.as_str().to_owned()),
             updated_at: row
                 .updated_at
-                .map(|updated_at| updated_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+                .map(arkret_sdk::canonical::format_timestamp_canonical),
         }
     }
 }

@@ -264,7 +264,7 @@ export async function seedLocalRecoveryKeyMetadata(page: import("@playwright/tes
         .join("");
     const recoveryState = JSON.stringify({
       recovery_key_fingerprint: "sha256:e2e-local-recovery-key",
-      recovery_key_rotated_at: "2026-06-12T12:00:00Z",
+      recovery_key_rotated_at: "2026-06-12T12:00:00.000Z",
       sss_threshold: 3,
       sss_total: 5,
       guardians: [],
@@ -320,7 +320,7 @@ export function registerStrandsBeforeEach() {
       personalAgentPairingExpiresAt: testInfo.title.startsWith(
         "expired personal agent pairing",
       )
-        ? "2000-01-01T00:00:00Z"
+        ? "2000-01-01T00:00:00.000Z"
         : undefined,
       sidecarPendingMemberReconciliations: testInfo.title.startsWith(
         "pending sidecar",

@@ -642,7 +642,7 @@ mod tests {
 
     #[test]
     fn validate_cursor_schema_ok() {
-        let cursor = json!({"version": 1, "timestamp": "2026-01-01T00:00:00Z"});
+        let cursor = json!({"version": 1, "timestamp": "2026-01-01T00:00:00.000Z"});
         assert!(validate_structure(&cursor, "cursor").is_ok());
     }
 
@@ -660,7 +660,7 @@ mod tests {
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
             "actor_id": "did:web:alice",
             "actor_seq": 1,
-            "created_at": "2026-01-01T00:00:00Z",
+            "created_at": "2026-01-01T00:00:00.000Z",
             "prev_refs": [],
             "refs": [],
             "payload": {},
@@ -680,7 +680,7 @@ mod tests {
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
             "actor_id": "did:web:alice",
             "actor_seq": 1,
-            "created_at": "2026-01-01T00:00:00Z",
+            "created_at": "2026-01-01T00:00:00.000Z",
             "prev_refs": [],
             "refs": [],
             "payload": {},

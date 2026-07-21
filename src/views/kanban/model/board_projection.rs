@@ -424,7 +424,7 @@ mod tests {
             "kind": "ak.space.create",
             "realm_id": REALM,
             "actor_id": "did:web:creator.example",
-            "created_at": "2026-06-28T00:00:00Z",
+            "created_at": "2026-06-28T00:00:00.000Z",
             "payload": { "object": object },
         })
     }
@@ -473,7 +473,7 @@ mod tests {
             "kind": "ak.strand.move",
             "realm_id": REALM,
             "actor_id": "did:web:mover.example",
-            "created_at": "2026-06-28T01:00:00Z",
+            "created_at": "2026-06-28T01:00:00.000Z",
             "payload": {
                 "board_space_id": board,
                 "strand_id": id,
@@ -489,7 +489,7 @@ mod tests {
             "kind": "ak.strand.archive",
             "realm_id": REALM,
             "actor_id": "did:web:archiver.example",
-            "created_at": "2026-06-28T02:00:00Z",
+            "created_at": "2026-06-28T02:00:00.000Z",
             "payload": { "target_ref": id },
         })
     }
@@ -563,7 +563,7 @@ mod tests {
                 "ak:event:01904100-0000-7000-8000-000000000111",
                 "ak.space.create",
                 1,
-                "2026-07-08T00:00:00Z",
+                "2026-07-08T00:00:00.000Z",
                 json!({
                     "object": {
                         "id": BOARD,
@@ -577,7 +577,7 @@ mod tests {
                 "ak:event:01904100-0000-7000-8000-000000000112",
                 "ak.space.create",
                 2,
-                "2026-07-08T00:00:01Z",
+                "2026-07-08T00:00:01.000Z",
                 json!({
                     "object": {
                         "id": LIST_A,
@@ -592,14 +592,14 @@ mod tests {
                 "ak:event:01904100-0000-7000-8000-000000000113",
                 "ak.strand.create",
                 3,
-                "2026-07-08T00:00:02Z",
+                "2026-07-08T00:00:02.000Z",
                 json!({
                     "object": {
                         "id": "ak:strand:01904100-0000-7000-8000-000000000301",
                         "schema": "ak.schema.strand.v1",
                         "realm_id": REALM,
                         "created_by": "did:webvh:z6mkfixture:alice.example",
-                        "created_at": "2026-07-08T00:00:02Z",
+                        "created_at": "2026-07-08T00:00:02.000Z",
                         "metadata": {
                             "title": "golden card",
                             "fields": {
@@ -651,7 +651,7 @@ mod tests {
                 BOARD,
                 LIST_A,
                 "U",
-                "2026-06-28T00:01:00Z",
+                "2026-06-28T00:01:00.000Z",
             ),
             strand_create_event(
                 "ak:strand:019f1072-0002-73b2-9c7e-1bb33a924b5c",
@@ -660,7 +660,7 @@ mod tests {
                 BOARD,
                 LIST_A,
                 "V",
-                "2026-06-28T00:02:00Z",
+                "2026-06-28T00:02:00.000Z",
             ),
         ];
         let ops = kanban_operations_from_events(&events);
@@ -692,7 +692,7 @@ mod tests {
                 BOARD,
                 LIST_A,
                 "U",
-                "2026-06-28T00:01:00Z",
+                "2026-06-28T00:01:00.000Z",
             ),
             strand_move_event(strand, BOARD, LIST_B, "U"),
         ];
@@ -725,7 +725,7 @@ mod tests {
                 BOARD,
                 LIST_A,
                 "U",
-                "2026-06-28T00:01:00Z",
+                "2026-06-28T00:01:00.000Z",
             ),
             strand_archive_event(strand),
         ];
@@ -774,12 +774,12 @@ mod tests {
             ]),
             vec![local_op(
                 "op-create-1",
-                "2026-06-28T00:05:00Z",
+                "2026-06-28T00:05:00.000Z",
                 json!({
                     "kind": "ak.strand.create",
                     "operation_id": "op-create-1",
                     "actor_id": "did:web:alice.example",
-                    "created_at": "2026-06-28T00:05:00Z",
+                    "created_at": "2026-06-28T00:05:00.000Z",
                     "wire_kind": "ak.strand.create",
                     "write_state": "queued",
                     "effect": {
@@ -839,12 +839,12 @@ mod tests {
                 BOARD,
                 LIST_A,
                 "U",
-                "2026-06-28T00:01:00Z",
+                "2026-06-28T00:01:00.000Z",
             ),
         ]);
         ops.push(local_op(
             "op-move-1",
-            "2026-06-28T00:06:00Z",
+            "2026-06-28T00:06:00.000Z",
             json!({
                 "kind": "ak.strand.move",
                 "move_id": "op-move-1",
@@ -894,7 +894,7 @@ mod tests {
             // the initial order is A, B; then bump B to r001 (front).
             ops.push(local_op(
                 "op-rank-a",
-                "2026-06-28T00:02:00Z",
+                "2026-06-28T00:02:00.000Z",
                 json!({
                     "kind": "ak.space.update",
                     "write_state": "queued",
@@ -903,7 +903,7 @@ mod tests {
             ));
             ops.push(local_op(
                 "op-rank-b",
-                "2026-06-28T00:03:00Z",
+                "2026-06-28T00:03:00.000Z",
                 json!({
                     "kind": "ak.space.update",
                     "write_state": "queued",
@@ -931,7 +931,7 @@ mod tests {
         ]);
         ops.push(local_op(
             "op-archive-1",
-            "2026-06-28T00:04:00Z",
+            "2026-06-28T00:04:00.000Z",
             json!({
                 "kind": "ak.space.archive",
                 "write_state": "queued",
@@ -995,13 +995,13 @@ mod tests {
         ]);
         ops.push(local_op_from_builder(
             "op-rank-a",
-            "2026-06-28T00:02:00Z",
+            "2026-06-28T00:02:00.000Z",
             "ak.space.update",
             space_update_body(LIST_A, "r002"),
         ));
         ops.push(local_op_from_builder(
             "op-rank-b",
-            "2026-06-28T00:03:00Z",
+            "2026-06-28T00:03:00.000Z",
             "ak.space.update",
             space_update_body(LIST_B, "r001"),
         ));
@@ -1040,12 +1040,12 @@ mod tests {
                 BOARD,
                 LIST_A,
                 "U",
-                "2026-06-28T00:01:00Z",
+                "2026-06-28T00:01:00.000Z",
             ),
         ]);
         ops.push(local_op_from_builder(
             "op-move-real",
-            "2026-06-28T00:06:00Z",
+            "2026-06-28T00:06:00.000Z",
             "ak.strand.move",
             move_body,
         ));

@@ -77,7 +77,7 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
         "ak:event:01904100-0000-7000-8000-000000000101",
         arkret_sdk::events::EventKind::MESSAGE_CREATE,
         1,
-        "2026-07-08T00:00:00Z",
+        "2026-07-08T00:00:00.000Z",
         serde_json::json!({
             "strand_id": "ak:strand:01904100-0000-7000-8000-000000000201",
             "track_name": "discussion",
@@ -88,7 +88,7 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
         "ak:event:01904100-0000-7000-8000-000000000102",
         arkret_sdk::events::EventKind::REACTION_ADD,
         2,
-        "2026-07-08T00:00:01Z",
+        "2026-07-08T00:00:01.000Z",
         serde_json::json!({
             "target_ref": "ak:event:01904100-0000-7000-8000-000000000101",
             "key": "+1"
@@ -210,7 +210,7 @@ fn projection_audit_policy_access_late_recovery_marker_is_guarded() {
                 "events": [{
                     "kind": "ak.audit.policy_access",
                     "event_id": "ak:event:01904100-0000-7000-8000-000000000099",
-                    "original_received_at": "2026-05-20T00:00:00Z",
+                    "original_received_at": "2026-05-20T00:00:00.000Z",
                     "late_recovery": {
                         "receiver_visible_at_t0": true,
                         "source_rechecked_current_share_policy": true,
@@ -221,7 +221,7 @@ fn projection_audit_policy_access_late_recovery_marker_is_guarded() {
                         "actor": "did:web:alice.example",
                         "access_kind": "e2ee_late_recovery",
                         "late_recovery_original_event_id": "ak:event:01904100-0000-7000-8000-000000000007",
-                        "observed_at": "2026-05-20T00:30:00Z"
+                        "observed_at": "2026-05-20T00:30:00.000Z"
                     }
                 }]
             }

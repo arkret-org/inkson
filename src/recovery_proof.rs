@@ -159,7 +159,7 @@ mod tests {
             assert!(t.get(f).is_some(), "transcript missing {f}");
         }
         // created_at is the session value (not regenerated).
-        assert_eq!(t["created_at"], "2026-05-30T00:00:00Z");
+        assert_eq!(t["created_at"], "2026-05-30T00:00:00.000Z");
         assert_eq!(t["model_generation_ref"], 1);
         assert!(t.get("ssk_generation").is_none());
     }

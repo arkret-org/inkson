@@ -74,7 +74,7 @@ fn invite_notification_from_value(invite: &Value) -> Option<Value> {
     let invite_token = value_string(invite, &["invite_token"])
         .or_else(|| nested_value_string(invite, &["join_rule_snapshot"], "invite_token"));
     let created_at = value_string(invite, &["created_at"])
-        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+        .unwrap_or_else(|| arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()));
     let body = if let Some(title) = realm_title.as_deref() {
         format!("You were invited to join {title}.")
     } else {

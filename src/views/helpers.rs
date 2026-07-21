@@ -496,8 +496,14 @@ pub fn handle_claim_rows(
                     .binding_state
                     .map(|s| format!("{s:?}").to_lowercase())
                     .unwrap_or_else(|| "(unset)".to_owned()),
-                created_at: claim.created_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
-                expires_at: claim.expires_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
+                created_at: claim
+                    .created_at
+                    .map(arkret_sdk::canonical::format_timestamp_canonical)
+                    .unwrap_or_default(),
+                expires_at: claim
+                    .expires_at
+                    .map(arkret_sdk::canonical::format_timestamp_canonical)
+                    .unwrap_or_default(),
                 claim_digest: digest,
             }
         })

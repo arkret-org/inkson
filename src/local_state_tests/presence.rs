@@ -26,13 +26,13 @@ fn presence_preference_persists_and_expires() {
     store.set_presence_preference(PresencePreferenceState {
         manual_state: Some("dnd".to_owned()),
         status_message: Some("In a meeting".to_owned()),
-        clears_at: Some("2026-07-03T12:00:00Z".to_owned()),
+        clears_at: Some("2026-07-03T12:00:00.000Z".to_owned()),
     });
 
     let reader = LocalStateStore::with_path(path);
     let preference = reader.presence_preference();
-    let before: chrono::DateTime<chrono::Utc> = "2026-07-03T11:59:59Z".parse().unwrap();
-    let after: chrono::DateTime<chrono::Utc> = "2026-07-03T12:00:00Z".parse().unwrap();
+    let before: chrono::DateTime<chrono::Utc> = "2026-07-03T11:59:59.000Z".parse().unwrap();
+    let after: chrono::DateTime<chrono::Utc> = "2026-07-03T12:00:00.000Z".parse().unwrap();
     assert_eq!(preference.effective_manual_state(before), Some("dnd"));
     assert_eq!(
         preference.effective_status_message(before),

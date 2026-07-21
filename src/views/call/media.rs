@@ -131,7 +131,7 @@ pub(super) async fn submit_call_state_participant(
     let participant = json!({
         "actor_id": actor,
         "device_id": device,
-        "joined_at": crate::clock::now_rfc3339_secs(),
+        "joined_at": crate::clock::now_timestamp(),
         "foci_preferred": [session.focus_id.clone()],
         "participant_identity": session.participant_identity.clone(),
         "participant_binding": participant_binding,

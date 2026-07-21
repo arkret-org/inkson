@@ -200,7 +200,7 @@ pub(super) fn toggle_sidebar_contact_pin(
     base_url: String,
     api_token: String,
 ) {
-    let now_rfc3339 = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let now_rfc3339 = arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now());
     let next = crate::account_data::ContactRemark::with_pinned_preserving_fields(
         actor_id.clone(),
         existing.as_ref(),

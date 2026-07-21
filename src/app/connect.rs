@@ -427,9 +427,11 @@ async fn enroll_current_session_device(
     // `actor_seq` is 1-indexed on the Principal Server (soland rejects 0 with
     // `actor_seq must be greater than zero`), so an empty stream (no frontier
     // yet) enrolls at seq 1, not 0.
+    let actor_did = arkret_sdk::Did::new(actor.to_owned())
+        .map_err(|error| anyhow::anyhow!("invalid enrollment actor DID: {error}"))?;
     let actor_seq = match principal_api
         .event_submitter()?
-        .events_frontier_actor(actor)
+        .events_frontier_actor(actor, &arkret_sdk::principal_control_realm_id(&actor_did))
         .await
     {
         Ok(view) => view.actor_seq.saturating_add(1),

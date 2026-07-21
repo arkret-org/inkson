@@ -258,7 +258,7 @@ fn notification_from_value(
         None
     };
     let timestamp = value_string(&value, &["timestamp", "created_at"])
-        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+        .unwrap_or_else(|| arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()));
 
     Some(UiNotification {
         id,

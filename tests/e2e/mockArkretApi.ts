@@ -238,14 +238,14 @@ export async function mockArkretApi(
   const includeSidecarInCircleList = options.includeSidecarInCircleList ?? false;
   const includeLowFloorRealm = options.includeLowFloorRealm ?? false;
   const personalAgentPairingExpiresAt =
-    options.personalAgentPairingExpiresAt ?? "2099-07-06T00:10:00Z";
+    options.personalAgentPairingExpiresAt ?? "2099-07-06T00:10:00.000Z";
   const accountDevices = new Map<string, MockAccountDevice>();
   for (const device of options.accountDevices ?? [
     {
       device_id: "ak:device:01964137-0000-7000-8000-0000000000a1",
       status: "active",
       display_name: "Current device",
-      authorized_at: "2026-04-28T12:00:00Z",
+      authorized_at: "2026-04-28T12:00:00.000Z",
     },
   ]) {
     accountDevices.set(device.device_id, { ...device });
@@ -300,9 +300,9 @@ export async function mockArkretApi(
       : undefined,
     members: circleMembers.get(circleId) ?? [],
     created_by: accountPrincipalId,
-    created_at: "2026-06-23T00:00:00Z",
+    created_at: "2026-06-23T00:00:00.000Z",
     updated_by: accountPrincipalId,
-    updated_at: "2026-06-23T00:00:00Z",
+    updated_at: "2026-06-23T00:00:00.000Z",
   });
   const sidecarCircleView = () => ({
     ...circleView("ak:circle:0196419b-0000-7000-8000-00000000c1c2"),
@@ -326,8 +326,8 @@ export async function mockArkretApi(
     slug: "assistant",
     avatar_blob_ref: DEMO_BLOB_REF,
     status: "active",
-    created_at: "2026-07-06T00:00:00Z",
-    updated_at: "2026-07-06T00:05:00Z",
+    created_at: "2026-07-06T00:00:00.000Z",
+    updated_at: "2026-07-06T00:05:00.000Z",
   });
   // Keep consumed bootstrap material in this active Agent fixture. The
   // settings UI must trust lifecycle state, not the mere presence of a stale
@@ -365,7 +365,7 @@ export async function mockArkretApi(
     }),
     pairing_request_id: "pair-consumed-active-1",
     pairing_code: "246810",
-    pairing_expires_at: "2099-07-06T00:20:00Z",
+    pairing_expires_at: "2099-07-06T00:20:00.000Z",
     authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000a600",
   });
   personalAgents.set("did:web:agents.example:deactivated", {
@@ -373,8 +373,8 @@ export async function mockArkretApi(
     display_name: "Deactivated Agent",
     slug: "deactivated",
     status: "deactivated",
-    created_at: "2026-07-05T00:00:00Z",
-    updated_at: "2026-07-06T00:10:00Z",
+    created_at: "2026-07-05T00:00:00.000Z",
+    updated_at: "2026-07-06T00:10:00.000Z",
   });
   if (personalAgentPairingExpiresAt.startsWith("2000-")) {
     const expiredAgentId = "did:web:agents.example:summary";
@@ -406,8 +406,8 @@ export async function mockArkretApi(
       agent_id: expiredAgentId,
       slug: "summary",
       status: "pairing_expired",
-      created_at: "2026-07-06T00:00:00Z",
-      updated_at: "2026-07-06T00:10:00Z",
+      created_at: "2026-07-06T00:00:00.000Z",
+      updated_at: "2026-07-06T00:10:00.000Z",
     });
     personalAgentKeyStates.set(expiredAgentId, {
       agent_id: expiredAgentId,
@@ -635,7 +635,7 @@ export async function mockArkretApi(
         executed_by: ENROLLMENT_AUTHORITY_DID,
         authorization_ref: `${accountPrincipalId}#enrollment-authority`,
         actor_seq: typeof body.actor_seq === "number" ? body.actor_seq : 1,
-        created_at: "2026-06-22T00:00:00Z",
+        created_at: "2026-06-22T00:00:00.000Z",
         hlc: "019641370000-0000-12345678",
         prev_refs: [],
         refs: [],
@@ -647,7 +647,7 @@ export async function mockArkretApi(
               ? body.device_public_key
               : "z6MkExamplePublicKey",
           authorized_by: ENROLLMENT_AUTHORITY_DID,
-          not_before: "2026-06-22T00:00:00Z",
+          not_before: "2026-06-22T00:00:00.000Z",
           enrollment_authority_binding: {
             kind: "service_attested",
             authority_did: ENROLLMENT_AUTHORITY_DID,
@@ -662,7 +662,7 @@ export async function mockArkretApi(
           alg: "EdDSA",
           verification_method: ENROLLMENT_AUTHORITY_VM,
           event_digest: eventDigest,
-          created_at: "2026-06-22T00:00:00Z",
+          created_at: "2026-06-22T00:00:00.000Z",
           domain: ENROLLMENT_AUTHORITY_DID,
           audience: "did:web:server.local",
           jws: "ey.ey.sig",
@@ -1244,7 +1244,7 @@ export async function mockArkretApi(
           realm_id: realmId,
           actor_id: body.actor_id ?? "did:web:alice.example",
           actor_seq: body.actor_seq,
-          created_at: body.created_at ?? "2026-04-28T12:00:00Z",
+          created_at: body.created_at ?? "2026-04-28T12:00:00.000Z",
           payload: body.payload,
         });
       }
@@ -1288,7 +1288,7 @@ export async function mockArkretApi(
           realm_id: body.realm_id ?? DEMO_REALM,
           actor_id: body.actor_id ?? "did:web:alice.example",
           actor_seq: body.actor_seq,
-          created_at: body.created_at ?? "2026-04-28T12:00:00Z",
+          created_at: body.created_at ?? "2026-04-28T12:00:00.000Z",
           payload: body.payload,
         });
       }
@@ -1445,7 +1445,7 @@ export async function mockArkretApi(
         proofs: [
           {
             type: "private_identifier_query",
-            expires_at: "2026-04-30T12:00:00Z",
+            expires_at: "2026-04-30T12:00:00.000Z",
           },
         ],
         has_more: false,
@@ -1471,7 +1471,7 @@ export async function mockArkretApi(
       return json(route, {
         download_ref: `https://mimi.example.com/proxy/${DEMO_BLOB_REF}`,
         headers: { "content-type": "application/octet-stream" },
-        expires_at: "2026-04-30T12:00:00Z",
+        expires_at: "2026-04-30T12:00:00.000Z",
       });
     }
 
@@ -1502,7 +1502,7 @@ export async function mockArkretApi(
             display_name: body.display_name ?? "inkson",
             profile_fields: {},
             accountable_principal_ids: [],
-            created_at: "2026-04-28T12:00:00Z",
+            created_at: "2026-04-28T12:00:00.000Z",
           },
         },
         201,
@@ -1536,8 +1536,8 @@ export async function mockArkretApi(
           avatar_blob_ref: avatarBlobRef,
           profile_fields: bio ? { bio } : {},
           accountable_principal_ids: [],
-          created_at: "2026-04-28T12:00:00Z",
-          updated_at: "2026-04-28T12:10:00Z",
+          created_at: "2026-04-28T12:00:00.000Z",
+          updated_at: "2026-04-28T12:10:00.000Z",
         },
       });
     }
@@ -1575,7 +1575,7 @@ export async function mockArkretApi(
                 realm_id: DEMO_REALM,
                 notification_kind: "message",
                 type: "message",
-                timestamp: "2026-04-28T12:01:00Z",
+                timestamp: "2026-04-28T12:01:00.000Z",
                 read: false,
               },
               proofs: [],
@@ -1598,7 +1598,7 @@ export async function mockArkretApi(
                 realm_id: DEMO_REALM,
                 notification_kind: "invite",
                 type: "invite",
-                timestamp: "2026-04-28T12:02:00Z",
+                timestamp: "2026-04-28T12:02:00.000Z",
                 read: false,
               },
               proofs: [],
@@ -1785,7 +1785,7 @@ export async function mockArkretApi(
             organization_did: "did:web:org.arkret.example",
             handle: "arkret.example",
             display_name: "Arkret Labs",
-            as_of: "2026-06-19T00:00:00Z",
+            as_of: "2026-06-19T00:00:00.000Z",
             source_refs: ["ak:event:0196419b-0000-7000-8000-0000000000d1"],
             policy_revision: "local",
           },
@@ -1827,8 +1827,8 @@ export async function mockArkretApi(
         schema: "ak.schema.principal_locator.v1",
         subject_id: "did:web:carol.example",
         recipient_service_id: "did:web:server.local",
-        issued_at: "2026-06-07T00:00:00Z",
-        expires_at: "2026-06-07T00:15:00Z",
+        issued_at: "2026-06-07T00:00:00.000Z",
+        expires_at: "2026-06-07T00:15:00.000Z",
         locator_ref_digest: `sha256:${"1".repeat(64)}`,
         proofs: [
           {
@@ -1838,7 +1838,7 @@ export async function mockArkretApi(
               verification_method: "did:web:server.local#server-key-1",
               alg: "EdDSA",
               payload_digest: `sha256:${"2".repeat(64)}`,
-              created_at: "2026-06-07T00:00:00Z",
+              created_at: "2026-06-07T00:00:00.000Z",
               jws: "header..sig",
             },
           },
@@ -1893,7 +1893,7 @@ export async function mockArkretApi(
         return json(route, {
           subject,
           primary_handle: null,
-          as_of: "2026-04-28T12:00:00Z",
+          as_of: "2026-04-28T12:00:00.000Z",
           has_more: false,
           claims: [],
         });
@@ -1901,7 +1901,7 @@ export async function mockArkretApi(
       return json(route, {
         subject,
         primary_handle: subjectPrimaryHandle,
-        as_of: "2026-04-28T12:00:00Z",
+        as_of: "2026-04-28T12:00:00.000Z",
         has_more: false,
         claims: [
           {
@@ -1913,9 +1913,9 @@ export async function mockArkretApi(
             claim_kind: "handle_binding",
             visibility: "public",
             audience: "did:web:server.local",
-            created_at: "2026-04-28T12:00:00Z",
-            verified_at: "2026-04-28T12:00:00Z",
-            expires_at: "2027-04-28T12:00:00Z",
+            created_at: "2026-04-28T12:00:00.000Z",
+            verified_at: "2026-04-28T12:00:00.000Z",
+            expires_at: "2027-04-28T12:00:00.000Z",
           },
         ],
       });
@@ -2056,7 +2056,7 @@ export async function mockArkretApi(
             actions: ["space.read", "message.create"],
             resource_selectors: [`realm:${DEMO_REALM}`],
             constraints: [
-              { type: "temporal", not_after: "2026-12-31T00:00:00Z" },
+              { type: "temporal", not_after: "2026-12-31T00:00:00.000Z" },
               {
                 type: "type_restriction",
                 params: {
@@ -2073,7 +2073,7 @@ export async function mockArkretApi(
         ],
         state_digest:
           "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-        evaluated_at: "2026-04-28T12:00:00Z",
+        evaluated_at: "2026-04-28T12:00:00.000Z",
       });
     }
 
@@ -2326,7 +2326,7 @@ export async function mockArkretApi(
           principal_id: accountPrincipalId,
           actor_kind: "user",
           display_name: "inkson",
-          created_at: "2026-04-28T12:00:00Z",
+          created_at: "2026-04-28T12:00:00.000Z",
         },
         current_device_id: currentDeviceId,
         devices: accountDeviceSummaries(),
@@ -2404,7 +2404,7 @@ export async function mockArkretApi(
           backing_circle_id: "ak:circle:01964137-0000-7000-8000-0000000000a1",
           encryption_profile: "mls_rfc9420",
           state: "active",
-          created_at: "2026-07-20T00:00:00Z",
+          created_at: "2026-07-20T00:00:00.000Z",
         },
         desired_agent_ids: ["did:web:agents.example:assistant"],
         effective_agent_ids:
@@ -2489,8 +2489,8 @@ export async function mockArkretApi(
           ? { avatar_blob_ref: body.avatar_blob_ref }
           : {}),
         status: "pending_runtime_key",
-        created_at: "2026-07-06T00:00:00Z",
-        updated_at: "2026-07-06T00:00:00Z",
+        created_at: "2026-07-06T00:00:00.000Z",
+        updated_at: "2026-07-06T00:00:00.000Z",
       };
       const keyState = {
         agent_id: agentId,
@@ -2581,7 +2581,7 @@ export async function mockArkretApi(
         );
       }
       agent.status = expectedTo;
-      agent.updated_at = "2026-07-19T08:00:00Z";
+      agent.updated_at = "2026-07-19T08:00:00.000Z";
       keyState.status = expectedTo;
       return json(route, { ok: true, status: expectedTo });
     }
@@ -2620,7 +2620,7 @@ export async function mockArkretApi(
         );
       }
       personalAgentCounter += 1;
-      const renewedExpiresAt = "2099-07-06T00:20:00Z";
+      const renewedExpiresAt = "2099-07-06T00:20:00.000Z";
       const pairingMode = agent.status === "paused" ? "replacement" : "bootstrap";
       const keyState = {
         ...(personalAgentKeyStates.get(agentId) ?? {}),
@@ -2633,7 +2633,7 @@ export async function mockArkretApi(
       personalAgents.set(agentId, {
         ...agent,
         status: agent.status,
-        updated_at: "2026-07-06T00:30:00Z",
+        updated_at: "2026-07-06T00:30:00.000Z",
       });
       personalAgentKeyStates.set(agentId, keyState);
       return json(route, {
@@ -2725,7 +2725,7 @@ export async function mockArkretApi(
       const authorizedEventRef =
         "ak:event:01964137-0000-7000-8000-00000000a601";
       agent.status = "active";
-      agent.updated_at = "2026-07-06T00:05:00Z";
+      agent.updated_at = "2026-07-06T00:05:00.000Z";
       const previousKeyState = personalAgentKeyStates.get(agentId) ?? {};
       personalAgentKeyStates.set(agentId, {
         ...previousKeyState,
@@ -2879,7 +2879,7 @@ export async function mockArkretApi(
         ],
         ttl_seconds: 600,
         refresh_lead_seconds: 150,
-        issued_at: "2026-05-19T00:00:00Z",
+        issued_at: "2026-05-19T00:00:00.000Z",
         signature: {
           alg: "EdDSA",
           kid: "did:web:server.local#media-ice",
@@ -3026,7 +3026,7 @@ function realmPreview() {
     discoverability: "public",
     join_rule: "public",
     member_count_bucket: "1-10",
-    as_of: "2026-06-13T00:00:00Z",
+    as_of: "2026-06-13T00:00:00.000Z",
     source_refs: ["ak:event:0196419b-0000-7000-8000-000000000001"],
     policy_revision: "mock-policy-rev",
   };
@@ -3052,8 +3052,8 @@ function joinCandidate() {
       state_root:
         "sha256:3333333333333333333333333333333333333333333333333333333333333333",
     },
-    as_of: "2026-05-30T00:00:00Z",
-    expires_at: "2099-01-01T00:00:00Z",
+    as_of: "2026-05-30T00:00:00.000Z",
+    expires_at: "2099-01-01T00:00:00.000Z",
   };
 }
 
@@ -3091,7 +3091,7 @@ function mimiProviderDirectory() {
       ],
       room_policy_components: ["roles", "join_rules", "history_visibility"],
     },
-    expires_at: "2026-04-30T12:00:00Z",
+    expires_at: "2026-04-30T12:00:00.000Z",
   };
 }
 

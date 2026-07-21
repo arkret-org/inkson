@@ -224,7 +224,7 @@ fn CalendarScheduleEditForm(
                     class: "input",
                     "data-testid": "card-detail-calendar-start-input",
                     value: "{calendar().start}",
-                    placeholder: "2026-06-20T09:00:00Z",
+                    placeholder: "2026-06-20T09:00:00.000Z",
                     oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.start = event.value()),
                 }
             }
@@ -235,7 +235,7 @@ fn CalendarScheduleEditForm(
                     class: "input",
                     "data-testid": "card-detail-calendar-end-input",
                     value: "{calendar().end}",
-                    placeholder: "2026-06-20T10:00:00Z",
+                    placeholder: "2026-06-20T10:00:00.000Z",
                     oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.end = event.value()),
                 }
             }

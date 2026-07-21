@@ -54,7 +54,7 @@ fn sign_chat_fixture(value: &mut Value) {
                 alg: signer.algorithm().to_owned(),
                 verification_method: signer.verification_method().to_owned(),
                 event_digest: arkret_sdk::Hash::new(event_digest).unwrap(),
-                created_at: chrono::DateTime::parse_from_rfc3339("2026-07-10T00:00:00Z")
+                created_at: chrono::DateTime::parse_from_rfc3339("2026-07-10T00:00:00.000Z")
                     .unwrap()
                     .with_timezone(&chrono::Utc),
                 domain: None,
@@ -134,7 +134,7 @@ fn parses_message_event_with_operation_body_shape() {
         "type": "ak.message.create",
         "actor": "did:web:alice.example",
         "realm_id": "ak:realm:demo",
-        "created_at": "2026-05-14T01:23:45Z",
+        "created_at": "2026-05-14T01:23:45.000Z",
         "causal": {"actor_seq": 42},
         "body": {
             "body": "restored from durable history",
@@ -199,10 +199,10 @@ fn folds_received_redaction_tombstone_onto_message() {
         "strand_id": "ak:strand:support",
         "sender": "did:web:bob.example",
         "actor_id": "did:web:bob.example",
-        "created_at": "2026-05-14T01:23:45Z",
+        "created_at": "2026-05-14T01:23:45.000Z",
         "redacted": true,
         "state": "redacted",
-        "redacted_at": "2026-05-14T02:00:00Z",
+        "redacted_at": "2026-05-14T02:00:00.000Z",
         "redaction_ref": "ak:event:redact-1",
         "content": {"kind": "ak.content.text", "body": "[redacted]"}
     });
@@ -937,7 +937,7 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
         "kind": "ak.message.create",
         "actor_id": "did:web:bob.example",
         "realm_id": "ak:realm:r1",
-        "created_at": "2026-05-22T10:00:00Z",
+        "created_at": "2026-05-22T10:00:00.000Z",
         "strand_id": "ak:strand:topic",
         "message_id": "ak:message:m1",
         "body": "hello from bob"
@@ -978,7 +978,7 @@ fn chat_messages_read_projected_reaction_summary() {
         "kind": "ak.message.create",
         "actor_id": "did:web:alice.example",
         "realm_id": "ak:realm:r1",
-        "created_at": "2026-05-22T10:00:00Z",
+        "created_at": "2026-05-22T10:00:00.000Z",
         "strand_id": "ak:strand:topic",
         "message_id": "ak:message:m1",
         "body": "hello from alice",
@@ -1011,7 +1011,7 @@ fn chat_messages_fold_reaction_events_by_target_ref() {
             "kind": "ak.message.create",
             "actor_id": "did:web:alice.example",
             "realm_id": "ak:realm:r1",
-            "created_at": "2026-05-22T10:00:00Z",
+            "created_at": "2026-05-22T10:00:00.000Z",
             "strand_id": "ak:strand:topic",
             "message_id": "ak:message:m1",
             "body": "hello from alice"
@@ -1078,7 +1078,7 @@ fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() 
             "actor_id": "did:web:alice.example",
             "sender_actor_id": "did:web:alice.example",
             "realm_id": "ak:realm:r1",
-            "created_at": "2026-07-08T01:44:39Z",
+            "created_at": "2026-07-08T01:44:39.000Z",
             "strand_id": "ak:strand:topic",
             "track_name": "discussion",
             "message_id": "ak:message:envelope-create",
@@ -1098,7 +1098,7 @@ fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() 
             "actor_id": "did:web:bob.example",
             "sender_actor_id": "did:web:bob.example",
             "realm_id": "ak:realm:r1",
-            "created_at": "2026-07-08T01:44:43Z",
+            "created_at": "2026-07-08T01:44:43.000Z",
             "strand_id": "ak:strand:topic",
             "track_name": "discussion",
             "message_id": "ak:message:envelope-reaction",
@@ -1155,7 +1155,7 @@ fn chat_messages_fold_canonical_create_with_streamed_reaction_envelope() {
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
             "actor_id": "did:web:alice.example",
             "actor_seq": 1,
-            "created_at": "2026-07-08T01:44:39Z",
+            "created_at": "2026-07-08T01:44:39.000Z",
             "hlc": "01970e589d21-0004-a13f9c2e",
             "prev_refs": [],
             "refs": [],
@@ -1172,7 +1172,7 @@ fn chat_messages_fold_canonical_create_with_streamed_reaction_envelope() {
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
             "actor_id": "did:web:bob.example",
             "actor_seq": 2,
-            "created_at": "2026-07-08T01:44:43Z",
+            "created_at": "2026-07-08T01:44:43.000Z",
             "hlc": "01970e589d22-0004-a13f9c2e",
             "prev_refs": [],
             "refs": [],
@@ -1214,7 +1214,7 @@ fn durable_reaction_folds_onto_controller_only_create() {
             "realm_id": realm_id,
             "actor_id": "did:web:alice.example",
             "actor_seq": 1,
-            "created_at": "2026-07-08T01:44:39Z",
+            "created_at": "2026-07-08T01:44:39.000Z",
             "hlc": "01970e589d21-0004-a13f9c2e",
             "prev_refs": [],
             "refs": [],
@@ -1231,7 +1231,7 @@ fn durable_reaction_folds_onto_controller_only_create() {
             "realm_id": realm_id,
             "actor_id": "did:web:bob.example",
             "actor_seq": 2,
-            "created_at": "2026-07-08T01:44:43Z",
+            "created_at": "2026-07-08T01:44:43.000Z",
             "hlc": "01970e589d22-0004-a13f9c2e",
             "prev_refs": [],
             "refs": [],
@@ -1287,7 +1287,7 @@ fn durable_redaction_folds_onto_controller_only_create() {
         "realm_id": realm_id,
         "actor_id": "did:web:alice.example",
         "actor_seq": 2,
-        "created_at": "2026-07-08T01:44:43Z",
+        "created_at": "2026-07-08T01:44:43.000Z",
         "hlc": "01970e589d22-0004-a13f9c2e",
         "prev_refs": [],
         "refs": [],
@@ -1314,7 +1314,7 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
             "kind": "ak.message.create",
             "actor_id": "did:web:bob.example",
             "realm_id": "ak:realm:r1",
-            "created_at": "2026-05-22T10:00:00Z",
+            "created_at": "2026-05-22T10:00:00.000Z",
             "strand_id": "ak:strand:topic",
             "message_id": "ak:message:m3",
             "content": {"kind": "ak.content.text", "body": "v1"}
@@ -1324,7 +1324,7 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
             "kind": "ak.message.revise",
             "actor_id": "did:web:bob.example",
             "realm_id": "ak:realm:r1",
-            "created_at": "2026-05-22T10:01:00Z",
+            "created_at": "2026-05-22T10:01:00.000Z",
             "strand_id": "ak:strand:topic",
             "target_ref": "ak:message:m3",
             "content": {"kind": "ak.content.text", "body": "v2"}
@@ -1334,7 +1334,7 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
             "kind": "ak.message.revise",
             "actor_id": "did:web:bob.example",
             "realm_id": "ak:realm:r1",
-            "created_at": "2026-05-22T10:02:00Z",
+            "created_at": "2026-05-22T10:02:00.000Z",
             "strand_id": "ak:strand:topic",
             "target_ref": "ak:message:m3",
             "content": {"kind": "ak.content.text", "body": "v3"}
@@ -1405,7 +1405,7 @@ fn chat_messages_keep_folded_timeline_revision_over_older_backfill_create() {
             "kind": "ak.message.create",
             "actor_id": "did:web:bob.example",
             "realm_id": "ak:realm:r1",
-            "created_at": "2026-07-07T05:58:23Z",
+            "created_at": "2026-07-07T05:58:23.000Z",
             "strand_id": "ak:strand:topic",
             "message_id": message_id,
             "content": {"kind": "ak.content.text", "body": "edited body"}
@@ -1415,7 +1415,7 @@ fn chat_messages_keep_folded_timeline_revision_over_older_backfill_create() {
             "kind": "ak.message.create",
             "actor_id": "did:web:bob.example",
             "realm_id": "ak:realm:r1",
-            "created_at": "2026-07-07T05:58:22Z",
+            "created_at": "2026-07-07T05:58:22.000Z",
             "payload": {
                 "content": {"kind": "ak.content.text", "body": "original body"},
                 "message_id": message_id,
@@ -1429,7 +1429,7 @@ fn chat_messages_keep_folded_timeline_revision_over_older_backfill_create() {
             "kind": "ak.message.revise",
             "actor_id": "did:web:bob.example",
             "realm_id": "ak:realm:r1",
-            "created_at": "2026-07-07T05:58:23Z",
+            "created_at": "2026-07-07T05:58:23.000Z",
             "payload": {
                 "content": {"kind": "ak.content.text", "body": "edited body"},
                 "target_ref": message_id
@@ -1456,7 +1456,7 @@ fn chat_messages_fold_redacted_revision_tombstone_into_root_tombstone() {
             "kind": "ak.message.revise",
             "actor_id": "did:web:bob.example",
             "realm_id": "ak:realm:r1",
-            "created_at": "2026-05-22T10:01:00Z",
+            "created_at": "2026-05-22T10:01:00.000Z",
             "strand_id": "ak:strand:topic",
             "target_ref": "ak:message:m4",
             "redacted": true,
@@ -1468,7 +1468,7 @@ fn chat_messages_fold_redacted_revision_tombstone_into_root_tombstone() {
             "kind": "ak.message.create",
             "actor_id": "did:web:bob.example",
             "realm_id": "ak:realm:r1",
-            "created_at": "2026-05-22T10:00:00Z",
+            "created_at": "2026-05-22T10:00:00.000Z",
             "strand_id": "ak:strand:topic",
             "message_id": "ak:message:m4",
             "redacted": true,
@@ -1492,13 +1492,13 @@ fn chat_messages_fold_nested_server_redacted_revision_tombstone_into_root_tombst
             "kind": "ak.message.create",
             "realm_id": "ak:realm:r1",
             "actor_id": "did:web:bob.example",
-            "created_at": "2026-05-22T10:00:00Z",
+            "created_at": "2026-05-22T10:00:00.000Z",
             "payload": {
                 "content": {"kind": "ak.content.text", "body": "[redacted]"},
                 "event_id": "ak:event:msg-5",
                 "message_id": "ak:message:m5",
                 "redacted": true,
-                "redacted_at": "2026-05-22T10:05:00Z",
+                "redacted_at": "2026-05-22T10:05:00.000Z",
                 "redaction_ref": "ak:event:redact-5",
                 "sender": "did:web:bob.example",
                 "state": "redacted",
@@ -1511,12 +1511,12 @@ fn chat_messages_fold_nested_server_redacted_revision_tombstone_into_root_tombst
             "kind": "ak.message.revise",
             "realm_id": "ak:realm:r1",
             "actor_id": "did:web:bob.example",
-            "created_at": "2026-05-22T10:01:00Z",
+            "created_at": "2026-05-22T10:01:00.000Z",
             "payload": {
                 "content": {"kind": "ak.content.text", "body": "[redacted]"},
                 "event_id": "ak:event:msg-5-rev-1",
                 "redacted": true,
-                "redacted_at": "2026-05-22T10:05:00Z",
+                "redacted_at": "2026-05-22T10:05:00.000Z",
                 "redaction_ref": "ak:event:redact-5",
                 "sender": "did:web:bob.example",
                 "state": "redacted",
@@ -1631,7 +1631,7 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
         "ak:event:msg-2-rev-1",
         protocol_message_id,
         "edited body",
-        "2026-07-07T06:19:22Z",
+        "2026-07-07T06:19:22.000Z",
     )];
     target[0].edited = true;
 
@@ -1639,7 +1639,7 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
         "ak:event:msg-2",
         protocol_message_id,
         "original body",
-        "2026-07-07T06:19:20Z",
+        "2026-07-07T06:19:20.000Z",
     );
     incoming.reactions = vec![(
         "+1".to_owned(),
@@ -1680,7 +1680,7 @@ fn message_operations_redaction_tombstone_dedupes_over_create_by_event_id() {
         "kind": "ak.message.create",
         "actor_id": "did:web:bob.example",
         "realm_id": "ak:realm:r1",
-        "created_at": "2026-05-22T10:00:00Z",
+        "created_at": "2026-05-22T10:00:00.000Z",
         "strand_id": "ak:strand:topic",
         "message_id": "ak:message:m2",
         "body": "secret"
@@ -1690,7 +1690,7 @@ fn message_operations_redaction_tombstone_dedupes_over_create_by_event_id() {
         "kind": "ak.message.create",
         "actor_id": "did:web:bob.example",
         "realm_id": "ak:realm:r1",
-        "created_at": "2026-05-22T10:05:00Z",
+        "created_at": "2026-05-22T10:05:00.000Z",
         "strand_id": "ak:strand:topic",
         "message_id": "ak:message:m2",
         "redacted": true
@@ -1711,7 +1711,7 @@ fn message_operations_fold_independent_redaction_event_by_message_id() {
         "kind": "ak.message.create",
         "actor_id": "did:web:bob.example",
         "realm_id": "ak:realm:r1",
-        "created_at": "2026-05-22T10:00:00Z",
+        "created_at": "2026-05-22T10:00:00.000Z",
         "strand_id": "ak:strand:topic",
         "message_id": "ak:message:m3",
         "body": "secret"
@@ -1722,7 +1722,7 @@ fn message_operations_fold_independent_redaction_event_by_message_id() {
         "event_kind": "ak.message.redact",
         "actor_id": "did:web:bob.example",
         "realm_id": "ak:realm:r1",
-        "created_at": "2026-05-22T10:05:00Z",
+        "created_at": "2026-05-22T10:05:00.000Z",
         "payload": {
             "event_id": "ak:event:redact-3",
             "message_id": "ak:message:m3",
@@ -1758,7 +1758,7 @@ fn message_operations_from_events_folds_shared_pin_control_events() {
         "event_kind": "ak.pin.add",
         "actor_id": "did:web:mei.example",
         "realm_id": "ak:realm:r1",
-        "created_at": "2026-05-22T10:10:00Z",
+        "created_at": "2026-05-22T10:10:00.000Z",
         "payload": {
             "pin_scope": {"kind": "strand", "id": strand_id},
             "target_ref": target_ref,
@@ -1784,7 +1784,7 @@ fn message_operations_from_events_folds_shared_pin_control_events() {
 
 #[test]
 fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
-    let redacted_at = chrono::DateTime::parse_from_rfc3339("2026-05-22T10:05:00Z")
+    let redacted_at = chrono::DateTime::parse_from_rfc3339("2026-05-22T10:05:00.000Z")
         .unwrap()
         .with_timezone(&chrono::Utc);
     let message = ChatMessage {
@@ -3620,19 +3620,19 @@ fn typing_actor_snapshot_filters_expired_and_self_entries() {
                 {
                     "kind": "ak.typing",
                     "actor_id": "did:web:alice.example",
-                    "expires_at": future.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                    "expires_at": arkret_sdk::canonical::format_timestamp_canonical(future),
                     "payload": { "typing": true, "strand_id": "ak:strand:demo" }
                 },
                 {
                     "kind": "ak.typing",
                     "actor_id": "did:web:bob.example",
-                    "expires_at": expired.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                    "expires_at": arkret_sdk::canonical::format_timestamp_canonical(expired),
                     "payload": { "typing": true, "strand_id": "ak:strand:demo" }
                 },
                 {
                     "kind": "ak.typing",
                     "actor_id": "did:web:self.example",
-                    "expires_at": future.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                    "expires_at": arkret_sdk::canonical::format_timestamp_canonical(future),
                     "payload": { "typing": true, "strand_id": "ak:strand:demo" }
                 }
             ] }
@@ -3669,13 +3669,13 @@ fn typing_actor_snapshot_reads_canonical_ephemeral_envelopes() {
                 {
                     "kind": "ak.typing",
                     "actor_id": "did:web:alice.example",
-                    "expires_at": expires_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                    "expires_at": arkret_sdk::canonical::format_timestamp_canonical(expires_at),
                     "payload": {"strand_id": "ak:strand:demo", "typing": true}
                 },
                 {
                     "kind": "ak.typing",
                     "actor_id": "did:web:bob.example",
-                    "expires_at": expires_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                    "expires_at": arkret_sdk::canonical::format_timestamp_canonical(expires_at),
                     "payload": {"strand_id": "ak:strand:demo", "typing": false}
                 }
             ]}
@@ -4026,10 +4026,10 @@ mod merge_duplicate_create_message_alignment_tests {
     // wins (and thus carries local metadata forward) iff its id is `>=`.
     #[test]
     fn newer_or_same_lifecycle_version_uses_ge_id_tiebreak_on_equal_timestamp() {
-        let existing = msg("ak:event:b", "existing", at("2026-07-07T06:19:20Z"));
-        let same_id = msg("ak:event:b", "incoming", at("2026-07-07T06:19:20Z"));
-        let higher_id = msg("ak:event:c", "incoming", at("2026-07-07T06:19:20Z"));
-        let lower_id = msg("ak:event:a", "incoming", at("2026-07-07T06:19:20Z"));
+        let existing = msg("ak:event:b", "existing", at("2026-07-07T06:19:20.000Z"));
+        let same_id = msg("ak:event:b", "incoming", at("2026-07-07T06:19:20.000Z"));
+        let higher_id = msg("ak:event:c", "incoming", at("2026-07-07T06:19:20.000Z"));
+        let lower_id = msg("ak:event:a", "incoming", at("2026-07-07T06:19:20.000Z"));
         assert!(same_id.is_newer_or_same_lifecycle_version_than(&existing));
         assert!(higher_id.is_newer_or_same_lifecycle_version_than(&existing));
         assert!(!lower_id.is_newer_or_same_lifecycle_version_than(&existing));
@@ -4037,10 +4037,10 @@ mod merge_duplicate_create_message_alignment_tests {
 
     #[test]
     fn newer_or_same_lifecycle_version_prefers_strictly_newer_timestamp() {
-        let existing = msg("ak:event:b", "existing", at("2026-07-07T06:19:20Z"));
+        let existing = msg("ak:event:b", "existing", at("2026-07-07T06:19:20.000Z"));
         // A strictly newer timestamp wins regardless of the id tie-break.
-        let newer = msg("ak:event:a", "incoming", at("2026-07-07T06:19:30Z"));
-        let older = msg("ak:event:c", "incoming", at("2026-07-07T06:19:10Z"));
+        let newer = msg("ak:event:a", "incoming", at("2026-07-07T06:19:30.000Z"));
+        let older = msg("ak:event:c", "incoming", at("2026-07-07T06:19:10.000Z"));
         assert!(newer.is_newer_or_same_lifecycle_version_than(&existing));
         assert!(!older.is_newer_or_same_lifecycle_version_than(&existing));
     }
@@ -4048,9 +4048,9 @@ mod merge_duplicate_create_message_alignment_tests {
     #[test]
     fn newer_or_same_lifecycle_version_missing_timestamps() {
         let existing_none = msg("ak:event:a", "existing", None);
-        let existing_some = msg("ak:event:a", "existing", at("2026-07-07T06:19:20Z"));
+        let existing_some = msg("ak:event:a", "existing", at("2026-07-07T06:19:20.000Z"));
         let incoming_none = msg("ak:event:a", "incoming", None);
-        let incoming_some = msg("ak:event:a", "incoming", at("2026-07-07T06:19:20Z"));
+        let incoming_some = msg("ak:event:a", "incoming", at("2026-07-07T06:19:20.000Z"));
         // incoming timestamped, existing not → incoming newer.
         assert!(incoming_some.is_newer_or_same_lifecycle_version_than(&existing_none));
         // existing timestamped, incoming not → NOT newer.
@@ -4064,10 +4064,18 @@ mod merge_duplicate_create_message_alignment_tests {
     // into the revision list.
     #[test]
     fn merge_newer_incoming_preserves_local_edit_metadata_and_appends_old_body() {
-        let mut existing = msg("ak:event:rev-1", "edited body", at("2026-07-07T06:19:22Z"));
+        let mut existing = msg(
+            "ak:event:rev-1",
+            "edited body",
+            at("2026-07-07T06:19:22.000Z"),
+        );
         existing.edited = true;
         existing.revisions = vec!["draft".to_owned()];
-        let incoming = msg("ak:event:base", "newer body", at("2026-07-07T06:19:30Z"));
+        let incoming = msg(
+            "ak:event:base",
+            "newer body",
+            at("2026-07-07T06:19:30.000Z"),
+        );
 
         merge_duplicate_create_message(&mut existing, incoming);
 
@@ -4084,9 +4092,17 @@ mod merge_duplicate_create_message_alignment_tests {
     // authoritative, the older body is appended as a revision, reactions union.
     #[test]
     fn merge_older_incoming_keeps_existing_and_folds_body_into_revisions() {
-        let mut existing = msg("ak:event:rev-1", "current body", at("2026-07-07T06:19:30Z"));
+        let mut existing = msg(
+            "ak:event:rev-1",
+            "current body",
+            at("2026-07-07T06:19:30.000Z"),
+        );
         existing.edited = true;
-        let mut incoming = msg("ak:event:base", "original body", at("2026-07-07T06:19:20Z"));
+        let mut incoming = msg(
+            "ak:event:base",
+            "original body",
+            at("2026-07-07T06:19:20.000Z"),
+        );
         incoming.reactions = vec![("+1".to_owned(), vec!["did:web:carol.example".to_owned()])];
 
         merge_duplicate_create_message(&mut existing, incoming);
@@ -4104,9 +4120,9 @@ mod merge_duplicate_create_message_alignment_tests {
     // sort by key then by member.
     #[test]
     fn merge_unions_and_sorts_reaction_members() {
-        let mut existing = msg("ak:event:base", "body", at("2026-07-07T06:19:20Z"));
+        let mut existing = msg("ak:event:base", "body", at("2026-07-07T06:19:20.000Z"));
         existing.reactions = vec![("+1".to_owned(), vec!["did:web:bob.example".to_owned()])];
-        let mut incoming = msg("ak:event:base2", "body", at("2026-07-07T06:19:30Z"));
+        let mut incoming = msg("ak:event:base2", "body", at("2026-07-07T06:19:30.000Z"));
         incoming.reactions = vec![
             (
                 "\u{2764}".to_owned(),
@@ -4151,7 +4167,7 @@ mod merge_duplicate_create_message_alignment_tests {
             "kind": "ak.message.create",
             "actor_id": "did:web:bob.example",
             "realm_id": "ak:realm:r1",
-            "created_at": "2026-07-07T06:19:20Z",
+            "created_at": "2026-07-07T06:19:20.000Z",
             "strand_id": "ak:strand:topic",
             "message_id": "ak:message:mr",
             "body": "hi",
@@ -4172,13 +4188,13 @@ mod merge_duplicate_create_message_alignment_tests {
     // stable. (The former events twin dropped the timestamp here.)
     #[test]
     fn merge_redaction_tombstone_without_timestamp_keeps_existing_created_at() {
-        let mut existing = msg("ak:event:base", "secret", at("2026-07-07T06:19:20Z"));
+        let mut existing = msg("ak:event:base", "secret", at("2026-07-07T06:19:20.000Z"));
         let mut tombstone = msg("ak:event:base", "", None);
         tombstone.redacted = true;
 
         merge_duplicate_create_message(&mut existing, tombstone);
 
         assert!(existing.redacted);
-        assert_eq!(existing.created_at, at("2026-07-07T06:19:20Z"));
+        assert_eq!(existing.created_at, at("2026-07-07T06:19:20.000Z"));
     }
 }

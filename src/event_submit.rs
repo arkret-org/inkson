@@ -33,8 +33,6 @@ use crate::models::{
     BackfillView, PresenceResult, ReceiptResult, ServiceDescribe, SubmitEventResult, TypingResult,
 };
 use crate::operation::uuid_v7;
-#[cfg(test)]
-use crate::service_parse::parse_server_description;
 use crate::wire_helpers::query_component;
 
 /// Authenticated durable/ephemeral event submission engine extracted from the
@@ -771,24 +769,25 @@ impl EventSubmitter {
         Ok((view, seal))
     }
 
-    /// `GET /_arkret/self/events/frontier?actor_id=` — actor frontier
-    /// `{actor_id, actor_seq, event_id}` (highest accepted actor_seq
-    /// visible to the caller).
+    /// `GET /_arkret/self/events/frontier?actor_id=&realm_id=` — the
+    /// `(realm_id, actor_id)` frontier used for Event authoring.
     pub async fn events_frontier_actor(
         &self,
         actor_id: &str,
+        realm_id: &str,
     ) -> anyhow::Result<arkret_sdk::ActorFrontierView> {
         let actor_id_query = query_component(actor_id);
+        let realm_id_query = query_component(realm_id);
         let state: arkret_sdk::EventsFrontierAccountClientState = self
             .http
             .get(&format!(
-                "/_arkret/self/events/frontier?actor_id={actor_id_query}"
+                "/_arkret/self/events/frontier?actor_id={actor_id_query}&realm_id={realm_id_query}"
             ))
             .await
             .map_err(anyhow::Error::from)?;
         let arkret_sdk::EventsFrontierView::Actor(view) = state.frontier else {
             anyhow::bail!(
-                "events/frontier for actor_id={actor_id} did not return an actor frontier"
+                "events/frontier for actor_id={actor_id}, realm_id={realm_id} did not return an actor frontier"
             );
         };
         view.validate()
@@ -810,8 +809,10 @@ impl EventSubmitter {
     pub(crate) async fn event_proof_context(
         &self,
     ) -> anyhow::Result<crate::event_signer::EventProofContext> {
-        let describe = self.describe_cached().await?;
-        Ok(event_proof_context_from_description(describe))
+        // Durable Event envelopes are portable Realm facts. Binding their
+        // proof to the authoring Principal Server would make the original
+        // signature unverifiable after federation to another Realm host.
+        Ok(crate::event_signer::EventProofContext::new())
     }
 
     /// Wire-submit a fully-prepared, already-signed SDK [`arkret_sdk::Event`].
@@ -1114,7 +1115,8 @@ impl EventSubmitter {
             return Ok(());
         }
         let actor_id = event.actor_id.as_str().to_owned();
-        let observed_frontier = match self.events_frontier_actor(&actor_id).await {
+        let realm_id = event.realm_id.as_str();
+        let observed_frontier = match self.events_frontier_actor(&actor_id, realm_id).await {
             Ok(frontier) => {
                 apply_actor_frontier_to_sdk_event(event, &frontier)?;
                 Some(frontier.actor_seq)
@@ -1353,62 +1355,52 @@ pub(crate) fn attach_capability_grant_payload_proof(
     if event.kind.as_str() != arkret_sdk::events::EventKind::CAPABILITY_GRANT {
         return Ok(());
     }
-    let grant = event
-        .payload
-        .get_mut("grant")
-        .and_then(Value::as_object_mut)
-        .ok_or_else(|| anyhow::anyhow!("capability grant payload requires grant object"))?;
-    if grant
-        .get("proofs")
-        .and_then(Value::as_array)
-        .is_some_and(|proofs| !proofs.is_empty())
-    {
-        return Ok(());
-    }
-    grant.insert("proofs".to_owned(), Value::Array(Vec::new()));
-    let transcript = crate::canonical::canonical_json_bytes(grant)?;
     let signer = crate::event_signer::active_signer().ok_or_else(|| {
         anyhow::anyhow!("no active signer configured — cannot attest capability grant payload")
     })?;
-    let proof = arkret_sdk::PayloadProof {
+    attach_capability_grant_payload_proof_with_signer(event, &signer)
+}
+
+pub(crate) fn attach_capability_grant_payload_proof_with_signer(
+    event: &mut arkret_sdk::Event,
+    signer: &crate::event_signer::InksonEventSigner,
+) -> anyhow::Result<()> {
+    if event.kind.as_str() != arkret_sdk::events::EventKind::CAPABILITY_GRANT {
+        return Ok(());
+    }
+    let grant_value = event
+        .payload
+        .get("grant")
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("capability grant payload requires grant object"))?;
+    let mut grant: arkret_sdk::CapabilityGrant = serde_json::from_value(grant_value)
+        .map_err(|error| anyhow::anyhow!("decode capability grant payload: {error}"))?;
+    if !grant.proofs.is_empty() {
+        return Ok(());
+    }
+    if grant.issuer != event.actor_id {
+        anyhow::bail!("capability grant issuer must equal the Event actor");
+    }
+    let mut proof = arkret_sdk::PayloadProof {
         kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
         alg: signer.algorithm().to_owned(),
-        verification_method: signer.verification_method().to_owned(),
-        payload_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&transcript))
-            .map_err(|error| anyhow::anyhow!("capability grant payload digest: {error}"))?,
-        created_at: crate::clock::now_utc(),
+        verification_method: signer.verification_method_for_sdk_event(event),
+        payload_digest: grant.payload_digest()?,
+        created_at: chrono::DateTime::from_timestamp(event.created_at.timestamp(), 0)
+            .ok_or_else(|| anyhow::anyhow!("capability grant proof timestamp is invalid"))?,
         domain: None,
         audience: None,
         proof_purpose: Some(arkret_sdk::PayloadProofPurpose::IssuerAttestation),
-        jws: signer.detached_jws_over(&transcript)?,
+        jws: String::new(),
     };
-    grant.insert(
-        "proofs".to_owned(),
-        serde_json::to_value(vec![proof])
+    let transcript = grant.canonical_proof_binding_bytes(&proof)?;
+    proof.jws = signer.detached_jws_over(&transcript)?;
+    grant.proofs.push(proof);
+    event.payload.insert(
+        "grant".to_owned(),
+        serde_json::to_value(grant)
             .map_err(|error| anyhow::anyhow!("capability grant proof encode: {error}"))?,
     );
-    Ok(())
-}
-
-fn ensure_sdk_event_proofs_are_domain_bound(event: &arkret_sdk::Event) -> anyhow::Result<()> {
-    for proof in &event.proofs {
-        if proof
-            .domain
-            .as_deref()
-            .is_none_or(|domain| domain.trim().is_empty())
-        {
-            anyhow::bail!(
-                "event proof for {} is missing domain binding",
-                event.event_id
-            );
-        }
-        if proof.audience.is_none() {
-            anyhow::bail!(
-                "event proof for {} is missing audience binding",
-                event.event_id
-            );
-        }
-    }
     Ok(())
 }
 
@@ -1420,7 +1412,6 @@ fn validate_signed_sdk_event_for_submit(event: &arkret_sdk::Event) -> anyhow::Re
             event.kind.as_str()
         );
     }
-    ensure_sdk_event_proofs_are_domain_bound(event)?;
     event.validate_proof_bindings().map_err(|err| {
         anyhow::anyhow!("event proof binding invalid for {}: {err}", event.event_id)
     })?;
@@ -1567,17 +1558,6 @@ fn data_event_key_id_for(event: &arkret_sdk::Event) -> String {
     } else {
         "device".to_owned()
     }
-}
-
-fn event_proof_context_from_description(
-    describe: &ServiceDescribe,
-) -> crate::event_signer::EventProofContext {
-    let service_id = describe.service_id.to_string();
-    crate::event_signer::EventProofContext::new()
-        .with_domain(service_id.clone())
-        .with_audience(crate::operation::EventProofAudience::Single(
-            service_id.to_owned(),
-        ))
 }
 
 #[cfg(test)]
@@ -1943,90 +1923,5 @@ mod tests {
             ),
             None
         );
-    }
-
-    #[test]
-    fn event_proof_context_binds_domain_and_audience_to_service_id() {
-        let describe = parse_server_description(json!({
-            "service_id": "did:web:local.host",
-            "trust_domain": "ak:trust_domain:local.host",
-            "service_type": "principal_server",
-            "protocol_version": "1.0",
-            "supported_profiles": [
-                "ak.profile.core_event_store.v1",
-                "ak.profile.principal_server_events_api.v1"
-            ],
-            "supported_operations": [
-                "ak.self.events.query.describe",
-                "ak.self.events.command.submit"
-            ],
-            "supported_bindings": [{"kind": "http_json", "base_url": "https://local.host"}],
-            "supported_features": ["ak.feature.soland.events.describe"],
-            "auth_metadata": {"mode": "development"},
-            "limits": {},
-            "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
-            "implemented_features": ["ak.feature.soland.events.describe"],
-            "claimed_profiles": [],
-            "verified_profiles": [],
-            "experimental_features": [],
-            "compat_surfaces": [],
-            "development_mode": true
-        }))
-        .unwrap();
-
-        let context = event_proof_context_from_description(&describe);
-
-        assert_eq!(context.domain.as_deref(), Some("did:web:local.host"));
-        assert_eq!(
-            context.audience,
-            Some(crate::operation::EventProofAudience::Single(
-                "did:web:local.host".to_owned()
-            ))
-        );
-    }
-
-    fn sdk_event_with_proof(domain: Option<&str>, audience: Option<&str>) -> arkret_sdk::Event {
-        let mut proof = json!({
-            "kind": "detached_jws",
-            "alg": "EdDSA",
-            "verification_method": "did:web:alice.example#device-1",
-            "event_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "created_at": "2026-05-19T00:00:00.000Z",
-            "jws": "header.payload.signature"
-        });
-        if let Some(domain) = domain {
-            proof["domain"] = json!(domain);
-        }
-        if let Some(audience) = audience {
-            proof["audience"] = json!(audience);
-        }
-        serde_json::from_value(json!({
-            "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
-            "kind": "ak.presence",
-            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
-            "actor_id": "did:web:alice.example",
-            "actor_seq": 1,
-            "created_at": "2026-05-19T00:00:00.000Z",
-            "hlc": "01970e589d21-0001-a13f9c2e",
-            "prev_refs": [],
-            "payload": {
-                "actor_id": "did:web:alice.example",
-                "state": "online"
-            },
-            "proofs": [proof]
-        }))
-        .unwrap()
-    }
-
-    #[test]
-    fn sdk_event_proof_gate_requires_domain_and_audience() {
-        let ok = sdk_event_with_proof(Some("did:web:local.host"), Some("did:web:local.host"));
-        ensure_sdk_event_proofs_are_domain_bound(&ok).unwrap();
-
-        let missing_domain = sdk_event_with_proof(None, Some("did:web:local.host"));
-        assert!(ensure_sdk_event_proofs_are_domain_bound(&missing_domain).is_err());
-
-        let missing_audience = sdk_event_with_proof(Some("did:web:local.host"), None);
-        assert!(ensure_sdk_event_proofs_are_domain_bound(&missing_audience).is_err());
     }
 }

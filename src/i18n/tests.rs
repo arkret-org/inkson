@@ -109,7 +109,7 @@ fn translation_lookup_fallback() {
 
 #[test]
 fn locale_formatters_are_stable() {
-    let timestamp = DateTime::parse_from_rfc3339("2026-04-29T07:08:09Z")
+    let timestamp = DateTime::parse_from_rfc3339("2026-04-29T07:08:09.000Z")
         .unwrap()
         .with_timezone(&Utc);
 

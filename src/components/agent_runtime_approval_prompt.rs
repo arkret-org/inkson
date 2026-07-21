@@ -561,9 +561,11 @@ fn pending_runtime_approval_from_view(
     let request_json = serde_json::to_string(&request_value).ok()?;
     let summary = summarize_runtime_key_approval_request(&request_json).ok()?;
     if timestamp_has_expired(&summary.proof_expires_at)
-        || key_state
-            .pairing_expires_at
-            .is_some_and(|expires_at| timestamp_has_expired(&expires_at.to_rfc3339()))
+        || key_state.pairing_expires_at.is_some_and(|expires_at| {
+            timestamp_has_expired(&arkret_sdk::canonical::format_timestamp_canonical(
+                expires_at,
+            ))
+        })
     {
         return None;
     }
@@ -585,7 +587,7 @@ fn pending_runtime_approval_from_view(
         pairing_code,
         approval_requested_at: key_state
             .approval_requested_at
-            .map(|value| value.to_rfc3339())
+            .map(arkret_sdk::canonical::format_timestamp_canonical)
             .unwrap_or_default(),
         proof_expires_at: summary.proof_expires_at,
         verification_method: summary.verification_method,

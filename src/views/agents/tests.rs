@@ -121,15 +121,15 @@ mod personal_agent_tests {
     #[test]
     fn action_request_expired_only_when_now_strictly_after_expires_at() {
         assert!(is_action_request_expired(
-            "2026-05-26T00:00:00Z",
-            "2026-05-27T00:00:00Z"
+            "2026-05-26T00:00:00.000Z",
+            "2026-05-27T00:00:00.000Z"
         ));
         assert!(!is_action_request_expired(
-            "2026-05-27T00:00:00Z",
-            "2026-05-26T00:00:00Z"
+            "2026-05-27T00:00:00.000Z",
+            "2026-05-26T00:00:00.000Z"
         ));
-        assert!(!is_action_request_expired("", "2026-05-26T00:00:00Z"));
-        assert!(!is_action_request_expired("2026-05-26T00:00:00Z", ""));
+        assert!(!is_action_request_expired("", "2026-05-26T00:00:00.000Z"));
+        assert!(!is_action_request_expired("2026-05-26T00:00:00.000Z", ""));
     }
 
     #[test]
@@ -251,7 +251,7 @@ mod personal_agent_tests {
             AgentGrantPreset::ReplyAsAgent,
             "did:web:agents.example:summary",
             Some("ak:realm:01"),
-            "2026-06-26T00:00:00Z",
+            "2026-06-26T00:00:00.000Z",
         );
         assert_eq!(
             grant["actions"],
@@ -260,7 +260,7 @@ mod personal_agent_tests {
         assert_eq!(grant["subject"], "did:web:agents.example:summary");
         assert_eq!(grant["resources"][0]["kind"], "realm");
         assert_eq!(grant["resources"][0]["realm_id"], "ak:realm:01");
-        assert_eq!(grant["expires_at"], "2026-06-26T00:00:00Z");
+        assert_eq!(grant["expires_at"], "2026-06-26T00:00:00.000Z");
         // Non-aob presets carry no controller-approval constraint.
         assert!(grant.get("constraints").is_none());
     }
@@ -271,7 +271,7 @@ mod personal_agent_tests {
             AgentGrantPreset::ActOnBehalf,
             "did:web:agents.example:summary",
             None,
-            "2026-06-26T00:00:00Z",
+            "2026-06-26T00:00:00.000Z",
         );
         // No realm supplied -> empty selector (controller narrows later).
         assert_eq!(grant["resources"], serde_json::json!([]));
@@ -287,15 +287,15 @@ mod personal_agent_tests {
     fn pairing_request_expiry_parses_rfc3339_offsets() {
         assert!(is_pairing_request_expired(
             "2026-06-26T00:00:00+00:00",
-            "2026-06-26T00:00:01Z"
+            "2026-06-26T00:00:01.000Z"
         ));
         assert!(!is_pairing_request_expired(
             "2026-06-26T00:00:00+00:00",
-            "2026-06-26T00:00:00Z"
+            "2026-06-26T00:00:00.000Z"
         ));
         assert!(!is_pairing_request_expired(
             "not-a-timestamp",
-            "2026-06-26T00:00:01Z"
+            "2026-06-26T00:00:01.000Z"
         ));
     }
 
@@ -314,7 +314,7 @@ mod personal_agent_tests {
             pcr_recovery: arkret_sdk::AgentProvisionPcrRecovery::default(),
             pairing_request_id: "0197-req".to_owned(),
             pairing_code: Some("123456".to_owned()),
-            expires_at: chrono::DateTime::parse_from_rfc3339("2026-06-26T00:00:00Z")
+            expires_at: chrono::DateTime::parse_from_rfc3339("2026-06-26T00:00:00.000Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
         };
@@ -359,7 +359,7 @@ mod personal_agent_tests {
             pcr_recovery: arkret_sdk::AgentProvisionPcrRecovery::default(),
             pairing_request_id: "0197-req".to_owned(),
             pairing_code: Some("123456".to_owned()),
-            expires_at: chrono::DateTime::parse_from_rfc3339("2026-06-26T00:00:00Z")
+            expires_at: chrono::DateTime::parse_from_rfc3339("2026-06-26T00:00:00.000Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
         };
@@ -539,7 +539,7 @@ mod personal_agent_tests {
         let event_wire = serde_json::to_value(&event).unwrap();
         let event_created_at = event_wire["created_at"].as_str().unwrap();
         assert_eq!(event_created_at.len(), 24);
-        arkret_sdk::canonical::validate_timestamp_millis_canonical(event_created_at).unwrap();
+        arkret_sdk::canonical::validate_timestamp_canonical(event_created_at).unwrap();
         event.payload["issued_at"]
             .as_str()
             .unwrap()
@@ -581,14 +581,14 @@ mod personal_agent_tests {
         let payload = build_action_approve_payload(
             &draft,
             "did:web:alice.example",
-            "2026-06-26T00:00:00Z",
-            "2026-06-26T01:00:00Z",
+            "2026-06-26T00:00:00.000Z",
+            "2026-06-26T01:00:00.000Z",
         );
         assert_eq!(payload["draft_id"], "0197-draft");
         assert_eq!(payload["controller_id"], "did:web:alice.example");
         assert_eq!(payload["proposed_action"], "ak.message.create");
-        assert_eq!(payload["approved_at"], "2026-06-26T00:00:00Z");
-        assert_eq!(payload["expires_at"], "2026-06-26T01:00:00Z");
+        assert_eq!(payload["approved_at"], "2026-06-26T00:00:00.000Z");
+        assert_eq!(payload["expires_at"], "2026-06-26T01:00:00.000Z");
         let digest = payload["draft_content_digest"].as_str().unwrap();
         assert!(digest.starts_with("sha256:"));
         // Approving as-is means both digests match.
@@ -613,8 +613,8 @@ mod personal_agent_tests {
         let payload = build_action_approve_payload(
             &request,
             "did:web:alice.example",
-            "2026-06-26T00:00:00Z",
-            "2026-06-26T01:00:00Z",
+            "2026-06-26T00:00:00.000Z",
+            "2026-06-26T01:00:00.000Z",
         );
         assert_eq!(payload["request_id"], "ak:agent-action-request:0197");
         assert_eq!(
@@ -633,12 +633,12 @@ mod personal_agent_tests {
         let payload = build_action_reject_payload(
             &request,
             "did:web:alice.example",
-            "2026-06-26T00:00:00Z",
+            "2026-06-26T00:00:00.000Z",
             Some("needs review"),
         );
         assert_eq!(payload["request_id"], "ak:agent-action-request:0198");
         assert_eq!(payload["controller_id"], "did:web:alice.example");
-        assert_eq!(payload["rejected_at"], "2026-06-26T00:00:00Z");
+        assert_eq!(payload["rejected_at"], "2026-06-26T00:00:00.000Z");
         assert_eq!(payload["reason"], "needs review");
         assert!(!payload["rejection_id"].as_str().unwrap().is_empty());
     }

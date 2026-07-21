@@ -710,7 +710,7 @@ fn durable_welcome_payload_without_claim_envelope_fails_closed() {
                         "ssk_generation": 1
                     },
                     "ciphertext": "AQID",
-                    "expires_at": "2100-01-01T00:00:00Z"
+                    "expires_at": "2100-01-01T00:00:00.000Z"
                 }
             }
         ]

@@ -170,7 +170,7 @@ pub(super) fn raw_operation_activity_detail(
     actor_label: &impl Fn(&str) -> String,
 ) -> String {
     let timestamp = json_path_string(Some(payload), &["created_at"])
-        .unwrap_or_else(|| record.received_at.to_rfc3339());
+        .unwrap_or_else(|| arkret_sdk::canonical::format_timestamp_canonical(record.received_at));
     let mut parts = vec![
         kind.to_owned(),
         activity_status_label(payload).to_owned(),

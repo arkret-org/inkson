@@ -365,17 +365,17 @@ test.describe("feature coverage placeholders", () => {
             {
               backup_id: "ak:backup:019eca5c-2fcb-7592-9000-000000000001",
               backup_class: "did_recovery",
-              created_at: "2026-06-15T08:00:00Z",
+              created_at: "2026-06-15T08:00:00.000Z",
             },
             {
               backup_id: "ak:backup:019eca5c-2fcb-7592-9000-000000000002",
               backup_class: "secret_storage",
-              created_at: "2026-06-14T06:30:00Z",
+              created_at: "2026-06-14T06:30:00.000Z",
             },
             {
               backup_id: "ak:backup:019eca5c-2fcb-7592-9000-000000000003",
               backup_class: "mls_history",
-              created_at: "2026-06-10T22:15:00Z",
+              created_at: "2026-06-10T22:15:00.000Z",
             },
           ],
         }),

@@ -25,7 +25,7 @@ fn event_timestamp() -> chrono::DateTime<chrono::Utc> {
 /// Both values therefore use the Event profile's fixed three-digit millisecond
 /// representation.
 fn payload_timestamp_wire(created_at: chrono::DateTime<chrono::Utc>) -> String {
-    arkret_sdk::canonical::format_timestamp_millis_canonical(created_at)
+    arkret_sdk::canonical::format_timestamp_canonical(created_at)
 }
 
 fn cell_ref(cell: &str) -> anyhow::Result<arkret_sdk::CellRef> {
@@ -1342,12 +1342,10 @@ mod notary_derivation_tests {
         let object_created_at = event.payload["object"]["created_at"]
             .as_str()
             .expect("managed PCR object created_at");
-        assert!(
-            arkret_sdk::canonical::validate_timestamp_millis_canonical(object_created_at).is_ok()
-        );
+        assert!(arkret_sdk::canonical::validate_timestamp_canonical(object_created_at).is_ok());
         assert_eq!(
             object_created_at,
-            arkret_sdk::canonical::format_timestamp_millis_canonical(event.created_at)
+            arkret_sdk::canonical::format_timestamp_canonical(event.created_at)
         );
         assert_eq!(
             event.effects[0].cell.as_str(),

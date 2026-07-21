@@ -25,7 +25,7 @@ mod device_identity_proof_tests {
             "kind": "ak.message.create",
             "realm_id": "ak:realm:r",
             "actor_id": actor_id,
-            "created_at": "2026-06-16T00:00:00Z",
+            "created_at": "2026-06-16T00:00:00.000Z",
             "message_id": "ak:msg:1",
             "strand_id": "ak:strand:general",
             "content": { "body": "hello from a verified device" }
@@ -44,7 +44,7 @@ mod device_identity_proof_tests {
         // `context = "ak.event-proof-v1"` domain tag) — the SAME transcript both
         // the production signer and the verifier use, so this test can never drift
         // from the on-wire binding again.
-        let proof_created_at = chrono::DateTime::parse_from_rfc3339("2026-06-16T00:00:00Z")
+        let proof_created_at = chrono::DateTime::parse_from_rfc3339("2026-06-16T00:00:00.000Z")
             .unwrap()
             .with_timezone(&chrono::Utc);
         let did = arkret_sdk::Did::new(actor_id.to_owned()).unwrap();
@@ -259,7 +259,7 @@ mod device_identity_proof_tests {
             "realm_id": "ak:realm:r",
             "actor_id": actor,
             "executed_by": executor,
-            "created_at": "2026-06-16T00:00:00Z",
+            "created_at": "2026-06-16T00:00:00.000Z",
             "message_id": "ak:msg:applet",
             "strand_id": "ak:strand:general",
             "content": { "body": "hello through an applet" }
@@ -271,7 +271,7 @@ mod device_identity_proof_tests {
             "alg": "EdDSA",
             "verification_method": format!("{executor}#applet-service-key"),
             "event_digest": event_digest,
-            "created_at": "2026-06-16T00:00:00Z",
+            "created_at": "2026-06-16T00:00:00.000Z",
             "jws": "fixture"
         }]);
 

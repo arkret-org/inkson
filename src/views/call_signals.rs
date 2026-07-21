@@ -883,8 +883,8 @@ mod tests {
             "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
             "actor_id": actor_id,
             "device_id": device_id,
-            "sent_at": "2026-06-16T00:00:00Z",
-            "expires_at": "2026-06-16T00:01:00Z",
+            "sent_at": "2026-06-16T00:00:00.000Z",
+            "expires_at": "2026-06-16T00:01:00.000Z",
             "payload": {
                 "call_id": "ak:call:01964200-0000-7000-8000-000000000001",
                 "signal_type": "invite",

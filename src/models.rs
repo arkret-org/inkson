@@ -1048,7 +1048,7 @@ impl From<arkret_sdk::models::DirectoryHandleResolutionOutcome> for ResolveHandl
             handle_claim: outcome.handle_claim,
             as_of: outcome
                 .as_of
-                .map(|as_of| as_of.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+                .map(arkret_sdk::canonical::format_timestamp_canonical),
             source_refs: outcome.source_refs,
             policy_revision: outcome.policy_revision,
             stale: outcome.stale,

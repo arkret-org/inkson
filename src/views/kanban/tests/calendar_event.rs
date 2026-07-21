@@ -7,8 +7,8 @@ fn calendar_patch_sets_schedule_recurrence_profile_and_private_location_path() {
     let current = test_card(TEST_CALENDAR_STRAND_ID, "U");
     let mut draft = card_detail_draft_from_card(&current);
     draft.calendar = CalendarCardFields {
-        start: "2026-06-20T09:00:00Z".to_owned(),
-        end: "2026-06-20T10:00:00Z".to_owned(),
+        start: "2026-06-20T09:00:00.000Z".to_owned(),
+        end: "2026-06-20T10:00:00.000Z".to_owned(),
         timezone: "Asia/Shanghai".to_owned(),
         recurrence_frequency: "weekly".to_owned(),
         recurrence_interval: "1".to_owned(),
@@ -29,11 +29,11 @@ fn calendar_patch_sets_schedule_recurrence_profile_and_private_location_path() {
     );
     assert_eq!(
         patch["metadata.fields.start"]["value"],
-        "2026-06-20T09:00:00Z"
+        "2026-06-20T09:00:00.000Z"
     );
     assert_eq!(
         patch["metadata.fields.end"]["value"],
-        "2026-06-20T10:00:00Z"
+        "2026-06-20T10:00:00.000Z"
     );
     assert_eq!(patch["metadata.fields.timezone"]["value"], "Asia/Shanghai");
     assert_eq!(
@@ -94,8 +94,8 @@ fn calendar_projection_reads_schedule_and_plain_location() {
             "profile_refs".to_owned(),
             json!([arkret_sdk::PROFILE_CALENDAR_EVENT]),
         ),
-        ("start".to_owned(), json!("2026-06-20T09:00:00Z")),
-        ("end".to_owned(), json!("2026-06-20T10:00:00Z")),
+        ("start".to_owned(), json!("2026-06-20T09:00:00.000Z")),
+        ("end".to_owned(), json!("2026-06-20T10:00:00.000Z")),
         ("timezone".to_owned(), json!("Asia/Shanghai")),
         ("all_day".to_owned(), json!(false)),
         (
@@ -129,8 +129,8 @@ fn calendar_projection_reads_schedule_and_plain_location() {
 
     let card = card_from_strand_projection(&strand, None);
 
-    assert_eq!(card.calendar.start, "2026-06-20T09:00:00Z");
-    assert_eq!(card.calendar.end, "2026-06-20T10:00:00Z");
+    assert_eq!(card.calendar.start, "2026-06-20T09:00:00.000Z");
+    assert_eq!(card.calendar.end, "2026-06-20T10:00:00.000Z");
     assert_eq!(card.calendar.timezone, "Asia/Shanghai");
     assert_eq!(card.calendar.recurrence_frequency, "weekly");
     assert_eq!(card.calendar.recurrence_interval, "1");
@@ -143,8 +143,8 @@ fn calendar_projection_reads_schedule_and_plain_location() {
 fn calendar_overlay_merges_partial_direct_schedule_patch() {
     let mut card = test_card(TEST_CALENDAR_STRAND_ID, "U");
     card.calendar = CalendarCardFields {
-        start: "2026-06-20T09:00:00Z".to_owned(),
-        end: "2026-06-20T10:00:00Z".to_owned(),
+        start: "2026-06-20T09:00:00.000Z".to_owned(),
+        end: "2026-06-20T10:00:00.000Z".to_owned(),
         timezone: "Asia/Shanghai".to_owned(),
         recurrence_frequency: "weekly".to_owned(),
         recurrence_interval: "1".to_owned(),
@@ -172,7 +172,7 @@ fn calendar_overlay_merges_partial_direct_schedule_patch() {
                 "patch": {
                     "metadata.fields.start": {
                         "$op": "set",
-                        "value": "2026-06-20T11:00:00Z"
+                        "value": "2026-06-20T11:00:00.000Z"
                     }
                 }
             }
@@ -182,8 +182,8 @@ fn calendar_overlay_merges_partial_direct_schedule_patch() {
     let overlaid = overlay_local_card_update_records(columns, &[queued], None);
     let calendar = &overlaid[0].cards[0].calendar;
 
-    assert_eq!(calendar.start, "2026-06-20T11:00:00Z");
-    assert_eq!(calendar.end, "2026-06-20T10:00:00Z");
+    assert_eq!(calendar.start, "2026-06-20T11:00:00.000Z");
+    assert_eq!(calendar.end, "2026-06-20T10:00:00.000Z");
     assert_eq!(calendar.timezone, "Asia/Shanghai");
     assert_eq!(calendar.recurrence_frequency, "weekly");
     assert_eq!(calendar.recurrence_by_day, "MO, WE");

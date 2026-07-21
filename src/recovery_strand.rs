@@ -527,7 +527,7 @@ pub async fn ensure_recovery_policy_and_did_recovery_backup(
 
     let backup_id = format!("ak:backup:{}", crate::operation::uuid_v7());
     let recovery_key_ref = format!("{}#backup-hpke-0", principal_id.trim());
-    let created_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let created_at = arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now());
     let plaintext = crate::canonical::canonical_json_bytes(&json!({
         "schema": "ak.local.did_recovery_metadata.v1",
         "principal_id": principal_id,
@@ -788,10 +788,10 @@ mod tests {
     }
 
     fn test_active_policy(policy_id: &str, version: u64) -> ActiveRecoveryPolicy {
-        let issued_at = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+        let issued_at = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00.000Z")
             .unwrap()
             .with_timezone(&chrono::Utc);
-        let accepted_at = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:01Z")
+        let accepted_at = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:01.000Z")
             .unwrap()
             .with_timezone(&chrono::Utc);
         ActiveRecoveryPolicy {
@@ -905,8 +905,8 @@ mod tests {
                     "version": 1,
                     "trust_domain": "ak:trust_domain:soland.local",
                     "allowed_proof_kinds": [],
-                    "issued_at": "2026-01-01T00:00:00Z",
-                    "accepted_at": "2026-01-01T00:00:01Z"
+                    "issued_at": "2026-01-01T00:00:00.000Z",
+                    "accepted_at": "2026-01-01T00:00:01.000Z"
                 }
             }))
             .is_none()
@@ -918,8 +918,8 @@ mod tests {
                 "version": 3,
                 "trust_domain": "ak:trust_domain:soland.local",
                 "allowed_proof_kinds": ["principal_signing", "recovery_unlock"],
-                "issued_at": "2026-01-01T00:00:00Z",
-                "accepted_at": "2026-01-01T00:00:01Z"
+                "issued_at": "2026-01-01T00:00:00.000Z",
+                "accepted_at": "2026-01-01T00:00:01.000Z"
             }
         }))
         .expect("active policy");
@@ -1063,8 +1063,8 @@ mod tests {
                 "version": 1,
                 "trust_domain": "ak:trust_domain:soland.local",
                 "allowed_proof_kinds": ["principal_signing"],
-                "issued_at": "2026-01-01T00:00:00Z",
-                "accepted_at": "2026-01-01T00:00:01Z"
+                "issued_at": "2026-01-01T00:00:00.000Z",
+                "accepted_at": "2026-01-01T00:00:01.000Z"
             }
         });
         let no_backup =
@@ -1180,8 +1180,8 @@ mod tests {
                 "version": 1,
                 "trust_domain": "ak:trust_domain:soland.local",
                 "allowed_proof_kinds": ["principal_signing"],
-                "issued_at": "2026-01-01T00:00:00Z",
-                "accepted_at": "2026-01-01T00:00:01Z"
+                "issued_at": "2026-01-01T00:00:00.000Z",
+                "accepted_at": "2026-01-01T00:00:01.000Z"
             }
         });
         assert_eq!(

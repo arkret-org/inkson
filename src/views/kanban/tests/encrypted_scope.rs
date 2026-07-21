@@ -177,8 +177,10 @@ fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
         "sender_device_id": "ak:device:01904100-0000-7000-8000-0000000000a1",
         "recipient_principal_id": bob_actor,
         "recipient_device_id": bob_device,
-        "sent_at": chrono::Utc::now().to_rfc3339(),
-        "expires_at": (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+        "sent_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
+        "expires_at": arkret_sdk::canonical::format_timestamp_canonical(
+            chrono::Utc::now() + chrono::Duration::hours(1)
+        ),
         "content": serde_json::to_value(&add.welcome).unwrap(),
         "unsigned": {
             "mls_welcome_id": "ak:mls_welcome:01904100-0000-7000-8000-0000000000ff",
@@ -242,8 +244,10 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
         "sender_device_id": "ak:device:01904100-0000-7000-8000-0000000000a1",
         "recipient_principal_id": bob_actor,
         "recipient_device_id": bob_device,
-        "sent_at": chrono::Utc::now().to_rfc3339(),
-        "expires_at": (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+        "sent_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
+        "expires_at": arkret_sdk::canonical::format_timestamp_canonical(
+            chrono::Utc::now() + chrono::Duration::hours(1)
+        ),
         "content": serde_json::to_value(&add.welcome).unwrap(),
         "unsigned": {
             "mls_welcome_id": "ak:mls_welcome:01904100-0000-7000-8000-0000000000f1",

@@ -2045,7 +2045,7 @@ fn membership_operation_from_client_event(
             "operation_id": operation_id,
             "event_id": event.event_id.as_str(),
             "actor_id": event.actor_id.as_str(),
-            "created_at": event.created_at.to_rfc3339(),
+            "created_at": arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
             "write_state": "synced",
             "body": event.payload,
         }),
@@ -2937,7 +2937,7 @@ mod tests {
                     "event_kind": "ak.space.create",
                     "realm_id": realm_id,
                     "actor_id": "did:web:bob.example",
-                    "created_at": "2026-06-29T00:00:00Z",
+                    "created_at": "2026-06-29T00:00:00.000Z",
                     "operation_id": "sha256:remote-board-create",
                     "payload": {
                         "object": {
@@ -2951,7 +2951,7 @@ mod tests {
                 }
             }),
             json!({ "kind": "catchup_complete", "cursor": "ak:cursor:realmframe1" }),
-            json!({ "kind": "heartbeat", "ts": "2026-06-29T00:00:01Z" }),
+            json!({ "kind": "heartbeat", "ts": "2026-06-29T00:00:01.000Z" }),
         );
 
         let frames = ndjson
@@ -2998,7 +2998,7 @@ mod tests {
                     "event_kind": "ak.member.state",
                     "realm_id": realm_id,
                     "actor_id": "did:web:alice.example",
-                    "created_at": "2026-06-29T00:00:00Z",
+                    "created_at": "2026-06-29T00:00:00.000Z",
                     "payload": {
                         "actor_id": "did:web:bob.example",
                         "membership": "join"
@@ -3009,7 +3009,7 @@ mod tests {
                     "kind": "ak.invite.accept",
                     "realm_id": realm_id,
                     "actor_id": "did:web:carol.example",
-                    "created_at": "2026-06-29T00:00:01Z",
+                    "created_at": "2026-06-29T00:00:01.000Z",
                     "payload": {
                         "invite_ref": "ak:invite:0196419b-0000-7000-8000-000000000301"
                     }
@@ -3024,7 +3024,7 @@ mod tests {
                     "kind": "ak.member.state",
                     "realm_id": realm_id,
                     "actor_id": "did:web:dave.example",
-                    "created_at": "2026-06-29T00:00:02Z",
+                    "created_at": "2026-06-29T00:00:02.000Z",
                     "payload": {
                         "actor_id": "did:web:dave.example",
                         "membership": "join"
@@ -3056,8 +3056,8 @@ mod tests {
             "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
             "recipient_principal_id": "did:webvh:z6mkfixture:bob.example",
             "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
-            "sent_at": "2026-07-15T00:00:00Z",
-            "expires_at": "2026-07-16T00:00:00Z",
+            "sent_at": "2026-07-15T00:00:00.000Z",
+            "expires_at": "2026-07-16T00:00:00.000Z",
             "content": {
                 "transaction_id": "txn-1",
                 "request_id": "request-1"
@@ -3099,7 +3099,7 @@ mod tests {
                     "operation_id": "ak:operation:01904100-0000-7000-8000-0000000000a1",
                     "event_kind": "ak.strand.update",
                     "actor_id": "did:web:bob.example",
-                    "created_at": "2026-06-24T10:00:00Z",
+                    "created_at": "2026-06-24T10:00:00.000Z",
                     "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
                     "payload": {
                         "strand_id": "ak:strand:01904100-0000-7000-8000-000000000002",
@@ -3140,7 +3140,7 @@ mod tests {
                     "event_id": "ak:event:01904100-0000-7000-8000-0000000000b1",
                     "event_kind": "ak.pin.add",
                     "actor_id": "did:web:mei.example",
-                    "created_at": "2026-06-24T10:00:00Z",
+                    "created_at": "2026-06-24T10:00:00.000Z",
                     "realm_id": realm_id,
                     "payload": {
                         "pin_scope": {"kind": "strand", "id": strand_id},
@@ -3177,7 +3177,7 @@ mod tests {
                         "event_id": "ak:event:01904100-0000-7000-8000-0000000000c1",
                         "event_kind": "ak.message.revise",
                         "actor_id": "did:web:bob.example",
-                        "created_at": "2026-06-24T10:00:00Z",
+                        "created_at": "2026-06-24T10:00:00.000Z",
                         "realm_id": realm_id,
                         "payload": {
                             "event_id": "ak:event:01904100-0000-7000-8000-0000000000c1",
@@ -3193,7 +3193,7 @@ mod tests {
                         "event_id": "ak:event:01904100-0000-7000-8000-0000000000c2",
                         "event_kind": "ak.message.redact",
                         "actor_id": "did:web:bob.example",
-                        "created_at": "2026-06-24T10:01:00Z",
+                        "created_at": "2026-06-24T10:01:00.000Z",
                         "realm_id": realm_id,
                         "payload": {
                             "event_id": "ak:event:01904100-0000-7000-8000-0000000000c2",
@@ -3205,7 +3205,7 @@ mod tests {
                         "event_id": "ak:event:01904100-0000-7000-8000-0000000000c3",
                         "event_kind": "ak.reaction.add",
                         "actor_id": "did:web:carol.example",
-                        "created_at": "2026-06-24T10:02:00Z",
+                        "created_at": "2026-06-24T10:02:00.000Z",
                         "realm_id": realm_id,
                         "payload": {
                             "target_ref": "ak:message:01904100-0000-7000-8000-000000000101",
@@ -3288,7 +3288,7 @@ mod tests {
             "notification_id": "message-1",
             "notification_kind": "message",
             "realm_id": "ak:realm:existing",
-            "timestamp": "2026-06-01T00:00:00Z"
+            "timestamp": "2026-06-01T00:00:00.000Z"
         })]);
         let response = empty_response("sx:invite");
 
@@ -3299,7 +3299,7 @@ mod tests {
             Some(vec![json!({
                 "invite_id": "ak:invite:0196419b-0000-7000-8000-000000000010",
                 "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000011",
-                "created_at": "2026-06-01T00:00:01Z"
+                "created_at": "2026-06-01T00:00:01.000Z"
             })]),
         );
 
@@ -3422,7 +3422,7 @@ mod tests {
                         "principal_id": actor,
                         "device_id": device,
                         "revoked_by": "ak:device:0196419b-0000-7000-8000-000000000004",
-                        "revoked_at": "2026-07-14T02:00:00Z",
+                        "revoked_at": "2026-07-14T02:00:00.000Z",
                         "reason": "device_loss"
                     }
                 }]}

@@ -500,7 +500,7 @@ impl InksonEventSigner {
         Ok(format!("{header_b64}..{sig_b64}"))
     }
 
-    fn verification_method_for_sdk_event(&self, event: &arkret_sdk::Event) -> String {
+    pub(crate) fn verification_method_for_sdk_event(&self, event: &arkret_sdk::Event) -> String {
         let controller = event
             .executed_by
             .as_ref()
@@ -914,7 +914,7 @@ pub fn signer_status() -> Option<SignerStatus> {
     let signer = active_signer()?;
     let last = signer
         .last_signed_at_snapshot()
-        .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+        .map(arkret_sdk::canonical::format_timestamp_canonical);
     Some(SignerStatus {
         signer_did: signer.signer_did().to_owned(),
         verification_method: signer.verification_method().to_owned(),

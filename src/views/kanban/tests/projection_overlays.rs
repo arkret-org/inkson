@@ -151,7 +151,7 @@ fn collection_projection_overlay_applies_remote_encrypted_strand_updates() {
         "operation_id": "ak:operation:0196419b-0000-7000-8000-00000000f003",
         "event_kind": "ak.strand.update",
         "actor_id": "did:web:alice.example",
-        "created_at": "2026-05-22T10:00:00Z",
+        "created_at": "2026-05-22T10:00:00.000Z",
         "realm_id": TEST_REALM_ID,
         "payload": {
             "strand_id": strand_id,
@@ -327,7 +327,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
             ("due_at".to_owned(), json!("2026-05-22")),
         ]),
         created_by: Some("did:web:acme.example:users:alice".to_owned()),
-        created_at: Some("2026-05-22T10:00:00Z".to_owned()),
+        created_at: Some("2026-05-22T10:00:00.000Z".to_owned()),
         updated_by: None,
         updated_at: None,
         state: "active".to_owned(),
@@ -465,7 +465,7 @@ fn remote_strand_update_events_overlay_detail_fields_on_projection() {
         "operation_id": "ak:operation:0196419b-0000-7000-8000-00000000f001",
         "event_kind": "ak.strand.update",
         "actor_id": "did:web:alice.example",
-        "created_at": "2026-05-22T10:00:00Z",
+        "created_at": "2026-05-22T10:00:00.000Z",
         "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
         "payload": {
             "strand_id": strand_id,
@@ -527,7 +527,7 @@ fn remote_encrypted_strand_update_overlay_marks_private_fields_locked() {
         "operation_id": "ak:operation:0196419b-0000-7000-8000-00000000f002",
         "event_kind": "ak.strand.update",
         "actor_id": "did:web:alice.example",
-        "created_at": "2026-05-22T10:00:00Z",
+        "created_at": "2026-05-22T10:00:00.000Z",
         "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
         "payload": {
             "strand_id": strand_id,

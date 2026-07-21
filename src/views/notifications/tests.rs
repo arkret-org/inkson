@@ -61,7 +61,7 @@ mod tests {
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002",
             "inviter": "did:web:alice.example",
             "state": "pending",
-            "created_at": "2026-05-29T00:00:00Z",
+            "created_at": "2026-05-29T00:00:00.000Z",
         });
         let duplicate_invite = json!({
             "id": "ak:invite:01904100-0000-7000-8000-000000000099",
@@ -69,7 +69,7 @@ mod tests {
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002",
             "inviter": "did:web:alice.example",
             "state": "pending",
-            "created_at": "2026-05-29T00:00:01Z",
+            "created_at": "2026-05-29T00:00:01.000Z",
         });
         let mut raw = Vec::new();
         append_invite_notifications(&mut raw, vec![invite.clone()], &BTreeSet::new());
@@ -168,7 +168,7 @@ mod tests {
                     "realm_id": realm_id,
                     "strand_id": strand_id,
                     "source_event_id": old_event,
-                    "timestamp": "2026-05-29T00:00:00Z",
+                    "timestamp": "2026-05-29T00:00:00.000Z",
                     "body": "old mention",
                     "read": false
                 }),
@@ -178,7 +178,7 @@ mod tests {
                     "realm_id": realm_id,
                     "strand_id": strand_id,
                     "source_event_id": cursor_event,
-                    "timestamp": "2026-05-29T00:00:01Z",
+                    "timestamp": "2026-05-29T00:00:01.000Z",
                     "body": "cursor mention",
                     "read": false
                 }),
@@ -215,7 +215,7 @@ mod tests {
             "schema": "ak.schema.invite.v1",
             "realm_id": realm_id,
             "state": "pending",
-            "created_at": "2026-06-10T00:00:00Z",
+            "created_at": "2026-06-10T00:00:00.000Z",
         });
         let mut raw = Vec::new();
         append_invite_notifications(&mut raw, vec![invite], &BTreeSet::new());
@@ -311,7 +311,7 @@ mod tests {
                 "invite_token": "ak:invite-token:01904100-0000-7000-8000-000000000012"
             },
             "state": "pending",
-            "created_at": "2026-05-29T00:00:00Z",
+            "created_at": "2026-05-29T00:00:00.000Z",
         });
         let mut raw = Vec::new();
         append_invite_notifications(&mut raw, vec![invite], &BTreeSet::new());
@@ -403,7 +403,7 @@ mod tests {
                 "realm_id": realm_a,
                 "strand_id": strand_a,
                 "source_event_id": "ak:event:01904100-0000-7000-8000-000000000005",
-                "timestamp": "2026-05-29T00:00:00Z",
+                "timestamp": "2026-05-29T00:00:00.000Z",
             }),
             json!({
                 "notification_id": "new-a",
@@ -411,20 +411,20 @@ mod tests {
                 "realm_id": realm_a,
                 "strand_id": strand_a,
                 "event_id": "ak:event:01904100-0000-7000-8000-000000000006",
-                "timestamp": "2026-05-29T00:00:01Z",
+                "timestamp": "2026-05-29T00:00:01.000Z",
             }),
             json!({
                 "notification_id": "no-position",
                 "notification_type": "message",
                 "realm_id": realm_a,
-                "timestamp": "2026-05-29T00:00:02Z",
+                "timestamp": "2026-05-29T00:00:02.000Z",
             }),
             json!({
                 "notification_id": "new-b",
                 "notification_type": "mention",
                 "realm_id": realm_b,
                 "source_event_id": "ak:event:01904100-0000-7000-8000-000000000007",
-                "timestamp": "2026-05-29T00:00:03Z",
+                "timestamp": "2026-05-29T00:00:03.000Z",
             }),
         ];
 

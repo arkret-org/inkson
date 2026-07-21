@@ -33,6 +33,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
     device_id: &str,
     claim: &arkret_sdk::KeyPackageClaimRecord,
     claim_nonce: &str,
+    peer_claim_receipt: Option<&arkret_sdk::PeerKeyPackageClaimReceipt>,
 ) -> Result<RealmMlsAdmissionEvents, String> {
     let member_key_package = crate::mls_api_helpers::keypackage_claim_record_to_mls_record(claim)
         .map_err(|err| format!("MLS KeyPackage claim decode failed: {err}"))?;
@@ -73,6 +74,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
         &commit,
         governance_binding,
         claim_nonce,
+        peer_claim_receipt,
     )?;
     let welcome = crate::operation::ak_ops::mls_welcome_with_governance(
         realm_id,
@@ -154,6 +156,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claims(
             &commit,
             governance_binding.clone(),
             claim_nonce,
+            None,
         )?;
         let welcome = crate::operation::ak_ops::mls_welcome_with_governance(
             realm_id,
@@ -249,7 +252,7 @@ pub(crate) fn build_realm_key_share_event(
         encrypted_key_ref: None,
         aad_digest: None,
         expires_at: None,
-        created_at: crate::clock::now_utc_secs(),
+        created_at: crate::clock::now_utc_canonical(),
     };
     // Sign `sender_signing_input()` with this device's active Ed25519 event
     // signer and embed the detached signature. The registered payload schema
@@ -342,6 +345,7 @@ pub(crate) fn build_mls_welcome_payload_value(
     commit_event: &arkret_sdk::Event,
     governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
     claim_nonce: &str,
+    peer_claim_receipt: Option<&arkret_sdk::PeerKeyPackageClaimReceipt>,
 ) -> Result<Value, String> {
     let intended_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|err| format!("invalid MLS Welcome Realm id: {err:?}"))?;
@@ -362,7 +366,7 @@ pub(crate) fn build_mls_welcome_payload_value(
         nonce: arkret_sdk::NonEmptyString::new(claim_nonce.trim())
             .map_err(|err| format!("invalid MLS Welcome claim nonce: {err}"))?,
         welcome_digest: welcome.welcome_hash.clone(),
-        created_at: crate::clock::now_utc_secs(),
+        created_at: crate::clock::now_utc_canonical(),
         signature: arkret_sdk::KeyOperationSignature {
             kid: arkret_sdk::NonEmptyString::new("pending")
                 .map_err(|err| format!("MLS Welcome placeholder kid: {err}"))?,
@@ -417,6 +421,7 @@ pub(crate) fn build_mls_welcome_payload_value(
             .map_err(|err| format!("invalid MLS Welcome claim id: {err}"))?,
         claim_ref,
         claim_envelope: envelope,
+        peer_claim_receipt: peer_claim_receipt.cloned(),
         carrier: arkret_sdk::MlsWelcomeCarrier::new(
             None,
             None,
@@ -782,6 +787,7 @@ mod tests {
             alice_device,
             &claim,
             "test-claim-nonce",
+            None,
         )
         .unwrap();
 
@@ -932,6 +938,7 @@ mod tests {
             alice_device,
             &claim,
             "test-claim-nonce",
+            None,
         )
         .unwrap();
 

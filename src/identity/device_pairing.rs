@@ -205,7 +205,7 @@ mod tests {
             "kind": "ak.key.verification.request",
             "sender_principal_id": "did:web:alice",
             "sender_device_id": "ak:device:existing",
-            "expires_at": "2026-06-17T12:00:00Z",
+            "expires_at": "2026-06-17T12:00:00.000Z",
             "content": {
                 "transaction_id": "txn-1",
                 "from_device": "ak:device:01904100-0000-7000-8000-000000000001",
@@ -221,7 +221,7 @@ mod tests {
                     "display_name": "New browser",
                     "platform": "browser"
                 },
-                "expires_at": "2026-06-17T12:00:00Z"
+                "expires_at": "2026-06-17T12:00:00.000Z"
             }
         })
     }
@@ -239,7 +239,7 @@ mod tests {
         assert_eq!(row.pairing_code, "384921");
         assert_eq!(row.display_name, "New browser");
         assert_eq!(row.platform, "browser");
-        assert_eq!(row.expires_at, "2026-06-17T12:00:00Z");
+        assert_eq!(row.expires_at, "2026-06-17T12:00:00.000Z");
     }
 
     #[test]

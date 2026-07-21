@@ -70,7 +70,9 @@ fn expiry_choice_to_rfc3339(choice: &str) -> Option<String> {
         "30d" => chrono::Duration::days(30),
         _ => return None,
     };
-    Some((chrono::Utc::now() + duration).to_rfc3339())
+    Some(arkret_sdk::canonical::format_timestamp_canonical(
+        chrono::Utc::now() + duration,
+    ))
 }
 
 #[component]

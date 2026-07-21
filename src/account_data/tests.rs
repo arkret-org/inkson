@@ -210,15 +210,15 @@ fn realm_remark_pinned_builder_preserves_private_fields() {
         pinned: false,
         verified_title_at_save: Some("Engineering".to_owned()),
         verified_owning_organizations_at_save: vec!["did:web:acme.example".to_owned()],
-        saved_at: "2026-06-01T00:00:00Z".parse().unwrap(),
-        updated_at: Some("2026-06-01T00:00:00Z".parse().unwrap()),
+        saved_at: "2026-06-01T00:00:00.000Z".parse().unwrap(),
+        updated_at: Some("2026-06-01T00:00:00.000Z".parse().unwrap()),
     };
 
     let next = RealmRemark::with_pinned_preserving_fields(
         realm_id,
         Some(&existing),
         true,
-        Some("2026-06-06T00:00:00Z".parse().unwrap()),
+        Some("2026-06-06T00:00:00.000Z".parse().unwrap()),
     );
 
     assert!(next.pinned);
@@ -233,7 +233,7 @@ fn realm_remark_pinned_builder_preserves_private_fields() {
     assert_eq!(next.saved_at, existing.saved_at);
     assert_eq!(
         next.updated_at,
-        Some("2026-06-06T00:00:00Z".parse().unwrap())
+        Some("2026-06-06T00:00:00.000Z".parse().unwrap())
     );
 }
 
@@ -244,7 +244,7 @@ fn realm_remark_unpin_builder_can_tombstone_empty_remark() {
         realm_id,
         None,
         true,
-        Some("2026-06-06T00:00:00Z".parse().unwrap()),
+        Some("2026-06-06T00:00:00.000Z".parse().unwrap()),
     );
     assert!(!existing.is_empty());
 
@@ -252,7 +252,7 @@ fn realm_remark_unpin_builder_can_tombstone_empty_remark() {
         realm_id,
         Some(&existing),
         false,
-        Some("2026-06-06T00:01:00Z".parse().unwrap()),
+        Some("2026-06-06T00:01:00.000Z".parse().unwrap()),
     );
 
     assert!(!next.pinned);
@@ -297,15 +297,15 @@ fn contact_remark_pinned_builder_preserves_private_fields() {
         tags: vec!["ops".to_owned()],
         pinned: false,
         verified_handle_at_save: Some("alice:example.com".to_owned()),
-        saved_at: Some("2026-06-05T00:00:00Z".to_owned()),
-        updated_at: Some("2026-06-05T00:00:00Z".to_owned()),
+        saved_at: Some("2026-06-05T00:00:00.000Z".to_owned()),
+        updated_at: Some("2026-06-05T00:00:00.000Z".to_owned()),
     };
 
     let next = ContactRemark::with_pinned_preserving_fields(
         actor_id,
         Some(&existing),
         true,
-        Some("2026-06-06T00:00:00Z".to_owned()),
+        Some("2026-06-06T00:00:00.000Z".to_owned()),
     );
 
     assert!(next.pinned);
@@ -317,7 +317,7 @@ fn contact_remark_pinned_builder_preserves_private_fields() {
         existing.verified_handle_at_save
     );
     assert_eq!(next.saved_at, existing.saved_at);
-    assert_eq!(next.updated_at.as_deref(), Some("2026-06-06T00:00:00Z"));
+    assert_eq!(next.updated_at.as_deref(), Some("2026-06-06T00:00:00.000Z"));
 }
 
 #[test]
@@ -341,12 +341,15 @@ fn block_user_appends_to_list_without_duplicates() {
         &mut list,
         "did:web:alice.example",
         Some("spam".into()),
-        Some("2026-05-18T00:00:00Z".into()),
+        Some("2026-05-18T00:00:00.000Z".into()),
     ));
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].did, "did:web:alice.example");
     assert_eq!(list[0].reason.as_deref(), Some("spam"));
-    assert_eq!(list[0].blocked_at.as_deref(), Some("2026-05-18T00:00:00Z"));
+    assert_eq!(
+        list[0].blocked_at.as_deref(),
+        Some("2026-05-18T00:00:00.000Z")
+    );
     // Second call with the same DID is a no-op.
     assert!(!block_user_in(
         &mut list,
@@ -394,14 +397,17 @@ fn block_target_in_dedupes_per_kind_and_value_and_stamps_entry_id() {
         "https://Spam.Example/path",
         None,
         vec!["dm".into(), "calls".into()],
-        Some("2026-08-01T00:00:00Z".into()),
-        Some("2026-05-18T00:00:00Z".into()),
+        Some("2026-08-01T00:00:00.000Z".into()),
+        Some("2026-05-18T00:00:00.000Z".into()),
     ));
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].kind, "domain");
     assert_eq!(list[0].did, "spam.example");
     assert_eq!(list[0].applies_to, vec!["dm", "calls"]);
-    assert_eq!(list[0].expires_at.as_deref(), Some("2026-08-01T00:00:00Z"));
+    assert_eq!(
+        list[0].expires_at.as_deref(),
+        Some("2026-08-01T00:00:00.000Z")
+    );
     assert!(
         list[0]
             .entry_id
@@ -489,7 +495,7 @@ fn build_blocklist_account_data_body_emits_domain_and_expiry_fields() {
         "spam.example",
         None,
         vec!["dm".into()],
-        Some("2026-08-01T00:00:00Z".into()),
+        Some("2026-08-01T00:00:00.000Z".into()),
         None,
     );
     let body = build_blocklist_account_data_body(&list);
@@ -500,7 +506,7 @@ fn build_blocklist_account_data_body_emits_domain_and_expiry_fields() {
     assert!(entry["target"].get("did").is_none());
     assert_eq!(entry["mode"], "block");
     assert_eq!(entry["applies_to"], json!(["dm"]));
-    assert_eq!(entry["expires_at"], "2026-08-01T00:00:00Z");
+    assert_eq!(entry["expires_at"], "2026-08-01T00:00:00.000Z");
     assert!(entry["entry_id"].as_str().unwrap().starts_with("ak:block:"));
 }
 
@@ -544,19 +550,19 @@ fn blocklist_entries_parse_canonical_account_data_body() {
                 "target": {"kind": "actor", "did": "did:web:mallory.example"},
                 "mode": "block",
                 "reason_code": "harassment",
-                "created_at": "2026-05-29T00:00:00Z"
+                "created_at": "2026-05-29T00:00:00.000Z"
             },
             {
                 "target": {"kind": "actor", "did": "did:web:carol.example"},
                 "mode": "unblock",
-                "created_at": "2026-05-29T00:00:00Z"
+                "created_at": "2026-05-29T00:00:00.000Z"
             },
             {
                 "target": {"kind": "domain", "value": "Example.com"},
                 "mode": "block",
                 "applies_to": ["dm", "calls"],
-                "expires_at": "2026-07-01T00:00:00Z",
-                "created_at": "2026-05-29T00:00:00Z"
+                "expires_at": "2026-07-01T00:00:00.000Z",
+                "created_at": "2026-05-29T00:00:00.000Z"
             }
         ]
     });
@@ -568,7 +574,7 @@ fn blocklist_entries_parse_canonical_account_data_body() {
     assert_eq!(entries[0].reason.as_deref(), Some("harassment"));
     assert_eq!(
         chrono::DateTime::parse_from_rfc3339(entries[0].blocked_at.as_deref().unwrap()).unwrap(),
-        chrono::DateTime::parse_from_rfc3339("2026-05-29T00:00:00Z").unwrap()
+        chrono::DateTime::parse_from_rfc3339("2026-05-29T00:00:00.000Z").unwrap()
     );
     // Domain target: kind preserved, value normalized (lower-cased),
     // applies_to + expires_at round-tripped.
@@ -577,7 +583,7 @@ fn blocklist_entries_parse_canonical_account_data_body() {
     assert_eq!(entries[1].applies_to, vec!["dm", "calls"]);
     assert_eq!(
         chrono::DateTime::parse_from_rfc3339(entries[1].expires_at.as_deref().unwrap()).unwrap(),
-        chrono::DateTime::parse_from_rfc3339("2026-07-01T00:00:00Z").unwrap()
+        chrono::DateTime::parse_from_rfc3339("2026-07-01T00:00:00.000Z").unwrap()
     );
 }
 
@@ -855,7 +861,7 @@ fn draft_sync_value_requires_origin_device_id_and_current_slot_shape() {
         "draft_slot": "compose",
         "content": {"body": "draft"},
         "updated_hlc": "01970e589d21-0000-a13f9c2e",
-        "retention_expires_at": "2026-06-07T00:00:00Z"
+        "retention_expires_at": "2026-06-07T00:00:00.000Z"
     });
     assert!(draft_sync_value_from_account_data(&missing_origin).is_err());
 
@@ -864,7 +870,7 @@ fn draft_sync_value_requires_origin_device_id_and_current_slot_shape() {
         json!({"body": "draft"}),
         "01970e589d21-0000-a13f9c2e",
         "ak:device:01904100-0000-7000-8000-000000000001",
-        "2026-06-07T00:00:00Z",
+        "2026-06-07T00:00:00.000Z",
     )
     .map(|mut value| {
         value.draft_slot = "main".to_owned();
@@ -886,7 +892,7 @@ fn draft_merge_uses_hlc_then_origin_device_tiebreaker() {
         json!({"body": "local"}),
         "01970e589d21-0000-a13f9c2e",
         "ak:device:01904100-0000-7000-8000-000000000001",
-        "2026-06-07T00:00:00Z",
+        "2026-06-07T00:00:00.000Z",
     )
     .unwrap();
     let newer_remote = build_message_draft_sync_value(
@@ -894,7 +900,7 @@ fn draft_merge_uses_hlc_then_origin_device_tiebreaker() {
         json!({"body": "remote"}),
         "01970e589d22-0000-a13f9c2e",
         "ak:device:01904100-0000-7000-8000-000000000002",
-        "2026-06-07T00:00:00Z",
+        "2026-06-07T00:00:00.000Z",
     )
     .unwrap();
     let merged = merge_draft_values(Some(&local), newer_remote).unwrap();
@@ -907,7 +913,7 @@ fn draft_merge_uses_hlc_then_origin_device_tiebreaker() {
         json!({"body": "device wins"}),
         "01970e589d21-0000-a13f9c2e",
         "ak:device:01904100-0000-7000-8000-000000000002",
-        "2026-06-07T00:00:00Z",
+        "2026-06-07T00:00:00.000Z",
     )
     .unwrap();
     let merged = merge_draft_values(Some(&local), same_hlc_higher_device).unwrap();
@@ -922,7 +928,7 @@ fn draft_merge_fails_closed_for_same_hlc_and_device_with_different_content() {
         json!({"body": "a"}),
         "01970e589d21-0000-a13f9c2e",
         "ak:device:01904100-0000-7000-8000-000000000001",
-        "2026-06-07T00:00:00Z",
+        "2026-06-07T00:00:00.000Z",
     )
     .unwrap();
     let remote = build_message_draft_sync_value(
@@ -930,7 +936,7 @@ fn draft_merge_fails_closed_for_same_hlc_and_device_with_different_content() {
         json!({"body": "b"}),
         "01970e589d21-0000-a13f9c2e",
         "ak:device:01904100-0000-7000-8000-000000000001",
-        "2026-06-07T00:00:00Z",
+        "2026-06-07T00:00:00.000Z",
     )
     .unwrap();
     assert!(merge_draft_values(Some(&local), remote).is_err());

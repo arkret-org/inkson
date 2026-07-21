@@ -3,7 +3,6 @@ use std::fmt;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
-use chrono::SecondsFormat;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde_json::{Value, json};
 
@@ -253,7 +252,7 @@ pub fn build_key_backup_unlock_proof_active(
     let backup_class = required_str_anyhow(backup, "backup_class")?;
     let series_id = required_str_anyhow(backup, "series_id")?;
     let ciphertext_digest = required_str_anyhow(backup, "ciphertext_digest")?;
-    let issued_at = chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+    let issued_at = arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now());
     let (recovery_session_id, proof_kind, proof_digest) = if let Some(session) = recovery_session {
         let session_id = required_str_anyhow(session, "recovery_session_id")?.to_owned();
         let summary = session

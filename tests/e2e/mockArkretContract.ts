@@ -75,7 +75,7 @@ export function mockArkretContract(req) {
         principal_id: principalId,
         actor_kind: "user",
         display_name: "inkson",
-        created_at: "2026-04-28T12:00:00Z",
+        created_at: "2026-04-28T12:00:00.000Z",
       },
     });
   }
@@ -147,7 +147,7 @@ export function mockArkretContract(req) {
       device_grant: {
         status: "active",
         authorized_by_device_id: req.account?.device_id,
-        authorized_at: "2026-04-28T12:00:00Z",
+        authorized_at: "2026-04-28T12:00:00.000Z",
         display_name: body.display_name ?? null,
       },
       key_backup_hint: {},
@@ -168,7 +168,7 @@ export function mockArkretContract(req) {
       accepted: true,
       kind: body.kind,
       realm_id: body.realm_id,
-      server_received_at: "2026-04-28T12:00:00Z",
+      server_received_at: "2026-04-28T12:00:00.000Z",
     });
   }
 
@@ -216,7 +216,7 @@ function realmPreview() {
     discoverability: "public",
     join_rule: "public",
     member_count_bucket: "1-10",
-    as_of: "2026-06-13T00:00:00Z",
+    as_of: "2026-06-13T00:00:00.000Z",
     source_refs: ["ak:event:0196419b-0000-7000-8000-000000000001"],
     policy_revision: "mock-policy-rev",
   };

@@ -192,7 +192,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
         "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
         "actor_id": "did:web:alice.example",
         "actor_seq": 1,
-        "created_at": "2026-05-21T13:00:00Z",
+        "created_at": "2026-05-21T13:00:00.000Z",
         "prev_refs": [],
         "refs": [],
         "payload": {},
@@ -213,7 +213,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
         "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
         "actor_id": "did:web:alice.example",
         "actor_seq": 1,
-        "created_at": "2026-05-21T13:00:00Z",
+        "created_at": "2026-05-21T13:00:00.000Z",
         "prev_refs": [],
         "refs": [],
         "payload": {},
@@ -222,7 +222,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
             "alg": "EdDSA",
             "verification_method": "did:web:alice.example#device",
             "event_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-            "created_at": "2026-05-21T13:00:00Z",
+            "created_at": "2026-05-21T13:00:00.000Z",
             "jws": "a.b.c"
         }]
     });
