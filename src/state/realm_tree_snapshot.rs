@@ -200,7 +200,7 @@ impl LocalStateStore {
         self.load()
             .realm_tree_projections
             .get(realm_id)
-            .is_some_and(crate::realm_tree::realm_projection_is_encrypted)
+            .is_some_and(crate::security_state::realm_projection_is_encrypted)
     }
 
     /// The effective `durability_policy` (RRK, realm-and-space.md §2.3.1) for

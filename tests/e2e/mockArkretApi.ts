@@ -1649,7 +1649,10 @@ export async function mockArkretApi(
                       title: "Arkret Demo Realm",
                       summary: "Shared demo Realm served by mocked server",
                     },
-                    e2ee_epoch: { epoch: 0, key_ref: "mock-key:demo-realm" },
+                    // Match Soland's real account snapshot: the window-start
+                    // epoch hint can be null even though the create-locked
+                    // Realm profile in state is MLS-backed.
+                    e2ee_epoch: null,
                   },
                   summary: { joined_member_count: 2 },
                   members: [
@@ -1657,7 +1660,27 @@ export async function mockArkretApi(
                     { actor_id: activeAssistantId, membership: "join" },
                   ],
                   timeline: { events: demoProjectionEvents, limited: false },
-                  state: { events: [] },
+                  state: {
+                    events: [
+                      {
+                        event_id:
+                          "ak:event:0196419b-0000-7000-8000-00000000e2ee",
+                        kind: "ak.realm.create",
+                        realm_id: DEMO_REALM,
+                        actor_id: accountPrincipalId,
+                        actor_seq: 1,
+                        created_at: "2026-04-28T12:00:00.000Z",
+                        hlc: "019641370000-0000-12345678",
+                        prev_refs: [],
+                        payload: {
+                          object: {
+                            encryption_profile: "mls_rfc9420",
+                          },
+                        },
+                        proofs: [],
+                      },
+                    ],
+                  },
                   ephemeral: { events: [] },
                   unread_notifications: {
                     notification_count: 0,
