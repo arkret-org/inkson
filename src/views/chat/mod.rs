@@ -126,6 +126,50 @@ fn timeline_projection_key(
     format!("{:016x}", projection.finish())
 }
 
+fn project_visible_messages(
+    messages: &[ChatMessage],
+    selected_channel_id: &str,
+    selected_realm_id: &str,
+    sidecar_projection: Option<(&str, &str, arkret_sdk::AgentSidecarDisplayMode)>,
+) -> Vec<ChatMessage> {
+    let mut visible = Vec::new();
+    let mut positions = std::collections::BTreeMap::<String, usize>::new();
+
+    for message in messages {
+        if !selected_realm_id.trim().is_empty() && message.realm_id != selected_realm_id {
+            continue;
+        }
+        let strand_matches = sidecar_projection.map_or_else(
+            || message.strand_id == selected_channel_id,
+            |(source_strand_id, private_strand_id, display_mode)| {
+                message.strand_id == private_strand_id
+                    || (display_mode == arkret_sdk::AgentSidecarDisplayMode::ContextMerged
+                        && message.strand_id == source_strand_id)
+            },
+        );
+        if !strand_matches {
+            continue;
+        }
+
+        let Some((_, private_strand_id, _)) = sidecar_projection else {
+            visible.push(message.clone());
+            continue;
+        };
+        let dedupe_key = message.id.clone();
+        if let Some(position) = positions.get(&dedupe_key).copied() {
+            if message.strand_id == private_strand_id
+                && visible[position].strand_id != private_strand_id
+            {
+                visible[position] = message.clone();
+            }
+        } else {
+            positions.insert(dedupe_key, visible.len());
+            visible.push(message.clone());
+        }
+    }
+    visible
+}
+
 async fn resolve_agent_selector_mentions(
     base_url: &str,
     api_token: String,
@@ -830,23 +874,19 @@ pub fn ChatPanel(
         }
     });
     let all_messages_snapshot = all_messages_snapshot.read().clone();
-    let visible_messages = all_messages_snapshot
-        .iter()
-        .filter(|msg| {
-            let strand_matches = sidecar_session.as_ref().map_or_else(
-                || msg.strand_id == selected_channel_value,
-                |session| {
-                    msg.strand_id == session.private_strand_id
-                        || (session.display_mode
-                            == arkret_sdk::AgentSidecarDisplayMode::ContextMerged
-                            && msg.strand_id == session.source_strand_id)
-                },
-            );
-            strand_matches
-                && (selected_realm_id.trim().is_empty() || msg.realm_id == selected_realm_id)
-        })
-        .cloned()
-        .collect::<Vec<_>>();
+    let sidecar_projection = sidecar_session.as_ref().map(|session| {
+        (
+            session.source_strand_id.as_str(),
+            session.private_strand_id.as_str(),
+            session.display_mode,
+        )
+    });
+    let visible_messages = project_visible_messages(
+        &all_messages_snapshot,
+        &selected_channel_value,
+        &selected_realm_id,
+        sidecar_projection,
+    );
     let visible_moderation_appeal_prompts = moderation_appeal_prompts()
         .into_iter()
         .filter(|prompt| {
@@ -867,25 +907,15 @@ pub fn ChatPanel(
     // AKP-0007 P3B.2.4 — per-strand Circle-scope lookup used by the
     // message accent rail. We index by `strand_id` once instead of
     // searching the `channels` Vec for every rendered message.
-    let mut strand_scope_lookup: std::collections::BTreeMap<String, StrandScopeCircle> =
-        all_channels
-            .iter()
-            .filter_map(|channel| {
-                channel
-                    .scope_circle
-                    .clone()
-                    .map(|circle| (channel.strand_id.clone(), circle))
-            })
-            .collect();
-    if let Some(session) = sidecar_session.as_ref() {
-        strand_scope_lookup
-            .entry(session.private_strand_id.clone())
-            .or_insert_with(|| StrandScopeCircle {
-                circle_id: session.backing_scope_circle_id.to_string(),
-                title: "Private Sidecar".to_owned(),
-                member_count: session.addressed_agent_ids.len().saturating_add(1) as u32,
-            });
-    }
+    let strand_scope_lookup: std::collections::BTreeMap<String, StrandScopeCircle> = all_channels
+        .iter()
+        .filter_map(|channel| {
+            channel
+                .scope_circle
+                .clone()
+                .map(|circle| (channel.strand_id.clone(), circle))
+        })
+        .collect();
     let visible_message_count = visible_messages.len();
     let messages_for_reply_lookup = &all_messages_snapshot;
     let left_open = !embedded && !direct_mode && left_panel_open();
@@ -1853,7 +1883,11 @@ pub fn ChatPanel(
                         account_display_label: account_display_label.clone(),
                         participants: participants_for_messages.clone(),
                         selected_realm_id: selected_realm_id.clone(),
-                        selected_channel_id: selected_channel_value.clone(),
+                        selected_channel_id: sidecar_session
+                            .as_ref()
+                            .map(|session| session.private_strand_id.clone())
+                            .unwrap_or_else(|| selected_channel_value.clone()),
+                        sidecar_active: sidecar_mode,
                         device_id: device_id.clone(),
                         plaintext_service_id: plaintext_service_id.clone(),
                         base_url: base_url.clone(),

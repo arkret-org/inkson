@@ -12,6 +12,7 @@ pub(super) struct ChatTimelineContext {
     pub participants: Vec<SpaceParticipant>,
     pub selected_realm_id: String,
     pub selected_channel_id: String,
+    pub sidecar_active: bool,
     pub device_id: String,
     pub plaintext_service_id: String,
     pub base_url: String,
@@ -39,6 +40,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
         participants: participants_for_messages,
         selected_realm_id,
         selected_channel_id: selected_channel_value,
+        sidecar_active,
         device_id,
         plaintext_service_id,
         base_url,
@@ -116,7 +118,13 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                     }
                     for msg in visible_messages {
                         {
-                            let scope_circle = strand_scope_lookup.get(&msg.strand_id).cloned();
+                            let message_is_private_sidecar =
+                                private_sidecar_strand_ids.contains(&msg.strand_id);
+                            let message_is_read_only_shared =
+                                sidecar_active && !message_is_private_sidecar;
+                            let scope_circle = (!message_is_private_sidecar)
+                                .then(|| strand_scope_lookup.get(&msg.strand_id).cloned())
+                                .flatten();
                             let scope_class = if scope_circle.is_some() {
                                 " has-circle-accent-rail"
                             } else {
@@ -134,8 +142,6 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                 || pinned_target_set.contains(&msg.id);
                             let message_is_saved_private =
                                 private_saved_target_set.contains(&message_target_ref);
-                            let message_is_private_sidecar =
-                                private_sidecar_strand_ids.contains(&msg.strand_id);
                             let message_is_queued_offline = msg
                                 .protocol_message_id
                                 .as_ref()
@@ -226,6 +232,13 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                 }
                             },
                             "data-circle-scope-id": "{scope_attr}",
+                            "data-sidecar-provenance": if message_is_private_sidecar {
+                                "private"
+                            } else if sidecar_active {
+                                "shared-read-only"
+                            } else {
+                                "shared"
+                            },
                             "data-crypto-state": match msg.crypto_state {
                                 MessageCryptoState::Plaintext => "plaintext",
                                 MessageCryptoState::Decrypting => "decrypting",
@@ -287,7 +300,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                             // dispatchers and only add the menu-close
                                             // glue. Hidden for redacted messages, same
                                             // as the hover row.
-                                            if !msg.redacted {
+                                            if !msg.redacted && !message_is_read_only_shared {
                                                 Button {
                                                     variant: ButtonVariant::Secondary,
                                                     r#type: "button",
@@ -342,6 +355,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                     {crate::i18n::tr("chat.button.redact")}
                                                 }
                                             }
+                                            if !message_is_read_only_shared {
                                             Button {
                                                 variant: ButtonVariant::Secondary,
                                                 r#type: "button",
@@ -365,6 +379,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                 } else {
                                                     {crate::i18n::tr("message.shared_pin")}
                                                 }
+                                            }
                                             }
                                             Button {
                                                 variant: ButtonVariant::Secondary,
@@ -497,6 +512,16 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                     "aria-label": crate::i18n::tr("chat.message.private_sidecar.tooltip"),
                                                     UiIcon { name: "lock" }
                                                     span { {crate::i18n::tr("chat.message.private_sidecar.label")} }
+                                                }
+                                            } else if sidecar_active {
+                                                span {
+                                                    class: "message-provenance-badge message-provenance-badge--shared",
+                                                    "data-testid": "message-shared-read-only-badge",
+                                                    "data-provenance": "shared",
+                                                    title: "Original Strand · read only while Private Sidecar is active",
+                                                    "aria-label": "Original Strand message, read only while Private Sidecar is active",
+                                                    UiIcon { name: "lock" }
+                                                    span { "Original Strand · read only" }
                                                 }
                                             }
                                         }
@@ -686,7 +711,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                         span { class: "badge", "{emoji} {senders.len()}" }
                                     }
                                 }
-                                if msg.failed {
+                                if msg.failed && !message_is_read_only_shared {
                                     div { class: "message-error-row", "data-testid": "chat-message-error",
                                         span { class: "message-error-mark", "!" }
                                         span {
@@ -714,6 +739,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                 }
                                 if !msg.redacted {
                                     div { class: "actions chat-message-actions",
+                                        if !message_is_read_only_shared {
                                         Button {
                                             variant: ButtonVariant::Secondary,
                                             class: "chat-message-action",
@@ -784,6 +810,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                             } else {
                                                 {crate::i18n::tr("message.shared_pin")}
                                             }
+                                        }
                                         }
                                         // T7: holder-private save exposed on the hover
                                         // action row, mirroring the context-menu entry.
@@ -895,7 +922,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                                     "data-testid": "poll-result-row",
                                                                     "data-option-index": "{option_index_attr}",
                                                                     "data-option-text": "{option_label}",
-                                                                    if !card_closed {
+                                                                    if !card_closed && !message_is_read_only_shared {
                                                                         Button {
                                                                             variant: ButtonVariant::Secondary,
                                                                             class: "poll-option poll-vote-button",
@@ -931,7 +958,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                             }
                                                         }
                                                     }
-                                                    if !card.closed {
+                                                    if !card.closed && !message_is_read_only_shared {
                                                         Button {
                                                             variant: ButtonVariant::Secondary,
                                                             r#type: "button",
@@ -1000,7 +1027,9 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                         None => rsx! {},
                                     }
                                 }
-                                if reaction_picker() == Some(msg.id.clone()) {
+                                if !message_is_read_only_shared
+                                    && reaction_picker() == Some(msg.id.clone())
+                                {
                                     div { class: "actions chat-chip-row", "data-testid": "chat-reaction-picker",
                                         for emoji in CHAT_EMOJI_GRID {
                                             Button {
@@ -1023,7 +1052,9 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                         }
                                     }
                                 }
-                                if editing_message() == Some(msg.id.clone()) {
+                                if !message_is_read_only_shared
+                                    && editing_message() == Some(msg.id.clone())
+                                {
                                     div { class: "composer compact-composer", "data-testid": "chat-edit-composer",
                                         Textarea {
                                             value: "{edit_draft}",
@@ -1054,7 +1085,9 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                         }
                                     }
                                 }
-                                if redact_confirm() == Some(msg.id.clone()) {
+                                if !message_is_read_only_shared
+                                    && redact_confirm() == Some(msg.id.clone())
+                                {
                                     div { class: "chat-redact-confirm", "data-testid": "chat-redact-confirm",
                                         div { class: "discussion-subhead", span { "Remove message" } }
                                         div { class: "actions",

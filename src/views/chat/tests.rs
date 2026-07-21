@@ -15,6 +15,75 @@ fn circle_scope_request_is_single_flight_and_semantically_deduplicated() {
     ));
 }
 
+fn sidecar_projection_message(id: &str, strand_id: &str, body: &str) -> ChatMessage {
+    ChatMessage {
+        realm_id: "ak:realm:test".to_owned(),
+        id: id.to_owned(),
+        protocol_message_id: None,
+        sender: "did:web:example.test:alice".to_owned(),
+        executed_by: None,
+        body: body.to_owned(),
+        timestamp: "12:00".to_owned(),
+        created_at: None,
+        strand_id: strand_id.to_owned(),
+        reply_to: None,
+        reactions: Vec::new(),
+        redacted: false,
+        edited: false,
+        revisions: Vec::new(),
+        pending: false,
+        failed: false,
+        error: None,
+        mentions: Vec::new(),
+        crypto_state: MessageCryptoState::Plaintext,
+    }
+}
+
+#[test]
+fn hosted_sidecar_projection_dedupes_echo_and_prefers_private_event() {
+    let shared = "ak:strand:source";
+    let private = "ak:strand:private";
+    let messages = vec![
+        sidecar_projection_message("ak:event:echo", shared, "echo overlay"),
+        sidecar_projection_message("ak:event:shared", shared, "shared"),
+        sidecar_projection_message("ak:event:echo", private, "private event"),
+        sidecar_projection_message("ak:event:private", private, "native private"),
+    ];
+
+    let merged = project_visible_messages(
+        &messages,
+        shared,
+        "ak:realm:test",
+        Some((
+            shared,
+            private,
+            arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
+        )),
+    );
+    assert_eq!(merged.len(), 3);
+    assert_eq!(merged[0].body, "private event");
+    assert_eq!(merged[0].strand_id, private);
+    assert_eq!(merged[1].body, "shared");
+    assert_eq!(merged[2].body, "native private");
+
+    let private_only = project_visible_messages(
+        &messages,
+        shared,
+        "ak:realm:test",
+        Some((
+            shared,
+            private,
+            arkret_sdk::AgentSidecarDisplayMode::SidecarOnly,
+        )),
+    );
+    assert_eq!(private_only.len(), 2);
+    assert!(
+        private_only
+            .iter()
+            .all(|message| message.strand_id == private)
+    );
+}
+
 const CHAT_FIXTURE_DEVICE: &str = "ak:device:01964137-0000-7000-8000-00000000cafe";
 const CHAT_FIXTURE_SEED: [u8; 32] = [91; 32];
 

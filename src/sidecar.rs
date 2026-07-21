@@ -249,6 +249,12 @@ pub fn HostedSidecarContextBar(base_url: String, api_token: String, device_id: S
             div { class: "sidecar-context-main",
                 strong { "Private Sidecar active" }
                 span { class: "muted", "Only you and your eligible AI Agents · E2EE" }
+                span {
+                    class: "badge sidecar-write-target",
+                    "data-testid": "sidecar-write-target",
+                    "data-write-target": "private",
+                    "Editing: Private Sidecar"
+                }
             }
             div { class: "sidecar-display-mode", role: "group", "aria-label": "Private Sidecar display mode",
                 button {
