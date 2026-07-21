@@ -293,11 +293,8 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
             .as_deref(),
         Some("\"private body from invited member\"")
     );
-    // The KeyPackage init private state is RETAINED after a successful apply.
-    // Invitees publish reusable last-resort KeyPackages whose whole purpose is
-    // to stay decryptable across redelivered / repeated Welcomes; consuming the
-    // init key here would self-inflict a "no local KeyPackage identity state"
-    // deadlock on the next redelivery.
+    // The KeyPackage init private state is retained after a successful apply so
+    // a redelivered durable Welcome remains an idempotent replay until ACK.
     assert!(
         crate::mls::runtime::load_mls_key_package_identity_state(
             &secure,

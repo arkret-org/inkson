@@ -129,6 +129,45 @@ impl MlsEndpoints<'_> {
             .map_err(anyhow::Error::from)
     }
 
+    pub async fn consume_key_package(
+        &self,
+        candidate: &crate::mls::runtime::WelcomeConsumeCandidate,
+        consumer_device_id: &str,
+    ) -> anyhow::Result<arkret_sdk::KeyPackagesConsumeOutcome> {
+        let key_package_refs = vec![candidate.key_package_id.clone()];
+        let claim_ids = vec![candidate.claim_id.clone()];
+        let signature = crate::mls_api_helpers::sign_keypackage_consume(
+            &key_package_refs,
+            consumer_device_id,
+            &claim_ids,
+            Some(&candidate.welcome_event_id),
+            Some(&candidate.realm_id),
+            candidate.strand_id.as_deref(),
+            Some(&candidate.mls_group_id),
+            Some(candidate.epoch),
+        )?;
+        let body = arkret_sdk::KeyPackagesConsumeRequestBody {
+            key_package_refs,
+            consumer_device_id: arkret_sdk::DeviceId::new(consumer_device_id.to_owned())?,
+            signature,
+            claim_ids,
+            welcome_ref: Some(candidate.welcome_event_id.clone()),
+            realm_id: Some(arkret_sdk::RealmId::new(candidate.realm_id.clone())?),
+            strand_id: candidate
+                .strand_id
+                .as_ref()
+                .map(|strand_id| arkret_sdk::StrandId::new(strand_id.clone()))
+                .transpose()?,
+            mls_group_id: Some(candidate.mls_group_id.clone()),
+            epoch: Some(candidate.epoch),
+        };
+        self.transport
+            .http()
+            .keypackages_consume(&body)
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
     pub async fn claim_key_package(
         &self,
         target_principal_id: &str,

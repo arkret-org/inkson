@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 /// (`ak-keys-upload-v1`, spec §8.1) so a signature over one batch can never be
 /// replayed as the other; binds the device + the published KeyPackage batch.
 const KEYPACKAGE_UPLOAD_SIGNATURE_PREFIX: &str = "ak.keypackage-upload-v1\n";
+const KEYPACKAGE_CONSUME_SIGNATURE_PREFIX: &str = "ak.keypackage-consume-v1\n";
 
 /// Sign the MLS KeyPackage upload batch with the local event-signer (device
 /// identity Ed25519 `did:key`), binding `device_id` + the published
@@ -56,6 +57,47 @@ pub(crate) fn sign_keypackage_upload_batch(
         )
     })?;
     sign_keypackage_upload_batch_with_signer(&signer, device_id, key_packages)
+}
+
+pub(crate) fn sign_keypackage_consume(
+    key_package_refs: &[String],
+    consumer_device_id: &str,
+    claim_ids: &[String],
+    welcome_ref: Option<&str>,
+    realm_id: Option<&str>,
+    strand_id: Option<&str>,
+    mls_group_id: Option<&str>,
+    epoch: Option<u64>,
+) -> anyhow::Result<arkret_sdk::KeyOperationSignature> {
+    let signer = crate::event_signer::active_signer().ok_or_else(|| {
+        anyhow::anyhow!(
+            "keypackages/consume signature requires an active event-signer (fail-closed)"
+        )
+    })?;
+    let value = json!({
+        "key_package_refs": key_package_refs,
+        "consumer_device_id": consumer_device_id,
+        "claim_ids": claim_ids,
+        "welcome_ref": welcome_ref,
+        "realm_id": realm_id,
+        "strand_id": strand_id,
+        "mls_group_id": mls_group_id,
+        "epoch": epoch,
+    });
+    let canonical = crate::canonical::canonical_json_bytes(&value)?;
+    let mut input = Vec::with_capacity(KEYPACKAGE_CONSUME_SIGNATURE_PREFIX.len() + canonical.len());
+    input.extend_from_slice(KEYPACKAGE_CONSUME_SIGNATURE_PREFIX.as_bytes());
+    input.extend_from_slice(&canonical);
+    let signature = signer
+        .sign_raw(&input)
+        .map_err(|error| anyhow::anyhow!("keypackages/consume signature failed: {error}"))?;
+    Ok(arkret_sdk::KeyOperationSignature {
+        kid: arkret_sdk::NonEmptyString::new(signer.verification_method())
+            .map_err(anyhow::Error::msg)?,
+        alg: Some(arkret_sdk::NonEmptyString::new(signer.algorithm()).map_err(anyhow::Error::msg)?),
+        sig: arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(signature))
+            .map_err(anyhow::Error::msg)?,
+    })
 }
 
 /// Convert a local `MlsKeyPackageRecord` into the typed wire entry for

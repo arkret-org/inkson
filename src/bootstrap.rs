@@ -495,17 +495,11 @@ pub(crate) async fn ensure_local_mls_key_package_published(
         .map_err(|error| format!("MLS device_id: {error:?}"))?;
     let identity = arkret_sdk::ArkretMlsIdentity::new_basic(principal, device)
         .map_err(|error| format!("create MLS identity: {error}"))?;
-    // Publish a reusable last-resort KeyPackage. Single-use KeyPackages are
-    // consumed on claim, so once an admission claims it the member has no
-    // claimable KeyPackage left — if that admission's Welcome is ever lost
-    // (consumed server-side but never applied client-side, e.g. a Welcome
-    // to-device message that expired, or a transient resolution failure during
-    // apply), the member becomes permanently un-addable: the admin reconcile
-    // loop can never re-admit it and it is stuck "pending invite" forever. A
-    // last-resort KeyPackage is kept claimable by the server and retains its
-    // init key across repeated Welcomes, so re-admission always succeeds.
+    // Publish a single-use KeyPackage. Direct Conversation peer claims must
+    // reject last-resort packages, and the successful Welcome path below
+    // replenishes this slot after the joined MLS state is durable.
     let record = identity
-        .last_resort_key_package_record()
+        .key_package_record()
         .map_err(|error| format!("create MLS KeyPackage: {error}"))?;
     let key_package_id = record.keypackage_id.clone();
     let key_package_ref = record.keypackage_ref.as_str().to_owned();
@@ -662,6 +656,29 @@ fn merge_durable_local_mls_welcomes_for_realm(
     Ok(merged)
 }
 
+fn mls_welcome_batch_is_exclusively_for_realm(value: &Value, realm_id: &str) -> bool {
+    value
+        .get("messages")
+        .and_then(Value::as_array)
+        .is_some_and(|messages| {
+            !messages.is_empty()
+                && messages.iter().all(|message| {
+                    crate::mls::runtime::mls_welcome_message_matches_realm(message, realm_id)
+                })
+        })
+}
+
+fn retain_mls_welcomes_for_realm(value: &mut Value, realm_id: &str) -> Result<(), String> {
+    value
+        .get_mut("messages")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "device messages response omits messages array".to_owned())?
+        .retain(|message| {
+            crate::mls::runtime::mls_welcome_message_matches_realm(message, realm_id)
+        });
+    Ok(())
+}
+
 pub(crate) async fn bootstrap_mls_welcome_for_realm(
     base_url: String,
     session_credential: String,
@@ -684,11 +701,6 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     .await
     .map_err(|error| error.display())?;
     let ack_token = messages.ack_token.clone();
-    let can_ack_welcome_batch = !messages.messages.is_empty()
-        && messages
-            .messages
-            .iter()
-            .all(|message| message.kind == "ak.mls.welcome");
 
     // Runs on every target now that OpenMLS builds + runs under wasm32
     // (the browser uses the in-tree OpenMLS via the `js` feature). Previously
@@ -697,6 +709,9 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     // and showed empty/locked encrypted Realms.
     let mut messages_value =
         serde_json::to_value(&messages).map_err(|error| format!("device messages: {error}"))?;
+    let can_ack_welcome_batch =
+        mls_welcome_batch_is_exclusively_for_realm(&messages_value, &realm_id);
+    retain_mls_welcomes_for_realm(&mut messages_value, &realm_id)?;
     let local_inbox = state_store.read().to_device_inbox();
     let replayed_local_welcomes =
         merge_durable_local_mls_welcomes_for_realm(&mut messages_value, &local_inbox, &realm_id)?;
@@ -805,6 +820,36 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         ));
     }
 
+    for candidate in &welcome_outcome.consumable_claims {
+        let candidate = candidate.clone();
+        let key_package_id = candidate.key_package_id.clone();
+        let consumer_device_id = device_id.clone();
+        let consume = crate::transport::auth::with_endpoint_clients(
+            &base_url,
+            session_credential.clone(),
+            None,
+            |clients| async move {
+                clients
+                    .mls()
+                    .consume_key_package(&candidate, &consumer_device_id)
+                    .await
+            },
+        )
+        .await
+        .map_err(|error| error.display())?;
+        if !consume.failures.is_empty()
+            || !consume
+                .consumed
+                .iter()
+                .any(|keypackage_ref| keypackage_ref == &key_package_id)
+        {
+            return Err(format!(
+                "MLS KeyPackage consume did not confirm {}: {:?}",
+                key_package_id, consume.failures
+            ));
+        }
+    }
+
     if applied > 0 {
         // Applying a Welcome creates/imports the local account MLS secret before
         // the user necessarily sends an encrypted message. Back it up with the
@@ -866,6 +911,20 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         tracing::debug!(?error, "failed to ack durable MLS welcome device messages");
     }
 
+    if applied > 0 {
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        let base_scope = server_key(&base_url);
+        crate::mls::runtime::delete_mls_key_package_publish_marker(
+            secure_store.as_ref(),
+            &base_scope,
+            &actor_id,
+            &device_id,
+        )
+        .map_err(|error| format!("clear claimed MLS KeyPackage publish marker: {error}"))?;
+        ensure_local_mls_key_package_published(base_url, session_credential, actor_id, device_id)
+            .await?;
+    }
+
     Ok(MlsWelcomeBootstrapOutcome {
         applied,
         backup_id: Some(backup_id),
@@ -903,6 +962,7 @@ mod tests {
             failed,
             skipped_stale,
             first_error: None,
+            consumable_claims: Vec::new(),
         }
     }
 
@@ -953,6 +1013,31 @@ mod tests {
             1
         );
         assert_eq!(messages["messages"], serde_json::json!([welcome]));
+    }
+
+    #[test]
+    fn bootstrap_applies_only_current_realm_welcomes_and_preserves_ack_boundary() {
+        let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000014";
+        let current = durable_welcome(
+            "ak:device_message:0196419b-0000-7000-8000-000000000026",
+            realm_id,
+        );
+        let other = durable_welcome(
+            "ak:device_message:0196419b-0000-7000-8000-000000000027",
+            "ak:realm:0196419b-0000-7000-8000-000000000099",
+        );
+        let mut messages = serde_json::json!({
+            "messages": [current.clone(), other],
+        });
+
+        assert!(!mls_welcome_batch_is_exclusively_for_realm(
+            &messages, realm_id
+        ));
+        retain_mls_welcomes_for_realm(&mut messages, realm_id).unwrap();
+        assert_eq!(messages["messages"], serde_json::json!([current]));
+        assert!(mls_welcome_batch_is_exclusively_for_realm(
+            &messages, realm_id
+        ));
     }
 
     #[test]

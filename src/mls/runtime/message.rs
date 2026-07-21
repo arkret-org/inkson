@@ -51,6 +51,7 @@ pub struct WelcomeApplyOutcome {
     /// would otherwise roll the local MLS snapshot back to the join epoch).
     pub skipped_stale: usize,
     pub first_error: Option<String>,
+    pub(crate) consumable_claims: Vec<WelcomeConsumeCandidate>,
 }
 
 impl WelcomeApplyOutcome {
@@ -62,10 +63,22 @@ impl WelcomeApplyOutcome {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct WelcomeConsumeCandidate {
+    pub(crate) key_package_id: String,
+    pub(crate) claim_id: String,
+    pub(crate) welcome_event_id: String,
+    pub(crate) realm_id: String,
+    pub(crate) strand_id: Option<String>,
+    pub(crate) mls_group_id: String,
+    pub(crate) epoch: u64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct WelcomeMessageEntry {
     content: serde_json::Value,
     key_package_id: Option<String>,
+    welcome_event_id: Option<String>,
 }
 
 /// Canonical exporter-aead `aad_bytes` for `(realm_id, epoch)`, bound into the
@@ -810,6 +823,16 @@ fn welcome_entry_key_package_id(entry: &serde_json::Value) -> Option<String> {
         .map(str::to_owned)
 }
 
+fn welcome_entry_event_id(entry: &serde_json::Value) -> Option<String> {
+    entry
+        .get("unsigned")
+        .and_then(|unsigned| unsigned.get("source_event_id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
 fn collect_welcome_message_entries(value: &serde_json::Value) -> Vec<WelcomeMessageEntry> {
     let mut welcomes = Vec::new();
     let Some(messages) = value
@@ -830,10 +853,33 @@ fn collect_welcome_message_entries(value: &serde_json::Value) -> Vec<WelcomeMess
             welcomes.push(WelcomeMessageEntry {
                 content: content.clone(),
                 key_package_id: welcome_entry_key_package_id(entry),
+                welcome_event_id: welcome_entry_event_id(entry),
             });
         }
     }
     welcomes
+}
+
+fn welcome_consume_candidate(
+    entry: &WelcomeMessageEntry,
+    realm_id: &str,
+) -> Option<WelcomeConsumeCandidate> {
+    let payload =
+        serde_json::from_value::<arkret_sdk::MlsWelcomePayload>(entry.content.clone()).ok()?;
+    let strand_id = payload
+        .peer_claim_receipt
+        .as_ref()
+        .and_then(|receipt| receipt.request.strand_id.as_ref())
+        .map(ToString::to_string);
+    Some(WelcomeConsumeCandidate {
+        key_package_id: entry.key_package_id.clone()?,
+        claim_id: payload.claim_id.as_str().to_owned(),
+        welcome_event_id: entry.welcome_event_id.clone()?,
+        realm_id: realm_id.to_owned(),
+        strand_id,
+        mls_group_id: payload.mls_group_id.as_str().to_owned(),
+        epoch: payload.epoch,
+    })
 }
 
 pub fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Value> {
@@ -1295,6 +1341,9 @@ pub fn apply_welcome_messages_with_device_snapshot(
             && existing.epoch >= post_state.epoch
         {
             outcome.skipped_stale += 1;
+            if let Some(candidate) = welcome_consume_candidate(&welcome_entry, realm_id) {
+                outcome.consumable_claims.push(candidate);
+            }
             continue;
         }
         let mut salt = [0u8; 16];
@@ -1314,17 +1363,14 @@ pub fn apply_welcome_messages_with_device_snapshot(
         if let Some(policy_root) = welcome_policy_root.as_deref() {
             state_store.record_genesis_policy_root_for_effective_scope(realm_id, None, policy_root);
         }
-        // RETAIN the KeyPackage init private key — do NOT delete it after a
-        // successful apply. Invitees publish reusable **last-resort** KeyPackages
-        // (`identity.last_resort_key_package_record()`), whose whole purpose is to
-        // stay decryptable across repeated Welcomes (redelivery of the to-device
-        // Welcome, re-admission after a device/epoch change). Deleting the init
-        // key here "consumed" it: the FIRST apply succeeded, then the very next
-        // re-delivered Welcome failed with "no local KeyPackage identity state"
-        // because the key was already gone — a self-inflicted deadlock that
-        // exactly defeats the last-resort retention guarantee. A redelivered
-        // Welcome is now an idempotent no-op via the stale-snapshot guard above.
+        // Retain the claimed KeyPackage private state until redelivery has
+        // quiesced. The server-side package is single-use, but the durable
+        // to-device queue may replay the same Welcome before its ACK lands; the
+        // equal-or-higher snapshot guard above makes that replay idempotent.
         outcome.applied += 1;
+        if let Some(candidate) = welcome_consume_candidate(&welcome_entry, realm_id) {
+            outcome.consumable_claims.push(candidate);
+        }
     }
     Ok(outcome)
 }

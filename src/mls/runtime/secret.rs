@@ -18,19 +18,11 @@ const ACCOUNT_MLS_SECRET_VERIFIED_MARKER: &str = "verified";
 pub const ACCOUNT_MLS_SECRET_CURRENT_VERSION: u32 = 1;
 const ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION: u32 = 32;
 const MLS_KEY_PACKAGE_IDENTITY_STATE_PREFIX: &str = "inkson.mls_key_package.identity_state.v1";
-// `.v2`: bumped when the bootstrap publish switched from a single-use
-// KeyPackage to a reusable last-resort one. Bumping the marker namespace makes
-// every client miss its old (single-use, possibly already-consumed) marker once
-// and republish a last-resort KeyPackage, self-healing members that were stuck
-// "pending invite" because their only KeyPackage had been consumed by an
-// admission whose Welcome was never applied.
-// v3: bumped so every device re-publishes its last-resort KeyPackage after the
-// SDK fix that adds the `LastResort` leaf capability. KeyPackages minted by the
-// pre-fix SDK are self-inconsistent (carry the `last_resort` extension without
-// declaring `ExtensionType::LastResort`), so an admin `Add` of them fails with
-// `UnsupportedExtension` and admission stalls. The bump invalidates the stale
-// publish marker so the corrected KeyPackage is re-published on next boot.
-const MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str = "inkson.mls_key_package.publish_marker.v3";
+// v4 invalidates the former last-resort-only marker. Direct Conversation peer
+// claims must use single-use KeyPackages, so every device republishes an
+// ordinary package after this upgrade and after each successfully applied
+// Welcome.
+const MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str = "inkson.mls_key_package.publish_marker.v4";
 /// Per-(actor, device) X25519 keypair used to receive HPKE-sealed
 /// `history_secret`s in a `ak.realm_key.share`. This device advertises the
 /// public half as `recipient_hpke_public_key` in a `ak.realm_key.request` and

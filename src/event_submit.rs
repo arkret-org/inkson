@@ -1225,13 +1225,17 @@ impl EventSubmitter {
             && events.get(1).is_some_and(|event| {
                 event.kind.as_str() == arkret_sdk::events::EventKind::DEVICE_AUTHORIZE
             });
-        let is_ordinary_realm_bootstrap = if first_is_realm_create && !is_identity_anchor_unit {
-            arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(&events)
-                .map_err(|error| anyhow::anyhow!(error.reason_code()))?;
-            true
-        } else {
-            false
-        };
+        let is_managed_agent_pcr_create = first_is_realm_create
+            && events.len() == 1
+            && arkret_sdk::identity::materialize_managed_agent_pcr_control(&events).is_ok();
+        let is_ordinary_realm_bootstrap =
+            if first_is_realm_create && !is_identity_anchor_unit && !is_managed_agent_pcr_create {
+                arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(&events)
+                    .map_err(|error| anyhow::anyhow!(error.reason_code()))?;
+                true
+            } else {
+                false
+            };
         for event in &mut events {
             attach_capability_grant_payload_proof(event)?;
         }
@@ -1253,7 +1257,10 @@ impl EventSubmitter {
             batch_frontiers.insert(actor_id, (event.actor_seq, event.event_id.clone()));
         }
         for event in &mut events {
-            if !is_ordinary_realm_bootstrap && !is_identity_anchor_unit {
+            if !is_ordinary_realm_bootstrap
+                && !is_identity_anchor_unit
+                && !is_managed_agent_pcr_create
+            {
                 self.stamp_cba_basis_for_sdk_event(event).await?;
             }
         }

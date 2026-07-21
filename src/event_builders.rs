@@ -504,15 +504,9 @@ pub fn build_managed_agent_pcr_bootstrap_events(
         controller_authorization_ref,
         trust_domain,
     )?;
-    let grant_id = format!("ak:grant:{}", crate::operation::uuid_v7());
-    let mut founding_grant =
-        crate::operation::ak_ops::realm_founding_grant(realm_id, agent_id, &grant_id)
-            .build_sdk_event("inkson")?;
-    founding_grant.executed_by = Some(arkret_sdk::Did::new(controller_id.to_owned())?);
-    founding_grant.authorization_ref = Some(controller_authorization_ref.to_owned());
-    let events = vec![create, founding_grant];
-    arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(&events)
-        .map_err(|error| anyhow::anyhow!(error.reason_code()))?;
+    let events = vec![create];
+    arkret_sdk::identity::materialize_managed_agent_pcr_control(&events)
+        .map_err(|error| anyhow::anyhow!("managed Agent PCR bootstrap is invalid: {error}"))?;
     Ok(events)
 }
 
@@ -1363,7 +1357,7 @@ mod notary_derivation_tests {
     }
 
     #[test]
-    fn managed_agent_pcr_bootstrap_includes_exact_founding_grant() {
+    fn managed_agent_pcr_bootstrap_is_delegated_create_only() {
         let events = build_managed_agent_pcr_bootstrap_events(
             "ak:realm:01964137-0000-7000-8000-000000000099",
             "did:web:agent.example",
@@ -1373,16 +1367,17 @@ mod notary_derivation_tests {
         )
         .unwrap();
 
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[1].kind.as_str(), "ak.capability.grant");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind.as_str(), "ak.realm.create");
         assert_eq!(
-            events[1].executed_by.as_ref().map(arkret_sdk::Did::as_str),
+            events[0].executed_by.as_ref().map(arkret_sdk::Did::as_str),
             Some("did:web:alice.example")
         );
         assert_eq!(
-            events[1].authorization_ref.as_deref(),
+            events[0].authorization_ref.as_deref(),
             Some("did:web:agent.example#managed-controller")
         );
+        assert!(arkret_sdk::identity::materialize_managed_agent_pcr_control(&events).is_ok());
     }
 
     #[test]
