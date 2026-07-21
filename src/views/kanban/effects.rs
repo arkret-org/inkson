@@ -485,7 +485,7 @@ pub(super) fn KanbanEffects(
                 }
             } else {
                 // Event-sourced live reconcile (spec
-                // `cotask/specs/active/2026-06-29-kanban-event-sourced-projection.md`).
+                // `arkret-work/specs/active/2026-06-29-kanban-event-sourced-projection.md`).
                 // The per-session server strand/space projections are
                 // visibility-filtered and, for an encrypted realm, never carry
                 // another member's card content (title in `encrypted_metadata`,
@@ -730,7 +730,7 @@ pub(super) fn KanbanEffects(
             if let Ok(backfill) = events_res {
                 let event_values = backfill.event_values();
                 // Event-sourced cold start (spec
-                // `cotask/specs/active/2026-06-29-kanban-event-sourced-projection.md`):
+                // `arkret-work/specs/active/2026-06-29-kanban-event-sourced-projection.md`):
                 // fold the durable event log into `raw_operations`. The `columns`
                 // memo + the container/selection sync effect re-project the board
                 // purely from events; this spawn ONLY ingests. The per-session
