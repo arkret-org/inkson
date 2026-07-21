@@ -93,7 +93,7 @@ pub(crate) fn presence_expiry_to_clears_at(choice: &str) -> Option<String> {
         }
         _ => return None,
     };
-    Some(clears_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+    Some(arkret_sdk::canonical::format_timestamp_canonical(clears_at))
 }
 
 pub(crate) fn default_avatar_initial(handles: &[String], account_did: &str) -> String {
@@ -2836,11 +2836,9 @@ pub fn SettingsPanel(
                                                             let mut next = existing.clone();
                                                             next.local_name = next_name.trim().to_owned();
                                                             next.updated_at = Some(
-                                                                chrono::Utc::now()
-                                                                    .to_rfc3339_opts(
-                                                                        chrono::SecondsFormat::Secs,
-                                                                        true,
-                                                                    ),
+                                                                arkret_sdk::canonical::format_timestamp_canonical(
+                                                                    chrono::Utc::now(),
+                                                                ),
                                                             );
                                                             state_store
                                                                 .write()
@@ -2942,8 +2940,9 @@ pub fn SettingsPanel(
                                     crate::components::feedback::toast_info("feedback.enter_actor_and_name", vec![]);
                                     return;
                                 }
-                                let now_rfc3339 = chrono::Utc::now()
-                                    .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+                                let now_rfc3339 = arkret_sdk::canonical::format_timestamp_canonical(
+                                    chrono::Utc::now(),
+                                );
                                 let mut remark = crate::account_data::ContactRemark::new(
                                     actor_id.clone(),
                                     local_name.clone(),

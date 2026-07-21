@@ -695,7 +695,9 @@ pub fn RecoveryPanel(
                             let actor_key = actor_key.clone();
                             let mut store = state_store;
                             move |_| {
-                                let now = chrono::Utc::now().to_rfc3339();
+                                let now = arkret_sdk::canonical::format_timestamp_canonical(
+                                    chrono::Utc::now(),
+                                );
                                 last_rehearsed.set(now);
                                 save_state(&mut store, &actor_key, &snapshot_state());
                                 social_status.set("Rehearsal logged. Outreach to guardians is a future server-side feature.".to_owned());

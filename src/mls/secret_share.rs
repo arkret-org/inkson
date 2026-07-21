@@ -292,7 +292,7 @@ pub async fn send_request(
         account_did,
         target_existing_device_id,
         SECRET_SHARE_KIND_REQUEST,
-        &crate::clock::rfc3339_secs_in(30),
+        &crate::clock::timestamp_in(30),
         content,
     )
     .await
@@ -316,7 +316,7 @@ pub async fn respond_to_request(
     account_did: &str,
     self_device_id: &str,
 ) -> Result<()> {
-    let expires_at = crate::clock::rfc3339_secs_in(30);
+    let expires_at = crate::clock::timestamp_in(30);
     let content = build_send_content(
         request,
         account_secret,
@@ -369,10 +369,8 @@ pub fn try_open_envelope(
 
 /// Canonical HPKE AAD for `ak.secret.send` (device-lifecycle.md §10.7): the
 /// RFC 8785 JCS bytes of the six envelope binding fields both sides
-/// reconstruct. `expires_at` is normalized to integer Unix seconds
-/// (`expires_at_unix`) so the AAD is invariant to RFC3339 string reformatting
-/// across the soland `DateTime<Utc>` round-trip (e.g. `Z` vs `+00:00`,
-/// fractional seconds).
+/// reconstruct. `expires_at` is the already-validated canonical Arkret
+/// timestamp string; non-canonical spellings are rejected before AAD creation.
 fn send_aad(
     sender_principal_id: &str,
     sender_device_id: &str,
@@ -380,16 +378,15 @@ fn send_aad(
     recipient_device_id: &str,
     expires_at: &str,
 ) -> Result<Vec<u8>> {
-    let expires_at_unix = chrono::DateTime::parse_from_rfc3339(expires_at)
-        .map_err(|err| anyhow!("parse secret-share expires_at {expires_at:?}: {err}"))?
-        .timestamp();
+    arkret_sdk::canonical::validate_timestamp_canonical(expires_at)
+        .map_err(|err| anyhow!("invalid secret-share expires_at {expires_at:?}: {err}"))?;
     let aad = json!({
         "kind": SECRET_SHARE_KIND_SEND,
         "sender_principal_id": sender_principal_id,
         "sender_device_id": sender_device_id,
         "recipient_principal_id": recipient_principal_id,
         "recipient_device_id": recipient_device_id,
-        "expires_at_unix": expires_at_unix,
+        "expires_at": expires_at,
     });
     arkret_sdk::canonical::canonical_json_bytes(&aad)
         .map_err(|err| anyhow!("canonicalize secret-share AAD: {err}"))
@@ -422,7 +419,7 @@ mod tests {
     const ACCOUNT_DID: &str = "did:web:alice.example";
     const OLD_DEVICE: &str = "ak:device:01904100-0000-7000-8000-00000000000a";
     const NEW_DEVICE: &str = "ak:device:01904100-0000-7000-8000-00000000000b";
-    const EXPIRES: &str = "2026-06-10T00:30:00Z";
+    const EXPIRES: &str = "2026-06-10T00:30:00.000Z";
 
     fn stored_secret() -> StoredAccountMlsSecret {
         StoredAccountMlsSecret {
@@ -536,12 +533,9 @@ mod tests {
     }
 
     #[test]
-    fn aad_is_invariant_to_expires_at_reformatting() {
-        // Seal with a `Z` RFC3339; open with the equivalent `+00:00` form (as a
-        // DateTime<Utc> round-trip through soland might emit). The AAD binds the
-        // normalized Unix second, so HPKE open MUST still succeed.
+    fn aad_rejects_noncanonical_expires_at_before_hpke_open() {
         let (requester, send) = drive_happy_path();
-        let opened = open_send_content(
+        let error = open_send_content(
             &requester,
             &send,
             ACCOUNT_DID,
@@ -549,8 +543,8 @@ mod tests {
             NEW_DEVICE,
             "2026-06-10T00:30:00+00:00",
         )
-        .unwrap();
-        assert_eq!(opened.secret_version, 1);
+        .unwrap_err();
+        assert!(format!("{error}").contains("invalid secret-share expires_at"));
     }
 
     #[test]
@@ -570,7 +564,7 @@ mod tests {
             "sender_device_id": OLD_DEVICE,
             "recipient_principal_id": ACCOUNT_DID,
             "recipient_device_id": NEW_DEVICE,
-            "sent_at": "2026-06-10T00:00:00Z",
+            "sent_at": "2026-06-10T00:00:00.000Z",
             "expires_at": EXPIRES,
             "content": send,
         });

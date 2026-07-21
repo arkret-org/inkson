@@ -677,7 +677,7 @@ mod tests {
         let event = serde_json::json!({
             "kind": "ak.audit.policy_access",
             "event_id": "ak:event:01904100-0000-7000-8000-000000000099",
-            "original_received_at": "2026-05-19T23:45:00Z",
+            "original_received_at": "2026-05-19T23:45:00.000Z",
             "late_recovery": {
                 "receiver_visible_at_t0": true,
                 "source_rechecked_current_share_policy": true
@@ -687,7 +687,7 @@ mod tests {
                 "actor": "did:web:alice.example",
                 "access_kind": "e2ee_late_recovery",
                 "late_recovery_original_event_id": "ak:event:01904100-0000-7000-8000-000000000007",
-                "observed_at": base.to_rfc3339()
+                "observed_at": arkret_sdk::canonical::format_timestamp_canonical(base)
             }
         });
 
@@ -714,7 +714,7 @@ mod tests {
                 "actor": "did:web:alice.example",
                 "access_kind": "e2ee_late_recovery",
                 "late_recovery_original_event_id": "ak:event:01904100-0000-7000-8000-000000000007",
-                "observed_at": base.to_rfc3339()
+                "observed_at": arkret_sdk::canonical::format_timestamp_canonical(base)
             }
         });
         assert_eq!(

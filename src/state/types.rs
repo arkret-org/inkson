@@ -106,7 +106,7 @@ impl ReadMarkerRecord {
             "realm_id": &self.body.realm_id,
             "read_scope": &self.body.read_scope,
             "position": &self.body.position,
-            "updated_at": self.updated_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            "updated_at": arkret_sdk::canonical::format_timestamp_canonical(self.updated_at),
         })
     }
 

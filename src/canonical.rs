@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn timestamp_validation_pass_through() {
-        assert!(validate_timestamp_canonical("2026-05-14T00:00:00Z").is_ok());
+        assert!(validate_timestamp_canonical("2026-05-14T00:00:00.000Z").is_ok());
         assert!(validate_timestamp_canonical("2026-05-14T00:00:00+00:00").is_err());
     }
 

@@ -1,4 +1,4 @@
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Utc};
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn now_unix_ms() -> u64 {
@@ -21,23 +21,25 @@ pub(crate) fn now_utc() -> DateTime<Utc> {
     Utc::now()
 }
 
-pub(crate) fn now_utc_secs() -> DateTime<Utc> {
-    DateTime::<Utc>::from_timestamp(now_utc().timestamp(), 0).unwrap_or(DateTime::<Utc>::UNIX_EPOCH)
+pub(crate) fn now_utc_canonical() -> DateTime<Utc> {
+    arkret_sdk::canonical::normalize_timestamp_canonical(now_utc())
 }
 
-pub(crate) fn now_rfc3339_secs() -> String {
-    now_utc_secs().to_rfc3339_opts(SecondsFormat::Secs, true)
+pub(crate) fn now_timestamp() -> String {
+    arkret_sdk::canonical::format_timestamp_canonical(now_utc())
 }
 
 /// Canonical Event/proof timestamp with exactly three UTC millisecond digits.
 pub(crate) fn now_utc_millis() -> DateTime<Utc> {
-    arkret_sdk::canonical::normalize_timestamp_millis_canonical(now_utc())
+    arkret_sdk::canonical::normalize_timestamp_canonical(now_utc())
 }
 
-/// RFC3339 (seconds precision) timestamp `minutes` into the future. Used to
+/// Canonical Arkret timestamp `minutes` into the future. Used to
 /// stamp `DeviceMessageEnvelope.expires_at`, which `device-lifecycle.md` §7
 /// makes a required to-device queue field (default cap 24h; verification and
 /// secret-share strands use much shorter windows).
-pub(crate) fn rfc3339_secs_in(minutes: i64) -> String {
-    (now_utc() + chrono::Duration::minutes(minutes)).to_rfc3339_opts(SecondsFormat::Secs, true)
+pub(crate) fn timestamp_in(minutes: i64) -> String {
+    arkret_sdk::canonical::format_timestamp_canonical(
+        now_utc() + chrono::Duration::minutes(minutes),
+    )
 }

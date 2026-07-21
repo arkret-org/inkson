@@ -1328,7 +1328,7 @@ fn verified_org_relationships(org: &Value) -> Vec<String> {
         return Vec::new();
     }
 
-    let now = crate::clock::now_rfc3339_secs();
+    let now = crate::clock::now_timestamp();
     let mut out = Vec::new();
     if let Some(entries) = org
         .get("verified_relationships")
@@ -1592,7 +1592,7 @@ mod tests {
         let org = json!({
             "verified_relationships": [
                 { "relationship": "owner", "status": "revoked" },
-                { "relationship": "governance", "status": "active", "expires_at": "2000-01-01T00:00:00Z" },
+                { "relationship": "governance", "status": "active", "expires_at": "2000-01-01T00:00:00.000Z" },
             ],
         });
         assert!(verified_org_relationships(&org).is_empty());
@@ -1621,7 +1621,7 @@ mod tests {
     fn far_future_expiry_keeps_the_badge() {
         let org = json!({
             "verified_relationships": [
-                { "relationship": "directory_certifier", "status": "active", "expires_at": "9999-01-01T00:00:00Z" },
+                { "relationship": "directory_certifier", "status": "active", "expires_at": "9999-01-01T00:00:00.000Z" },
             ],
         });
         assert_eq!(

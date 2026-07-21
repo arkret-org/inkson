@@ -268,7 +268,7 @@ fn inkson_accepts_server_contract_payloads() {
             "tags": ["demo"],
             "public": true,
             "category": "collaboration",
-            "as_of": "2026-05-30T00:00:00Z",
+            "as_of": "2026-05-30T00:00:00.000Z",
             "source_refs": ["ak:event:0196419b-0000-7000-8000-000000000001"],
             "policy_revision": "contract-rev"
         },
@@ -289,8 +289,8 @@ fn inkson_accepts_server_contract_payloads() {
                 "control_event_set_root": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
                 "state_root": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
             },
-            "as_of": "2026-05-30T00:00:00Z",
-            "expires_at": "2099-01-01T00:00:00Z"
+            "as_of": "2026-05-30T00:00:00.000Z",
+            "expires_at": "2099-01-01T00:00:00.000Z"
         }]
     }))
     .unwrap();
@@ -364,11 +364,11 @@ fn inkson_accepts_server_contract_payloads() {
             "resources": [
                 {"kind": "realm", "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001"}
             ],
-            "issued_at": "2026-04-28T12:00:00Z",
+            "issued_at": "2026-04-28T12:00:00.000Z",
             "proofs": []
         }],
         "state_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-        "evaluated_at": "2026-04-28T12:00:00Z"
+        "evaluated_at": "2026-04-28T12:00:00.000Z"
     }))
     .unwrap();
     assert_eq!(grants.grants.len(), 1);
@@ -451,7 +451,7 @@ fn inkson_accepts_server_contract_payloads() {
             "blob_ref": format!("ak:blob:{blob_digest}"),
             "content_digest": blob_digest,
             "size_bytes": 23,
-            "received_at": "2026-04-28T12:00:00Z",
+            "received_at": "2026-04-28T12:00:00.000Z",
             "issuer_service_id": "did:web:server.local",
             "signature": {
                 "kid": "did:web:server.local",

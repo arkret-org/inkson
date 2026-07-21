@@ -63,7 +63,7 @@ fn kanban_operation_from_typed(event: &arkret_sdk::Event) -> Option<RawOperation
             "kind": kind,
             "operation_id": operation_id,
             "actor_id": event.actor_id.as_str(),
-            "created_at": event.created_at.to_rfc3339(),
+            "created_at": arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
             "write_state": "synced",
             "body": event.payload,
         }),

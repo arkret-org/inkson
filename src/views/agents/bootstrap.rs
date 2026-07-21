@@ -1429,10 +1429,10 @@ mod tests {
         )
         .unwrap();
         let public_multikey = crate::identity::did_key::encode_x25519_multibase(&public_key);
-        let issued_at = chrono::DateTime::parse_from_rfc3339("2026-07-17T00:00:00Z")
+        let issued_at = chrono::DateTime::parse_from_rfc3339("2026-07-17T00:00:00.000Z")
             .unwrap()
             .with_timezone(&chrono::Utc);
-        let expires_at = chrono::DateTime::parse_from_rfc3339("2036-07-17T00:00:00Z")
+        let expires_at = chrono::DateTime::parse_from_rfc3339("2036-07-17T00:00:00.000Z")
             .unwrap()
             .with_timezone(&chrono::Utc);
         let policy_id = "ak:policy:01964137-0000-7000-8000-000000000071";
@@ -1475,7 +1475,7 @@ mod tests {
             }
         }))
         .unwrap();
-        let evaluated_at = chrono::DateTime::parse_from_rfc3339("2026-07-18T00:00:00Z")
+        let evaluated_at = chrono::DateTime::parse_from_rfc3339("2026-07-18T00:00:00.000Z")
             .unwrap()
             .with_timezone(&chrono::Utc);
 

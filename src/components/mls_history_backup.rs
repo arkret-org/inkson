@@ -124,8 +124,12 @@ pub fn mls_history_backup_status() -> MlsHistoryBackupStatus {
     });
     if let Ok(last) = MLS_HISTORY_BACKUP_LAST_OUTCOME.lock() {
         status.last_error = last.last_error.clone();
-        status.last_error_at = last.last_error_at.map(|at| at.to_rfc3339());
-        status.last_uploaded_at = last.last_uploaded_at.map(|at| at.to_rfc3339());
+        status.last_error_at = last
+            .last_error_at
+            .map(arkret_sdk::canonical::format_timestamp_canonical);
+        status.last_uploaded_at = last
+            .last_uploaded_at
+            .map(arkret_sdk::canonical::format_timestamp_canonical);
     }
     status
 }

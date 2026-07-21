@@ -264,9 +264,9 @@ pub fn build_presence_envelope(
 
 fn bucket_presence_timestamp(ts: chrono::DateTime<chrono::Utc>) -> String {
     let bucketed = ts.timestamp() - ts.timestamp().rem_euclid(60 * 60);
-    let start = chrono::DateTime::<chrono::Utc>::from_timestamp(bucketed, 0)
-        .unwrap_or(ts)
-        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let start = arkret_sdk::canonical::format_timestamp_canonical(
+        chrono::DateTime::<chrono::Utc>::from_timestamp(bucketed, 0).unwrap_or(ts),
+    );
     format!("{start}/PT1H")
 }
 

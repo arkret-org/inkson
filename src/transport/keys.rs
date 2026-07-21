@@ -129,8 +129,9 @@ pub async fn submit_realm_key_request(
     payload
         .validate()
         .map_err(|err| anyhow::anyhow!("ak.realm_key.request invalid: {err}"))?;
-    let expires_at = (crate::clock::now_utc() + chrono::Duration::minutes(4))
-        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let expires_at = arkret_sdk::canonical::format_timestamp_canonical(
+        crate::clock::now_utc() + chrono::Duration::minutes(4),
+    );
     let txn_id = format!("realm-key-request-{}", crate::operation::uuid_v7());
     send_device_message_envelope(
         http,

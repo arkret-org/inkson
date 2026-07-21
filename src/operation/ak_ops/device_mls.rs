@@ -31,7 +31,7 @@ pub fn device_revoke(
             arkret_sdk::DeviceId::new(revoked_by_device_id.to_owned())
                 .map_err(|err| anyhow::anyhow!("invalid revoking device id: {err}"))?,
         ),
-        revoked_at: crate::clock::now_utc_secs(),
+        revoked_at: crate::clock::now_utc_canonical(),
         reason: arkret_sdk::DeviceRevocationReason::new(reason.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid device revocation reason: {err}"))?,
         proof: None,

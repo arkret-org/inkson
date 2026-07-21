@@ -109,7 +109,7 @@ pub fn moderation_appeal_review(
         "appeal_id": appeal_id,
         "realm_id": realm,
         "reviewer": actor,
-        "reviewed_at": crate::clock::now_rfc3339_secs(),
+        "reviewed_at": crate::clock::now_timestamp(),
     });
     if let Some(notes_ref) = notes_ref {
         body["notes_ref"] = json!(notes_ref);
@@ -145,7 +145,7 @@ pub fn moderation_appeal_decision(
         "reviewer": actor,
         "verdict": verdict,
         "reason_text_ref": reason_text_ref,
-        "decided_at": crate::clock::now_rfc3339_secs(),
+        "decided_at": crate::clock::now_timestamp(),
     });
     if let Some(modify_decision_ref) = modify_decision_ref {
         body["modify_decision_ref"] = json!(modify_decision_ref);
@@ -174,7 +174,7 @@ pub fn moderation_appeal_close(
         "appeal_id": appeal_id,
         "realm_id": realm,
         "closer": actor,
-        "closed_at": crate::clock::now_rfc3339_secs(),
+        "closed_at": crate::clock::now_timestamp(),
     });
     if let Some(close_reason) = close_reason {
         body["close_reason"] = json!(close_reason);

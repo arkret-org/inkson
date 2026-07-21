@@ -326,7 +326,7 @@ mod directory_refresh_tests {
             pairing_mode: mode,
             pairing_request_id: "pairing-request-2".to_owned(),
             pairing_code: Some("fresh-code".to_owned()),
-            expires_at: chrono::DateTime::parse_from_rfc3339("2026-07-18T01:00:00Z")
+            expires_at: chrono::DateTime::parse_from_rfc3339("2026-07-18T01:00:00.000Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
         }
@@ -336,7 +336,7 @@ mod directory_refresh_tests {
     fn bootstrap_renewal_reopens_expired_agent_and_exposes_fresh_material() {
         let mut rows = vec![test_pairing_view(AgentStatus::PairingExpired)];
         let outcome = test_renew_outcome(AgentPairingMode::Bootstrap);
-        let now = chrono::DateTime::parse_from_rfc3339("2026-07-18T00:00:00Z")
+        let now = chrono::DateTime::parse_from_rfc3339("2026-07-18T00:00:00.000Z")
             .unwrap()
             .with_timezone(&chrono::Utc);
 
@@ -352,7 +352,7 @@ mod directory_refresh_tests {
     fn replacement_renewal_preserves_paused_lifecycle_and_existing_key() {
         let mut rows = vec![test_pairing_view(AgentStatus::Paused)];
         let outcome = test_renew_outcome(AgentPairingMode::Replacement);
-        let now = chrono::DateTime::parse_from_rfc3339("2026-07-18T00:00:00Z")
+        let now = chrono::DateTime::parse_from_rfc3339("2026-07-18T00:00:00.000Z")
             .unwrap()
             .with_timezone(&chrono::Utc);
 
@@ -914,7 +914,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
         .and_then(|key_state| key_state.pairing_expires_at.as_ref())
         .map(chrono::DateTime::to_rfc3339)
         .unwrap_or_default();
-    let now_rfc3339 = crate::clock::now_rfc3339_secs();
+    let now_rfc3339 = crate::clock::now_timestamp();
     let selected_pairing_is_expired = selected_status == "pairing_expired"
         || is_pairing_request_expired(&selected_pairing_expires_at, &now_rfc3339);
     let active_pairing_action_id = pairing_action_agent_id();

@@ -345,7 +345,7 @@ mod tests {
                 display_name: name.to_owned(),
                 avatar_blob_ref: None,
             },
-            asserted_at: chrono::DateTime::parse_from_rfc3339("2026-05-27T12:00:00Z")
+            asserted_at: chrono::DateTime::parse_from_rfc3339("2026-05-27T12:00:00.000Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
             expires_at: None,

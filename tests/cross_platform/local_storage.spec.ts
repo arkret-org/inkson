@@ -25,7 +25,7 @@ const SAMPLE_LOCAL_IDENTITY = {
     "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSdoendfXkY2BVcDzqHM",
   signing_seed_hex:
     "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
-  created_at: "2026-05-10T00:00:00Z",
+  created_at: "2026-05-10T00:00:00.000Z",
 };
 
 test.describe("LocalStorage round-trip of LocalIdentity", () => {

@@ -1320,7 +1320,7 @@ mod tests {
             device_id: Some(arkret_sdk::DeviceId::new(device_id.to_owned()).unwrap()),
             grant_id: arkret_sdk::GrantId::new(grant_id.to_owned()).unwrap(),
             grant_jwt: "grant.jwt".to_owned(),
-            expires_at: "2026-05-29T12:00:00Z".parse().unwrap(),
+            expires_at: "2026-05-29T12:00:00.000Z".parse().unwrap(),
             audience: arkret_sdk::Did::new("did:web:local.host".to_owned()).unwrap(),
             granted_scope: vec!["urn:arkret:principal-server:session.bind".to_owned()],
             session_public_key: Some("public-key".to_owned()),
@@ -1342,11 +1342,10 @@ mod tests {
         assert_eq!(persisted.device_id, device_id);
         assert_eq!(persisted.principal_server_url, "https://local.host");
         assert_eq!(
-            persisted
-                .grant_expires_at
-                .expect("grant expiry")
-                .to_rfc3339(),
-            "2026-05-29T12:00:00+00:00"
+            arkret_sdk::canonical::format_timestamp_canonical(
+                persisted.grant_expires_at.expect("grant expiry")
+            ),
+            "2026-05-29T12:00:00.000Z"
         );
     }
 }

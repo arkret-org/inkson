@@ -15,7 +15,7 @@ fn parse_backup_summary_extracts_visible_metadata() {
         "backup_id": "ak:backup:01964137-0000-7000-8000-000000000000",
         "backup_class": "secret_storage",
         "backup_version": "kb_1",
-        "created_at": "2026-05-15T00:00:00Z",
+        "created_at": "2026-05-15T00:00:00.000Z",
         "ciphertext_digest": "sha256:abc",
         "encryption": {
             "recipient_method": "passphrase_kdf",
@@ -30,7 +30,7 @@ fn parse_backup_summary_extracts_visible_metadata() {
         "ak:backup:01964137-0000-7000-8000-000000000000"
     );
     assert_eq!(row.backup_class, "secret_storage");
-    assert_eq!(row.created_at, "2026-05-15T00:00:00Z");
+    assert_eq!(row.created_at, "2026-05-15T00:00:00.000Z");
 }
 
 #[test]
@@ -84,11 +84,11 @@ fn sorted_backups_latest_first_orders_by_created_at() {
         "backups": [
             {
                 "backup_id": "ak:backup:older",
-                "created_at": "2026-05-15T00:00:00Z"
+                "created_at": "2026-05-15T00:00:00.000Z"
             },
             {
                 "backup_id": "ak:backup:newer",
-                "created_at": "2026-05-16T00:00:00Z"
+                "created_at": "2026-05-16T00:00:00.000Z"
             }
         ]
     }));

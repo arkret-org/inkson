@@ -109,7 +109,7 @@ impl LocalStateStore {
     /// `ak.account_data.set("ak.account.blocklist", …)`.
     pub fn block_user(&mut self, did: impl AsRef<str>, reason: Option<String>) -> bool {
         self.ensure_cached_loaded();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now());
         let changed = crate::account_data::block_user_in(
             &mut self.cached.client_blocklist,
             did.as_ref(),
@@ -148,7 +148,7 @@ impl LocalStateStore {
         expires_at: Option<String>,
     ) -> bool {
         self.ensure_cached_loaded();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now());
         let changed = crate::account_data::block_target_in(
             &mut self.cached.client_blocklist,
             kind.as_ref(),

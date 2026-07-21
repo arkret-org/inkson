@@ -119,7 +119,9 @@ fn parse_consent_rows(value: &arkret_sdk::ConsentCellList) -> Vec<ConsentRow> {
                 .ok()
                 .and_then(|v| v.as_str().map(ToOwned::to_owned))
                 .unwrap_or_else(|| "pending".to_owned()),
-            expires_at: cell.expires_at.map(|dt| dt.to_rfc3339()),
+            expires_at: cell
+                .expires_at
+                .map(arkret_sdk::canonical::format_timestamp_canonical),
         })
         .collect()
 }
@@ -523,7 +525,7 @@ pub fn ConsentSettingsPanel(account_did: Signal<String>, token: Signal<String>) 
                                                                 id: "consent-valid-until-input-input",
                                                                 "data-testid": "consent-valid-until-input",
                                                                 value: "{detail_valid_until}",
-                                                                placeholder: "2026-12-31T00:00:00Z",
+                                                                placeholder: "2026-12-31T00:00:00.000Z",
                                                                 oninput: move |event: FormEvent| detail_valid_until.set(event.value()),
                                                             }
                                                         }

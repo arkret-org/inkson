@@ -200,7 +200,7 @@ mod tests {
                 "device_id": device_id,
                 "device_public_key": "z6MkExamplePublicKey",
                 "authorized_by": { "did": "did:webvh:example:auth-server" },
-                "not_before": "2026-06-17T00:00:00Z",
+                "not_before": "2026-06-17T00:00:00.000Z",
                 "enrollment_authority_binding": {
                     "kind": "service_attested",
                     "authority_did": "did:webvh:example:auth-server",
@@ -249,7 +249,7 @@ mod tests {
                 "device_id": device_id,
                 "device_public_key": "z6MkExamplePublicKey",
                 "authorized_by": "did:web:auth.local.host",
-                "not_before": "2026-06-22T00:00:00Z",
+                "not_before": "2026-06-22T00:00:00.000Z",
                 "enrollment_authority_binding": {
                     "kind": "service_attested",
                     "authority_did": "did:web:auth.local.host",

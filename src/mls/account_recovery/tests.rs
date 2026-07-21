@@ -843,13 +843,13 @@ fn select_account_secret_prefers_tail_seq_over_newer_timestamp() {
     tail["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000e2");
     tail["series_id"] = serde_json::json!(series);
     tail["series_seq"] = serde_json::json!(2);
-    tail["created_at"] = serde_json::json!("2026-01-01T00:00:00Z");
+    tail["created_at"] = serde_json::json!("2026-01-01T00:00:00.000Z");
     // A resurrected old seq=1 with a LATER timestamp (server injection).
     let mut stale = wrap();
     stale["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000e1");
     stale["series_id"] = serde_json::json!(series);
     stale["series_seq"] = serde_json::json!(1);
-    stale["created_at"] = serde_json::json!("2026-12-31T23:59:59Z");
+    stale["created_at"] = serde_json::json!("2026-12-31T23:59:59.000Z");
 
     let payload = serde_json::json!({
         "active_series": [active_series_record("secret_storage", series)],
@@ -868,14 +868,14 @@ fn select_account_secret_honors_active_series_record() {
     active["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000a1");
     active["series_id"] = serde_json::json!(ACTIVE_SECRET_STORAGE_SERIES);
     active["series_seq"] = serde_json::json!(0);
-    active["created_at"] = serde_json::json!("2026-01-01T00:00:00Z");
+    active["created_at"] = serde_json::json!("2026-01-01T00:00:00.000Z");
     active["contents"][0]["secret_version"] = serde_json::json!(1);
 
     let mut stale = wrap();
     stale["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000a2");
     stale["series_id"] = serde_json::json!(STALE_SECRET_STORAGE_SERIES);
     stale["series_seq"] = serde_json::json!(99);
-    stale["created_at"] = serde_json::json!("2026-12-31T23:59:59Z");
+    stale["created_at"] = serde_json::json!("2026-12-31T23:59:59.000Z");
     stale["contents"][0]["secret_version"] = serde_json::json!(99);
 
     let payload = serde_json::json!({
@@ -912,21 +912,21 @@ fn select_history_honors_active_series_record() {
     active0["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000b0");
     active0["series_id"] = serde_json::json!(ACTIVE_MLS_HISTORY_SERIES);
     active0["series_seq"] = serde_json::json!(0);
-    active0["created_at"] = serde_json::json!("2026-01-01T00:00:00Z");
+    active0["created_at"] = serde_json::json!("2026-01-01T00:00:00.000Z");
 
     let env_a2 = history_envelope("ak:realm:a", "g-a", 2, ACCOUNT_SECRET);
     let mut active1 = history_body(&env_a2);
     active1["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000b1");
     active1["series_id"] = serde_json::json!(ACTIVE_MLS_HISTORY_SERIES);
     active1["series_seq"] = serde_json::json!(1);
-    active1["created_at"] = serde_json::json!("2026-01-02T00:00:00Z");
+    active1["created_at"] = serde_json::json!("2026-01-02T00:00:00.000Z");
 
     let env_stale = history_envelope("ak:realm:a", "g-a", 99, ACCOUNT_SECRET);
     let mut stale = history_body(&env_stale);
     stale["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000b2");
     stale["series_id"] = serde_json::json!(STALE_MLS_HISTORY_SERIES);
     stale["series_seq"] = serde_json::json!(99);
-    stale["created_at"] = serde_json::json!("2026-12-31T23:59:59Z");
+    stale["created_at"] = serde_json::json!("2026-12-31T23:59:59.000Z");
 
     let payload = serde_json::json!({
         "active_series": [
@@ -1074,13 +1074,13 @@ fn select_sidecar_honors_active_series_record() {
     active["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000c1");
     active["series_id"] = serde_json::json!(ACTIVE_SECRET_STORAGE_SERIES);
     active["series_seq"] = serde_json::json!(0);
-    active["created_at"] = serde_json::json!("2026-01-01T00:00:00Z");
+    active["created_at"] = serde_json::json!("2026-01-01T00:00:00.000Z");
 
     let mut stale = base_body;
     stale["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000c2");
     stale["series_id"] = serde_json::json!(STALE_SECRET_STORAGE_SERIES);
     stale["series_seq"] = serde_json::json!(99);
-    stale["created_at"] = serde_json::json!("2026-12-31T23:59:59Z");
+    stale["created_at"] = serde_json::json!("2026-12-31T23:59:59.000Z");
 
     let payload = serde_json::json!({
         "active_series": [

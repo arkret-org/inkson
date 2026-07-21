@@ -100,7 +100,9 @@ pub(crate) fn moderation_operations_from_client_events(
                     "operation_id": event_id,
                     "event_id": event.event_id.as_str(),
                     "actor_id": event.actor_id.as_str(),
-                    "created_at": event.created_at.to_rfc3339(),
+                    "created_at": arkret_sdk::canonical::format_timestamp_canonical(
+                        event.created_at
+                    ),
                     "write_state": "synced",
                     "body": event.payload,
                 }),
@@ -126,7 +128,7 @@ mod tests {
                     "kind": "ak.moderation.decision",
                     "realm_id": realm_id,
                     "actor_id": "did:web:moderator.example",
-                    "created_at": "2026-07-19T00:00:00Z",
+                    "created_at": "2026-07-19T00:00:00.000Z",
                     "payload": {
                         "target_ref": "ak:message:01904100-0000-7000-8000-000000000201",
                         "decision": "quarantine"

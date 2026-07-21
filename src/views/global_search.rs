@@ -512,7 +512,7 @@ mod tests {
                     "kind": "ak.message.create",
                     "event_id": event_id,
                     "actor_id": "did:web:alice.example",
-                    "created_at": "2026-06-19T00:00:00Z",
+                    "created_at": "2026-06-19T00:00:00.000Z",
                     "content": {
                         "realm_id": realm_id,
                         "message_id": "ak:message:01904100-0000-7000-8000-000000000903",
@@ -563,7 +563,7 @@ mod tests {
                     "kind": "ak.message.create",
                     "event_id": "ak:event:01904100-0000-7000-8000-000000000912",
                     "actor_id": "did:web:alice.example",
-                    "created_at": "2026-06-19T00:00:00Z",
+                    "created_at": "2026-06-19T00:00:00.000Z",
                     "content": {
                         "realm_id": realm_id,
                         "message_id": "ak:message:01904100-0000-7000-8000-000000000913",
@@ -601,7 +601,7 @@ mod tests {
                         "kind": "ak.message.create",
                         "event_id": "ak:event:01904100-0000-7000-8000-000000000923",
                         "actor_id": "did:web:alice.example",
-                        "created_at": "2026-06-19T00:00:00Z",
+                        "created_at": "2026-06-19T00:00:00.000Z",
                         "content": {"realm_id": first_realm_id, "body": "needle first"}
                     }]}
                 }),
@@ -614,7 +614,7 @@ mod tests {
                         "kind": "ak.message.create",
                         "event_id": "ak:event:01904100-0000-7000-8000-000000000924",
                         "actor_id": "did:web:bob.example",
-                        "created_at": "2026-06-19T00:00:00Z",
+                        "created_at": "2026-06-19T00:00:00.000Z",
                         "content": {"realm_id": second_realm_id, "body": "needle second"}
                     }]}
                 }),

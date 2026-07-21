@@ -90,7 +90,7 @@ pub fn registration_state_from_response(
     response: &ChimePushRegisterDeviceOutcome,
 ) -> PushRegistrationState {
     let binding = GatewayBinding::new(PushGatewayType::Standard, request.push_gateway.clone());
-    let registered_at = Utc::now().to_rfc3339();
+    let registered_at = arkret_sdk::canonical::format_timestamp_canonical(Utc::now());
 
     build_registration_state(&binding, request, response, Some(registered_at.as_str()))
 }
@@ -101,6 +101,8 @@ pub fn push_register_view_from_chime_response(
     PushRegisterView {
         ok: response.ok,
         registration_id: response.registration_id,
-        expires_at: response.expires_at.map(|value| value.to_rfc3339()),
+        expires_at: response
+            .expires_at
+            .map(arkret_sdk::canonical::format_timestamp_canonical),
     }
 }

@@ -884,8 +884,8 @@ mod tests {
             "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
             "recipient_principal_id": "did:webvh:bob.example",
             "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
-            "sent_at": "2099-01-01T00:00:00Z",
-            "expires_at": "2100-01-01T00:00:00Z",
+            "sent_at": "2099-01-01T00:00:00.000Z",
+            "expires_at": "2100-01-01T00:00:00.000Z",
             "content": {
                 "mls_group_id": crate::mls::runtime::mls_group_id_for_realm(realm_id),
                 "ciphertext": "welcome-ciphertext"
@@ -999,7 +999,7 @@ mod tests {
             "ak:device_message:0196419b-0000-7000-8000-000000000025",
             realm_id,
         );
-        expired["expires_at"] = Value::String("2000-01-01T00:00:00Z".to_owned());
+        expired["expires_at"] = Value::String("2000-01-01T00:00:00.000Z".to_owned());
         let mut messages = serde_json::json!({ "messages": [] });
 
         assert_eq!(

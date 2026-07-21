@@ -13,7 +13,7 @@ fn card_activity_items_show_local_strand_and_assignment_writes() {
         RawOperationRecord {
             operation_id: "op-assignee".to_owned(),
             realm_id: Some(TEST_REALM_ID.to_owned()),
-            received_at: received_at("2026-06-10T10:00:00Z"),
+            received_at: received_at("2026-06-10T10:00:00.000Z"),
             payload: json!({
                 "kind": "ak.relation.tombstone",
                 "operation_id": "op-assignee",
@@ -30,7 +30,7 @@ fn card_activity_items_show_local_strand_and_assignment_writes() {
         RawOperationRecord {
             operation_id: "op-due".to_owned(),
             realm_id: Some(TEST_REALM_ID.to_owned()),
-            received_at: received_at("2026-06-10T11:00:00Z"),
+            received_at: received_at("2026-06-10T11:00:00.000Z"),
             payload: json!({
                 "kind": "ak.strand.update",
                 "operation_id": "op-due",

@@ -199,7 +199,7 @@ mod tests {
         .unwrap();
         event.event_id =
             arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000101").unwrap();
-        event.created_at = "2026-07-08T00:00:00Z".parse().unwrap();
+        event.created_at = "2026-07-08T00:00:00.000Z".parse().unwrap();
         event
     }
 

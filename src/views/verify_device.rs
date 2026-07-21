@@ -539,7 +539,7 @@ pub fn VerifyDevicePanel(
                                                             &account,
                                                             &target,
                                                             "ak.key.verification.key",
-                                                            &crate::clock::rfc3339_secs_in(10),
+                                                            &crate::clock::timestamp_in(10),
                                                             signed_content,
                                                         )
                                                         .await

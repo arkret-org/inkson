@@ -296,7 +296,7 @@ pub(super) fn dispatch_card_detail_update(
             "kind": op.kind.as_str(),
             "operation_id": operation_id.clone(),
             "actor_id": op.actor_id.to_string(),
-            "created_at": op.created_at.to_rfc3339(),
+            "created_at": arkret_sdk::canonical::format_timestamp_canonical(op.created_at),
             "write_state": "queued",
             "body": op.payload.clone(),
             "activity_summary": card_detail_activity_summary(&current, &draft),

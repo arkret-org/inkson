@@ -249,7 +249,7 @@ pub(crate) fn build_realm_key_share_event(
         encrypted_key_ref: None,
         aad_digest: None,
         expires_at: None,
-        created_at: crate::clock::now_utc_secs(),
+        created_at: crate::clock::now_utc_canonical(),
     };
     // Sign `sender_signing_input()` with this device's active Ed25519 event
     // signer and embed the detached signature. The registered payload schema
@@ -362,7 +362,7 @@ pub(crate) fn build_mls_welcome_payload_value(
         nonce: arkret_sdk::NonEmptyString::new(claim_nonce.trim())
             .map_err(|err| format!("invalid MLS Welcome claim nonce: {err}"))?,
         welcome_digest: welcome.welcome_hash.clone(),
-        created_at: crate::clock::now_utc_secs(),
+        created_at: crate::clock::now_utc_canonical(),
         signature: arkret_sdk::KeyOperationSignature {
             kid: arkret_sdk::NonEmptyString::new("pending")
                 .map_err(|err| format!("MLS Welcome placeholder kid: {err}"))?,

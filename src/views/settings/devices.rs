@@ -133,7 +133,7 @@ fn build_pair_payload(
         "device_metadata": {
             "platform": "browser",
         },
-        "issued_at": chrono::Utc::now().to_rfc3339(),
+        "issued_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
     });
     payload.to_string()
 }
@@ -149,7 +149,7 @@ fn build_pairing_verification_content(
     json!({
         "transaction_id": uuid_v7(),
         "from_device": requesting_device_id,
-        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "timestamp": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
         "expires_at": expires_at,
         "methods": ["ak.sas.v1", "ak.qr.v1"],
         "purpose": "same_principal_device_authorization",
@@ -1032,7 +1032,7 @@ fn render_pair_strand(
                                             .await?,
                                     )?;
                                     let (_, rows) = parse_devices(&devices_value);
-                                    let expires_at = crate::clock::rfc3339_secs_in(10 * 60);
+                                    let expires_at = crate::clock::timestamp_in(10 * 60);
                                     let content = build_pairing_verification_content(
                                         &request_body,
                                         &requesting_device_id,
@@ -1247,13 +1247,13 @@ mod tests {
                     "display_name": "Chrome · Windows",
                     "is_current_session_device": true,
                     "verification_state": "verified",
-                    "created_at": "2026-05-01T00:00:00Z"
+                    "created_at": "2026-05-01T00:00:00.000Z"
                 },
                 {
                     "device_id": "device-2",
                     "is_current_session_device": false,
                     "verification_state": "unverified",
-                    "created_at": "2026-05-05T12:34:56Z"
+                    "created_at": "2026-05-05T12:34:56.000Z"
                 }
             ]
         });
@@ -1328,7 +1328,7 @@ mod tests {
             &request_payload,
             "ak:device:new",
             "https://server.example",
-            "2026-06-12T12:00:00Z",
+            "2026-06-12T12:00:00.000Z",
         );
         assert_eq!(content["purpose"], "same_principal_device_authorization");
         assert_eq!(content["from_device"], "ak:device:new");
