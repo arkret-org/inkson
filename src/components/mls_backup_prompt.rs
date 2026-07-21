@@ -92,7 +92,7 @@ pub(crate) fn download_text_as_file(filename: &str, text: &str) {
 }
 
 /// Pull the human-readable localpart out of the account's primary personal
-/// handle (`<localpart>:<domain>(:<port>)?`) for use in the recovery-key
+/// handle (`<prepared-localpart>:<lowercase-A-label-domain>`) for use in the recovery-key
 /// download filename. Returns an empty string when no handle is known yet.
 pub(crate) fn recovery_localpart_from_handles(handles: &[String]) -> String {
     handles

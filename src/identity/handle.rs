@@ -1,9 +1,9 @@
 //! Utilities for Arkret user handles.
 //!
-//! R3.1 wire form (arkret-spec @ 7157ee8): the canonical handle is
-//! `<localpart>:<domain>(:<port>)?`. The previous `arkret://domain/users/local`
-//! URI form has been retired. `acct:<localpart>@<domain>` remains an interop
-//! alias only.
+//! The canonical wire form is
+//! `<prepared-localpart>:<lowercase-A-label-domain>` with no port. The previous
+//! `arkret://domain/users/local` URI form has been retired.
+//! `acct:<percent-encoded-localpart>@<A-label-domain>` remains an interop alias only.
 //!
 //! A handle is **addressing only**. It is NEVER materialised into an
 //! authoritative principal/subject DID on the client: per
@@ -21,10 +21,9 @@
 pub struct ParsedUserHandle {
     pub localpart: String,
     pub domain: String,
-    pub port: Option<u16>,
     pub display: String,
-    /// R3.1 canonical wire handle `<localpart>:<domain>(:<port>)?`.
-    /// Same string as [`display`] for ASCII handles; carried as its own
+    /// Canonical wire handle `<prepared-localpart>:<lowercase-A-label-domain>`.
+    /// Same string as [`display`]; carried as its own
     /// field so callers that want the wire-canonical form can grab it
     /// without going through the display path.
     pub handle: String,
@@ -55,14 +54,13 @@ fn parse_sdk_handle(input: &str) -> arkret_sdk::Result<arkret_sdk::models::Handl
         let acct = format!("acct:{body}");
         return arkret_sdk::models::Handle::from_acct(&acct).map_err(Into::into);
     }
-    arkret_sdk::models::Handle::parse(body).map_err(Into::into)
+    arkret_sdk::models::Handle::prepare(body).map_err(Into::into)
 }
 
 fn parsed_from_sdk_handle(handle: arkret_sdk::models::Handle) -> ParsedUserHandle {
     ParsedUserHandle {
         localpart: handle.localpart().to_owned(),
         domain: handle.domain().to_owned(),
-        port: handle.port(),
         display: handle.canonical().to_owned(),
         handle: handle.canonical().to_owned(),
         acct_alias: handle.to_acct(),
@@ -114,6 +112,10 @@ mod tests {
         assert_eq!(
             parse_user_handle("acct:alice@example.com").unwrap().display,
             "alice:example.com"
+        );
+        assert_eq!(
+            parse_user_handle("@小明:domain.中国").unwrap().handle,
+            "小明:domain.xn--fiqs8s"
         );
     }
 
