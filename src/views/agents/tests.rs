@@ -335,7 +335,7 @@ mod personal_agent_tests {
         assert_eq!(value["agent_id"], "did:web:agents.example:summary");
         assert_eq!(value["pairing_request_id"], "0197-req");
         assert_eq!(value["pairing_code"], "123456");
-        assert_eq!(value["pairing_expires_at"], "2026-06-26T00:00:00Z");
+        assert_eq!(value["pairing_expires_at"], "2026-06-26T00:00:00.000Z");
         assert!(value.get("schema").is_none());
         assert!(value.get("requested_scope").is_none());
         assert!(value.get("service_scope").is_none());
