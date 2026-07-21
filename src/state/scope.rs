@@ -233,41 +233,85 @@ impl LocalStateStore {
         }
     }
 
-    /// Pre-DID login kickoff: record the freshly-minted `device_id` (+ optional
-    /// grant-binding `jkt`) into the root index `pending_login` and pin the
-    /// process-global pending namespace so the bootstrap wrap_seed / secrets
-    /// land under `pending.<device_id>` until the principal DID resolves.
+    /// Start a fresh pre-DID login. Any onboarding checkpoint owned by the
+    /// previously-active account stays with that account and the anonymous
+    /// login namespace is reset before the new callback can write into it.
     pub fn begin_pending_login(&mut self, device_id: &str, dpop_jkt: Option<&str>) {
+        self.begin_pending_login_inner(device_id, dpop_jkt, false);
+    }
+
+    /// Whether the current account has an unfinished identity handoff fenced
+    /// to this exact device and its persisted DPoP holder.
+    pub fn can_resume_pending_login(&self, device_id: &str) -> bool {
+        let state = self.load();
+        let device_id = device_id.trim();
+        state
+            .pending_account_handoff
+            .as_ref()
+            .is_some_and(|handoff| {
+                !device_id.is_empty()
+                    && handoff.device_id == device_id
+                    && state.dpop_device_key.as_ref().is_some_and(|dpop| {
+                        !dpop.jkt.trim().is_empty() && handoff.holder_jkt == dpop.jkt
+                    })
+            })
+    }
+
+    /// Move a verified unfinished handoff into the anonymous pre-DID namespace.
+    /// Returns `true` when the checkpoint was preserved. A failed match starts
+    /// a fresh isolated login instead, so foreign onboarding state cannot leak
+    /// into the next Account Authority callback.
+    pub fn resume_pending_login(&mut self, device_id: &str) -> bool {
+        self.ensure_cached_loaded();
+        let device_id = device_id.trim();
+        let resume_matches = self.can_resume_pending_login(device_id);
+        let pending_jkt = if resume_matches {
+            self.cached
+                .dpop_device_key
+                .as_ref()
+                .map(|record| record.jkt.clone())
+        } else {
+            None
+        };
+        let can_resume = pending_jkt.is_some();
+        self.begin_pending_login_inner(device_id, pending_jkt.as_deref(), can_resume);
+        can_resume
+    }
+
+    /// Record the pre-DID owner and pin the pending secure-store namespace.
+    /// Onboarding fields cross the account boundary only for an explicitly
+    /// verified resume; fresh login and registration always start empty.
+    fn begin_pending_login_inner(
+        &mut self,
+        device_id: &str,
+        dpop_jkt: Option<&str>,
+        preserve_onboarding: bool,
+    ) {
         let device_id = device_id.trim();
         if device_id.is_empty() {
             return;
         }
         self.ensure_cached_loaded();
 
-        // A pre-DID login has no account owner yet. Detach it from the
-        // previously-active DID before the callback persists handoff or
-        // onboarding checkpoints; otherwise those records (and every read made
-        // by the onboarding shell) inherit the previous account's projection
-        // state until the new DID is finally resolved.
-        //
-        // Preserve an already-started onboarding checkpoint when upgrading an
-        // affected browser: older builds wrote it into the active account
-        // entry. Move only those two pre-DID fields into the anonymous entry and
-        // leave the outgoing account's realms/cursors/MLS state untouched.
-        let pending_account_handoff = self.cached.pending_account_handoff.take();
-        let pending_principal_registration = self.cached.pending_principal_registration.take();
+        let (pending_account_handoff, pending_principal_registration) = if preserve_onboarding {
+            (
+                self.cached.pending_account_handoff.take(),
+                self.cached.pending_principal_registration.take(),
+            )
+        } else {
+            (None, None)
+        };
+        // Persist the outgoing account before changing the root owner. On a
+        // fresh login its checkpoint remains account-scoped; on a verified
+        // resume the two fields were intentionally removed for re-homing.
         let _ = self.flush();
 
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
-        let mut anonymous = self
-            .read_account_state(ANONYMOUS_ACCOUNT_NAMESPACE)
-            .unwrap_or_default();
-        // A newly-started login supersedes abandoned anonymous checkpoints.
-        // When this is a real resume, the fields were captured from `cached`
-        // above (because the anonymous scope was already active) and are written
-        // back unchanged.
-        anonymous.pending_account_handoff = pending_account_handoff;
-        anonymous.pending_principal_registration = pending_principal_registration;
+        let anonymous = ClientLocalState {
+            pending_account_handoff,
+            pending_principal_registration,
+            ..ClientLocalState::default()
+        };
 
         crate::secure_key_store::set_pending_login_device_id(Some(device_id));
         let pending = PendingLogin {

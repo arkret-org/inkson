@@ -47,13 +47,28 @@ pub fn OnboardingPanel(
     // child flow keeps the Recovery Key in memory and must remain mounted while
     // its background bootstrap advances. A real remount (reload/restart) reads
     // the latest checkpoint and intentionally enters the resume surface.
-    let (pending_handoff, pending_registration) = {
+    let (pending_handoff, mut pending_registration) = {
         let store = state_store.peek();
         (
             store.pending_account_handoff(),
             store.pending_principal_registration(),
         )
     };
+
+    // Upgrade/self-heal path: older builds could combine a fresh account
+    // handoff with the previous account's identity draft in the anonymous
+    // namespace. Never route from that foreign draft; the active handoff owns
+    // this onboarding surface and will replace it when the user confirms a new
+    // Recovery Key.
+    if pending_registration.as_ref().is_some_and(|checkpoint| {
+        pending_handoff.as_ref().is_some_and(|handoff| {
+            !crate::identity::principal_registration::checkpoint_belongs_to_handoff(
+                checkpoint, handoff,
+            )
+        })
+    }) {
+        pending_registration = None;
+    }
 
     if pending_registration.is_some() {
         return rsx! {
@@ -439,12 +454,16 @@ async fn create_bind_and_bootstrap_identity(
     // for the same 24 words twice.
     let stored_checkpoint = state_store.read().pending_principal_registration();
     let (checkpoint, checkpoint_changed) = match stored_checkpoint.as_ref() {
-        Some(checkpoint) => {
+        Some(checkpoint)
+            if crate::identity::principal_registration::checkpoint_belongs_to_handoff(
+                checkpoint, handoff,
+            ) =>
+        {
             let checkpoint = checkpoint_for_handoff(checkpoint, handoff, recovery_key)?;
             let changed = stored_checkpoint.as_ref() != Some(&checkpoint);
             (checkpoint, changed)
         }
-        None => (
+        Some(_) | None => (
             crate::identity::principal_registration::prepare_registration_checkpoint(
                 handoff,
                 device,
@@ -574,6 +593,10 @@ fn checkpoint_for_handoff(
     handoff: &crate::state::PendingAccountHandoff,
     recovery_key: &str,
 ) -> anyhow::Result<crate::state::PendingPrincipalRegistration> {
+    if !crate::identity::principal_registration::checkpoint_belongs_to_handoff(checkpoint, handoff)
+    {
+        anyhow::bail!("the saved identity setup belongs to a different service account");
+    }
     if checkpoint.handoff_request_id == handoff.request_id {
         crate::identity::principal_registration::validate_checkpoint_recovery_key(
             checkpoint,
@@ -588,20 +611,12 @@ fn checkpoint_for_handoff(
         anyhow::bail!("the renewed identity-creation lease is unavailable");
     };
 
-    if checkpoint.principal_server_url != handoff.principal_server_url
-        || checkpoint.gate_account_base != handoff.gate_account_base
-        || checkpoint.device_id != handoff.device_id
-        || checkpoint.enrollment_authority_did != handoff.enrollment_authority_did
-        || checkpoint.trust_domain != handoff.trust_domain
-    {
-        anyhow::bail!("the server's reserved identity belongs to a different setup context");
-    }
     // A renewed lease carries forward any identity operation that the server
     // already reserved. Recovery must replay that exact public operation; a
     // newly-derived draft would correctly be rejected as a duplicate conflict.
     // Older Inkson versions did not persist this field, so its absence is not
-    // evidence that the server has no reservation. Reusing the local operation
-    // is safe in both cases: it either matches the reservation or becomes it.
+    // evidence that the server has no reservation; in that case the account
+    // handle continuity check above still has to prove ownership.
     if let Some(reserved_identity) = handoff.reserved_identity.as_ref() {
         let reserved_identity: arkret_sdk::ReservedIdentityCreation =
             serde_json::from_value(reserved_identity.clone()).map_err(|error| {
@@ -936,16 +951,18 @@ mod tests {
             Some("lease-1"),
             Some(1),
         );
-        let checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
-            &old_handoff,
-            &old_handoff.device_id,
-            &recovery_key,
-        )
-        .unwrap();
+        let mut checkpoint =
+            crate::identity::principal_registration::prepare_registration_checkpoint(
+                &old_handoff,
+                &old_handoff.device_id,
+                &recovery_key,
+            )
+            .unwrap();
         let did_operation: arkret_sdk::DidOperationSubmitRequestBody =
             serde_json::from_value(checkpoint.did_operation.clone()).unwrap();
         let reserved_identity =
             arkret_sdk::ReservedIdentityCreation::from_operation(did_operation).unwrap();
+        checkpoint.account_handle.clear();
         let mut new_handoff = test_handoff(
             "ak:request:019f0000-0000-7000-8000-000000000011",
             Some("lease-2"),
@@ -1007,7 +1024,7 @@ mod tests {
     }
 
     #[test]
-    fn renewed_handoff_reuses_a_legacy_checkpoint_without_a_saved_reservation() {
+    fn renewed_handoff_reuses_checkpoint_for_the_same_account_handle() {
         let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
         let old_handoff = test_handoff(
             "ak:request:019f0000-0000-7000-8000-000000000010",
@@ -1032,6 +1049,33 @@ mod tests {
         assert_eq!(legacy_resumed.handoff_request_id, new_handoff.request_id);
         assert_eq!(legacy_resumed.lease_id, "lease-2");
         assert_eq!(legacy_resumed.lease_fence, 2);
+    }
+
+    #[test]
+    fn renewed_handoff_rejects_checkpoint_from_a_different_account() {
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let old_handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000010",
+            Some("lease-1"),
+            Some(1),
+        );
+        let checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
+            &old_handoff,
+            &old_handoff.device_id,
+            &recovery_key,
+        )
+        .unwrap();
+        let mut new_account_handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000011",
+            Some("lease-2"),
+            Some(2),
+        );
+        new_account_handoff.account_handle = "bob:auth.example".to_owned();
+
+        let error =
+            checkpoint_for_handoff(&checkpoint, &new_account_handoff, &recovery_key).unwrap_err();
+
+        assert!(error.to_string().contains("different service account"));
     }
 
     fn test_handoff(

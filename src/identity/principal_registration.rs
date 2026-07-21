@@ -62,6 +62,7 @@ pub fn prepare_registration_checkpoint(
         principal_server_url: handoff.principal_server_url.clone(),
         gate_account_base: handoff.gate_account_base.clone(),
         handoff_request_id: handoff.request_id.clone(),
+        account_handle: handoff.account_handle.clone(),
         lease_id,
         lease_fence,
         device_id: device_id.trim().to_owned(),
@@ -109,6 +110,47 @@ pub fn validate_checkpoint_recovery_key(
         anyhow::bail!("Recovery Key does not match the persisted identity draft");
     }
     Ok(key_material)
+}
+
+/// Whether a persisted identity draft can safely follow this Account
+/// Authority handoff. A request-id match is exact continuity. A renewed
+/// request must additionally prove the same authenticated account handle or
+/// carry the exact server-side identity reservation.
+pub fn checkpoint_belongs_to_handoff(
+    checkpoint: &PendingPrincipalRegistration,
+    handoff: &PendingAccountHandoff,
+) -> bool {
+    let same_context = checkpoint.principal_server_url == handoff.principal_server_url
+        && checkpoint.gate_account_base == handoff.gate_account_base
+        && checkpoint.device_id == handoff.device_id
+        && checkpoint.enrollment_authority_did == handoff.enrollment_authority_did
+        && checkpoint.trust_domain == handoff.trust_domain;
+    if !same_context {
+        return false;
+    }
+    if checkpoint.handoff_request_id == handoff.request_id {
+        return true;
+    }
+    if !checkpoint.account_handle.trim().is_empty()
+        && checkpoint.account_handle == handoff.account_handle
+    {
+        return true;
+    }
+    let Some(reserved_identity) = handoff.reserved_identity.as_ref() else {
+        return false;
+    };
+    let Ok(reserved_identity) =
+        serde_json::from_value::<arkret_sdk::ReservedIdentityCreation>(reserved_identity.clone())
+    else {
+        return false;
+    };
+    let Ok(did_operation) = serde_json::from_value::<arkret_sdk::DidOperationSubmitRequestBody>(
+        checkpoint.did_operation.clone(),
+    ) else {
+        return false;
+    };
+    arkret_sdk::ReservedIdentityCreation::from_operation(did_operation)
+        .is_ok_and(|expected| expected == reserved_identity)
 }
 
 pub struct IdentityBindingCompletion {
@@ -377,6 +419,14 @@ mod tests {
         arkret_sdk::canonical::validate_timestamp_canonical(&checkpoint.bootstrap_created_at)
             .unwrap();
         validate_checkpoint_recovery_key(&checkpoint, &recovery_key).unwrap();
+
+        let mut legacy_value = serde_json::to_value(&checkpoint).unwrap();
+        legacy_value
+            .as_object_mut()
+            .unwrap()
+            .remove("account_handle");
+        let legacy: PendingPrincipalRegistration = serde_json::from_value(legacy_value).unwrap();
+        assert!(legacy.account_handle.is_empty());
 
         let another_key = crate::recovery_crypto::generate_recovery_key().unwrap();
         assert!(validate_checkpoint_recovery_key(&checkpoint, &another_key).is_err());

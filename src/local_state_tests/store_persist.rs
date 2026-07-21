@@ -885,8 +885,8 @@ fn adopt_pending_login_preserves_returning_account_entry() {
 }
 
 #[test]
-fn pending_login_moves_legacy_onboarding_fields_out_of_the_previous_account() {
-    let path = temp_state_path("pending-migrates-legacy-onboarding");
+fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
+    let path = temp_state_path("pending-isolates-previous-onboarding");
     let mut store = LocalStateStore::with_path(path);
     store.switch_active_account("did:web:old.example");
     store.save_sync_cursor("sx:old");
@@ -911,24 +911,42 @@ fn pending_login_moves_legacy_onboarding_fields_out_of_the_previous_account() {
     store
         .set_pending_account_handoff(Some(handoff.clone()))
         .unwrap();
+    let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+    let checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
+        &handoff,
+        &handoff.device_id,
+        &recovery_key,
+    )
+    .unwrap();
+    let previous_did = checkpoint.did.clone();
+    store
+        .set_pending_principal_registration(Some(checkpoint))
+        .unwrap();
 
     store.begin_pending_login(&handoff.device_id, Some(&handoff.holder_jkt));
 
     assert!(store.active_account_did().is_none());
+    assert!(store.pending_account_handoff().is_none());
+    assert!(store.pending_principal_registration().is_none());
+    assert!(store.load().sync_cursor.is_none());
+
+    store.switch_active_account("did:web:old.example");
+    assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:old"));
     assert_eq!(
         store
             .pending_account_handoff()
             .as_ref()
             .map(|pending| pending.request_id.as_str()),
-        Some(handoff.request_id.as_str())
+        Some(handoff.request_id.as_str()),
+        "fresh registration must leave the old account's handoff scoped to it"
     );
-    assert!(store.load().sync_cursor.is_none());
-
-    store.switch_active_account("did:web:old.example");
-    assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:old"));
-    assert!(
-        store.pending_account_handoff().is_none(),
-        "legacy onboarding data must be removed from the old DID entry"
+    assert_eq!(
+        store
+            .pending_principal_registration()
+            .as_ref()
+            .map(|pending| pending.did.as_str()),
+        Some(previous_did.as_str()),
+        "fresh registration must not expose the old identity draft anonymously"
     );
 }
 
@@ -970,7 +988,22 @@ fn adopt_pending_login_moves_the_unfinished_handoff_with_its_registration() {
     store
         .set_pending_principal_registration(Some(checkpoint))
         .unwrap();
-    store.begin_pending_login(device, Some(&handoff.holder_jkt));
+    assert!(!store.can_resume_pending_login(device));
+    let dpop_jkt = "resume-holder-jkt".to_owned();
+    store.set_dpop_device_key(Some(DpopDeviceKeyRecord {
+        seed_b64: "test-seed".to_owned(),
+        jkt: dpop_jkt.clone(),
+        created_at: chrono::Utc::now(),
+    }));
+    assert!(!store.can_resume_pending_login(device));
+    let mut resumed_handoff = handoff.clone();
+    resumed_handoff.holder_jkt = dpop_jkt;
+    store
+        .set_pending_account_handoff(Some(resumed_handoff))
+        .unwrap();
+    assert!(!store.can_resume_pending_login("ak:device:019f0000-0000-7000-8000-000000000099"));
+    assert!(store.can_resume_pending_login(device));
+    assert!(store.resume_pending_login(device));
 
     store.adopt_pending_login(&did);
 

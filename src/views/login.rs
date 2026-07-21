@@ -258,10 +258,7 @@ pub fn LoginPanel(
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             let resume_account_handoff = {
                 let store = reset_state_store.read();
-                pending_account_handoff_matches_dpop(
-                    store.pending_account_handoff().as_ref(),
-                    store.dpop_device_key().as_ref(),
-                )
+                store.can_resume_pending_login(&device)
             };
             if resume_account_handoff {
                 // An unfinished identity-creation lease is fenced to this DPoP
@@ -284,9 +281,16 @@ pub fn LoginPanel(
             // bootstrap wrap_seed / secrets land under the
             // `pending.<device_id>` namespace until the principal DID resolves
             // and `adopt_pending_login` re-homes them.
-            reset_state_store
-                .write()
-                .begin_pending_login(device.trim(), None);
+            if resume_account_handoff {
+                let resumed = reset_state_store
+                    .write()
+                    .resume_pending_login(device.trim());
+                debug_assert!(resumed, "validated handoff resume must remain valid");
+            } else {
+                reset_state_store
+                    .write()
+                    .begin_pending_login(device.trim(), None);
+            }
             // Persist the pending device_id under the bootstrap scope. On a
             // returning account this should match the account-scoped device id;
             // on first sign-in it becomes the account-scoped protocol device.
@@ -548,24 +552,6 @@ pub fn LoginPanel(
             }
         }
     }
-}
-
-fn pending_account_handoff_matches_dpop(
-    handoff: Option<&crate::state::PendingAccountHandoff>,
-    dpop: Option<&crate::state::DpopDeviceKeyRecord>,
-) -> bool {
-    account_handoff_holder_matches_dpop_jkt(
-        handoff.map(|handoff| handoff.holder_jkt.as_str()),
-        dpop.map(|dpop| dpop.jkt.as_str()),
-    )
-}
-
-fn account_handoff_holder_matches_dpop_jkt(
-    holder_jkt: Option<&str>,
-    dpop_jkt: Option<&str>,
-) -> bool {
-    matches!((holder_jkt, dpop_jkt), (Some(holder_jkt), Some(dpop_jkt))
-        if !holder_jkt.trim().is_empty() && holder_jkt == dpop_jkt)
 }
 
 fn persist_completed_login_state(
@@ -890,33 +876,33 @@ async fn finish_oidc_callback(
         )
         .await
         .map_err(|error| format!("Persist account handoff credential failed: {error}"))?;
-        state_store
-            .write()
-            .set_pending_account_handoff(Some(crate::state::PendingAccountHandoff {
-                principal_server_url,
-                gate_account_base,
-                request_id: handoff.request_id.to_string(),
-                account_handle: handoff.account_handle.canonical().to_owned(),
-                holder_jkt: dpop_handle.jkt().to_owned(),
-                audience: principal_audience.to_string(),
-                expires_at: handoff.expires_at,
-                lease_id: Some(lease.lease_id.clone()),
-                lease_fence: Some(lease.fence),
-                lease_expires_at: Some(lease.expires_at),
-                reserved_identity: lease
-                    .reserved_identity
-                    .as_ref()
-                    .map(serde_json::to_value)
-                    .transpose()
-                    .map_err(|error| {
-                        format!("Persist reserved identity checkpoint failed: {error}")
-                    })?,
-                retry_after_ms: None,
-                device_id: device,
-                enrollment_authority_did: scaffold.enrollment_authority_did.clone(),
-                trust_domain: scaffold.principal_trust_domain.clone(),
-            }))
-            .map_err(|error| format!("Persist public handoff checkpoint failed: {error}"))?;
+        let pending_handoff = crate::state::PendingAccountHandoff {
+            principal_server_url,
+            gate_account_base,
+            request_id: handoff.request_id.to_string(),
+            account_handle: handoff.account_handle.canonical().to_owned(),
+            holder_jkt: dpop_handle.jkt().to_owned(),
+            audience: principal_audience.to_string(),
+            expires_at: handoff.expires_at,
+            lease_id: Some(lease.lease_id.clone()),
+            lease_fence: Some(lease.fence),
+            lease_expires_at: Some(lease.expires_at),
+            reserved_identity: lease
+                .reserved_identity
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(|error| format!("Persist reserved identity checkpoint failed: {error}"))?,
+            retry_after_ms: None,
+            device_id: device,
+            enrollment_authority_did: scaffold.enrollment_authority_did.clone(),
+            trust_domain: scaffold.principal_trust_domain.clone(),
+        };
+        {
+            let mut store = state_store.write();
+            persist_pending_account_handoff(&mut store, pending_handoff)
+                .map_err(|error| format!("Persist public handoff checkpoint failed: {error}"))?;
+        }
         let _ = clear_persisted_oidc_scaffold();
         return Ok(OidcCallbackOutcome::Onboarding);
     }
@@ -926,26 +912,28 @@ async fn finish_oidc_callback(
         )
         .await
         .map_err(|error| format!("Persist account handoff credential failed: {error}"))?;
-        state_store
-            .write()
-            .set_pending_account_handoff(Some(crate::state::PendingAccountHandoff {
-                principal_server_url,
-                gate_account_base,
-                request_id: handoff.request_id.to_string(),
-                account_handle: handoff.account_handle.canonical().to_owned(),
-                holder_jkt: dpop_handle.jkt().to_owned(),
-                audience: principal_audience.to_string(),
-                expires_at: handoff.expires_at,
-                lease_id: None,
-                lease_fence: None,
-                lease_expires_at: None,
-                reserved_identity: None,
-                retry_after_ms: Some(retry_after_ms),
-                device_id: device,
-                enrollment_authority_did: scaffold.enrollment_authority_did.clone(),
-                trust_domain: scaffold.principal_trust_domain.clone(),
-            }))
-            .map_err(|error| format!("Persist busy handoff checkpoint failed: {error}"))?;
+        let pending_handoff = crate::state::PendingAccountHandoff {
+            principal_server_url,
+            gate_account_base,
+            request_id: handoff.request_id.to_string(),
+            account_handle: handoff.account_handle.canonical().to_owned(),
+            holder_jkt: dpop_handle.jkt().to_owned(),
+            audience: principal_audience.to_string(),
+            expires_at: handoff.expires_at,
+            lease_id: None,
+            lease_fence: None,
+            lease_expires_at: None,
+            reserved_identity: None,
+            retry_after_ms: Some(retry_after_ms),
+            device_id: device,
+            enrollment_authority_did: scaffold.enrollment_authority_did.clone(),
+            trust_domain: scaffold.principal_trust_domain.clone(),
+        };
+        {
+            let mut store = state_store.write();
+            persist_pending_account_handoff(&mut store, pending_handoff)
+                .map_err(|error| format!("Persist busy handoff checkpoint failed: {error}"))?;
+        }
         let _ = clear_persisted_oidc_scaffold();
         return Ok(OidcCallbackOutcome::Onboarding);
     }
@@ -1087,6 +1075,24 @@ async fn finish_oidc_callback(
     })))
 }
 
+fn persist_pending_account_handoff(
+    store: &mut LocalStateStore,
+    pending_handoff: crate::state::PendingAccountHandoff,
+) -> anyhow::Result<()> {
+    if store
+        .pending_principal_registration()
+        .is_some_and(|checkpoint| {
+            !crate::identity::principal_registration::checkpoint_belongs_to_handoff(
+                &checkpoint,
+                &pending_handoff,
+            )
+        })
+    {
+        store.set_pending_principal_registration(None)?;
+    }
+    store.set_pending_account_handoff(Some(pending_handoff))
+}
+
 fn persisted_session_grant_from_state(
     grant: &SessionGrantState,
     session_private_key_pem: &str,
@@ -1162,6 +1168,58 @@ mod tests {
             grant_expires_at: Some(now + chrono::Duration::seconds(3600)),
             stored_at: now,
         }
+    }
+
+    fn pending_handoff_for_test(
+        request_id: &str,
+        account_handle: &str,
+    ) -> crate::state::PendingAccountHandoff {
+        crate::state::PendingAccountHandoff {
+            principal_server_url: "https://principal.example".to_owned(),
+            gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
+            request_id: request_id.to_owned(),
+            account_handle: account_handle.to_owned(),
+            holder_jkt: "holder-jkt".to_owned(),
+            audience: "did:webvh:z6mkfixture:principal.example".to_owned(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+            lease_id: Some("lease-1".to_owned()),
+            lease_fence: Some(1),
+            lease_expires_at: Some(chrono::Utc::now() + chrono::Duration::minutes(15)),
+            reserved_identity: None,
+            retry_after_ms: None,
+            device_id: "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
+            enrollment_authority_did: "did:key:z6MkrJVnaZkeFzdQyKjzgRHjhBfE6ZscXDFHq8T7TYNy9v1t"
+                .to_owned(),
+            trust_domain: "ak:trust-domain:test".to_owned(),
+        }
+    }
+
+    #[test]
+    fn callback_handoff_discards_checkpoint_owned_by_another_account() {
+        let mut store = crate::state::isolated_store_for_tests("foreign-callback-checkpoint");
+        let old_handoff = pending_handoff_for_test(
+            "ak:request:019f0000-0000-7000-8000-000000000010",
+            "alice:auth.example",
+        );
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
+            &old_handoff,
+            &old_handoff.device_id,
+            &recovery_key,
+        )
+        .unwrap();
+        store
+            .set_pending_principal_registration(Some(checkpoint))
+            .unwrap();
+        let new_handoff = pending_handoff_for_test(
+            "ak:request:019f0000-0000-7000-8000-000000000011",
+            "bob:auth.example",
+        );
+
+        persist_pending_account_handoff(&mut store, new_handoff.clone()).unwrap();
+
+        assert!(store.pending_principal_registration().is_none());
+        assert_eq!(store.pending_account_handoff(), Some(new_handoff));
     }
 
     #[test]
@@ -1268,20 +1326,6 @@ mod tests {
             unbound.is_empty(),
             "first registration must not infer a principal DID"
         );
-    }
-
-    #[test]
-    fn unfinished_account_handoff_reuses_only_its_bound_dpop_key() {
-        assert!(account_handoff_holder_matches_dpop_jkt(
-            Some("same-holder"),
-            Some("same-holder")
-        ));
-        assert!(!account_handoff_holder_matches_dpop_jkt(
-            Some("lease-holder"),
-            Some("rotated-holder")
-        ));
-        assert!(!account_handoff_holder_matches_dpop_jkt(Some(""), Some("")));
-        assert!(!account_handoff_holder_matches_dpop_jkt(None, Some("key")));
     }
 
     #[test]

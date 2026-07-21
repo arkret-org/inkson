@@ -585,8 +585,8 @@ pub struct PendingAccountHandoff {
     pub principal_server_url: String,
     pub gate_account_base: String,
     pub request_id: String,
-    /// Authenticated service-account handle used only for UI display and
-    /// local artifact naming. It is not principal identity evidence.
+    /// Authenticated service-account handle used for local handoff continuity,
+    /// UI display, and artifact naming. It is not principal identity evidence.
     #[serde(default)]
     pub account_handle: String,
     pub holder_jkt: String,
@@ -614,6 +614,11 @@ pub struct PendingPrincipalRegistration {
     pub principal_server_url: String,
     pub gate_account_base: String,
     pub handoff_request_id: String,
+    /// Authenticated Account Authority handle that owns this local identity
+    /// draft. Older checkpoints omit it and must prove continuity through an
+    /// exact request id or a server reservation instead.
+    #[serde(default)]
+    pub account_handle: String,
     pub lease_id: String,
     pub lease_fence: u64,
     pub device_id: String,
