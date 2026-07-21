@@ -62,7 +62,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chacha20poly1305::aead::{Aead, OsRng, Payload};
 use chacha20poly1305::{AeadCore, ChaCha20Poly1305, KeyInit, Nonce};
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Utc};
 use garth::MlsGroupStateRecord;
 use hkdf::Hkdf;
 use serde::{Deserialize, Serialize};
@@ -333,7 +333,7 @@ impl MlsSnapshotEnvelope {
         let ciphertext_digest = arkret_sdk::canonical::sha256_digest(&envelope_bytes);
         let nonce_material = format!(
             "{backup_id}|{actor_id}|{device_id}|mls_history|kb_mls_snapshot_v1|{}|xchacha20_poly1305",
-            self.recorded_at.to_rfc3339_opts(SecondsFormat::Secs, true)
+            arkret_sdk::canonical::format_timestamp_canonical(self.recorded_at)
         );
         let nonce_digest = Sha256::digest(nonce_material.as_bytes());
         let nonce = URL_SAFE_NO_PAD.encode(&nonce_digest[..24]);
@@ -342,7 +342,7 @@ impl MlsSnapshotEnvelope {
             "actor_id": actor_id,
             "backup_class": "mls_history",
             "backup_version": "kb_mls_snapshot_v1",
-            "created_at": self.recorded_at.to_rfc3339_opts(SecondsFormat::Secs, true),
+            "created_at": arkret_sdk::canonical::format_timestamp_canonical(self.recorded_at),
             "encryption": {
                 // Spec key-management.md §7.5.3 / device-lifecycle.md §12:
                 // mls_history is wrapped under a `secret_storage` key
@@ -504,7 +504,7 @@ mod tests {
             "device_id": "dev_alice_1",
             "epoch": epoch,
             "serialized_state": [1, 2, 3, 4, 5, 6, 7, 8],
-            "updated_at": "2026-05-09T00:00:00Z",
+            "updated_at": "2026-05-09T00:00:00.000Z",
         });
         serde_json::to_vec(&body).unwrap()
     }

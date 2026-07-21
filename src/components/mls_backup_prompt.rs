@@ -92,7 +92,7 @@ pub(crate) fn download_text_as_file(filename: &str, text: &str) {
 }
 
 /// Pull the human-readable localpart out of the account's primary personal
-/// handle (`<localpart>:<domain>(:<port>)?`) for use in the recovery-key
+/// handle (`<prepared-localpart>:<lowercase-A-label-domain>`) for use in the recovery-key
 /// download filename. Returns an empty string when no handle is known yet.
 pub(crate) fn recovery_localpart_from_handles(handles: &[String]) -> String {
     handles
@@ -341,7 +341,7 @@ pub(crate) fn mark_mls_recovery_backup_configured(
     let payload = serde_json::json!({
         "schema_version": 1,
         "backup_id": backup_id,
-        "configured_at": chrono::Utc::now().to_rfc3339(),
+        "configured_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
     });
     state_store.save_private_data(actor_id, MLS_RECOVERY_BACKUP_STATE_KEY, payload.to_string());
 }

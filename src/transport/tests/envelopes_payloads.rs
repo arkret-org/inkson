@@ -187,7 +187,7 @@ fn presence_envelope_buckets_last_active_at_to_hour() {
     );
     assert_eq!(
         envelope.payload["last_active_at"],
-        "2026-06-22T10:00:00Z/PT1H"
+        "2026-06-22T10:00:00.000Z/PT1H"
     );
     assert_eq!(envelope.payload["ttl_ms"], 30000);
 }
@@ -321,7 +321,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     );
     assert_eq!(
         create.payload["object"]["created_at"].as_str().unwrap(),
-        arkret_sdk::canonical::format_timestamp_millis_canonical(create.created_at),
+        arkret_sdk::canonical::format_timestamp_canonical(create.created_at),
         "Realm create cross-field semantic validation requires matching timestamps",
     );
     assert_eq!(create.payload["object"]["default_join_rule"], "invite");
@@ -851,7 +851,7 @@ fn device_message_envelope_matches_schema_v1() {
         "did:web:alice.example",
         "ak:device:01904100-0000-7000-8000-0000000000aa",
         "ak.key.verification.request",
-        "2026-04-26T00:10:00Z",
+        "2026-04-26T00:10:00.000Z",
         json!({
             "method": "sas",
             "transaction_id": "verify-001"
@@ -867,7 +867,7 @@ fn device_message_envelope_matches_schema_v1() {
                     "ak:device:01904100-0000-7000-8000-0000000000aa": {
                         "message_id": "ak:device_message:01904100-0000-7000-8000-000000000001",
                         "kind": "ak.key.verification.request",
-                        "expires_at": "2026-04-26T00:10:00Z",
+                        "expires_at": "2026-04-26T00:10:00.000Z",
                         "content": {
                             "method": "sas",
                             "transaction_id": "verify-001"
@@ -890,7 +890,7 @@ fn device_message_envelope_accepts_minimal_content() {
         "did:web:bob.example",
         "ak:device:01904100-0000-7000-8000-0000000000bb",
         "ak.key.verification.done",
-        "2026-04-26T00:10:00Z",
+        "2026-04-26T00:10:00.000Z",
         json!({"transaction_id": "verify-done-001"}),
     )
     .expect("device message envelope builds");
@@ -901,7 +901,7 @@ fn device_message_envelope_accepts_minimal_content() {
         "ak:device_message:01904100-0000-7000-8000-000000000002"
     );
     assert_eq!(inner["kind"], "ak.key.verification.done");
-    assert_eq!(inner["expires_at"], "2026-04-26T00:10:00Z");
+    assert_eq!(inner["expires_at"], "2026-04-26T00:10:00.000Z");
     assert_eq!(inner["content"]["transaction_id"], "verify-done-001");
 }
 

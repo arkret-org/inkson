@@ -67,7 +67,7 @@ fn decode_capability_row(grant: &CapabilityGrant) -> CapabilityRow {
         },
         expires_at: grant
             .expires_at
-            .map(|expires_at| expires_at.to_rfc3339())
+            .map(arkret_sdk::canonical::format_timestamp_canonical)
             .unwrap_or_default(),
         chain: Vec::new(),
     }
@@ -268,8 +268,8 @@ mod tests {
             "resources": [
                 {"kind": "realm", "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001"}
             ],
-            "issued_at": "2026-01-01T00:00:00Z",
-            "expires_at": "2026-12-31T00:00:00Z",
+            "issued_at": "2026-01-01T00:00:00.000Z",
+            "expires_at": "2026-12-31T00:00:00.000Z",
             "proofs": [],
         }))
         .expect("sample grant decodes as SDK CapabilityGrant")

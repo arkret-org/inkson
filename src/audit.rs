@@ -61,7 +61,7 @@ pub fn build_audit_accessed(
         "target_ref": target_event_id,
         "actor_id": actor,
         "purpose": format!("e2ee_read;reader_device={device_id}"),
-        "accessed_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        "accessed_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
     }))
 }
 
@@ -97,7 +97,7 @@ pub fn build_audit_ryw_receipt(
         "target_ref": source_event_id,
         "actor_id": actor,
         "purpose": purpose,
-        "accessed_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        "accessed_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
     }))
 }
 

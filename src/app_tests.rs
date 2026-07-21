@@ -319,7 +319,7 @@ fn account_has_other_active_devices_ignores_revoked_prior_device() {
             {
                 "device_id": prior,
                 "verification_state": "verified",
-                "revoked_at": "2026-06-14T00:00:00Z"
+                "revoked_at": "2026-06-14T00:00:00.000Z"
             },
             {
                 "device_id": current,
@@ -339,7 +339,7 @@ fn current_device_authorization_accepts_authorized_at_without_status() {
     let viewer = serde_json::json!({
         "devices": [{
             "device_id": device,
-            "authorized_at": "2026-04-28T12:00:00Z"
+            "authorized_at": "2026-04-28T12:00:00.000Z"
         }]
     });
 
@@ -436,7 +436,7 @@ fn recovery_auto_prompt_ignores_old_shown_flag_for_local_only_key() {
         "recovery.state.v1",
         serde_json::json!({
             "recovery_key_fingerprint": "sha256:abc",
-            "recovery_key_rotated_at": "2026-06-13T00:00:00Z"
+            "recovery_key_rotated_at": "2026-06-13T00:00:00.000Z"
         })
         .to_string(),
     );
@@ -463,7 +463,7 @@ fn recovery_auto_prompt_local_only_key_is_prompted_once_per_fingerprint() {
         "recovery.state.v1",
         serde_json::json!({
             "recovery_key_fingerprint": "sha256:abc",
-            "recovery_key_rotated_at": "2026-06-13T00:00:00Z"
+            "recovery_key_rotated_at": "2026-06-13T00:00:00.000Z"
         })
         .to_string(),
     );
@@ -949,7 +949,7 @@ fn mls_recovery_setup_missing_stays_false_for_local_recovery_key_and_did_backup(
         "recovery.state.v1",
         serde_json::json!({
             "recovery_key_fingerprint": "sha256:abc",
-            "recovery_key_rotated_at": "2026-06-13T00:00:00Z"
+            "recovery_key_rotated_at": "2026-06-13T00:00:00.000Z"
         })
         .to_string(),
     );

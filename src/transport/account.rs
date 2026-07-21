@@ -810,11 +810,7 @@ fn current_account_from_viewer(viewer: arkret_sdk::models::AccountView) -> Curre
     let created_at = viewer
         .profile
         .as_ref()
-        .map(|profile| {
-            profile
-                .created_at
-                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-        })
+        .map(|profile| arkret_sdk::canonical::format_timestamp_canonical(profile.created_at))
         .unwrap_or_default();
     CurrentAccount {
         did: viewer.principal_id.as_str().to_owned(),
@@ -1097,7 +1093,7 @@ mod tests {
                 "principal_id": "did:web:alice.example",
                 "actor_kind": "user",
                 "display_name": "Alice",
-                "created_at": "2026-06-12T08:00:00Z"
+                "created_at": "2026-06-12T08:00:00.000Z"
             }
         }))
         .expect("account viewer shape");
@@ -1107,7 +1103,7 @@ mod tests {
         assert_eq!(account.did, "did:web:alice.example");
         assert_eq!(account.handle, "alice:local.host");
         assert_eq!(account.display_name.as_deref(), Some("Alice"));
-        assert_eq!(account.created_at, "2026-06-12T08:00:00Z");
+        assert_eq!(account.created_at, "2026-06-12T08:00:00.000Z");
     }
 
     #[test]

@@ -439,7 +439,7 @@ pub(super) fn dispatch_calendar_rsvp(
             "kind": op.kind.as_str(),
             "operation_id": operation_id.clone(),
             "actor_id": op.actor_id.to_string(),
-            "created_at": op.created_at.to_rfc3339(),
+            "created_at": arkret_sdk::canonical::format_timestamp_canonical(op.created_at),
             "write_state": "queued",
             "body": op.payload.clone(),
             "activity_summary": format!("RSVP {status}"),
@@ -519,11 +519,7 @@ fn raw_operation_synthesis_timestamp(record: &RawOperationRecord) -> String {
     json_path_string(Some(payload), &["created_at"])
         .or_else(|| json_path_string(Some(payload), &["body", "created_at"]))
         .or_else(|| json_path_string(Some(payload), &["payload", "created_at"]))
-        .unwrap_or_else(|| {
-            record
-                .received_at
-                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-        })
+        .unwrap_or_else(|| arkret_sdk::canonical::format_timestamp_canonical(record.received_at))
 }
 
 fn raw_operation_synthesis_actor_id(record: &RawOperationRecord) -> String {

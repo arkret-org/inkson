@@ -154,7 +154,9 @@ impl BlocklistEntry {
             did,
             kind,
             reason,
-            blocked_at: Some(chrono::Utc::now().to_rfc3339()),
+            blocked_at: Some(arkret_sdk::canonical::format_timestamp_canonical(
+                chrono::Utc::now(),
+            )),
             applies_to: normalize_blocklist_applies_to(applies_to),
             expires_at,
             entry_id: None,
@@ -374,9 +376,13 @@ pub fn blocklist_entries_from_account_data(value: &Value) -> Result<Vec<Blocklis
                 &entry.target.kind,
                 &value,
                 entry.reason_code.map(|value| value.to_string()),
-                Some(entry.created_at.to_rfc3339()),
+                Some(arkret_sdk::canonical::format_timestamp_canonical(
+                    entry.created_at,
+                )),
                 entry.applies_to,
-                entry.expires_at.map(|value| value.to_rfc3339()),
+                entry
+                    .expires_at
+                    .map(arkret_sdk::canonical::format_timestamp_canonical),
                 entry.entry_id.map(|value| value.to_string()),
             )
         })

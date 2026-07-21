@@ -443,10 +443,10 @@ mod tests {
                 )
                 .unwrap(),
                 participant_identity: "ak:rtc_participant:self".to_owned(),
-                issued_at: chrono::DateTime::parse_from_rfc3339("2026-04-26T00:00:00Z")
+                issued_at: chrono::DateTime::parse_from_rfc3339("2026-04-26T00:00:00.000Z")
                     .unwrap()
                     .with_timezone(&chrono::Utc),
-                expires_at: chrono::DateTime::parse_from_rfc3339("2026-04-26T00:05:00Z")
+                expires_at: chrono::DateTime::parse_from_rfc3339("2026-04-26T00:05:00.000Z")
                     .unwrap()
                     .with_timezone(&chrono::Utc),
             },

@@ -316,7 +316,7 @@ fn local_state_store_persists_private_read_cursors() {
                     "event_id": EVENT_ID,
                     "hlc": &marker.body.position.hlc
                 },
-                "updated_at": marker.updated_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                "updated_at": arkret_sdk::canonical::format_timestamp_canonical(marker.updated_at),
             },
         })
     );
@@ -342,8 +342,8 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
         "sender_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
         "recipient_principal_id": "did:webvh:z6mkfixture:alice.example",
         "recipient_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
-        "sent_at": "2026-06-24T00:00:00Z",
-        "expires_at": "2099-06-25T00:00:00Z",
+        "sent_at": "2026-06-24T00:00:00.000Z",
+        "expires_at": "2099-06-25T00:00:00.000Z",
         "content": {
             "schema": "ak.schema.read_cursor.v1",
             "actor_id": "did:web:alice.example",
@@ -358,7 +358,7 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
                 "event_id": "ak:event:01904100-0000-7000-8000-000000000004",
                 "hlc": "019041000000-0001-deadbeef"
             },
-            "updated_at": "2026-06-24T00:00:00Z"
+            "updated_at": "2026-06-24T00:00:00.000Z"
         }
     }))
     .unwrap()]);
@@ -387,8 +387,8 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
     "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
     "recipient_principal_id": "did:webvh:z6mkfixture:alice.example",
     "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
-    "sent_at": "2026-07-17T00:00:00Z",
-    "expires_at": "2099-07-17T00:10:00Z",
+    "sent_at": "2026-07-17T00:00:00.000Z",
+    "expires_at": "2099-07-17T00:10:00.000Z",
     "content": {
         "from_device": "ak:device:0196419b-0000-7000-8000-000000000001",
         "pairing_code": "123456"
@@ -421,8 +421,8 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
         "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
         "recipient_principal_id": "did:webvh:z6mkfixture:alice.example",
         "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
-        "sent_at": "2026-07-17T00:00:00Z",
-        "expires_at": "2099-07-17T00:10:00Z",
+        "sent_at": "2026-07-17T00:00:00.000Z",
+        "expires_at": "2099-07-17T00:10:00.000Z",
         "content": {
             "from_device": "ak:device:0196419b-0000-7000-8000-000000000001",
             "pairing_code": "654321"
@@ -501,10 +501,10 @@ fn local_state_store_persists_push_registration_state() {
         push_gateway: "https://push.example/_arkret/edge/push/notify".to_owned(),
         push_key_hash: "sha256:abc".to_owned(),
         push_key_preview: "desktop:<redacted,len=5>".to_owned(),
-        registered_at: Some("2026-04-29T00:00:00Z".to_owned()),
+        registered_at: Some("2026-04-29T00:00:00.000Z".to_owned()),
         expires_at: None,
         refresh_hint: None,
-        last_success_at: Some("2026-04-29T00:00:00Z".to_owned()),
+        last_success_at: Some("2026-04-29T00:00:00.000Z".to_owned()),
         last_error: None,
     });
 

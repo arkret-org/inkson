@@ -271,7 +271,9 @@ pub(super) fn dispatch_card_assignees_update(
                 "kind": operation.kind.as_str(),
                 "operation_id": operation_id,
                 "actor_id": operation.actor_id.to_string(),
-                "created_at": operation.created_at.to_rfc3339(),
+                "created_at": arkret_sdk::canonical::format_timestamp_canonical(
+                    operation.created_at
+                ),
                 "write_state": "queued",
                 "body": operation.payload.clone(),
                 "assignment_strand_id": current.id.clone(),

@@ -619,7 +619,7 @@ mod tests {
             backup_class: "secret_storage",
             subdomain: "recovery_vault",
             backup_version: "kb_1",
-            created_at: "2026-06-02T00:00:00Z",
+            created_at: "2026-06-02T00:00:00.000Z",
             aad_canonical: aad,
         }
     }

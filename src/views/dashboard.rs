@@ -828,7 +828,7 @@ mod tests {
         let operation = |id: &str, realm_id: &str| RawOperationRecord {
             operation_id: format!("operation-{id}"),
             realm_id: Some(realm_id.to_owned()),
-            received_at: chrono::DateTime::parse_from_rfc3339("2026-07-13T00:00:00Z")
+            received_at: chrono::DateTime::parse_from_rfc3339("2026-07-13T00:00:00.000Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
             payload: json!({

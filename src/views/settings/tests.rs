@@ -105,11 +105,11 @@ fn presence_preference_account_data_matches_spec() {
     let body = build_presence_preference_body(&crate::state::PresencePreferenceState {
         manual_state: Some("dnd".to_owned()),
         status_message: Some("In a meeting".to_owned()),
-        clears_at: Some("2026-07-03T12:00:00Z".to_owned()),
+        clears_at: Some("2026-07-03T12:00:00.000Z".to_owned()),
     });
     assert_eq!(body["manual_state"], "dnd");
     assert_eq!(body["status_message"], "In a meeting");
-    assert_eq!(body["clears_at"], "2026-07-03T12:00:00Z");
+    assert_eq!(body["clears_at"], "2026-07-03T12:00:00.000Z");
     // Absent fields stay absent (delta-friendly payload).
     let empty = build_presence_preference_body(&Default::default());
     assert!(empty.as_object().unwrap().is_empty());

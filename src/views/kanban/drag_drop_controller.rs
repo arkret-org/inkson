@@ -28,7 +28,7 @@ pub(super) fn submit_kanban_operation_event(
     let operation_id = sdk_event_local_operation_id(&operation).to_owned();
     let kind = operation.kind.as_str().to_owned();
     let actor_id = operation.actor_id.to_string();
-    let created_at = operation.created_at.to_rfc3339();
+    let created_at = arkret_sdk::canonical::format_timestamp_canonical(operation.created_at);
     state_store.write().enqueue_local_projection_command(
         operation_id.clone(),
         Some(realm_id),
@@ -325,7 +325,7 @@ pub(super) fn submit_kanban_move(
             "kind": kind,
             "operation_id": op_id,
             "actor_id": actor_id.clone(),
-            "created_at": event.created_at.to_rfc3339(),
+            "created_at": arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
             "cell": cell_id,
             "effect": value,
             "wire_kind": wire_kind.clone(),
@@ -592,7 +592,7 @@ pub(super) fn dispatch_space_container_lifecycle(
             "kind": kind,
             "operation_id": operation_id,
             "actor_id": actor_id,
-            "created_at": event.created_at.to_rfc3339(),
+            "created_at": arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
             "write_state": "queued",
             "body": event.payload.clone(),
         }),
@@ -682,7 +682,7 @@ pub(super) fn dispatch_strand_lifecycle(
             "kind": kind,
             "operation_id": operation_id,
             "actor_id": actor_id,
-            "created_at": event.created_at.to_rfc3339(),
+            "created_at": arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
             "write_state": "queued",
             "body": event.payload.clone(),
         }),
@@ -811,7 +811,9 @@ pub(super) fn dispatch_board_archive_cascade(
                         "kind": event.kind.as_str(),
                         "operation_id": operation_id,
                         "actor_id": actor_id,
-                        "created_at": event.created_at.to_rfc3339(),
+                        "created_at": arkret_sdk::canonical::format_timestamp_canonical(
+                            event.created_at
+                        ),
                         "write_state": "queued",
                         "body": event.payload.clone(),
                     }),

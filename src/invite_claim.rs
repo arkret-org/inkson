@@ -213,7 +213,7 @@ mod tests {
             "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000010",
             "audience": "arkret.invite.claim",
             "claim_nonce": "nonce-claim-proof-1",
-            "expires_at": "2099-01-01T00:00:00Z",
+            "expires_at": "2099-01-01T00:00:00.000Z",
             "signature": "binding-signature"
         });
         let body = build_invite_claim_body(

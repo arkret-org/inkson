@@ -112,7 +112,7 @@ pub(crate) fn local_redaction_tombstone_for_message(
         "strand_id": message.strand_id.clone(),
         "actor_id": message.sender.clone(),
         "sender": message.sender.clone(),
-        "created_at": redacted_at.to_rfc3339(),
+        "created_at": arkret_sdk::canonical::format_timestamp_canonical(redacted_at),
     });
     if let Some(message_id) = message
         .protocol_message_id

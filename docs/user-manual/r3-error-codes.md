@@ -70,31 +70,31 @@ you can simply retry.
 on a Realm), you get a message like "this handle isn't allowed" or
 "this handle could be confused with another one".
 
-**What it means:** the system detected that the handle you chose
-visually resembles another existing handle to the point that an
-attacker could use one to impersonate the other. Common examples:
+**What it means:** the issuing authority's registration policy detected that
+the prepared handle collides with an existing handle in that authority's UTS
+#39 skeleton index, or does not meet its declared restriction level. Common
+examples include:
 
 - Using Cyrillic letters that look identical to Latin (`а` vs `a`).
-- Mixed scripts (Latin + Greek + Cyrillic) in the same handle.
 - Confusable digits / letter combinations (`rn` vs `m`, `0` vs `O`).
 
-This check is enforced **before** rate-limiting, so even a single
-attempt with a confusable handle will fail.
+Mixed script alone is not protocol equality and is not a mandatory rejection.
+Chinese, Cyrillic, Greek, Japanese and other internationalized handles are
+supported. The collision check is scoped to one issuing authority and does not
+merge handles from different domains.
 
 **What to do:**
 
-1. Pick a handle that uses a single, consistent script (all Latin, all
-   Cyrillic, all Han, etc.).
+1. Review the exact handle and domain shown by the client.
 2. Avoid substituting one letter for a visually similar one.
 3. If you genuinely need a handle that the system thinks is confusable
    (for example, your name in your native language conflicts with an
    existing handle in another script), contact your Realm admin to
    request a review.
 
-**Why is this strict?** Impersonation attacks via lookalike handles are
-a well-documented social-engineering pattern. The system errs on the
-side of refusing the handle rather than silently allowing a confusable
-collision.
+**Why is this checked?** Impersonation attacks via lookalike handles are a
+well-documented social-engineering pattern. The skeleton is registrar-only
+derived state; it never changes your canonical handle or signed identity data.
 
 ## `participant_binding_invalid`
 

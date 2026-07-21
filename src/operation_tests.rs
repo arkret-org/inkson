@@ -646,10 +646,8 @@ fn space_create_emits_canonical_space_object() {
     assert!(created_at.ends_with('Z'));
     assert!(!created_at.contains('.'));
     let event_wire = serde_json::to_value(&op).unwrap();
-    arkret_sdk::canonical::validate_timestamp_millis_canonical(
-        event_wire["created_at"].as_str().unwrap(),
-    )
-    .unwrap();
+    arkret_sdk::canonical::validate_timestamp_canonical(event_wire["created_at"].as_str().unwrap())
+        .unwrap();
 }
 
 #[test]

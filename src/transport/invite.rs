@@ -574,8 +574,8 @@ mod invite_addressing_tests {
             "schema": arkret_sdk::PRINCIPAL_LOCATOR_SCHEMA,
             "subject_id": "did:web:bob.example",
             "recipient_service_id": "did:web:ps.bob.example",
-            "issued_at": "2026-06-07T00:00:00Z",
-            "expires_at": "2026-06-07T00:15:00Z",
+            "issued_at": "2026-06-07T00:00:00.000Z",
+            "expires_at": "2026-06-07T00:15:00.000Z",
             "locator_ref_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
             "proofs": [{
                 "proof_purpose": "recipient_service_acceptance",
@@ -584,7 +584,7 @@ mod invite_addressing_tests {
                     "verification_method": "did:web:ps.bob.example#server-key-1",
                     "alg": "EdDSA",
                     "payload_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-                    "created_at": "2026-06-07T00:00:00Z",
+                    "created_at": "2026-06-07T00:00:00.000Z",
                     "jws": "header..sig"
                 }
             }],

@@ -5083,7 +5083,7 @@ mod tests {
             serde_json::json!({
                 "kind": "ak.member.state",
                 "write_state": "synced",
-                "created_at": "2026-06-29T00:00:00Z",
+                "created_at": "2026-06-29T00:00:00.000Z",
                 "body": {
                     "actor_id": "did:web:bob.example",
                     "membership": "join"
@@ -5096,7 +5096,7 @@ mod tests {
             serde_json::json!({
                 "kind": "ak.member.state",
                 "write_state": "synced",
-                "created_at": "2026-06-29T00:01:00Z",
+                "created_at": "2026-06-29T00:01:00.000Z",
                 "body": {
                     "actor_id": "did:web:bob.example",
                     "membership": "leave"
@@ -5114,7 +5114,7 @@ mod tests {
             serde_json::json!({
                 "kind": "ak.member.state",
                 "write_state": "synced",
-                "created_at": "2026-06-29T00:02:00Z",
+                "created_at": "2026-06-29T00:02:00.000Z",
                 "body": {
                     "actor_id": "did:web:bob.example",
                     "membership": "join"
@@ -5309,8 +5309,8 @@ mod tests {
             "sender_device_id": PROVIDER_DEVICE,
             "recipient_principal_id": SELF_DID,
             "recipient_device_id": SELF_DEVICE,
-            "sent_at": "2026-07-05T00:00:00Z",
-            "expires_at": "2099-07-05T00:01:00Z",
+            "sent_at": "2026-07-05T00:00:00.000Z",
+            "expires_at": "2099-07-05T00:01:00.000Z",
             "content": {
                 "group_id": "test-group",
                 "epoch": 1,
@@ -5368,8 +5368,8 @@ mod tests {
             "sender_device_id": PROVIDER_DEVICE,
             "recipient_principal_id": SELF_DID,
             "recipient_device_id": SELF_DEVICE,
-            "sent_at": "2026-07-05T00:00:00Z",
-            "expires_at": "2099-07-05T00:01:00Z",
+            "sent_at": "2026-07-05T00:00:00.000Z",
+            "expires_at": "2099-07-05T00:01:00.000Z",
             "content": {
                 "group_id": "test-group",
                 "epoch": 1,
@@ -5412,7 +5412,7 @@ mod tests {
                 arkret_sdk::DeviceId::new(PROVIDER_DEVICE).unwrap(),
             ),
             target_principal_id: arkret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
-            created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33Z")
+            created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33.000Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
         };
@@ -5462,7 +5462,7 @@ mod tests {
                 arkret_sdk::DeviceId::new(PROVIDER_DEVICE).unwrap(),
             ),
             target_principal_id: arkret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
-            created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33Z")
+            created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33.000Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
         };
@@ -5505,7 +5505,7 @@ mod tests {
                 arkret_sdk::DeviceId::new(PROVIDER_DEVICE).unwrap(),
             ),
             target_principal_id: arkret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
-            created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33Z")
+            created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33.000Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
         };
@@ -5548,7 +5548,7 @@ mod tests {
                 arkret_sdk::DeviceId::new(PROVIDER_DEVICE).unwrap(),
             ),
             target_principal_id: arkret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
-            created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33Z")
+            created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33.000Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
         };

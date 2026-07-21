@@ -15,7 +15,7 @@ fn due_calendar_parses_date_and_rfc3339_values() {
         Some(NaiveDate::from_ymd_opt(2026, 6, 9).unwrap())
     );
     assert_eq!(
-        parse_due_calendar_date("2026-06-09T18:30:00Z"),
+        parse_due_calendar_date("2026-06-09T18:30:00.000Z"),
         Some(NaiveDate::from_ymd_opt(2026, 6, 9).unwrap())
     );
     assert_eq!(parse_due_calendar_date("unscheduled"), None);

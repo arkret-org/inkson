@@ -85,8 +85,8 @@ fn card_synthesis_track_entries_preserve_append_history() {
     let mut card = test_card("ak:strand:edit-me", "U");
     card.synthesis = "second synthesis".to_owned();
     card.created_by = "did:web:acme.example:users:alice".to_owned();
-    card.created_at = "2026-05-22T09:00:00Z".to_owned();
-    card.updated_at = "2026-05-22T11:00:00Z".to_owned();
+    card.created_at = "2026-05-22T09:00:00.000Z".to_owned();
+    card.updated_at = "2026-05-22T11:00:00.000Z".to_owned();
     let received_at = |value: &str| {
         chrono::DateTime::parse_from_rfc3339(value)
             .unwrap()
@@ -96,12 +96,12 @@ fn card_synthesis_track_entries_preserve_append_history() {
         RawOperationRecord {
             operation_id: "op-1".to_owned(),
             realm_id: Some("ak:realm:r1".to_owned()),
-            received_at: received_at("2026-05-22T10:00:00Z"),
+            received_at: received_at("2026-05-22T10:00:00.000Z"),
             payload: json!({
                 "kind": "ak.strand.update",
                 "operation_id": "op-1",
                 "actor_id": "did:web:acme.example:users:alice",
-                "created_at": "2026-05-22T10:00:00Z",
+                "created_at": "2026-05-22T10:00:00.000Z",
                 "write_state": "queued",
                 "body": {
                     "strand_id": "ak:strand:edit-me",
@@ -114,12 +114,12 @@ fn card_synthesis_track_entries_preserve_append_history() {
         RawOperationRecord {
             operation_id: "op-2".to_owned(),
             realm_id: Some("ak:realm:r1".to_owned()),
-            received_at: received_at("2026-05-22T11:00:00Z"),
+            received_at: received_at("2026-05-22T11:00:00.000Z"),
             payload: json!({
                 "kind": "ak.strand.update",
                 "operation_id": "op-2",
                 "actor_id": "did:web:acme.example:users:bob",
-                "created_at": "2026-05-22T11:00:00Z",
+                "created_at": "2026-05-22T11:00:00.000Z",
                 "write_state": "queued",
                 "body": {
                     "strand_id": "ak:strand:edit-me",
@@ -154,9 +154,9 @@ fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_his
         "bob synthesis".to_owned(),
     ]);
     card.created_by = "did:web:acme.example:users:alice".to_owned();
-    card.created_at = "2026-05-22T09:00:00Z".to_owned();
+    card.created_at = "2026-05-22T09:00:00.000Z".to_owned();
     card.updated_by = "did:web:acme.example:users:bob".to_owned();
-    card.updated_at = "2026-05-22T11:00:00Z".to_owned();
+    card.updated_at = "2026-05-22T11:00:00.000Z".to_owned();
     let received_at = |value: &str| {
         chrono::DateTime::parse_from_rfc3339(value)
             .unwrap()
@@ -166,12 +166,12 @@ fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_his
         RawOperationRecord {
             operation_id: "op-1".to_owned(),
             realm_id: Some("ak:realm:r1".to_owned()),
-            received_at: received_at("2026-05-22T10:00:00Z"),
+            received_at: received_at("2026-05-22T10:00:00.000Z"),
             payload: json!({
                 "kind": "ak.strand.update",
                 "operation_id": "op-1",
                 "actor_id": "did:web:acme.example:users:alice",
-                "created_at": "2026-05-22T10:00:00Z",
+                "created_at": "2026-05-22T10:00:00.000Z",
                 "write_state": "synced",
                 "body": {
                     "strand_id": "ak:strand:edit-me",
@@ -184,12 +184,12 @@ fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_his
         RawOperationRecord {
             operation_id: "op-2".to_owned(),
             realm_id: Some("ak:realm:r1".to_owned()),
-            received_at: received_at("2026-05-22T11:00:00Z"),
+            received_at: received_at("2026-05-22T11:00:00.000Z"),
             payload: json!({
                 "kind": "ak.strand.update",
                 "operation_id": "op-2",
                 "actor_id": "did:web:acme.example:users:bob",
-                "created_at": "2026-05-22T11:00:00Z",
+                "created_at": "2026-05-22T11:00:00.000Z",
                 "write_state": "synced",
                 "body": {
                     "strand_id": "ak:strand:edit-me",
@@ -228,9 +228,9 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
         "bob synthesis".to_owned(),
     ]);
     card.created_by = "did:web:acme.example:users:alice".to_owned();
-    card.created_at = "2026-05-22T09:00:00Z".to_owned();
+    card.created_at = "2026-05-22T09:00:00.000Z".to_owned();
     card.updated_by = "did:web:acme.example:users:bob".to_owned();
-    card.updated_at = "2026-05-22T11:00:00Z".to_owned();
+    card.updated_at = "2026-05-22T11:00:00.000Z".to_owned();
 
     // Canonical realm events as `account.subscribe` / `events/subscribe`
     // deliver them, folded through the SAME funnel the engine ingests with.
@@ -239,7 +239,7 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
             "event_kind": "ak.strand.update",
             "event_id": "op-1",
             "actor_id": "did:web:acme.example:users:alice",
-            "created_at": "2026-05-22T10:00:00Z",
+            "created_at": "2026-05-22T10:00:00.000Z",
             "realm_id": "ak:realm:r1",
             "payload": {
                 "strand_id": "ak:strand:edit-me",
@@ -250,7 +250,7 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
             "event_kind": "ak.strand.update",
             "event_id": "op-2",
             "actor_id": "did:web:acme.example:users:bob",
-            "created_at": "2026-05-22T11:00:00Z",
+            "created_at": "2026-05-22T11:00:00.000Z",
             "realm_id": "ak:realm:r1",
             "payload": {
                 "strand_id": "ak:strand:edit-me",
@@ -298,15 +298,15 @@ fn engine_ingest_dedupes_resent_strand_update_by_operation_id() {
     let mut card = test_card("ak:strand:edit-me", "U");
     card.synthesis = "alice synthesis".to_owned();
     card.created_by = "did:web:acme.example:users:alice".to_owned();
-    card.created_at = "2026-05-22T09:00:00Z".to_owned();
+    card.created_at = "2026-05-22T09:00:00.000Z".to_owned();
     card.updated_by = "did:web:acme.example:users:alice".to_owned();
-    card.updated_at = "2026-05-22T10:00:00Z".to_owned();
+    card.updated_at = "2026-05-22T10:00:00.000Z".to_owned();
 
     let event = json!({
         "event_kind": "ak.strand.update",
         "event_id": "op-1",
         "actor_id": "did:web:acme.example:users:alice",
-        "created_at": "2026-05-22T10:00:00Z",
+        "created_at": "2026-05-22T10:00:00.000Z",
         "realm_id": "ak:realm:r1",
         "payload": {
             "strand_id": "ak:strand:edit-me",
@@ -339,9 +339,9 @@ fn projection_synthesis_revision_uses_card_author_only_when_single_author() {
     let mut card = test_card("ak:strand:edit-me", "U");
     card.synthesis = "bob synthesis".to_owned();
     card.created_by = "did:web:acme.example:users:bob".to_owned();
-    card.created_at = "2026-05-22T09:00:00Z".to_owned();
+    card.created_at = "2026-05-22T09:00:00.000Z".to_owned();
     card.updated_by = "did:web:acme.example:users:bob".to_owned();
-    card.updated_at = "2026-05-22T11:00:00Z".to_owned();
+    card.updated_at = "2026-05-22T11:00:00.000Z".to_owned();
 
     let entries = card_synthesis_track_entries(&card, &[], &LocalStateStore::default());
 
@@ -362,9 +362,9 @@ fn projection_synthesis_revision_leaves_multi_author_card_unattributed() {
     let mut card = test_card("ak:strand:edit-me", "U");
     card.synthesis = "bob synthesis".to_owned();
     card.created_by = "did:web:acme.example:users:alice".to_owned();
-    card.created_at = "2026-05-22T09:00:00Z".to_owned();
+    card.created_at = "2026-05-22T09:00:00.000Z".to_owned();
     card.updated_by = "did:web:acme.example:users:bob".to_owned();
-    card.updated_at = "2026-05-22T11:00:00Z".to_owned();
+    card.updated_at = "2026-05-22T11:00:00.000Z".to_owned();
 
     let entries = card_synthesis_track_entries(&card, &[], &LocalStateStore::default());
 

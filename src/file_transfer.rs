@@ -440,10 +440,10 @@ fn prepare_actor_private_file(
     getrandom::fill(&mut nonce)
         .map_err(|error| anyhow::anyhow!("file-transfer nonce rng: {error}"))?;
 
-    let created_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    let retention_expires_at = (chrono::Utc::now()
-        + chrono::Duration::days(FILE_TRANSFER_RETENTION_DAYS))
-    .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let created_at = arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now());
+    let retention_expires_at = arkret_sdk::canonical::format_timestamp_canonical(
+        chrono::Utc::now() + chrono::Duration::days(FILE_TRANSFER_RETENTION_DAYS),
+    );
     let aad = FileTransferAad {
         schema: FILE_TRANSFER_SCHEMA.to_owned(),
         purpose: FILE_TRANSFER_PURPOSE.to_owned(),
@@ -592,8 +592,9 @@ impl PreparedFileTransfer {
             .validate()
             .map_err(|error| anyhow::anyhow!("file-transfer record invalid: {error}"))?;
 
-        let expires_at = (chrono::Utc::now() + chrono::Duration::hours(24))
-            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let expires_at = arkret_sdk::canonical::format_timestamp_canonical(
+            chrono::Utc::now() + chrono::Duration::hours(24),
+        );
         let mut dispatches = Vec::with_capacity(recipients.len());
         for recipient in &recipients {
             dispatches.push(build_file_transfer_device_key_dispatch(
@@ -1160,7 +1161,7 @@ mod tests {
         let entry = json!({
             "data_type": key,
             "content": envelope,
-            "updated_at": "2026-06-07T00:00:00Z",
+            "updated_at": "2026-06-07T00:00:00.000Z",
         });
         let items = file_transfer_items_from_account_data(&[entry], &crypto);
         assert_eq!(items.len(), 1);

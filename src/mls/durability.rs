@@ -151,7 +151,7 @@ pub fn seal_history_secrets(
         sender_device_id,
         source_authorization_ref,
         sender_device_signature,
-        crate::clock::now_utc_secs(),
+        crate::clock::now_utc_canonical(),
         None,
     )
     .map_err(|err| format!("seal history secrets to RRK: {err:?}"))

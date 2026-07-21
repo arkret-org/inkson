@@ -580,13 +580,8 @@ pub fn build_agent_key_authorize_event_for_pairing(
         anyhow::bail!("runtime request pairing_request_id does not match this agent");
     }
     let pairing_code = key_state_str(key_state, "pairing_code")?;
-    // The authoritative server hashes the protocol wire timestamp normalized
-    // to UTC milliseconds. PostgreSQL can retain microseconds and the Agent
-    // projection may serialize them, so never hash the raw projection string.
-    let pairing_expires_at =
-        chrono::DateTime::parse_from_rfc3339(key_state_str(key_state, "pairing_expires_at")?)?
-            .with_timezone(&Utc)
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let pairing_expires_at = key_state_str(key_state, "pairing_expires_at")?;
+    arkret_sdk::canonical::validate_timestamp_canonical(pairing_expires_at)?;
     let requested_scope: AgentKeyScope = serde_json::from_value(
         key_state
             .get("requested_scope")
@@ -606,7 +601,7 @@ pub fn build_agent_key_authorize_event_for_pairing(
         &runtime_public_key_digest,
         request.pairing_request_id.as_str(),
         pairing_code,
-        &pairing_expires_at,
+        pairing_expires_at,
         service_id,
     )?;
     let issued_at = Utc::now();

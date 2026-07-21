@@ -17,7 +17,7 @@ async fn publish_mls_key_package_fails_closed_without_active_signer() {
         capabilities: Vec::new(),
         state: arkret_sdk::MlsKeyPackageState::Published,
         claim_id: None,
-        created_at: chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+        created_at: chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00.000Z")
             .unwrap()
             .with_timezone(&chrono::Utc),
         expires_at: None,

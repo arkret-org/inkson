@@ -24,7 +24,7 @@ pub fn build_account_data_set(
     let mut payload = serde_json::json!({
         "key": key.as_wire(),
         "owner": actor,
-        "updated_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        "updated_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
     });
     payload[value_field] = value;
     OperationBuilder::new(
@@ -49,7 +49,7 @@ pub fn build_account_data_tombstone(
         "key": key.as_wire(),
         "owner": actor,
         "tombstone": true,
-        "updated_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        "updated_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
     }))
 }
 
@@ -162,7 +162,7 @@ pub fn build_private_account_data_set_with_cas(
         "key": key,
         "owner": actor,
         "encrypted_payload": encrypted_payload,
-        "updated_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        "updated_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
     });
     if let Some(expected_state_digest) = expected_state_digest {
         validate_sha256_digest(expected_state_digest)?;
@@ -191,7 +191,7 @@ pub fn build_private_account_data_tombstone(
         "key": key,
         "owner": actor,
         "tombstone": true,
-        "updated_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        "updated_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
     })))
 }
 

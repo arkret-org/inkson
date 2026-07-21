@@ -736,7 +736,7 @@ mod tests {
         let ciphertext_digest =
             "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         let retention = json!({
-            "retention_expires_at": "2026-06-20T00:00:00Z",
+            "retention_expires_at": "2026-06-20T00:00:00.000Z",
             "deletion_trigger": "retention_expiry",
             "audit_lock": false,
             "consent_confirmed": true
@@ -782,12 +782,12 @@ mod tests {
                     "retention": retention,
                     "produced_by": "did:web:recorder.example",
                     "recording_initiator_capability_ref": "ak:grant:019a7360-0000-7000-8000-000000000006",
-                    "created_at": "2026-06-19T00:00:00Z",
+                    "created_at": "2026-06-19T00:00:00.000Z",
                     "deletion_audit": {
                         "trigger": "retention_expiry",
                         "outcome": "completed",
-                        "requested_at": "2026-06-20T00:00:00Z",
-                        "completed_at": "2026-06-20T00:00:01Z",
+                        "requested_at": "2026-06-20T00:00:00.000Z",
+                        "completed_at": "2026-06-20T00:00:01.000Z",
                         "erasure_receipt_ref": "ak:receipt:019a7360-0000-7000-8000-000000000007"
                     }
                 }

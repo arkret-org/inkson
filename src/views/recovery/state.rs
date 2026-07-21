@@ -54,7 +54,7 @@ pub(crate) fn save_generated_recovery_key_metadata(
         0,
     )
     .ok()?;
-    let rotated_at = chrono::Utc::now().to_rfc3339();
+    let rotated_at = arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now());
     state.recovery_key_fingerprint = fingerprint.clone();
     state.backup_hpke_public_key_multibase = key_material.backup_hpke_public_key_multikey.clone();
     state.recovery_key_rotated_at = rotated_at.clone();

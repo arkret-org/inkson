@@ -70,7 +70,7 @@ pub fn capability_grant_actions(
         "subject": subject,
         "actions": actions,
         "resources": [{ "kind": "realm", "realm_id": realm }],
-        "issued_at": crate::clock::now_rfc3339_secs(),
+        "issued_at": crate::clock::now_timestamp(),
         "proofs": [],
     });
     let carries_aggregate_admin = actions.iter().any(|action| {
@@ -133,7 +133,7 @@ pub fn realm_founding_grant(realm_id: &str, actor: &str, grant_id: &str) -> Oper
                 "realm_id": realm,
                 "match_scope": "realm_wide"
             }],
-            "issued_at": crate::clock::now_rfc3339_secs(),
+            "issued_at": crate::clock::now_timestamp(),
             "proofs": []
         }
     }))

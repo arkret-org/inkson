@@ -1,7 +1,6 @@
 use arkret_sdk::models::KeyBackupContentItem;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
-use chrono::SecondsFormat;
 use serde_json::{Value, json};
 
 use super::{
@@ -45,7 +44,7 @@ pub fn build_passphrase_kdf_backup_body(
         "actor_id": actor_id,
         "backup_class": class.as_str(),
         "backup_version": "kb_1",
-        "created_at": chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        "created_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
         "encryption": {
             "recipient_method": "passphrase_kdf",
             "recipient_key_ref": device_id,
@@ -380,7 +379,7 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
         "actor_id": actor_id,
         "backup_class": class.as_str(),
         "backup_version": "kb_1",
-        "created_at": chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        "created_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
         "encryption": {
             "recipient_method": "recovery_public_key",
             "recipient_key_ref": recovery_key_ref,
