@@ -598,6 +598,10 @@ pub struct PendingAccountHandoff {
     pub lease_fence: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease_expires_at: Option<DateTime<Utc>>,
+    /// Server-persisted identity reservation, when challenge issuance already
+    /// bound this account setup to one exact DID inception operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reserved_identity: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_after_ms: Option<u64>,
     pub device_id: String,

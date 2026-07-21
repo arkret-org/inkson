@@ -438,39 +438,29 @@ async fn create_bind_and_bootstrap_identity(
     // resume panel here made a successful, uninterrupted setup appear to ask
     // for the same 24 words twice.
     let stored_checkpoint = state_store.read().pending_principal_registration();
-    let checkpoint = if let Some(checkpoint) = stored_checkpoint
-        .as_ref()
-        .filter(|checkpoint| checkpoint.handoff_request_id == handoff.request_id)
-    {
-        crate::identity::principal_registration::validate_checkpoint_recovery_key(
-            checkpoint,
-            recovery_key,
-        )?;
-        checkpoint.clone()
-    } else {
-        if let Some(checkpoint) = stored_checkpoint.as_ref()
-            && !can_replace_checkpoint_for_new_handoff(checkpoint, handoff)
-        {
-            anyhow::bail!("a different identity setup is already pending");
+    let (checkpoint, checkpoint_changed) = match stored_checkpoint.as_ref() {
+        Some(checkpoint) => {
+            let checkpoint = checkpoint_for_handoff(checkpoint, handoff, recovery_key)?;
+            let changed = stored_checkpoint.as_ref() != Some(&checkpoint);
+            (checkpoint, changed)
         }
-        // A re-authentication always has a fresh handoff request id. If the old
-        // checkpoint never advanced past local custody confirmation, the server
-        // has not accepted its binding and the newly-issued active handoff proves
-        // the account is still unbound. Replace that stale local draft with one
-        // derived from the Recovery Key currently shown on this page.
-        let checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
-            handoff,
-            device,
-            recovery_key,
-        )?;
+        None => (
+            crate::identity::principal_registration::prepare_registration_checkpoint(
+                handoff,
+                device,
+                recovery_key,
+            )?,
+            true,
+        ),
+    };
+    if checkpoint_changed {
         let barrier = {
             let mut store = state_store.write();
             store.set_pending_principal_registration(Some(checkpoint.clone()))?;
             store.begin_durable_flush()?
         };
         barrier.wait().await?;
-        checkpoint
-    };
+    }
 
     let (registration, actor, grant_jwt) = if checkpoint.stage
         == crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed
@@ -579,14 +569,66 @@ async fn clear_completed_principal_setup(
     Ok(())
 }
 
-fn can_replace_checkpoint_for_new_handoff(
+fn checkpoint_for_handoff(
     checkpoint: &crate::state::PendingPrincipalRegistration,
     handoff: &crate::state::PendingAccountHandoff,
-) -> bool {
-    checkpoint.stage == crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed
-        && checkpoint.handoff_request_id != handoff.request_id
-        && handoff.lease_id.is_some()
-        && handoff.lease_fence.is_some()
+    recovery_key: &str,
+) -> anyhow::Result<crate::state::PendingPrincipalRegistration> {
+    if checkpoint.handoff_request_id == handoff.request_id {
+        crate::identity::principal_registration::validate_checkpoint_recovery_key(
+            checkpoint,
+            recovery_key,
+        )?;
+        return Ok(checkpoint.clone());
+    }
+    if checkpoint.stage != crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed {
+        anyhow::bail!("a different identity setup is already pending");
+    }
+    let (Some(lease_id), Some(lease_fence)) = (&handoff.lease_id, handoff.lease_fence) else {
+        anyhow::bail!("the renewed identity-creation lease is unavailable");
+    };
+
+    if checkpoint.principal_server_url != handoff.principal_server_url
+        || checkpoint.gate_account_base != handoff.gate_account_base
+        || checkpoint.device_id != handoff.device_id
+        || checkpoint.enrollment_authority_did != handoff.enrollment_authority_did
+        || checkpoint.trust_domain != handoff.trust_domain
+    {
+        anyhow::bail!("the server's reserved identity belongs to a different setup context");
+    }
+    // A renewed lease carries forward any identity operation that the server
+    // already reserved. Recovery must replay that exact public operation; a
+    // newly-derived draft would correctly be rejected as a duplicate conflict.
+    // Older Inkson versions did not persist this field, so its absence is not
+    // evidence that the server has no reservation. Reusing the local operation
+    // is safe in both cases: it either matches the reservation or becomes it.
+    if let Some(reserved_identity) = handoff.reserved_identity.as_ref() {
+        let reserved_identity: arkret_sdk::ReservedIdentityCreation =
+            serde_json::from_value(reserved_identity.clone()).map_err(|error| {
+                anyhow::anyhow!("the server's identity reservation is invalid: {error}")
+            })?;
+        let did_operation: arkret_sdk::DidOperationSubmitRequestBody =
+            serde_json::from_value(checkpoint.did_operation.clone())
+                .map_err(|error| anyhow::anyhow!("the saved DID operation is invalid: {error}"))?;
+        let expected_reservation =
+            arkret_sdk::ReservedIdentityCreation::from_operation(did_operation)
+                .map_err(|error| anyhow::anyhow!("the saved DID operation is invalid: {error}"))?;
+        if expected_reservation != reserved_identity {
+            anyhow::bail!(
+                "the server's reserved identity does not match the saved setup; the original local checkpoint is required"
+            );
+        }
+    }
+    crate::identity::principal_registration::validate_checkpoint_recovery_key(
+        checkpoint,
+        recovery_key,
+    )?;
+
+    let mut checkpoint = checkpoint.clone();
+    checkpoint.handoff_request_id = handoff.request_id.clone();
+    checkpoint.lease_id = lease_id.clone();
+    checkpoint.lease_fence = lease_fence;
+    Ok(checkpoint)
 }
 
 async fn finish_principal_setup(
@@ -887,36 +929,109 @@ mod tests {
     }
 
     #[test]
-    fn stale_custody_checkpoint_can_follow_a_fresh_active_handoff() {
+    fn renewed_handoff_reuses_the_server_reserved_identity() {
         let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
         let old_handoff = test_handoff(
             "ak:request:019f0000-0000-7000-8000-000000000010",
             Some("lease-1"),
             Some(1),
         );
-        let mut checkpoint =
-            crate::identity::principal_registration::prepare_registration_checkpoint(
-                &old_handoff,
-                &old_handoff.device_id,
-                &recovery_key,
-            )
-            .unwrap();
-        let new_handoff = test_handoff(
+        let checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
+            &old_handoff,
+            &old_handoff.device_id,
+            &recovery_key,
+        )
+        .unwrap();
+        let did_operation: arkret_sdk::DidOperationSubmitRequestBody =
+            serde_json::from_value(checkpoint.did_operation.clone()).unwrap();
+        let reserved_identity =
+            arkret_sdk::ReservedIdentityCreation::from_operation(did_operation).unwrap();
+        let mut new_handoff = test_handoff(
             "ak:request:019f0000-0000-7000-8000-000000000011",
+            Some("lease-2"),
+            Some(2),
+        );
+        new_handoff.reserved_identity = Some(serde_json::to_value(reserved_identity).unwrap());
+
+        let resumed = checkpoint_for_handoff(&checkpoint, &new_handoff, &recovery_key).unwrap();
+
+        assert_eq!(resumed.handoff_request_id, new_handoff.request_id);
+        assert_eq!(resumed.lease_id, "lease-2");
+        assert_eq!(resumed.lease_fence, 2);
+        assert_eq!(resumed.did, checkpoint.did);
+        assert_eq!(resumed.did_operation, checkpoint.did_operation);
+        assert_eq!(
+            resumed.bootstrap_create_event_id,
+            checkpoint.bootstrap_create_event_id
+        );
+    }
+
+    #[test]
+    fn renewed_handoff_fails_closed_on_a_different_reservation() {
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let old_handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000010",
             Some("lease-1"),
             Some(1),
         );
+        let checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
+            &old_handoff,
+            &old_handoff.device_id,
+            &recovery_key,
+        )
+        .unwrap();
+        let other_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let other_checkpoint =
+            crate::identity::principal_registration::prepare_registration_checkpoint(
+                &old_handoff,
+                &old_handoff.device_id,
+                &other_key,
+            )
+            .unwrap();
+        let other_operation: arkret_sdk::DidOperationSubmitRequestBody =
+            serde_json::from_value(other_checkpoint.did_operation).unwrap();
+        let mut new_handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000011",
+            Some("lease-2"),
+            Some(2),
+        );
+        new_handoff.reserved_identity = Some(
+            serde_json::to_value(
+                arkret_sdk::ReservedIdentityCreation::from_operation(other_operation).unwrap(),
+            )
+            .unwrap(),
+        );
 
-        assert!(can_replace_checkpoint_for_new_handoff(
-            &checkpoint,
-            &new_handoff
-        ));
+        let error = checkpoint_for_handoff(&checkpoint, &new_handoff, &recovery_key).unwrap_err();
+        assert!(error.to_string().contains("does not match the saved setup"));
+    }
 
-        checkpoint.stage = crate::state::PendingPrincipalRegistrationStage::BindingRegistered;
-        assert!(!can_replace_checkpoint_for_new_handoff(
-            &checkpoint,
-            &new_handoff
-        ));
+    #[test]
+    fn renewed_handoff_reuses_a_legacy_checkpoint_without_a_saved_reservation() {
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let old_handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000010",
+            Some("lease-1"),
+            Some(1),
+        );
+        let checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
+            &old_handoff,
+            &old_handoff.device_id,
+            &recovery_key,
+        )
+        .unwrap();
+        let new_handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000011",
+            Some("lease-2"),
+            Some(2),
+        );
+
+        let legacy_resumed =
+            checkpoint_for_handoff(&checkpoint, &new_handoff, &recovery_key).unwrap();
+        assert_eq!(legacy_resumed.did_operation, checkpoint.did_operation);
+        assert_eq!(legacy_resumed.handoff_request_id, new_handoff.request_id);
+        assert_eq!(legacy_resumed.lease_id, "lease-2");
+        assert_eq!(legacy_resumed.lease_fence, 2);
     }
 
     fn test_handoff(
@@ -935,6 +1050,7 @@ mod tests {
             lease_id: lease_id.map(ToOwned::to_owned),
             lease_fence,
             lease_expires_at: Some(chrono::Utc::now() + chrono::Duration::minutes(15)),
+            reserved_identity: None,
             retry_after_ms: None,
             device_id: "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
             enrollment_authority_did: "did:key:z6MkrJVnaZkeFzdQyKjzgRHjhBfE6ZscXDFHq8T7TYNy9v1t"

@@ -901,6 +901,7 @@ fn pending_login_moves_legacy_onboarding_fields_out_of_the_previous_account() {
         lease_id: Some("lease-new".to_owned()),
         lease_fence: Some(1),
         lease_expires_at: Some(chrono::Utc::now() + chrono::Duration::minutes(15)),
+        reserved_identity: None,
         retry_after_ms: None,
         device_id: "ak:device:019f0000-0000-7000-8000-000000000099".to_owned(),
         enrollment_authority_did: "did:key:z6MkrJVnaZkeFzdQyKjzgRHjhBfE6ZscXDFHq8T7TYNy9v1t"
@@ -947,6 +948,7 @@ fn adopt_pending_login_moves_the_unfinished_handoff_with_its_registration() {
         lease_id: Some("lease-1".to_owned()),
         lease_fence: Some(1),
         lease_expires_at: Some(chrono::Utc::now() + chrono::Duration::minutes(15)),
+        reserved_identity: None,
         retry_after_ms: None,
         device_id: device.to_owned(),
         enrollment_authority_did: "did:key:z6MkrJVnaZkeFzdQyKjzgRHjhBfE6ZscXDFHq8T7TYNy9v1t"

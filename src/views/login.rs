@@ -903,6 +903,14 @@ async fn finish_oidc_callback(
                 lease_id: Some(lease.lease_id.clone()),
                 lease_fence: Some(lease.fence),
                 lease_expires_at: Some(lease.expires_at),
+                reserved_identity: lease
+                    .reserved_identity
+                    .as_ref()
+                    .map(serde_json::to_value)
+                    .transpose()
+                    .map_err(|error| {
+                        format!("Persist reserved identity checkpoint failed: {error}")
+                    })?,
                 retry_after_ms: None,
                 device_id: device,
                 enrollment_authority_did: scaffold.enrollment_authority_did.clone(),
@@ -931,6 +939,7 @@ async fn finish_oidc_callback(
                 lease_id: None,
                 lease_fence: None,
                 lease_expires_at: None,
+                reserved_identity: None,
                 retry_after_ms: Some(retry_after_ms),
                 device_id: device,
                 enrollment_authority_did: scaffold.enrollment_authority_did.clone(),

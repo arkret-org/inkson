@@ -142,7 +142,12 @@ pub async fn complete_account_handoff_binding(
         expires_at: handoff
             .lease_expires_at
             .ok_or_else(|| anyhow!("identity-creation lease expiry is unavailable"))?,
-        reserved_identity: None,
+        reserved_identity: handoff
+            .reserved_identity
+            .clone()
+            .map(serde_json::from_value)
+            .transpose()
+            .context("persisted identity reservation is invalid")?,
     };
     let challenge_request = garth::identity_binding_challenge_request(
         arkret_sdk::RequestId::new(arkret_sdk::identifiers::new_prefixed_uuid7("ak:request:"))?,
@@ -309,6 +314,7 @@ mod tests {
             lease_id: Some("lease-1".to_owned()),
             lease_fence: Some(1),
             lease_expires_at: Some(Utc::now() + chrono::Duration::minutes(15)),
+            reserved_identity: None,
             retry_after_ms: None,
             device_id: "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
             enrollment_authority_did: "did:key:z6MkrJVnaZkeFzdQyKjzgRHjhBfE6ZscXDFHq8T7TYNy9v1t"
@@ -348,6 +354,7 @@ mod tests {
             lease_id: Some("lease-1".to_owned()),
             lease_fence: Some(1),
             lease_expires_at: Some(Utc::now() + chrono::Duration::minutes(15)),
+            reserved_identity: None,
             retry_after_ms: None,
             device_id: "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
             enrollment_authority_did: "did:key:z6MkrJVnaZkeFzdQyKjzgRHjhBfE6ZscXDFHq8T7TYNy9v1t"
