@@ -69,7 +69,13 @@ fn direct_security_state(value: &Value) -> Option<bool> {
     }
     if let Some(encrypted) = bool_field(
         value,
-        &["encrypted", "is_encrypted", "e2ee", "end_to_end_encrypted"],
+        &[
+            "__realm_security_encrypted",
+            "encrypted",
+            "is_encrypted",
+            "e2ee",
+            "end_to_end_encrypted",
+        ],
     ) {
         return Some(encrypted);
     }
@@ -157,15 +163,18 @@ pub fn realm_projection_security_state(body: &Value) -> Option<bool> {
         }
     }
 
-    if let Some(epoch) = body.pointer("/state_at_window_start/e2ee_epoch") {
-        return Some(!epoch.is_null());
-    }
-
     for event in body
         .get("state")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
+        .chain(
+            body.get("state")
+                .and_then(|state| state.get("events"))
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten(),
+        )
         .chain(
             body.get("state_after")
                 .and_then(|state| state.get("events"))
@@ -200,6 +209,19 @@ pub fn realm_projection_security_state(body: &Value) -> Option<bool> {
                 return Some(state);
             }
         }
+    }
+
+    // `state_at_window_start.e2ee_epoch = null` means that this projection
+    // does not carry a usable window-start epoch hint. It is not evidence that
+    // the Realm's create-locked encryption profile is plaintext. Soland emits
+    // this null hint even when the same frame contains an encrypted
+    // `ak.realm.create` state event, so only a concrete epoch is affirmative
+    // security evidence and null remains unknown.
+    if body
+        .pointer("/state_at_window_start/e2ee_epoch")
+        .is_some_and(|epoch| !epoch.is_null())
+    {
+        return Some(true);
     }
 
     None
@@ -246,7 +268,25 @@ mod tests {
         });
         assert_eq!(
             realm_projection_security_state(&synced_plaintext),
-            Some(false)
+            None,
+            "a missing epoch hint is unknown, not an explicit plaintext profile"
+        );
+
+        let real_encrypted_sync_shape = json!({
+            "state_at_window_start": {
+                "actor_profiles": {},
+                "realm_metadata": {"title": "Encrypted Realm"},
+                "e2ee_epoch": null
+            },
+            "state": {"events": [{
+                "kind": "ak.realm.create",
+                "payload": {"object": {"encryption_profile": "mls_rfc9420"}}
+            }]}
+        });
+        assert_eq!(
+            realm_projection_security_state(&real_encrypted_sync_shape),
+            Some(true),
+            "the create-locked profile must win over an absent epoch hint"
         );
 
         assert_eq!(

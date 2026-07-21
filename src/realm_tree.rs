@@ -89,7 +89,7 @@ impl OptimisticRealmTreeProjection {
         } = input;
         // Realm metadata is mirrored at the body top level *and* under
         // `summary` because downstream readers (e.g.
-        // `realm_projection_is_encrypted`) probe both containers.
+        // security-state readers probe both containers.
         Self::Realm(Box::new(RealmProjectionBody {
             owner: owner.clone(),
             admins: admins.clone(),
@@ -348,109 +348,6 @@ pub(crate) fn string_array_field(value: &Value, keys: &[&str]) -> Vec<String> {
                 .collect::<Vec<_>>()
         })
         .collect()
-}
-
-pub(crate) fn bool_field(value: &Value, keys: &[&str]) -> Option<bool> {
-    keys.iter().find_map(|key| value.get(*key)?.as_bool())
-}
-
-pub(crate) fn encryption_profile_is_encrypted(profile: &str) -> bool {
-    let normalized = profile.trim().to_ascii_lowercase().replace(['-', ' '], "_");
-    matches!(
-        normalized.as_str(),
-        "encrypted" | "e2ee" | "mls" | "mls_rfc9420"
-    )
-}
-
-pub(crate) fn plaintext_visibility_is_encrypted(visibility: &str) -> bool {
-    let normalized = visibility
-        .trim()
-        .to_ascii_lowercase()
-        .replace(['-', ' '], "_");
-    matches!(
-        normalized.as_str(),
-        "encrypted" | "e2ee" | "private_encrypted" | "mls" | "mls_rfc9420"
-    )
-}
-
-pub(crate) fn plaintext_visibility_value(value: &Value) -> Option<String> {
-    value
-        .as_str()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| string_field(value, &["default", "mode", "visibility"]))
-}
-
-pub(crate) fn realm_projection_is_encrypted(body: &Value) -> bool {
-    let summary = body.get("summary").unwrap_or(&Value::Null);
-    for container in [
-        body,
-        summary,
-        body.get("object").unwrap_or(&Value::Null),
-        body.get("realm").unwrap_or(&Value::Null),
-        body.get("metadata").unwrap_or(&Value::Null),
-    ] {
-        if let Some(encrypted) = bool_field(
-            container,
-            &["encrypted", "is_encrypted", "e2ee", "end_to_end_encrypted"],
-        ) {
-            return encrypted;
-        }
-        if let Some(profile) = string_field(container, &["encryption_profile"]) {
-            return encryption_profile_is_encrypted(&profile);
-        }
-        if let Some(visibility) = container
-            .get("plaintext_visibility")
-            .and_then(plaintext_visibility_value)
-        {
-            return plaintext_visibility_is_encrypted(&visibility);
-        }
-    }
-
-    // Sync projections carry the currently materialized MLS state here even
-    // when the Realm summary omits an explicit encryption profile. A present
-    // epoch is authoritative evidence that this Realm is E2EE-enabled.
-    if let Some(epoch) = body.pointer("/state_at_window_start/e2ee_epoch") {
-        return !epoch.is_null();
-    }
-
-    for event in state_event_values(body).chain(
-        body.get("state_after")
-            .and_then(|state| state.get("events"))
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten(),
-    ) {
-        let kind = event
-            .get("kind")
-            .or_else(|| event.get("type"))
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if !kind.contains("realm.create") && !kind.contains("encryption") {
-            continue;
-        }
-        for container in [
-            event.get("payload").unwrap_or(&Value::Null),
-            event
-                .get("payload")
-                .and_then(|payload| payload.get("object"))
-                .unwrap_or(&Value::Null),
-            event.get("content").unwrap_or(&Value::Null),
-            event
-                .get("content")
-                .and_then(|content| content.get("object"))
-                .unwrap_or(&Value::Null),
-            event.get("object").unwrap_or(&Value::Null),
-            event,
-        ] {
-            if let Some(profile) = string_field(container, &["encryption_profile"]) {
-                return encryption_profile_is_encrypted(&profile);
-            }
-        }
-    }
-
-    false
 }
 
 pub(crate) fn extract_parent_space_id(space_id: &str, body: &Value) -> Option<String> {
@@ -1282,26 +1179,47 @@ mod tests {
 
     #[test]
     fn realm_projection_encryption_state_uses_profile_and_visibility() {
-        assert!(realm_projection_is_encrypted(&json!({
-            "summary": {"encryption_profile": "mls_rfc9420"}
-        })));
-        assert!(realm_projection_is_encrypted(&json!({
-            "plaintext_visibility": {"default": "encrypted"}
-        })));
-        assert!(!realm_projection_is_encrypted(&json!({
-            "encryption_profile": "none"
-        })));
-        assert!(!realm_projection_is_encrypted(&json!({
-            "summary": {"title": "Projection without encryption metadata"}
-        })));
-        assert!(realm_projection_is_encrypted(&json!({
-            "state_at_window_start": {
-                "e2ee_epoch": {"epoch": 0, "key_ref": "mock-key:realm"}
-            }
-        })));
-        assert!(!realm_projection_is_encrypted(&json!({
-            "state_at_window_start": {"e2ee_epoch": null}
-        })));
+        assert!(crate::security_state::realm_projection_is_encrypted(
+            &json!({
+                "summary": {"encryption_profile": "mls_rfc9420"}
+            })
+        ));
+        assert!(crate::security_state::realm_projection_is_encrypted(
+            &json!({
+                "plaintext_visibility": {"default": "encrypted"}
+            })
+        ));
+        assert!(!crate::security_state::realm_projection_is_encrypted(
+            &json!({
+                "encryption_profile": "none"
+            })
+        ));
+        assert!(!crate::security_state::realm_projection_is_encrypted(
+            &json!({
+                "summary": {"title": "Projection without encryption metadata"}
+            })
+        ));
+        assert!(crate::security_state::realm_projection_is_encrypted(
+            &json!({
+                "state_at_window_start": {
+                    "e2ee_epoch": {"epoch": 0, "key_ref": "mock-key:realm"}
+                }
+            })
+        ));
+        assert!(!crate::security_state::realm_projection_is_encrypted(
+            &json!({
+                "state_at_window_start": {"e2ee_epoch": null}
+            })
+        ));
+        assert!(crate::security_state::realm_projection_is_encrypted(
+            &json!({
+                "state_at_window_start": {"e2ee_epoch": null},
+                "state": {"events": [{
+                    "kind": "ak.realm.create",
+                    "payload": {"object": {"encryption_profile": "mls_rfc9420"}}
+                }]}
+            })
+        ));
     }
 
     #[test]

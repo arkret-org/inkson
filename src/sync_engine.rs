@@ -416,6 +416,23 @@ fn merge_ephemeral_realm_projection(store: &mut LocalStateStore, realm_id: &str,
     store.save_realm_tree_projection(realm_id.to_owned(), merged);
 }
 
+fn preserve_realm_security_projection(existing: Option<&Value>, incoming: &Value) -> Value {
+    let security_state = crate::security_state::realm_projection_security_state(incoming)
+        .or_else(|| existing.and_then(crate::security_state::realm_projection_security_state));
+    let mut merged = incoming.clone();
+    if let (Some(encrypted), Some(object)) = (security_state, merged.as_object_mut()) {
+        // `encryption_profile` is create-locked. Incremental account frames
+        // can omit the original `ak.realm.create` event, so retain the last
+        // authoritative classification in the local projection instead of
+        // letting a partial delta silently downgrade the UI to plaintext.
+        object.insert(
+            "__realm_security_encrypted".to_owned(),
+            Value::Bool(encrypted),
+        );
+    }
+    merged
+}
+
 fn to_device_backfill_cursor(updates: &arkret_sdk::SyncUpdates) -> Option<String> {
     // client-sync.md §10.0: account subscribe is the primary receive path.
     // The standalone queue endpoint is only a continuation path when the
@@ -1346,15 +1363,17 @@ pub fn apply_response(
                 // Summary/member/state-only deltas must invalidate durable
                 // consumers just as timeline events do.
                 realm_projection_changed = true;
+                let existing = store.load().realm_tree_projections.get(id).cloned();
+                let body = preserve_realm_security_projection(existing.as_ref(), body);
                 store.save_realm_tree_projection(id.to_owned(), body.clone());
-                let view = LocalSealView::from_sync_body(body);
+                let view = LocalSealView::from_sync_body(&body);
                 store.set_realm_seal_view(id.to_owned(), view);
-                store.ingest_move_event_states(id, body);
-                let _ = ingest_kanban_state_events_from_projection(store, id, body)
-                    + ingest_discussion_state_events_from_projection(store, id, body)
-                    + ingest_message_events_from_projection(store, id, body)
-                    + ingest_moderation_events_from_projection(store, id, body);
-                ingest_membership_events_from_projection(store, id, body);
+                store.ingest_move_event_states(id, &body);
+                let _ = ingest_kanban_state_events_from_projection(store, id, &body)
+                    + ingest_discussion_state_events_from_projection(store, id, &body)
+                    + ingest_message_events_from_projection(store, id, &body)
+                    + ingest_moderation_events_from_projection(store, id, &body);
+                ingest_membership_events_from_projection(store, id, &body);
                 // Fold the discussion timeline into `raw_operations` too so the
                 // card-detail Discussion tab renders local-first instead of
                 // refetching + redecrypting the realm on every open.
@@ -1362,7 +1381,7 @@ pub fn apply_response(
                 // event envelopes off the `members[]` roster entries. The
                 // SDK's effective-set filter is applied lazily when a UI
                 // surface needs to resolve a display identity.
-                ingest_member_identity_events_from_projection(store, id, body);
+                ingest_member_identity_events_from_projection(store, id, &body);
             }
             crate::disappearing::shred_expired_message_plaintext_from_sync_realms(
                 store,
@@ -2446,6 +2465,50 @@ mod tests {
         assert_eq!(projection["summary"]["joined_member_count"], 2);
         assert_eq!(projection["members"], json!([]));
         assert_eq!(projection["ephemeral"]["events"][0]["kind"], "ak.typing");
+    }
+
+    #[test]
+    fn incremental_realm_projection_preserves_create_locked_security_state() {
+        let encrypted_create = json!({
+            "state_at_window_start": {"e2ee_epoch": null},
+            "state": {"events": [{
+                "kind": "ak.realm.create",
+                "payload": {"object": {"encryption_profile": "mls_rfc9420"}}
+            }]}
+        });
+        let initial = preserve_realm_security_projection(None, &encrypted_create);
+        assert_eq!(initial["__realm_security_encrypted"], true);
+
+        let partial_delta = json!({
+            "state_at_window_start": {
+                "realm_metadata": {"title": "Renamed Realm"},
+                "e2ee_epoch": null
+            },
+            "state": {"events": []}
+        });
+        let merged = preserve_realm_security_projection(Some(&initial), &partial_delta);
+
+        assert_eq!(merged["__realm_security_encrypted"], true);
+        assert!(crate::security_state::realm_projection_is_encrypted(
+            &merged
+        ));
+    }
+
+    #[test]
+    fn incremental_realm_projection_keeps_explicit_plaintext_state() {
+        let plaintext_create = json!({
+            "state_at_window_start": {"e2ee_epoch": null},
+            "state": {"events": [{
+                "kind": "ak.realm.create",
+                "payload": {"object": {"encryption_profile": "none"}}
+            }]}
+        });
+        let merged = preserve_realm_security_projection(None, &plaintext_create);
+
+        assert_eq!(merged["__realm_security_encrypted"], false);
+        assert!(!crate::security_state::realm_projection_is_encrypted(
+            &merged
+        ));
     }
 
     #[test]

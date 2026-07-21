@@ -24,9 +24,8 @@ use crate::models::{
 // `crate::sync_engine` so the existing `crate::app::…` call sites keep
 // resolving without a sync_engine edit.
 pub(crate) use crate::realm_tree::{
-    descendant_node_ids, full_sync_projection_keep_set, realm_projection_is_encrypted,
-    realm_tree_items_with_pinned_realms, realm_tree_node_looks_like_direct_conversation,
-    realm_tree_nodes_from_sync_realms,
+    descendant_node_ids, full_sync_projection_keep_set, realm_tree_items_with_pinned_realms,
+    realm_tree_node_looks_like_direct_conversation, realm_tree_nodes_from_sync_realms,
 };
 use crate::routes::Route;
 use crate::state::projection::ProjectionEvent;
@@ -743,6 +742,16 @@ fn AppBootstrap() -> Element {
     let realm_tree =
         realm_tree_items_with_pinned_realms(&collaboration_realm_tree_nodes, &pinned_realm_ids);
     let realm_tree_projections = state_store.read().load().realm_tree_projections;
+    // A persisted Realm-default MLS snapshot is authoritative local evidence
+    // for previously created/joined encrypted Realms. It also repairs clients
+    // whose cached account projection was already downgraded by the old
+    // `e2ee_epoch: null => plaintext` parser before this build starts.
+    let realm_ids_with_local_mls: BTreeSet<String> = state_store
+        .read()
+        .mls_snapshots()
+        .into_keys()
+        .filter(|scope_id| scope_id.starts_with("ak:realm:"))
+        .collect();
     let collaboration_sidebar_query_value =
         collaboration_sidebar_query().trim().to_ascii_lowercase();
     let direct_sidebar_query_value = direct_sidebar_query().trim().to_ascii_lowercase();
@@ -776,7 +785,8 @@ fn AppBootstrap() -> Element {
                 .unwrap_or_else(|| node.title.clone());
             let encrypted = realm_tree_projections
                 .get(&node.id)
-                .is_some_and(realm_projection_is_encrypted);
+                .and_then(crate::security_state::realm_projection_security_state)
+                .unwrap_or_else(|| realm_ids_with_local_mls.contains(&node.id));
             let space_count = descendant_node_ids(&collaboration_realm_tree_nodes, &node.id)
                 .len()
                 .saturating_sub(1);
@@ -2811,7 +2821,8 @@ fn AppBootstrap() -> Element {
                                     RealmTreeNodeKind::Realm => {
                                         let is_encrypted = realm_tree_projections
                                             .get(&item_node.id)
-                                            .is_some_and(realm_projection_is_encrypted);
+                                            .and_then(crate::security_state::realm_projection_security_state)
+                                            .unwrap_or_else(|| realm_ids_with_local_mls.contains(&item_node.id));
                                         if is_encrypted {
                                             (
                                                 "lock",
