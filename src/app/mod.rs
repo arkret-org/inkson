@@ -2402,11 +2402,16 @@ fn AppBootstrap() -> Element {
                                                         let base = base.clone();
                                                         let peer_for_task = peer.clone();
                                                         spawn(async move {
-                                                            let result = crate::transport::auth::with_authed_sdk_client(
+                                                            let result = crate::transport::auth::with_authed_api(
                                                                 &base,
                                                                 api_token,
-                                                                |http| async move {
-                                                                    crate::transport::account::direct_conversation_resolve(&http, &peer_for_task, true).await
+                                                                |api| async move {
+                                                                    crate::transport::account::direct_conversation_resolve(
+                                                                        &api,
+                                                                        state_store,
+                                                                        &peer_for_task,
+                                                                        true,
+                                                                    ).await
                                                                 },
                                                             ).await;
                                                             match result {
@@ -2640,11 +2645,16 @@ fn AppBootstrap() -> Element {
                                                                     let base = base.clone();
                                                                     let agent_id = agent_id.clone();
                                                                     spawn(async move {
-                                                                        match crate::transport::auth::with_authed_sdk_client(
+                                                                        match crate::transport::auth::with_authed_api(
                                                                             &base,
                                                                             api_token,
-                                                                            |http| async move {
-                                                                                crate::transport::account::direct_conversation_resolve(&http, &agent_id, true).await
+                                                                            |api| async move {
+                                                                                crate::transport::account::direct_conversation_resolve(
+                                                                                    &api,
+                                                                                    state_store,
+                                                                                    &agent_id,
+                                                                                    true,
+                                                                                ).await
                                                                             },
                                                                         ).await {
                                                                             Ok(response) if matches!(

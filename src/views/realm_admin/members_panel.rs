@@ -1506,6 +1506,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             &device_id,
             &claim,
             &claim_nonce,
+            None,
         )
         .map_err(|err| anyhow::anyhow!(err))?
     };

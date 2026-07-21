@@ -380,8 +380,13 @@ fn ContactRow(
                                 busy.set(true);
                                 row_status.set(tr("contacts.dm.opening"));
                                 spawn(async move {
-                                    match with_authed_sdk_client(&base, api_token, |http| async move {
-                                        crate::transport::account::direct_conversation_resolve(&http, &peer, true).await
+                                    match with_authed_api(&base, api_token, |api| async move {
+                                        crate::transport::account::direct_conversation_resolve(
+                                            &api,
+                                            state_store,
+                                            &peer,
+                                            true,
+                                        ).await
                                     })
                                     .await
                                     {

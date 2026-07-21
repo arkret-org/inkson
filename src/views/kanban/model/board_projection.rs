@@ -1,5 +1,5 @@
 //! Event-sourced kanban board projection (spec
-//! `cotask/specs/active/2026-06-29-kanban-event-sourced-projection.md`).
+//! `arkret-work/specs/active/2026-06-29-kanban-event-sourced-projection.md`).
 //!
 //! The board is a CLIENT-SIDE derived projection over the realm event log, per
 //! `service-surface.md` §("View projection 是派生结果、不是真相源；客户端应基于

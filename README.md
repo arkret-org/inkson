@@ -82,7 +82,7 @@ the protocol spec tree (`../arkret-spec/spec/v1/`) for the normative source.
 ## Cross-project task tracking
 
 Per-project task lists are consolidated upstream — see
-the cotask specs for the active cross-project task plan.
+the arkret-work specs for the active cross-project task plan.
 
 ## Targets
 

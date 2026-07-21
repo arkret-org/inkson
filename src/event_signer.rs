@@ -500,7 +500,7 @@ impl InksonEventSigner {
         Ok(format!("{header_b64}..{sig_b64}"))
     }
 
-    fn verification_method_for_sdk_event(&self, event: &arkret_sdk::Event) -> String {
+    pub(crate) fn verification_method_for_sdk_event(&self, event: &arkret_sdk::Event) -> String {
         let controller = event
             .executed_by
             .as_ref()
