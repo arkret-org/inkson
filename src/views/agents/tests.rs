@@ -169,6 +169,10 @@ mod personal_agent_tests {
                 "ak.self.events.stream.subscribe",
                 "ak.self.events.query.scan",
                 "ak.self.events.command.submit",
+                "ak.self.keys.keypackages.upload.create",
+                "ak.self.keys.keypackages.command.consume",
+                "ak.self.device_messages.query.list",
+                "ak.self.device_messages.command.ack",
             ]
         );
         let wire = serde_json::to_value(&scope).unwrap();
@@ -186,6 +190,22 @@ mod personal_agent_tests {
                 {
                     "kind": "operation",
                     "operation": "ak.self.events.command.submit"
+                },
+                {
+                    "kind": "operation",
+                    "operation": "ak.self.keys.keypackages.upload.create"
+                },
+                {
+                    "kind": "operation",
+                    "operation": "ak.self.keys.keypackages.command.consume"
+                },
+                {
+                    "kind": "operation",
+                    "operation": "ak.self.device_messages.query.list"
+                },
+                {
+                    "kind": "operation",
+                    "operation": "ak.self.device_messages.command.ack"
                 }
             ])
         );

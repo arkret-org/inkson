@@ -183,25 +183,32 @@ pub enum AgentServiceScopePreset {
     SubscribeEvents,
     ScanCatchUp,
     SubmitEvents,
+    SecureMessaging,
     ResolveResources,
 }
 
 impl AgentServiceScopePreset {
-    pub const ALL: [AgentServiceScopePreset; 4] = [
+    pub const ALL: [AgentServiceScopePreset; 5] = [
         Self::SubscribeEvents,
         Self::ScanCatchUp,
         Self::SubmitEvents,
+        Self::SecureMessaging,
         Self::ResolveResources,
     ];
 
-    pub const DEFAULTS: [AgentServiceScopePreset; 3] =
-        [Self::SubscribeEvents, Self::ScanCatchUp, Self::SubmitEvents];
+    pub const DEFAULTS: [AgentServiceScopePreset; 4] = [
+        Self::SubscribeEvents,
+        Self::ScanCatchUp,
+        Self::SubmitEvents,
+        Self::SecureMessaging,
+    ];
 
     pub fn preset_name(self) -> &'static str {
         match self {
             Self::SubscribeEvents => "subscribe_events",
             Self::ScanCatchUp => "scan_catch_up",
             Self::SubmitEvents => "submit_events",
+            Self::SecureMessaging => "secure_messaging",
             Self::ResolveResources => "resolve_resources",
         }
     }
@@ -211,6 +218,7 @@ impl AgentServiceScopePreset {
             Self::SubscribeEvents => "Subscribe events",
             Self::ScanCatchUp => "Scan catch-up",
             Self::SubmitEvents => "Submit events",
+            Self::SecureMessaging => "Secure messaging",
             Self::ResolveResources => "Resolve resources",
         }
     }
@@ -220,6 +228,9 @@ impl AgentServiceScopePreset {
             Self::SubscribeEvents => "Open the self events stream for live delivery.",
             Self::ScanCatchUp => "Query missed events after the runtime reconnects.",
             Self::SubmitEvents => "Call the durable submit endpoint for approved writes.",
+            Self::SecureMessaging => {
+                "Publish and consume MLS key packages and receive encrypted device messages."
+            }
             Self::ResolveResources => "Fetch event resources referenced by allowed payloads.",
         }
     }
@@ -229,6 +240,12 @@ impl AgentServiceScopePreset {
             Self::SubscribeEvents => &["ak.self.events.stream.subscribe"],
             Self::ScanCatchUp => &["ak.self.events.query.scan"],
             Self::SubmitEvents => &["ak.self.events.command.submit"],
+            Self::SecureMessaging => &[
+                "ak.self.keys.keypackages.upload.create",
+                "ak.self.keys.keypackages.command.consume",
+                "ak.self.device_messages.query.list",
+                "ak.self.device_messages.command.ack",
+            ],
             Self::ResolveResources => &["ak.self.events.resource.get"],
         }
     }
