@@ -319,6 +319,7 @@ pub(super) fn KanbanEffects(
                             realm_id: &decrypt_realm_id,
                             actor_id: &decrypt_actor,
                             device_id: &decrypt_device,
+                            circle_id: None,
                         };
                         overlay_collection_projection_with_operations(
                             &projection,
@@ -466,6 +467,7 @@ pub(super) fn KanbanEffects(
                             realm_id: &decrypt_realm_id,
                             actor_id: &decrypt_actor,
                             device_id: &decrypt_device,
+                            circle_id: None,
                         };
                         overlay_collection_projection_with_operations(
                             &projection,
@@ -924,6 +926,7 @@ fn refresh_projection(
                         realm_id: &decrypt_realm_id,
                         actor_id: &decrypt_actor,
                         device_id: &decrypt_device,
+                        circle_id: None,
                     };
                     overlay_collection_projection_with_operations(
                         &projection,

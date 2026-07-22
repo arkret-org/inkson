@@ -639,6 +639,7 @@ mod tests {
             capabilities_digest: record.keypackage_ref.clone(),
             ssk_generation: Some(ssk_generation),
             device_authorize_event_id: None,
+            agent_key_authorize_event_id: None,
             expires_at: crate::clock::now_utc() + chrono::Duration::hours(1),
             device_signature: arkret_sdk::KeyOperationSignature {
                 kid: arkret_sdk::NonEmptyString::new(format!(

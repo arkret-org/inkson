@@ -37,17 +37,26 @@ pub(super) struct EncryptedWriteMlsEvents {
     pub pending_history_secrets: Option<crate::state::PendingHistorySecrets>,
 }
 
-pub(super) fn encrypt_private_card_detail_patch_values(
+#[derive(Clone, Debug)]
+pub(super) struct SidecarTrackWriteContext {
+    pub circle_id: String,
+    pub binding: Option<arkret_sdk::SidecarMlsBinding>,
+    pub ready: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn encrypt_private_card_detail_patch_values_for_effective_scope(
     patch: Value,
     realm_id: &str,
     strand_id: &str,
     actor_id: &str,
     device_id: &str,
     mut state_store: SyncSignal<LocalStateStore>,
+    sidecar: Option<&SidecarTrackWriteContext>,
 ) -> Result<(Value, EncryptedWriteMlsEvents), String> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let mut store = state_store.write();
-    encrypt_private_card_detail_patch_values_with_store(
+    encrypt_private_card_detail_patch_values_with_store_for_effective_scope(
         patch,
         realm_id,
         strand_id,
@@ -55,9 +64,11 @@ pub(super) fn encrypt_private_card_detail_patch_values(
         device_id,
         &mut store,
         secure_store.as_ref(),
+        sidecar,
     )
 }
 
+#[cfg(test)]
 pub(super) fn encrypt_private_card_detail_patch_values_with_store(
     patch: Value,
     realm_id: &str,
@@ -67,6 +78,39 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store(
     state_store: &mut LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Result<(Value, EncryptedWriteMlsEvents), String> {
+    encrypt_private_card_detail_patch_values_with_store_for_effective_scope(
+        patch,
+        realm_id,
+        strand_id,
+        actor_id,
+        device_id,
+        state_store,
+        secure_store,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_scope(
+    patch: Value,
+    realm_id: &str,
+    strand_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    state_store: &mut LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    sidecar: Option<&SidecarTrackWriteContext>,
+) -> Result<(Value, EncryptedWriteMlsEvents), String> {
+    if let Some(sidecar) = sidecar
+        && (!sidecar.ready || sidecar.binding.is_none())
+    {
+        return Err("Private Sidecar MLS access is not ready".to_owned());
+    }
+    if let Some(binding) = sidecar.and_then(|sidecar| sidecar.binding.as_ref()) {
+        binding
+            .validate()
+            .map_err(|error| format!("Private Sidecar MLS binding is invalid: {error}"))?;
+    }
     let values = collect_encryptable_private_patch_values(&patch)?;
     if values.is_empty() {
         return Ok((patch, EncryptedWriteMlsEvents::default()));
@@ -75,22 +119,51 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store(
         .iter()
         .map(|(_, bytes)| bytes.clone())
         .collect::<Vec<_>>();
-    apply_local_mls_welcomes_for_realm(state_store, secure_store, realm_id, actor_id, device_id)?;
-    let fresh_summary = ensure_creator_mls_snapshot_for_encrypted_scope(
-        state_store,
-        secure_store,
-        realm_id,
-        actor_id,
-        device_id,
-    )?;
+    let circle_id = sidecar.map(|context| context.circle_id.as_str());
+    let fresh_summary = if circle_id.is_none() {
+        apply_local_mls_welcomes_for_realm(
+            state_store,
+            secure_store,
+            realm_id,
+            actor_id,
+            device_id,
+        )?;
+        ensure_creator_mls_snapshot_for_encrypted_scope(
+            state_store,
+            secure_store,
+            realm_id,
+            actor_id,
+            device_id,
+        )?
+    } else {
+        if state_store
+            .mls_snapshot_for_effective_scope(realm_id, circle_id)
+            .is_none()
+        {
+            return Err("Private Sidecar MLS snapshot is unavailable".to_owned());
+        }
+        None
+    };
     // Build genesis BEFORE the first commit mutates the group past epoch 0.
-    let genesis_event = build_creator_mls_genesis_event(
-        state_store,
-        realm_id,
-        actor_id,
-        device_id,
-        fresh_summary.as_ref(),
-    )?;
+    let genesis_event = if let Some(sidecar) = sidecar {
+        crate::mls::group_events::build_creator_mls_genesis_event_for_effective_scope_with_binding(
+            state_store,
+            realm_id,
+            Some(&sidecar.circle_id),
+            actor_id,
+            device_id,
+            fresh_summary.as_ref(),
+            sidecar.binding.clone(),
+        )?
+    } else {
+        build_creator_mls_genesis_event(
+            state_store,
+            realm_id,
+            actor_id,
+            device_id,
+            fresh_summary.as_ref(),
+        )?
+    };
     let (
         schedule_hash,
         _member_dids,
@@ -98,7 +171,7 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store(
         commit_envelope,
         new_snapshot,
         pending_history_secrets,
-    ) = crate::mls::runtime::encrypt_values_with_device_snapshot(
+    ) = crate::mls::runtime::encrypt_values_with_device_snapshot_for_effective_scope(
         state_store,
         secure_store,
         realm_id,
@@ -106,16 +179,31 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store(
         device_id,
         KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         &plaintext_values,
+        circle_id,
+        sidecar.and_then(|context| context.binding.as_ref()),
     )
     .map_err(|err| err.user_message())?;
     let commit_event = match commit_envelope.as_ref() {
-        Some(commit_envelope) => Some(mls_commit_event_from_store(
-            state_store,
-            realm_id,
-            actor_id,
-            &schedule_hash,
-            commit_envelope,
-        )?),
+        Some(commit_envelope) => Some(if let Some(sidecar) = sidecar {
+            crate::mls::group_events::mls_commit_event_from_store_for_effective_scope_with_sidecar_binding(
+                state_store,
+                realm_id,
+                &sidecar.circle_id,
+                actor_id,
+                commit_envelope,
+                sidecar.binding.clone().ok_or_else(|| {
+                    "Private Sidecar MLS governance binding is unavailable".to_owned()
+                })?,
+            )?
+        } else {
+            mls_commit_event_from_store(
+                state_store,
+                realm_id,
+                actor_id,
+                &schedule_hash,
+                commit_envelope,
+            )?
+        }),
         None => None,
     };
     // X5.1 — encryption succeeded. Persist the author's own plaintext into
@@ -198,6 +286,7 @@ pub(super) fn dispatch_card_detail_update(
     draft: CardDetailDraft,
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
     scope_security_encrypted: Option<bool>,
+    sidecar_track_write: Option<SidecarTrackWriteContext>,
     synthesis_entry_id: Option<String>,
     synthesis_revision_body: Option<String>,
     mut selected_card: Signal<Option<KanbanCard>>,
@@ -219,13 +308,14 @@ pub(super) fn dispatch_card_detail_update(
         .security_encrypted
         .unwrap_or_else(|| scope_security_encrypted.unwrap_or(true));
     let (patch, mls_events) = if effective_security_encrypted {
-        match encrypt_private_card_detail_patch_values(
+        match encrypt_private_card_detail_patch_values_for_effective_scope(
             patch,
             &realm_id,
             &current.id,
             &actor_id,
             &device_id,
             state_store,
+            sidecar_track_write.as_ref(),
         ) {
             Ok(result) => result,
             Err(msg) => {
@@ -280,7 +370,9 @@ pub(super) fn dispatch_card_detail_update(
     // `overlay_local_card_update_records`, so there is no direct signal write.
     let mut updated_card = current.clone();
     apply_card_detail_draft(&mut updated_card, &draft);
-    selected_card.set(Some(updated_card));
+    if sidecar_track_write.is_none() {
+        selected_card.set(Some(updated_card));
+    }
 
     let operation_id = sdk_event_local_operation_id(&op).to_owned();
     let synthesis_entry_id = synthesis_revision_body
@@ -325,6 +417,7 @@ pub(super) fn dispatch_card_detail_update(
     let base_for_backup_trigger = base_url.clone();
     let actor_for_backup_trigger = actor_id.clone();
     let device_for_sidecar_backup = device_id.clone();
+    let circle_id = sidecar_track_write.map(|context| context.circle_id);
     let submit_event = op;
     spawn(async move {
         if let Some(pending) = pending_history_secrets {
@@ -386,10 +479,11 @@ pub(super) fn dispatch_card_detail_update(
         if let Some(commit_op) = mls_commit_op {
             let snapshot_for_submit = mls_new_snapshot.clone();
             let realm_for_submit = realm_id.clone();
+            let circle_for_submit = circle_id.clone();
             let post_accept_store = crate::app::runtime_adapter::state_store_handle(state_store);
             let commit_result = with_authed_api(&base_url, api_token.clone(), |api| async move {
-                match snapshot_for_submit {
-                    Some(snapshot) => {
+                match (snapshot_for_submit, circle_for_submit.as_deref()) {
+                    (Some(snapshot), None) => {
                         api.event_submitter()?
                             .submit_mls_event_with_snapshot(
                                 &commit_op,
@@ -399,7 +493,9 @@ pub(super) fn dispatch_card_detail_update(
                             )
                             .await
                     }
-                    None => api.event_submitter()?.submit_sdk_event(&commit_op).await,
+                    (Some(_), Some(_)) | (None, _) => {
+                        api.event_submitter()?.submit_sdk_event(&commit_op).await
+                    }
                 }
             })
             .await;
@@ -413,18 +509,29 @@ pub(super) fn dispatch_card_detail_update(
                     // the next write retries at the correct `expected_prev_epoch`
                     // instead of skewing forever.
                     if mls_new_snapshot.is_some() {
+                        if let (Some(circle_id), Some(snapshot)) =
+                            (circle_id.as_deref(), mls_new_snapshot.clone())
+                        {
+                            state_store.write().save_mls_snapshot_for_effective_scope(
+                                realm_id.clone(),
+                                Some(circle_id),
+                                snapshot,
+                            );
+                        }
                         // §7.10 continuous backup: the accepted commit advanced
                         // the epoch, so re-upload this Realm's mls_history
                         // series tail (debounced; no-op until the 24-word
                         // Recovery Key exists).
-                        crate::components::schedule_mls_history_backup_after_commit(
-                            base_for_backup_trigger.clone(),
-                            api_token.clone(),
-                            actor_for_backup_trigger.clone(),
-                            device_for_sidecar_backup.clone(),
-                            realm_id.clone(),
-                            state_store,
-                        );
+                        if circle_id.is_none() {
+                            crate::components::schedule_mls_history_backup_after_commit(
+                                base_for_backup_trigger.clone(),
+                                api_token.clone(),
+                                actor_for_backup_trigger.clone(),
+                                device_for_sidecar_backup.clone(),
+                                realm_id.clone(),
+                                state_store,
+                            );
+                        }
                     }
                     if let Some(commit_operation_id) = mls_commit_operation_id {
                         state_store.write().record_move_submission_with_event_id(

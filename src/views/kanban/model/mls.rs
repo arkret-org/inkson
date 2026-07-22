@@ -12,6 +12,7 @@ pub(crate) struct MlsDecryptCtx<'a> {
     pub(crate) realm_id: &'a str,
     pub(crate) actor_id: &'a str,
     pub(crate) device_id: &'a str,
+    pub(crate) circle_id: Option<&'a str>,
 }
 
 /// Cheap key-only check for the raw MLS payload/envelope shape. Projection and
@@ -68,12 +69,13 @@ pub(crate) fn decrypt_private_strand_value(
     value: &Value,
 ) -> Option<Value> {
     let envelope = mls_envelope_value(value)?;
-    let plaintext = crate::state::projection::try_local_mls_decrypt_core(
+    let plaintext = crate::state::projection::try_local_mls_decrypt_core_for_effective_scope(
         ctx.state_store,
         ctx.realm_id,
         ctx.actor_id,
         ctx.device_id,
         envelope,
+        ctx.circle_id,
     )?;
     serde_json::from_slice::<Value>(&plaintext).ok()
 }

@@ -66,6 +66,7 @@ fn CardMarkdownEditor(
     value: String,
     token: String,
     realm_id: String,
+    allow_image_upload: Option<bool>,
     on_change: EventHandler<String>,
     /// Optional id suffix so multiple editor instances on the same card
     /// detail (e.g. Summary + Description) don't share a DOM id and
@@ -75,6 +76,7 @@ fn CardMarkdownEditor(
 ) -> Element {
     // A4 — base_url from session context instead of a prop.
     let base_url = crate::app::SessionContext::base_url_string();
+    let allow_image_upload = allow_image_upload.unwrap_or(true);
     let slot = slot.unwrap_or_else(|| "description".to_owned());
     let host_id = format!("card-detail-{slot}-toast-editor");
     let fallback_id = format!("card-detail-{slot}-input");
@@ -87,7 +89,9 @@ fn CardMarkdownEditor(
         let token = token.clone();
         let realm_id = realm_id.clone();
         move || {
-            let Some(script) = toast_editor_bootstrap_script(&host_id, &fallback_id, &value) else {
+            let Some(script) =
+                toast_editor_bootstrap_script(&host_id, &fallback_id, &value, allow_image_upload)
+            else {
                 return;
             };
             // YOU-06-002: the editor JS only extracts file bytes and hands
@@ -117,6 +121,7 @@ fn CardMarkdownEditor(
                         &base_url,
                         token.clone(),
                         &realm_id,
+                        allow_image_upload,
                         &request,
                     )
                     .await
@@ -360,9 +365,13 @@ async fn toast_editor_upload_via_api(
     base_url: &str,
     token: String,
     realm_id: &str,
+    allow_image_upload: bool,
     request: &Value,
 ) -> Result<(String, Option<String>), String> {
     use base64::Engine as _;
+    if !allow_image_upload {
+        return Err("image upload is unavailable for this encrypted scope".to_owned());
+    }
     let content_base64 = request
         .get("content_base64")
         .and_then(Value::as_str)
@@ -404,11 +413,17 @@ async fn toast_editor_upload_via_api(
     Ok((outcome.blob_ref.to_string(), outcome.media_type))
 }
 
-fn toast_editor_bootstrap_script(host_id: &str, fallback_id: &str, value: &str) -> Option<String> {
+fn toast_editor_bootstrap_script(
+    host_id: &str,
+    fallback_id: &str,
+    value: &str,
+    allow_image_upload: bool,
+) -> Option<String> {
     let config = serde_json::to_string(&json!({
         "hostId": host_id,
         "fallbackId": fallback_id,
         "value": value,
+        "allowImageUpload": allow_image_upload,
         "scriptUrl": TOAST_EDITOR_SCRIPT_URL,
         "cssUrl": TOAST_EDITOR_CSS_URL,
     }))
@@ -578,12 +593,12 @@ fn toast_editor_bootstrap_script(host_id: &str, fallback_id: &str, value: &str) 
             ["heading", "bold", "italic", "strike"],
             ["hr", "quote"],
             ["ul", "ol", "task"],
-            ["table", "image", "link"],
+            config.allowImageUpload ? ["table", "image", "link"] : ["table", "link"],
             ["code", "codeblock"]
         ],
-        hooks: {{
+        hooks: config.allowImageUpload ? {{
             addImageBlobHook: uploadImage
-        }}
+        }} : {{}}
     }});
 
     editor.on("change", () => sync(editor));
@@ -636,6 +651,7 @@ pub fn KanbanPanel(
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let state_store = crate::app::SessionContext::get().state_store;
+    let hosted_sidecar_state = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
     // T20 — load board projection from API when available, otherwise seed.
     // Source signal lets the UI surface persisted API projection vs
     // explicit demo seed in the board header.
@@ -773,6 +789,7 @@ pub fn KanbanPanel(
                 realm_id: &decrypt_realm_id,
                 actor_id: &decrypt_actor,
                 device_id: &decrypt_device,
+                circle_id: None,
             };
             if raw_operations.is_empty() && !seed_columns.is_empty() {
                 // Demo / seed-fallback columns: layer local optimistic ops on top.
@@ -855,13 +872,34 @@ pub fn KanbanPanel(
                 realm_id: &memo_realm_id,
                 actor_id: &memo_account_did,
                 device_id: &memo_device_id,
+                circle_id: None,
             };
+            let active_sidecar = hosted_sidecar_state().filter(|session| {
+                session.source_realm_id == memo_realm_id
+                    && session.source_strand_id == card.primary_strand_id
+            });
+            let circle_id = active_sidecar
+                .as_ref()
+                .map(|session| session.backing_scope_circle_id.to_string());
+            let sidecar_decrypt_ctx = MlsDecryptCtx {
+                circle_id: circle_id.as_deref(),
+                ..decrypt_ctx
+            };
+            let private_card = active_sidecar.as_ref().map(|session| {
+                sidecar_private_track_card(
+                    &card,
+                    &session.private_strand_id,
+                    &snapshot.raw_operations,
+                    Some(&sidecar_decrypt_ctx),
+                )
+            });
+            let projected_card = private_card.as_ref().unwrap_or(&card);
             card_synthesis_track_entries_with_author_context_and_decrypt(
-                &card,
+                projected_card,
                 &snapshot.raw_operations,
                 &store,
                 Some(author_context),
-                Some(&decrypt_ctx),
+                Some(&sidecar_decrypt_ctx),
             )
         })
     };

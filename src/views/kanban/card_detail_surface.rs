@@ -120,6 +120,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
         projected_strand_ids,
     } = context;
     let state_store = crate::app::SessionContext::get().state_store;
+    let hosted_sidecar_state = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
     let navigator = use_navigator();
     let route = use_route::<Route>();
     let mut member_mention_request =
@@ -204,11 +205,67 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
         mut board_status,
         command_queue: _,
     } = controller;
+    let mut sidecar_edit_context_seen = use_signal(String::new);
+    let edit_context_realm_id = selected_realm_id.clone();
+    use_effect(move || {
+        let selected_strand = selected_card().map(|card| card.primary_strand_id);
+        let next = hosted_sidecar_state()
+            .filter(|session| {
+                session.source_realm_id == edit_context_realm_id
+                    && selected_strand.as_deref() == Some(session.source_strand_id.as_str())
+            })
+            .map(|session| session.private_strand_id)
+            .unwrap_or_default();
+        if sidecar_edit_context_seen.peek().as_str() == next {
+            return;
+        }
+        if editing_card_detail() {
+            editing_card_detail.set(false);
+            card_detail_actions_open.set(false);
+            card_detail_edit_status.set(String::new());
+            card_edit_synthesis_target_id.set(None);
+        }
+        sidecar_edit_context_seen.set(next);
+    });
 
     rsx! {
             if let Some(ref card) = selected_card() {
                 {
                     let card_id_label = short_protocol_id(&card.id);
+                    let active_sidecar_session = hosted_sidecar_state().filter(|session| {
+                        session.source_realm_id == selected_realm_id
+                            && session.source_strand_id == card.primary_strand_id
+                    });
+                    let sidecar_track_write = active_sidecar_session.as_ref().map(|session| {
+                        SidecarTrackWriteContext {
+                            circle_id: session.backing_scope_circle_id.to_string(),
+                            binding: session.mls_binding().ok(),
+                            ready: session.membership_ready(),
+                        }
+                    });
+                    let private_track_card = active_sidecar_session.as_ref().map(|session| {
+                        let store = state_store.read();
+                        let snapshot = store.load();
+                        let circle_id = session.backing_scope_circle_id.to_string();
+                        let decrypt_ctx = MlsDecryptCtx {
+                            state_store: &store,
+                            realm_id: &selected_realm_id,
+                            actor_id: &account_did,
+                            device_id: &device_id,
+                            circle_id: Some(&circle_id),
+                        };
+                        sidecar_private_track_card(
+                            card,
+                            &session.private_strand_id,
+                            &snapshot.raw_operations,
+                            Some(&decrypt_ctx),
+                        )
+                    });
+                    let track_card = private_track_card.as_ref().unwrap_or(card);
+                    let sidecar_track_active = active_sidecar_session.is_some();
+                    let show_shared_track_base = active_sidecar_session.as_ref().is_some_and(|session| {
+                        session.display_mode == arkret_sdk::AgentSidecarDisplayMode::ContextMerged
+                    });
                     let board_route_after_close =
                         kanban_card_detail_board_route(&selected_realm_id, &selected_board_space_id());
                     let route_is_card_detail = matches!(
@@ -465,7 +522,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 oninput: move |event: FormEvent| card_edit_due.set(event.value()),
                                                             }
                                                         }
-                                                    } else {
+                                                    } else if !sidecar_track_active {
                                                         Button {
                                                             variant: ButtonVariant::Secondary,
                                                             class: "card-detail-action-menu-item",
@@ -597,7 +654,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         UiIcon { name: "file" }
                                                         span { "Summary" }
                                                     }
-                                                    if !editing_card_detail() {
+                                                    if !editing_card_detail() && !sidecar_track_active {
                                                         Button {
                                                             variant: ButtonVariant::Secondary,
                                                             class: "card-detail-mini-action card-detail-edit-action",
@@ -643,6 +700,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 value: card_edit_description(),
                                                                 token: token(),
                                                                 realm_id: selected_realm_id.clone(),
+                                                                allow_image_upload: !sidecar_track_active,
                                                                 on_change: move |value| card_edit_description.set(value),
                                                                 slot: "summary".to_owned(),
                                                             }
@@ -656,6 +714,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 let device = device_id.clone();
                                                                 let current = card.clone();
                                                                 let entries = synthesis_entries.clone();
+                                                                let sidecar_write = sidecar_track_write.clone();
                                                                 move |_| {
                                                                     save_card_detail_edit(
                                                                         base.clone(),
@@ -666,6 +725,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         current.clone(),
                                                                         entries.clone(),
                                                                         selected_scope_security_encrypted,
+                                                                        sidecar_write.clone(),
                                                                         card_edit_scope,
                                                                         card_edit_title,
                                                                         card_edit_description,
@@ -779,6 +839,25 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         class: "card-detail-description-panel",
                                                         "data-testid": "card-description-panel",
                                                         role: "tabpanel",
+                                                        if show_shared_track_base {
+                                                            div { class: "sidecar-shared-track-base", "data-testid": "sidecar-shared-description-base",
+                                                                span { class: "badge", "Original Strand · read only" }
+                                                                if card.body.trim().is_empty() {
+                                                                    div { class: "card-detail-empty", "No shared description" }
+                                                                } else {
+                                                                    div { class: "card-detail-description",
+                                                                        {crate::content::render_blocks(
+                                                                            &crate::content::parse_message_body(&card.body),
+                                                                        )}
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        if sidecar_track_active {
+                                                            div { class: "sidecar-private-track-label", "data-testid": "sidecar-private-description-label",
+                                                                span { class: "badge", "Private Sidecar overlay" }
+                                                            }
+                                                        }
                                                         if editing_card_detail() && card_edit_scope() == CardEditScope::Description {
                                                             div { class: "workflow-form card-detail-edit-form", "data-testid": "card-detail-edit-form",
                                                                 div { class: "field",
@@ -798,8 +877,9 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         let realm = selected_realm_id.clone();
                                                                         let actor = account_did.clone();
                                                                         let device = device_id.clone();
-                                                                        let current = card.clone();
+                                                                        let current = track_card.clone();
                                                                         let entries = synthesis_entries.clone();
+                                                                        let sidecar_write = sidecar_track_write.clone();
                                                                         move |_| {
                                                                             save_card_detail_edit(
                                                                                 base.clone(),
@@ -810,6 +890,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                 current.clone(),
                                                                                 entries.clone(),
                                                                                 selected_scope_security_encrypted,
+                                                                                sidecar_write.clone(),
                                                                                 card_edit_scope,
                                                                                 card_edit_title,
                                                                                 card_edit_description,
@@ -829,7 +910,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         }
                                                                     },
                                                                     on_cancel: {
-                                                                        let current = card.clone();
+                                                                        let current = track_card.clone();
                                                                         move |_| {
                                                                             reset_card_detail_edit(
                                                                                 &current,
@@ -851,8 +932,8 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     },
                                                                 }
                                                             }
-                                                        } else if card.body.trim().is_empty()
-                                                            && card.body_locked
+                                                        } else if track_card.body.trim().is_empty()
+                                                            && track_card.body_locked
                                                         {
                                                             // X10.2: encrypted field this device can't
                                                             // read yet — show a locked notice (NOT "No
@@ -863,16 +944,16 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 "data-testid": "card-detail-body-locked",
                                                                 div { "{MLS_LOCKED_FIELD_PLACEHOLDER}" }
                                                             }
-                                                        } else if card.body.trim().is_empty() {
+                                                        } else if track_card.body.trim().is_empty() {
                                                             div { class: "card-detail-empty",
-                                                                div { "No description" }
+                                                                div { {if sidecar_track_active { "No private description" } else { "No description" }} }
                                                                 if !editing_card_detail() {
                                                                     Button {
                                                                         variant: ButtonVariant::Secondary,
                                                                         class: "card-detail-mini-action",
                                                                         "data-testid": "card-detail-add-description-button",
                                                                         onclick: {
-                                                                            let current = card.clone();
+                                                                            let current = track_card.clone();
                                                                             move |_| {
                                                                                 let draft = card_detail_draft_from_card(&current);
                                                                                 card_edit_title.set(draft.title);
@@ -901,7 +982,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         class: "card-detail-mini-action card-detail-edit-action",
                                                                         "data-testid": "card-detail-edit-description-button",
                                                                         onclick: {
-                                                                            let current = card.clone();
+                                                                            let current = track_card.clone();
                                                                             move |_| {
                                                                                 let draft = card_detail_draft_from_card(&current);
                                                                                 card_edit_title.set(draft.title);
@@ -924,7 +1005,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             }
                                                             div { class: "card-detail-description",
                                                                 {crate::content::render_blocks(
-                                                                    &crate::content::parse_message_body(&card.body),
+                                                                    &crate::content::parse_message_body(&track_card.body),
                                                                 )}
                                                             }
                                                         }
@@ -934,8 +1015,27 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         class: "card-detail-synthesis-panel",
                                                         "data-testid": "card-synthesis-panel",
                                                         role: "tabpanel",
+                                                        if show_shared_track_base {
+                                                            div { class: "sidecar-shared-track-base", "data-testid": "sidecar-shared-synthesis-base",
+                                                                span { class: "badge", "Original Strand · read only" }
+                                                                if card.synthesis.trim().is_empty() {
+                                                                    div { class: "card-detail-empty", "No shared synthesis" }
+                                                                } else {
+                                                                    div { class: "card-detail-description card-synthesis-body",
+                                                                        {crate::content::render_blocks(
+                                                                            &crate::content::parse_message_body(&card.synthesis),
+                                                                        )}
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        if sidecar_track_active {
+                                                            div { class: "sidecar-private-track-label", "data-testid": "sidecar-private-synthesis-label",
+                                                                span { class: "badge", "Private Sidecar overlay" }
+                                                            }
+                                                        }
                                                         if synthesis_entries.is_empty()
-                                                            && card.synthesis_locked
+                                                            && track_card.synthesis_locked
                                                         {
                                                             div {
                                                                 class: "card-detail-empty",
@@ -944,7 +1044,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             }
                                                         } else if synthesis_entries.is_empty() {
                                                             div { class: "card-detail-empty",
-                                                                div { "No synthesis yet." }
+                                                                div { {if sidecar_track_active { "No private synthesis yet." } else { "No synthesis yet." }} }
                                                             }
                                                         } else {
                                                             div { class: "card-synthesis-track", "data-testid": "card-synthesis-track",
@@ -1125,7 +1225,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             class: "card-detail-mini-action card-synthesis-entry-edit",
                                                                                             "data-testid": "card-detail-edit-synthesis-button",
                                                                                             onclick: {
-                                                                                                let current = card.clone();
+                                                                                                let current = track_card.clone();
                                                                                                 let entry_id = entry.id.clone();
                                                                                                 let entry_body = entry.body.clone();
                                                                                                 move |_| {
@@ -1160,6 +1260,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                 value: card_edit_synthesis(),
                                                                                                 token: token(),
                                                                                                 realm_id: selected_realm_id.clone(),
+                                                                                                allow_image_upload: !sidecar_track_active,
                                                                                                 on_change: move |value| card_edit_synthesis.set(value),
                                                                                                 slot: "synthesis".to_owned(),
                                                                                             }
@@ -1171,8 +1272,9 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                 let realm = selected_realm_id.clone();
                                                                                                 let actor = account_did.clone();
                                                                                                 let device = device_id.clone();
-                                                                                                let current = card.clone();
+                                                                                                let current = track_card.clone();
                                                                                                 let entries = synthesis_entries.clone();
+                                                                                                let sidecar_write = sidecar_track_write.clone();
                                                                                                 move |_| {
                                                                                                     save_card_detail_edit(
                                                                                                         base.clone(),
@@ -1183,6 +1285,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                         current.clone(),
                                                                                                         entries.clone(),
                                                                                                         selected_scope_security_encrypted,
+                                                                                                        sidecar_write.clone(),
                                                                                                         card_edit_scope,
                                                                                                         card_edit_title,
                                                                                                         card_edit_description,
@@ -1202,7 +1305,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                 }
                                                                                             },
                                                                                             on_cancel: {
-                                                                                                let current = card.clone();
+                                                                                                let current = track_card.clone();
                                                                                                 move |_| {
                                                                                                     reset_card_detail_edit(
                                                                                                         &current,
@@ -1247,6 +1350,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         value: card_edit_synthesis(),
                                                                         token: token(),
                                                                         realm_id: selected_realm_id.clone(),
+                                                                        allow_image_upload: !sidecar_track_active,
                                                                         on_change: move |value| card_edit_synthesis.set(value),
                                                                         slot: "synthesis".to_owned(),
                                                                     }
@@ -1258,8 +1362,9 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         let realm = selected_realm_id.clone();
                                                                         let actor = account_did.clone();
                                                                         let device = device_id.clone();
-                                                                        let current = card.clone();
+                                                                        let current = track_card.clone();
                                                                         let entries = synthesis_entries.clone();
+                                                                        let sidecar_write = sidecar_track_write.clone();
                                                                         move |_| {
                                                                             save_card_detail_edit(
                                                                                 base.clone(),
@@ -1270,6 +1375,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                 current.clone(),
                                                                                 entries.clone(),
                                                                                 selected_scope_security_encrypted,
+                                                                                sidecar_write.clone(),
                                                                                 card_edit_scope,
                                                                                 card_edit_title,
                                                                                 card_edit_description,
@@ -1289,7 +1395,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         }
                                                                     },
                                                                     on_cancel: {
-                                                                        let current = card.clone();
+                                                                        let current = track_card.clone();
                                                                         move |_| {
                                                                             reset_card_detail_edit(
                                                                                 &current,
@@ -1319,7 +1425,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     class: "card-detail-mini-action",
                                                                     "data-testid": "card-detail-new-synthesis-button",
                                                                     onclick: {
-                                                                        let current = card.clone();
+                                                                        let current = track_card.clone();
                                                                         move |_| {
                                                                             let draft = card_detail_draft_from_card(&current);
                                                                             card_edit_title.set(draft.title);

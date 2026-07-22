@@ -51,6 +51,23 @@
   background: color-mix(in srgb, var(--accent) 16%, var(--surface));
 }
 
+.sidecar-shared-track-base,
+.sidecar-private-track-label {
+  margin-bottom: 0.75rem;
+}
+
+.sidecar-shared-track-base {
+  padding: 0.75rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.5rem;
+  background: var(--surface-muted);
+}
+
+.sidecar-shared-track-base > .badge,
+.sidecar-private-track-label > .badge {
+  margin-bottom: 0.5rem;
+}
+
 .sidecar-draft-notice,
 .sidecar-mode > .discussion-main-panel > .warning-banner {
   margin: 0.6rem 1rem 0;

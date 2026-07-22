@@ -197,6 +197,30 @@ pub(super) fn reset_card_detail_edit(
     card_detail_edit_status.set(String::new());
 }
 
+pub(super) fn sidecar_private_track_card(
+    source: &KanbanCard,
+    private_strand_id: &str,
+    raw_operations: &[RawOperationRecord],
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+) -> KanbanCard {
+    let mut private = source.clone();
+    private.id = private_strand_id.to_owned();
+    private.primary_strand_id = private_strand_id.to_owned();
+    private.body.clear();
+    private.synthesis.clear();
+    private.body_locked = false;
+    private.synthesis_locked = false;
+    private.security_encrypted = Some(true);
+    for update in raw_operations
+        .iter()
+        .filter_map(|record| local_card_update_from_raw_operation(record, decrypt_ctx))
+        .filter(|update| update.strand_id == private_strand_id)
+    {
+        apply_card_update_overlay(&mut private, &update);
+    }
+    private
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn save_card_detail_edit(
     base_url: String,
@@ -208,6 +232,7 @@ pub(super) fn save_card_detail_edit(
     synthesis_entries: Vec<CardSynthesisTrackEntry>,
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
     scope_security_encrypted: Option<bool>,
+    sidecar_track_write: Option<SidecarTrackWriteContext>,
     card_edit_scope: Signal<CardEditScope>,
     card_edit_title: Signal<String>,
     card_edit_description: Signal<String>,
@@ -226,6 +251,18 @@ pub(super) fn save_card_detail_edit(
 ) {
     card_detail_edit_status.set("Saving...".to_owned());
     let edit_scope = card_edit_scope();
+    if sidecar_track_write.is_some()
+        && !matches!(
+            edit_scope,
+            CardEditScope::Description | CardEditScope::Synthesis
+        )
+    {
+        card_detail_edit_status.set(
+            "Private Sidecar editing is available only on Description and Synthesis tracks"
+                .to_owned(),
+        );
+        return;
+    }
     let synthesis_target_id = card_edit_synthesis_target_id();
     let (draft, synthesis_revision) = card_detail_draft_for_edit_scope(
         &current,
@@ -249,6 +286,7 @@ pub(super) fn save_card_detail_edit(
         current,
         draft,
         scope_security_encrypted,
+        sidecar_track_write,
         synthesis_target_id,
         synthesis_revision,
         selected_card,
@@ -338,6 +376,7 @@ pub(super) fn save_card_due_edit(
         scope_security_encrypted,
         None,
         None,
+        None,
         selected_card,
         state_store,
         board_status,
@@ -385,6 +424,7 @@ pub(super) fn save_card_calendar_edit(
         current,
         draft,
         scope_security_encrypted,
+        None,
         None,
         None,
         selected_card,

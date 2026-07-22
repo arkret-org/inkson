@@ -166,16 +166,14 @@ pub fn decrypt_application_payload_for_effective_scope(
             .is_none()
             .then(|| try_history_decrypt_standalone(state_store, realm_id, payload))
             .flatten();
-        if plaintext.is_none() {
-            if circle.is_none() {
-                warn_mls_decrypt_once(
-                    realm_id,
-                    digest,
-                    payload.epoch,
-                    None,
-                    "no local MLS snapshot or granted history secret",
-                );
-            }
+        if plaintext.is_none() && circle.is_none() {
+            warn_mls_decrypt_once(
+                realm_id,
+                digest,
+                payload.epoch,
+                None,
+                "no local MLS snapshot or granted history secret",
+            );
         }
         return plaintext;
     };
@@ -248,18 +246,16 @@ pub fn decrypt_application_payload_for_effective_scope(
                 .is_none()
                 .then(|| try_history_decrypt_standalone(state_store, realm_id, payload))
                 .flatten();
-            if plaintext.is_none() {
-                if circle.is_none() {
-                    warn_mls_decrypt_once(
-                        realm_id,
-                        digest,
-                        payload.epoch,
-                        Some(snapshot.epoch),
-                        &format!(
-                            "live MLS decrypt failed ({live_error}); no granted history secret opened the payload"
-                        ),
-                    );
-                }
+            if plaintext.is_none() && circle.is_none() {
+                warn_mls_decrypt_once(
+                    realm_id,
+                    digest,
+                    payload.epoch,
+                    Some(snapshot.epoch),
+                    &format!(
+                        "live MLS decrypt failed ({live_error}); no granted history secret opened the payload"
+                    ),
+                );
             }
             return plaintext;
         }
@@ -1426,6 +1422,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
 }
 
 #[allow(clippy::type_complexity)]
+#[cfg(test)]
 pub(crate) fn encrypt_values_with_device_snapshot(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -1445,11 +1442,49 @@ pub(crate) fn encrypt_values_with_device_snapshot(
     ),
     MlsRuntimeError,
 > {
+    encrypt_values_with_device_snapshot_for_effective_scope(
+        state_store,
+        secure_store,
+        realm_id,
+        actor_id,
+        device_id,
+        content_type,
+        plaintext_values,
+        None,
+        None,
+    )
+}
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
+    state_store: &mut crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    content_type: &str,
+    plaintext_values: &[Vec<u8>],
+    circle_id: Option<&str>,
+    sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
+) -> Result<
+    (
+        arkret_sdk::Hash,
+        Vec<arkret_sdk::Did>,
+        Vec<serde_json::Value>,
+        Option<arkret_sdk::MlsCommitEnvelope>,
+        Option<crate::mls::persistence::MlsSnapshotEnvelope>,
+        Option<crate::state::PendingHistorySecrets>,
+    ),
+    MlsRuntimeError,
+> {
     if plaintext_values.is_empty() {
         return Err(MlsRuntimeError::EmptyPlaintext);
     }
+    let circle = circle_id
+        .map(str::trim)
+        .filter(|circle_id| !circle_id.is_empty());
     let snapshot = state_store
-        .mls_snapshot_for(realm_id)
+        .mls_snapshot_for_effective_scope(realm_id, circle)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
@@ -1470,8 +1505,8 @@ pub(crate) fn encrypt_values_with_device_snapshot(
         Some(self_update_with_verified_governance_binding(
             state_store,
             realm_id,
-            None,
-            None,
+            circle,
+            sidecar_binding,
             &mut group,
         )?)
     } else {
@@ -1484,7 +1519,8 @@ pub(crate) fn encrypt_values_with_device_snapshot(
     // forward-secret `mls-rfc9420` PrivateMessage path. The epoch is read AFTER
     // any forced commit above, so the AEAD aad binds the epoch the content
     // actually rides; it MUST match the decrypt-side `history_content_aad_bytes`.
-    let use_exporter_aead = realm_content_scheme_is_exporter_aead(state_store, realm_id);
+    let use_exporter_aead =
+        circle.is_none() && realm_content_scheme_is_exporter_aead(state_store, realm_id);
     let mut encrypted_values = Vec::with_capacity(plaintext_values.len());
     let exporter_aad = use_exporter_aead
         .then(|| history_content_aad_bytes(realm_id, group.epoch()))
@@ -1565,7 +1601,7 @@ pub(crate) fn encrypt_values_with_device_snapshot(
     new_envelope = new_envelope
         .carry_epoch_started_at(&snapshot)
         .with_app_messages_observed(snapshot.app_messages_observed.saturating_add(sent));
-    state_store.save_mls_snapshot(realm_id.to_owned(), new_envelope);
+    state_store.save_mls_snapshot_for_effective_scope(realm_id.to_owned(), circle, new_envelope);
     Ok((
         schedule_hash,
         member_dids,

@@ -98,6 +98,7 @@ fn private_strand_display_text_blanks_undecryptable_envelope() {
         realm_id: "ak:realm:01904100-0000-7000-8000-000000000001",
         actor_id: "did:web:alice.example",
         device_id: "ak:device:01904100-0000-7000-8000-000000000001",
+        circle_id: None,
     };
     // Envelope + ctx but no local snapshot → soft failure → blank.
     assert_eq!(private_strand_display_text(Some(&ctx), Some(&envelope)), "");
@@ -119,6 +120,7 @@ fn private_strand_field_text_prefers_local_sidecar_plaintext() {
         realm_id: realm,
         actor_id: "did:web:alice.example",
         device_id: "ak:device:01904100-0000-7000-8000-000000000001",
+        circle_id: None,
     };
     // Even when the projection value is an un-decryptable envelope, the
     // sidecar wins (tier 1) with zero decryption.
@@ -155,6 +157,7 @@ fn private_strand_empty_sidecar_does_not_mask_encrypted_locked_state() {
         realm_id: realm,
         actor_id: "did:web:alice.example",
         device_id: "ak:device:01904100-0000-7000-8000-000000000001",
+        circle_id: None,
     };
     let envelope = json!({
         "scheme": "mls-rfc9420",
@@ -190,6 +193,7 @@ fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
         realm_id: realm,
         actor_id: "did:web:alice.example",
         device_id: "ak:device:01904100-0000-7000-8000-000000000001",
+        circle_id: None,
     };
     let strand_view = crate::state::projection_views::StrandProjectionView {
         strand_id: strand.to_owned(),

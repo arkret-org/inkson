@@ -711,3 +711,97 @@ fn encrypted_scope_allows_strand_summary_metadata_update() {
     assert!(!kanban_event_carries_plaintext_private_content(&event));
     assert!(kanban_plaintext_block_reason(Some(true), &event).is_none());
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn sidecar_track_patch_encrypts_with_only_the_circle_snapshot() {
+    let mut state = temp_state_store("sidecar-track-circle-encrypt");
+    let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+    let actor = "did:web:alice.example";
+    let device = "ak:device:0196419b-0000-7000-8000-000000000021";
+    let realm = "ak:realm:0196419b-0000-7000-8000-000000000022";
+    let circle = "ak:circle:0196419b-0000-7000-8000-000000000023";
+    let strand = "ak:strand:0196419b-0000-7000-8000-000000000024";
+    let identity = arkret_sdk::ArkretMlsIdentity::new_basic(
+        arkret_sdk::Did::new(actor.to_owned()).unwrap(),
+        arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
+    )
+    .unwrap();
+    let group = identity.create_group(circle.as_bytes()).unwrap();
+    let post_state = group.export_state_record().unwrap();
+    let serialized = serde_json::to_vec(&post_state).unwrap();
+    let secret =
+        crate::mls::runtime::load_or_create_device_snapshot_secret(&secure, actor, device).unwrap();
+    let mut salt = [0_u8; 16];
+    getrandom::fill(&mut salt).unwrap();
+    let snapshot = crate::mls::persistence::encrypt_state(
+        realm,
+        &post_state.group_id,
+        post_state.epoch,
+        &serialized,
+        &secret,
+        &salt,
+    );
+    state.save_mls_snapshot_for_effective_scope(realm.to_owned(), Some(circle), snapshot);
+    let realm_identity = arkret_sdk::ArkretMlsIdentity::new_basic(
+        arkret_sdk::Did::new(actor.to_owned()).unwrap(),
+        arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
+    )
+    .unwrap();
+    let realm_group = realm_identity.create_group(realm.as_bytes()).unwrap();
+    let realm_state = realm_group.export_state_record().unwrap();
+    let realm_serialized = serde_json::to_vec(&realm_state).unwrap();
+    let mut realm_salt = [0_u8; 16];
+    getrandom::fill(&mut realm_salt).unwrap();
+    let realm_snapshot = crate::mls::persistence::encrypt_state(
+        realm,
+        &realm_state.group_id,
+        realm_state.epoch,
+        &realm_serialized,
+        &secret,
+        &realm_salt,
+    );
+    state.save_mls_snapshot(realm.to_owned(), realm_snapshot.clone());
+    let binding = arkret_sdk::SidecarMlsBinding {
+        sidecar_id: arkret_sdk::SidecarId::new(
+            "ak:sidecar:0196419b-0000-7000-8000-000000000025".to_owned(),
+        )
+        .unwrap(),
+        desired_access_digest: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64))).unwrap(),
+        control_frontier: vec![
+            arkret_sdk::NonEmptyString::new("ak:event:0196419b-0000-7000-8000-000000000026")
+                .unwrap(),
+        ],
+    };
+    let context = SidecarTrackWriteContext {
+        circle_id: circle.to_owned(),
+        binding: Some(binding),
+        ready: true,
+    };
+
+    let (patch, events) = encrypt_private_card_detail_patch_values_with_store_for_effective_scope(
+        json!({ "body": { "$op": "set", "value": "private overlay" } }),
+        realm,
+        strand,
+        actor,
+        device,
+        &mut state,
+        &secure,
+        Some(&context),
+    )
+    .unwrap();
+
+    assert!(value_is_mls_envelope(&patch["body"]["value"]));
+    assert!(events.genesis.is_none());
+    assert!(events.commit.is_none());
+    assert_eq!(state.mls_snapshot_for(realm), Some(realm_snapshot));
+    assert!(
+        state
+            .mls_snapshot_for_effective_scope(realm, Some(circle))
+            .is_some()
+    );
+    assert_eq!(
+        state.private_plaintext_for(realm, strand, "body"),
+        Some("\"private overlay\"".to_owned())
+    );
+}
