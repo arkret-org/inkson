@@ -1,27 +1,23 @@
 //! Current-session device enrollment (decision 0002, device-lifecycle.md §5.4).
 //!
-//! Under the delegated account-authority model the client cannot author a
-//! `ak.device.authorize` proof itself: the trust root is the enrollment
-//! authority (coauth) designated by the principal DID document. Enrollment is a
-//! three-step orchestration:
+//! Under the delegated account-authority model the client cannot author the
+//! founding `ak.device.authorize` proof itself: the trust root is the enrollment
+//! authority (coauth) designated by the principal DID document. Founding-device
+//! enrollment is a three-step orchestration:
 //!
 //! 1. derive this device's `device_public_key` from the persisted signing seed;
-//! 2. read the next `actor_seq` from the principal control stream's actor frontier on the Principal
-//!    Server;
+//! 2. bind it to actor sequence 1 and the root-signed PCR create Event;
 //! 3. ask the enrollment authority to mint a signed `service_attested` `ak.device.authorize` Event,
-//!    then submit it verbatim to the Principal Server's `POST /_arkret/self/events`.
+//!    then submit both Events as one atomic bootstrap unit.
 //!
-//! The flow is idempotent at the caller: it is only invoked when the device
-//! is not yet authorized, and a concurrent / already-applied authorization is
-//! reported by the server (the submit is a CAS on `actor_seq`).
+//! Later devices never use this endpoint; they follow the user-approved
+//! pairing/recovery flow.
 
 use anyhow::Context as _;
 
-use crate::transport::TransportClient;
-
-/// Inputs the caller resolves before invoking [`enroll_current_device`]. Kept as
-/// a struct so the wasm bootstrap site stays readable and the assembly is unit
-/// testable without a live session.
+/// Inputs the caller resolves for the atomic founding-device bootstrap. Kept as
+/// a struct so the wasm onboarding site stays readable and the assembly is
+/// unit testable without a live session.
 pub struct DeviceEnrollmentRequest {
     /// This session's `device_id` (`ak:device:<uuid>`). The enrollment authority
     /// signs the `ak.device.authorize` for exactly this device so the projected
@@ -132,26 +128,6 @@ fn validate_signed_device_authorize(
         );
     }
     Ok(event)
-}
-
-/// Enroll the current session device: ask the Account Authority to sign a
-/// `ak.device.authorize` for `request`, then submit it through `principal_api`
-/// (`POST /_arkret/self/events`). `expected_device_id` is this session's
-/// self-certifying id, used to fail closed if the returned event addresses a
-/// different device.
-pub async fn enroll_current_device(
-    account_client: &arkret_sdk::http_client::Client,
-    principal_api: &TransportClient,
-    request: &DeviceEnrollmentRequest,
-    expected_device_id: &str,
-) -> anyhow::Result<()> {
-    let event =
-        request_signed_device_authorize(account_client, request, expected_device_id).await?;
-    principal_api
-        .event_submitter()?
-        .submit_signed_sdk_event(&event)
-        .await?;
-    Ok(())
 }
 
 /// Ask the enrollment authority for the fully-signed authorize Event without

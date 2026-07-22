@@ -76,6 +76,8 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
     let navigator = use_navigator();
     let call_signal_hub = use_context::<crate::views::call_signals::CallSignalHub>();
     let did_cache = use_context::<Signal<crate::identity::did_resolver::DidResolutionCache>>();
+    let mut device_authorization_recheck_key = use_signal(String::new);
+    let mut device_authorization_recheck_attempt = use_signal(|| 0_u32);
 
     {
         let invalidator_effects = runtime_services.effects.clone();
@@ -120,6 +122,75 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
             realm_tree_nodes.set(next);
         }
     });
+
+    {
+        let mut recheck_needs_authorization = needs_device_authorization;
+        let mut recheck_complete = device_authorization_check_complete;
+        let mut recheck_has_other = account_has_other_devices;
+        use_effect(move || {
+            if !recheck_complete() || !recheck_needs_authorization() || !sync_bootstrap_complete() {
+                return;
+            }
+            // Device pairing is approved on another device. The durable device
+            // list/account-sync edge is therefore the signal to re-check the
+            // exact directory signer and release MLS publication on this one.
+            let cursor = sync_cursor();
+            let base = base_url();
+            let session = token();
+            let actor = account_did();
+            let device = device_id();
+            if cursor.trim().is_empty()
+                || base.trim().is_empty()
+                || session.trim().is_empty()
+                || actor.trim().is_empty()
+                || device.trim().is_empty()
+            {
+                return;
+            }
+            let key = format!("{cursor}|{actor}|{device}");
+            if device_authorization_recheck_key().as_str() == key {
+                return;
+            }
+            device_authorization_recheck_key.set(key.clone());
+            spawn(async move {
+                let result =
+                    crate::transport::auth::with_authed_api(&base, session, |api| async move {
+                        super::connect::probe_device_authorization(&actor, &device, &api).await
+                    })
+                    .await;
+                match result {
+                    Ok((needs_authorization, has_other)) => {
+                        if *device_authorization_recheck_attempt.peek() != 0 {
+                            device_authorization_recheck_attempt.set(0);
+                        }
+                        recheck_has_other.set(has_other);
+                        recheck_needs_authorization.set(needs_authorization);
+                        recheck_complete.set(true);
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            ?error,
+                            "device authorization re-check after account sync failed"
+                        );
+                        let attempt = *device_authorization_recheck_attempt.peek();
+                        let retry_after_secs = (2_u64 << attempt.min(5)).min(60);
+                        device_authorization_recheck_attempt.set(attempt.saturating_add(1).min(5));
+                        crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(
+                            retry_after_secs,
+                        ))
+                        .await;
+                        // Clear only the attempt that failed. Reading this key
+                        // reactively above makes the effect retry on the same
+                        // durable cursor; it does not need an unrelated Realm
+                        // event to recover from a transient directory error.
+                        if device_authorization_recheck_key.peek().as_str() == key {
+                            device_authorization_recheck_key.set(String::new());
+                        }
+                    }
+                }
+            });
+        });
+    }
 
     let secure_store_ready = secure_store_bootstrap_ready();
     if bootstrap_pending() {

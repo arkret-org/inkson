@@ -60,21 +60,7 @@ pub(crate) fn sign_keypackage_consume(
 pub(crate) fn mls_key_package_record_upload_entry(
     record: &arkret_sdk::MlsKeyPackageRecord,
 ) -> anyhow::Result<arkret_sdk::KeyPackageUploadEntry> {
-    Ok(arkret_sdk::KeyPackageUploadEntry {
-        keypackage_id: record.keypackage_id.clone(),
-        keypackage_ref: record.keypackage_ref.as_str().to_owned(),
-        keypackage_digest: record.keypackage_ref.clone(),
-        key_package: arkret_sdk::Base64UrlString::new(record.key_package.clone())
-            .map_err(anyhow::Error::msg)?,
-        cipher_suites: record.cipher_suites.clone(),
-        capabilities: record.capabilities.clone(),
-        expires_at: record
-            .expires_at
-            .unwrap_or(record.created_at + chrono::Duration::days(7)),
-        created_at: record.created_at,
-        device_signature: None,
-        last_resort: record.last_resort.then_some(true),
-    })
+    arkret_sdk::mls_key_package_record_upload_entry(record).map_err(anyhow::Error::msg)
 }
 
 pub(crate) fn generate_mls_claim_nonce() -> anyhow::Result<String> {

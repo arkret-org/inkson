@@ -30,6 +30,8 @@ pub fn OnboardingPanel(
     device_id: Signal<String>,
     config_store: Signal<crate::config::LocalConfigStore>,
     account_primary_handle: Signal<String>,
+    needs_device_authorization: Signal<bool>,
+    device_authorization_check_complete: Signal<bool>,
 ) -> Element {
     let state_store = crate::app::SessionContext::get().state_store;
     if !secure_store_ready {
@@ -79,6 +81,8 @@ pub fn OnboardingPanel(
                     device_id,
                     config_store,
                     account_primary_handle,
+                    needs_device_authorization,
+                    device_authorization_check_complete,
                 }
             }
         };
@@ -93,6 +97,8 @@ pub fn OnboardingPanel(
                     device_id,
                     config_store,
                     account_primary_handle,
+                    needs_device_authorization,
+                    device_authorization_check_complete,
                 }
             }
         };
@@ -146,6 +152,8 @@ fn PendingAccountIdentityCreation(
     mut device_id: Signal<String>,
     config_store: Signal<crate::config::LocalConfigStore>,
     account_primary_handle: Signal<String>,
+    mut needs_device_authorization: Signal<bool>,
+    mut device_authorization_check_complete: Signal<bool>,
 ) -> Element {
     let state_store = crate::app::SessionContext::get().state_store;
     let mut choice = use_signal(IdentityChoice::default);
@@ -397,6 +405,8 @@ fn PendingAccountIdentityCreation(
                                         account_did.set(actor);
                                         device_id.set(device);
                                         token.set(grant);
+                                        needs_device_authorization.set(false);
+                                        device_authorization_check_complete.set(true);
                                         recovery_key.set(String::new());
                                         confirmation.set(String::new());
                                         status.set(String::new());
@@ -756,6 +766,8 @@ fn PendingPrincipalBootstrap(
     mut device_id: Signal<String>,
     config_store: Signal<crate::config::LocalConfigStore>,
     mut account_primary_handle: Signal<String>,
+    mut needs_device_authorization: Signal<bool>,
+    mut device_authorization_check_complete: Signal<bool>,
 ) -> Element {
     let base_url = crate::app::SessionContext::base_url_string();
     let state_store = crate::app::SessionContext::get().state_store;
@@ -879,6 +891,13 @@ fn PendingPrincipalBootstrap(
                                         account_did.set(completed_actor);
                                         device_id.set(completed_device);
                                         token.set(completed_session);
+                                        // The atomic bootstrap call returned only after the
+                                        // PCR create, founding-device authorize, and Seal were
+                                        // durably accepted for this exact active signer. Publish
+                                        // that state directly so KeyPackage creation cannot race
+                                        // a stale pre-bootstrap connect probe.
+                                        needs_device_authorization.set(false);
+                                        device_authorization_check_complete.set(true);
                                         recovery_key.set(String::new());
                                         status.set(String::new());
                                         complete.set(true);

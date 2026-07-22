@@ -8,6 +8,22 @@ use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStoreError};
 use crate::state::isolated_store_for_tests as temp_state_store;
 
 #[cfg(not(target_arch = "wasm32"))]
+fn seed_complete_rfc9420_projection(
+    state: &mut crate::state::LocalStateStore,
+    realm: &str,
+    actor: &str,
+) {
+    state.save_realm_tree_projection(
+        realm,
+        json!({
+            "content_scheme": "mls-rfc9420",
+            "members_limited": false,
+            "members": [{ "actor_id": actor, "membership": "join" }]
+        }),
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 async fn commit_pending_history(
     state: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -48,6 +64,14 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
     let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
 
     super::seed_genesis_governance_proof(&mut state, realm);
+    state.save_realm_tree_projection(
+        realm,
+        json!({
+            "content_scheme": "mls-rfc9420",
+            "members_limited": false,
+            "members": [{ "actor_id": actor, "membership": "join" }]
+        }),
+    );
     let summary = ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device).unwrap();
 
     let summary = summary.expect("missing creator snapshot should be created");
@@ -83,6 +107,92 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
     assert_eq!(encrypted_again.2.len(), 1);
     assert!(encrypted_again.3.is_none());
     assert!(encrypted_again.4.is_none());
+    assert_eq!(state.mls_snapshot_for(realm).unwrap().epoch, 0);
+}
+
+/// client-sync.md §8.1: once a complete roster hint exposes a mismatch with
+/// the local MLS group, sending pauses conservatively until admission
+/// converges. This is the exact regression that produced an epoch-0 message
+/// after the add-member commit had already advanced the Realm to epoch 1.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
+    let mut state = temp_state_store("send-pause-membership-ahead");
+    let secure = MemorySecureKeyStore::new();
+    let actor = "did:web:alice.example";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:01904100-0000-7000-8000-0000000000f8";
+
+    super::seed_genesis_governance_proof(&mut state, realm);
+    ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
+        .unwrap()
+        .expect("creator snapshot");
+    state.save_realm_tree_projection(
+        realm,
+        json!({
+            "encrypted": true,
+            "members_limited": false,
+            "members": [
+                { "actor_id": actor, "membership": "join" },
+                { "actor_id": "did:web:bob.example", "membership": "join" }
+            ]
+        }),
+    );
+
+    let error = encrypt_values_with_device_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        actor,
+        device,
+        "application/vnd.arkret.test+json",
+        &[br#""must-not-send-on-epoch-zero""#.to_vec()],
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        MlsRuntimeError::EncryptionTransitionPending
+    ));
+    assert_eq!(state.mls_snapshot_for(realm).unwrap().epoch, 0);
+}
+
+/// A roster-only account-sync frame can arrive before the Realm's create /
+/// policy-components state. It must not make the wire scheme depend on timing.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
+    let mut state = temp_state_store("send-pause-policy-pending");
+    let secure = MemorySecureKeyStore::new();
+    let actor = "did:web:alice.example";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:01904100-0000-7000-8000-0000000000f9";
+
+    super::seed_genesis_governance_proof(&mut state, realm);
+    ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
+        .unwrap()
+        .expect("creator snapshot");
+    state.save_realm_tree_projection(
+        realm,
+        json!({
+            "encrypted": true,
+            "members_limited": false,
+            "members": [{ "actor_id": actor, "membership": "join" }]
+        }),
+    );
+
+    let error = encrypt_values_with_device_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        actor,
+        device,
+        "application/vnd.arkret.test+json",
+        &[br#""must-wait-for-policy""#.to_vec()],
+    )
+    .unwrap_err();
+
+    assert!(matches!(error, MlsRuntimeError::EncryptionPolicyPending));
     assert_eq!(state.mls_snapshot_for(realm).unwrap().epoch, 0);
 }
 
@@ -407,6 +517,7 @@ fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
     let realm = "ak:realm:01904100-0000-7000-8000-0000000000d2";
 
     super::seed_genesis_governance_proof(&mut state, realm);
+    seed_complete_rfc9420_projection(&mut state, realm, actor);
     ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device).unwrap();
     let (_, _, encrypted_values, ..) = encrypt_values_with_device_snapshot(
         &mut state,
@@ -525,6 +636,7 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
     );
     let mut state = temp_state_store("ready-encrypt");
     state.save_mls_snapshot(realm, envelope);
+    seed_complete_rfc9420_projection(&mut state, realm, actor);
 
     let (_schedule_hash, member_dids, encrypted_values, _commit, _new_envelope, _) =
         encrypt_values_with_device_snapshot(
@@ -562,7 +674,12 @@ fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
 
     state.save_realm_tree_projection(
         realm,
-        json!({ "active_profiles": [arkret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE] }),
+        json!({
+            "active_profiles": [arkret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE],
+            "content_scheme": "mls-rfc9420",
+            "members_limited": false,
+            "members": [{ "actor_id": actor, "membership": "join" }]
+        }),
     );
     assert!(state.realm_projection_is_minimal_metadata(realm));
 

@@ -74,11 +74,13 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
     } = SessionContext::get();
     let did_cache = use_context::<Signal<crate::identity::did_resolver::DidResolutionCache>>();
     let mls_admission_retry_attempt = use_signal(|| 0_u32);
+    let mls_key_package_publish_retry_attempt = use_signal(|| 0_u32);
     let realm_key_pull_retry_key = use_signal(|| Option::<String>::None);
     let realm_key_pull_retry_attempt = use_signal(|| 0_u32);
 
     {
         let mut seen_publish_key = mls_key_package_publish_key_seen;
+        let mut publish_retry_attempt = mls_key_package_publish_retry_attempt;
         let secure_store_ready_for_publish = secure_store_bootstrap_ready;
         use_effect(move || {
             if !secure_store_ready_for_publish() {
@@ -90,12 +92,13 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             // Gate on device authorization. Publishing a KeyPackage requires an
             // ACCEPTED `ak.device.authorize` — soland rejects the upload with
             // `claim_generation_mismatch` ("accepted device authorization is
-            // required") otherwise. The device-authorization check + auto-enroll
-            // (app/connect.rs) runs CONCURRENTLY with this publish effect; without
+            // required") otherwise. The authorization probe and any
+            // user-approved pairing/recovery run independently; without
             // this gate the upload can lose the race, fail, and — because the
-            // publish is deduped on `seen_publish_key` (set before the spawn) — it
-            // is NEVER retried, so the device stays KeyPackage-less and every
-            // invite of it dies at admission with `mls_keypackage_not_found`.
+            // publish is deduped on `seen_publish_key` (set before the spawn).
+            // Failures clear that key after bounded backoff below; otherwise a
+            // single transient error would leave every later invite stuck at
+            // `mls_keypackage_not_found`.
             // Reading both signals subscribes this effect, so it re-fires and
             // publishes once the device becomes authorized.
             if !device_authorization_check_complete() || needs_device_authorization() {
@@ -121,18 +124,38 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             if seen_publish_key().as_deref() == Some(publish_key.as_str()) {
                 return;
             }
-            seen_publish_key.set(Some(publish_key));
+            seen_publish_key.set(Some(publish_key.clone()));
             spawn(async move {
+                let attempted_publish_key = publish_key;
                 match ensure_local_mls_key_package_published(base, session, actor, device).await {
                     Ok(Some(key_package_id)) => {
+                        if *publish_retry_attempt.peek() != 0 {
+                            publish_retry_attempt.set(0);
+                        }
                         tracing::debug!(
                             key_package_id = %short_protocol_id(&key_package_id),
                             "local MLS KeyPackage is published"
                         );
                     }
-                    Ok(None) => {}
+                    Ok(None) => {
+                        if *publish_retry_attempt.peek() != 0 {
+                            publish_retry_attempt.set(0);
+                        }
+                    }
                     Err(error) => {
                         tracing::warn!(%error, "MLS KeyPackage publish bootstrap failed");
+                        let attempt = *publish_retry_attempt.peek();
+                        let retry_after_secs = (2_u64 << attempt.min(5)).min(60);
+                        publish_retry_attempt.set(attempt.saturating_add(1).min(5));
+                        crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(
+                            retry_after_secs,
+                        ))
+                        .await;
+                        if seen_publish_key.peek().as_deref()
+                            == Some(attempted_publish_key.as_str())
+                        {
+                            seen_publish_key.set(None);
+                        }
                     }
                 }
             });

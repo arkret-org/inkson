@@ -1690,9 +1690,39 @@ pub fn ChatPanel(
             .and_then(|channel| channel.security_encrypted)
             .unwrap_or(selected_realm_security_encrypted)
     };
-    let selected_realm_pending_mls_binding_reason = state_store
+    let mut selected_realm_pending_mls_binding_reason = state_store
         .read()
         .realm_pending_mls_binding_reason(&selected_realm_id);
+    if selected_realm_security_encrypted
+        && !sidecar_mode
+        && selected_realm_pending_mls_binding_reason.is_none()
+    {
+        if state_store
+            .read()
+            .realm_content_scheme(&selected_realm_id)
+            .is_none()
+        {
+            selected_realm_pending_mls_binding_reason = Some(
+                "encryption_policy_pending: waiting for the verified content scheme".to_owned(),
+            );
+        } else {
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+            let roster_matches =
+                crate::mls::runtime::realm_mls_roster_matches_complete_membership_hint(
+                    &state_store.read(),
+                    secure_store.as_ref(),
+                    &selected_realm_id,
+                    &account_did,
+                    &device_id,
+                );
+            if roster_matches == Some(false) {
+                selected_realm_pending_mls_binding_reason = Some(
+                    "encryption_transition_pending: synced roster differs from the verified MLS group"
+                        .to_owned(),
+                );
+            }
+        }
+    }
     let selected_realm_pending_mls_binding = selected_realm_pending_mls_binding_reason.is_some();
     let sidecar_security_label = sidecar_session.as_ref().map(|session| {
         if !session.membership_ready() {
@@ -1857,7 +1887,7 @@ pub fn ChatPanel(
     // Dioxus may retain the child timeline across context-backed signal updates. Key the
     // projection boundary by every visible timeline row so message and moderation lifecycle
     // folds cannot leave a memoized child rendering an older snapshot.
-    let timeline_projection_key = timeline_projection_key(
+    let _timeline_projection_key = timeline_projection_key(
         &selected_realm_id,
         realm_live_epoch(),
         &visible_messages,
@@ -2825,7 +2855,7 @@ pub fn ChatPanel(
                 }
 
                 ChatTimeline {
-                    key: "{timeline_projection_key}",
+                    key: "{_timeline_projection_key}",
                     controller,
                     context: ChatTimelineContext {
                         embedded,

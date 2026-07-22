@@ -549,7 +549,12 @@ mod tests {
         // (AEAD failure — the two cases are indistinguishable by
         // design and both block restore).
         let mut tampered = envelope.clone();
-        tampered.ciphertext_hex.replace_range(0..2, "ff");
+        let replacement = if tampered.ciphertext_hex.starts_with("ff") {
+            "00"
+        } else {
+            "ff"
+        };
+        tampered.ciphertext_hex.replace_range(0..2, replacement);
         let result = decrypt_envelope(&tampered, "secret one");
         assert!(matches!(result, Err(EnvelopeError::SecretMismatch)));
     }

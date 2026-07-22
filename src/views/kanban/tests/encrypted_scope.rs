@@ -322,6 +322,9 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
         json!({
             "__kind": "realm",
             "owner": actor,
+            "content_scheme": "mls-rfc9420",
+            "members_limited": false,
+            "members": [{ "actor_id": actor, "membership": "join" }],
             "summary": {
                 "title": "Encrypted Realm",
                 "encryption_profile": "mls_rfc9420",
@@ -329,22 +332,24 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
             }
         }),
     );
+    crate::mls::governance_proof::seed_test_governance_proof(
+        &mut state,
+        realm,
+        None,
+        arkret_sdk::base64url_encode(realm.as_bytes()),
+        0,
+        0,
+    );
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let patch = json!({
         "body": {"$op": "set", "value": "private body"},
     });
 
     let strand_id = "ak:strand:01904100-0000-7000-8000-0000000000ff";
-    let blocked = encrypt_private_card_detail_patch_values_with_store(
+    let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, actor, device, &mut state, &secure,
-    );
-    let (patched, mls_events) = match blocked {
-        Ok(value) => value,
-        Err(error) => {
-            assert!(error.contains("state_mismatch"));
-            return;
-        }
-    };
+    )
+    .expect("complete creator projection must reach the encrypted success path");
 
     assert!(state.mls_snapshot_for(realm).is_some());
     // X5.1 — the author's own plaintext is persisted to the local
@@ -407,9 +412,17 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     );
     state.save_realm_tree_projection(
         realm,
-        json!({ "active_profiles": [arkret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE] }),
+        json!({
+            "active_profiles": [arkret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE],
+            "content_scheme": "mls-rfc9420",
+            "members_limited": false,
+            "members": [{ "actor_id": actor, "membership": "join" }]
+        }),
     );
-    let base_group_state_ref = "ak:event:0196419b-0000-7000-8000-000000000010";
+    // Match the accepted-Seal frontier installed by
+    // `seed_test_governance_proof`; the emitted binding must carry that exact
+    // verified frontier.
+    let base_group_state_ref = "ak:event:01904100-0000-7000-8000-0000000000aa";
     state.set_realm_seal_view(
         realm,
         crate::state::LocalSealView {
@@ -419,21 +432,23 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     );
     envelope.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
     state.save_mls_snapshot(realm, envelope);
+    crate::mls::governance_proof::seed_test_governance_proof(
+        &mut state,
+        realm,
+        None,
+        record.group_id.clone(),
+        record.epoch,
+        record.epoch + 1,
+    );
     let patch = json!({
         "body": {"$op": "set", "value": "private body"},
     });
 
     let strand_id = "ak:strand:01904100-0000-7000-8000-0000000000ff";
-    let blocked = encrypt_private_card_detail_patch_values_with_store(
+    let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, actor, device, &mut state, &secure,
-    );
-    let (patched, mls_events) = match blocked {
-        Ok(value) => value,
-        Err(error) => {
-            assert!(error.contains("state_mismatch"));
-            return;
-        }
-    };
+    )
+    .expect("complete projection and ready snapshot must encrypt the patch");
 
     assert_eq!(
         patched["body"]["value"]["content_type"],

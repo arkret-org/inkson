@@ -1,5 +1,5 @@
 //! Hybrid Logical Clock (HLC) per arkret-spec section 6.4 — thin wrapper
-//! over `arkret_sdk::hlc`.
+//! over the HLC helpers re-exported by `arkret_sdk`.
 //!
 //! Format: `<physical_hex_12>-<logical_hex_4>-<node_hex_8>`
 //! - 48-bit millisecond timestamp (12 hex chars)
@@ -16,8 +16,7 @@
 
 use std::fmt;
 
-use arkret_sdk::Hlc as SdkHlc;
-use arkret_sdk::hlc::{parse_hlc, validate_hlc_format};
+use arkret_sdk::{Hlc as SdkHlc, parse_hlc, validate_hlc_format};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// A Hybrid Logical Clock timestamp.

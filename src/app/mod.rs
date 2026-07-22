@@ -3801,6 +3801,8 @@ fn AppBootstrap() -> Element {
                         contact_manage_query,
                         manage_contact_selection,
                         secure_store_bootstrap_ready,
+                        needs_device_authorization,
+                        device_authorization_check_complete,
                         can_list_handles_for_subject,
                         push_state,
                         locale,
