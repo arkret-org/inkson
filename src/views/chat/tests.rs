@@ -2610,7 +2610,6 @@ fn participant_roster_ignores_noncanonical_identity_fields() {
         &store,
         "ak:realm:demo",
         "did:web:alice.example",
-        None,
     );
     assert_eq!(participants.len(), 1);
     assert!(participants[0].is_self);
@@ -2634,7 +2633,6 @@ fn participant_roster_rejects_naked_handle_field() {
         &store,
         "ak:realm:demo",
         "did:web:alice.example",
-        None,
     );
     let bob = participants
         .iter()
@@ -2668,7 +2666,6 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
         &store,
         "ak:realm:demo",
         "did:web:alice.example",
-        None,
     );
     let bob = participants
         .iter()
@@ -3509,7 +3506,6 @@ fn mention_candidate_uses_cached_member_handle() {
         &store,
         "ak:realm:demo",
         "did:web:alice.example",
-        Some("alice:local.host"),
     );
     let bob = participants
         .iter()

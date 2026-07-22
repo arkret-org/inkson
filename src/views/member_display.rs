@@ -120,7 +120,6 @@ pub(crate) fn resolve_member_display(
     store: &LocalStateStore,
     realm_id: &str,
     row: &RealmMemberRow,
-    preferred_primary_handle: Option<&str>,
 ) -> ResolvedMemberDisplay {
     let identity = store.resolved_member_identity(realm_id, &row.actor_id);
     let subject_id = member_lookup_subject(row, identity.as_ref());
@@ -133,9 +132,13 @@ pub(crate) fn resolve_member_display(
             )
             .and_then(|entry| entry.primary_handle)
     });
-    let primary_handle = preferred_primary_handle
-        .and_then(crate::identity::handle::parse_user_handle)
-        .map(|handle| handle.display)
+    let primary_handle = [subject_id.as_deref(), Some(row.actor_id.as_str())]
+        .into_iter()
+        .flatten()
+        .find_map(|did| store.primary_handle_for_did(did))
+        .and_then(|handle| {
+            crate::identity::handle::parse_user_handle(&handle).map(|parsed| parsed.display)
+        })
         .or(cached_handle.and_then(|handle| {
             crate::identity::handle::parse_user_handle(&handle).map(|parsed| parsed.display)
         }))
@@ -152,6 +155,32 @@ pub(crate) fn resolve_member_display(
         avatar_blob_ref: identity.and_then(|identity| identity.display_profile.avatar_blob_ref),
         subject_id,
     }
+}
+
+/// Canonical actor label for surfaces that only have a DID and no Realm
+/// roster row. Verified current-account and Directory handles win; a local
+/// contact remark is the human-readable fallback; the protocol id remains the
+/// final unresolved form.
+pub(crate) fn actor_display_label(store: &LocalStateStore, did: &str) -> String {
+    store
+        .primary_handle_for_did(did)
+        .and_then(|handle| {
+            crate::identity::handle::parse_user_handle(&handle).map(|parsed| parsed.display)
+        })
+        .or_else(|| {
+            store
+                .cached_member_handle_lookup(did, None, None)
+                .and_then(|entry| entry.primary_handle)
+                .and_then(|handle| {
+                    crate::identity::handle::parse_user_handle(&handle).map(|parsed| parsed.display)
+                })
+        })
+        .or_else(|| {
+            store
+                .contact_remark(did)
+                .map(|remark| remark.display_name(did).to_owned())
+        })
+        .unwrap_or_else(|| short_protocol_id(did))
 }
 
 pub(crate) fn member_label(

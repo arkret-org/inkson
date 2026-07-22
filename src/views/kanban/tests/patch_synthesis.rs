@@ -514,6 +514,36 @@ fn card_synthesis_author_prefers_cached_member_primary_handle() {
 }
 
 #[test]
+fn synthesis_author_uses_the_same_persisted_self_handle_as_member_surfaces() {
+    let actor = "did:webvh:zQmCurrentAccount";
+    let mut card = test_card("ak:strand:self-handle", "U");
+    card.synthesis = "shared identity resolution".to_owned();
+    card.created_by = actor.to_owned();
+
+    let projection = json!({
+        "realm_id": TEST_REALM_ID,
+        "members": [{
+            "actor_id": actor,
+            "membership": "join"
+        }]
+    });
+    let rows = realm_member_roster(Some(&projection));
+    let mut store = temp_state_store("synthesis-current-account-handle");
+    store.switch_active_account(actor);
+    store.set_primary_handle_for_did(actor, "alice:local.host");
+    let context = CardAuthorDisplayContext {
+        realm_id: TEST_REALM_ID,
+        member_rows: &rows,
+    };
+
+    let entries =
+        card_synthesis_track_entries_with_author_context(&card, &[], &store, Some(context));
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].author_label, "alice:local.host");
+}
+
+#[test]
 fn synthesis_new_entry_appends_without_replacing_existing_entries() {
     let mut card = test_card("ak:strand:edit-me", "U");
     card.synthesis = join_synthesis_entry_bodies(vec![

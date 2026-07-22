@@ -21,7 +21,7 @@ use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{display_name_for_did, short_protocol_id};
+use crate::views::helpers::{actor_display_label, short_protocol_id};
 
 /// Maximum length of the optional contact-request greeting (protocol contract:
 /// `message` is `1..2000`).
@@ -236,7 +236,7 @@ fn ContactRow(
         .peer_service_id
         .clone()
         .filter(|s| !s.trim().is_empty());
-    let peer_label = display_name_for_did(&state_store.read(), &peer);
+    let peer_label = actor_display_label(&state_store.read(), &peer);
     let is_pending_incoming = state == "pending_incoming";
     let is_pending_outgoing = state == "pending_outgoing" || state == "pending";
     let is_accepted = state == "accepted";

@@ -800,6 +800,28 @@ fn primary_handle_is_per_account_and_readable_by_did() {
 }
 
 #[test]
+fn explicit_account_primary_handle_update_is_scoped_and_can_clear() {
+    let path = temp_state_path("explicit-primary-handle");
+    let mut store = LocalStateStore::with_path(path);
+    let alice = "did:webvh:zA:alice.example";
+    let david = "did:webvh:zB:david.example";
+
+    store.switch_active_account(david);
+    store.set_primary_handle_for_did(alice, "alice:local.host");
+
+    assert_eq!(store.active_account_did().as_deref(), Some(david));
+    assert_eq!(
+        store.primary_handle_for_did(alice).as_deref(),
+        Some("alice:local.host")
+    );
+
+    store.set_primary_handle_for_did(alice, "");
+
+    assert_eq!(store.active_account_did().as_deref(), Some(david));
+    assert!(store.primary_handle_for_did(alice).is_none());
+}
+
+#[test]
 fn known_accounts_lists_each_account_with_its_handle_and_device() {
     let path = temp_state_path("known-accounts");
     let mut store = LocalStateStore::with_path(path);

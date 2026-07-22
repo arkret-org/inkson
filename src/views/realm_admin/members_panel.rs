@@ -14,7 +14,7 @@ use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
-use crate::views::helpers::{active_sync_token, display_name_for_did, short_protocol_id};
+use crate::views::helpers::{active_sync_token, actor_display_label, short_protocol_id};
 
 /// Number of member rows the list renders per page. The member list is
 /// hydrated from the full local sync projection (which can hold tens of
@@ -431,7 +431,7 @@ fn projected_member_profiles_for_realm(
     if let Some(projection) = state.realm_tree_projections.get(realm_id) {
         for row in crate::views::member_display::realm_member_roster(Some(projection)) {
             let display =
-                crate::views::member_display::resolve_member_display(store, realm_id, &row, None);
+                crate::views::member_display::resolve_member_display(store, realm_id, &row);
             let mut profile = MemberProfile::bare(row.actor_id);
             profile.subject_id = display.subject_id;
             profile.display_name = display.display_name;
@@ -3415,7 +3415,7 @@ pub fn RealmMembersPanel(
                                             for contact in invite_contacts.read().clone() {
                                                 {
                                                     let did = contact.peer.clone();
-                                                    let did_label = display_name_for_did(&state_store.read(), &did);
+                                                    let did_label = actor_display_label(&state_store.read(), &did);
                                                     let checked = selected_contacts.read().contains(&did);
                                                     let eligible = contact.grants_me_invite();
                                                     let has_ref = contact.invite_consent_ref().is_some();

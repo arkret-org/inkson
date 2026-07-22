@@ -25,7 +25,7 @@ use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
-use crate::views::helpers::{display_name_for_did, short_protocol_id};
+use crate::views::helpers::{actor_display_label, short_protocol_id};
 
 /// `reason_code` options offered for a personal block. Mirrors the report
 /// reason enum in `governance/content-moderation.md` §3.2 (`spam`,
@@ -159,7 +159,7 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
                             let kind = entry.kind.clone();
                             let kind_label = target_kind_label(&kind);
                             let entry_label = if kind == "actor" {
-                                display_name_for_did(&state_store.read(), &entry.did)
+                                actor_display_label(&state_store.read(), &entry.did)
                             } else {
                                 short_protocol_id(&entry.did)
                             };
@@ -207,7 +207,7 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
                                                     entries.set(next.clone());
                                                     if changed {
                                                         let target_label = if target_kind == "actor" {
-                                                            display_name_for_did(
+                                                            actor_display_label(
                                                                 &state_store.read(),
                                                                 &target_value,
                                                             )
@@ -375,7 +375,7 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
                                 entries.set(next.clone());
                                 if changed {
                                     let target_label = if kind == "actor" {
-                                        display_name_for_did(&state_store.read(), &target)
+                                        actor_display_label(&state_store.read(), &target)
                                     } else {
                                         short_protocol_id(&target)
                                     };
@@ -391,7 +391,7 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
                                     );
                                 } else {
                                     let target_label = if kind == "actor" {
-                                        display_name_for_did(&state_store.read(), &target)
+                                        actor_display_label(&state_store.read(), &target)
                                     } else {
                                         short_protocol_id(&target)
                                     };

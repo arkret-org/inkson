@@ -369,7 +369,7 @@ pub(super) fn delete_sidebar_contact(
     mut direct_contact_rows: Signal<Vec<crate::models::ContactListRow>>,
     mut direct_contacts_loaded: Signal<bool>,
 ) {
-    let peer_label = crate::views::helpers::display_name_for_did(&state_store.read(), &peer);
+    let peer_label = crate::views::helpers::actor_display_label(&state_store.read(), &peer);
     crate::components::feedback::toast_info(
         "feedback.contact_deleting",
         vec![("name", peer_label.clone())],

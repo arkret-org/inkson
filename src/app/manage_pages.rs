@@ -333,7 +333,7 @@ pub(super) fn ContactsManagePage(
         .filter(|contact| {
             let scopes = contact_manage_scope_summary(contact);
             let display_name =
-                crate::views::helpers::display_name_for_did(&state_store.read(), &contact.peer);
+                crate::views::helpers::actor_display_label(&state_store.read(), &contact.peer);
             sidebar_text_matches_query(
                 &normalized_query,
                 &[&contact.peer, &contact.state, &display_name, &scopes],
@@ -445,7 +445,7 @@ pub(super) fn ContactsManagePage(
                                                     }
                                                     Err(err) => failed.push(format!(
                                                         "{} ({})",
-                                                        crate::views::helpers::display_name_for_did(
+                                                        crate::views::helpers::actor_display_label(
                                                             &state_store.read(),
                                                             &peer,
                                                         ),
@@ -533,7 +533,7 @@ pub(super) fn ContactsManagePage(
                                     {
                                         let peer = contact.peer.clone();
                                         let checked = selected_ids.contains(&peer);
-                                        let peer_label = crate::views::helpers::display_name_for_did(
+                                        let peer_label = crate::views::helpers::actor_display_label(
                                             &state_store.read(),
                                             &peer,
                                         );

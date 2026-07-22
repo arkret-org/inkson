@@ -10,7 +10,7 @@ use crate::routes::Route;
 use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
-use crate::views::helpers::{display_name_for_did, short_protocol_id};
+use crate::views::helpers::{actor_display_label, short_protocol_id};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DirectoryTab {
@@ -1070,7 +1070,7 @@ pub fn DirectoryPanel(
                                     .unwrap_or("-")
                                     .to_owned();
                                 let actor_id_label =
-                                    display_name_for_did(&state_store.read(), &actor_id);
+                                    actor_display_label(&state_store.read(), &actor_id);
                                 rsx! {
                                     span { title: "{actor_id}", "{actor_id_label}" }
                                 }
@@ -1168,7 +1168,7 @@ pub fn DirectoryPanel(
                                     .unwrap_or("")
                                     .to_owned();
                                 let actor_id_label =
-                                    display_name_for_did(&state_store.read(), &actor_id);
+                                    actor_display_label(&state_store.read(), &actor_id);
                                 rsx! {
                                     div {
                                         class: "muted",
@@ -1250,7 +1250,7 @@ pub fn DirectoryPanel(
                         // (if any) for the resolved DID, with the canonical
                         // DID kept verbatim in `title` for verification.
                         let resolved_display =
-                            display_name_for_did(&state_store.read(), &resolved.did);
+                            actor_display_label(&state_store.read(), &resolved.did);
                         let resolved_did_attr = resolved.did.clone();
                         let resolved_did_document = resolved.did_document.clone();
                         rsx! {

@@ -268,6 +268,28 @@ fn member_display_label_uses_cached_directory_primary_handle() {
 }
 
 #[test]
+fn resolved_member_display_uses_persisted_current_account_handle() {
+    let actor = "did:webvh:zQmCurrentAccount";
+    let row = RealmMemberRow {
+        actor_id: actor.to_owned(),
+        membership: Some("join".to_owned()),
+        identity_event_ids: vec![],
+        member_display_state_digest: None,
+        subject_id: None,
+        handle_claims: Vec::new(),
+        handle_claims_limited: false,
+    };
+    let mut store = temp_state_store("member-display-current-account");
+    store.switch_active_account(actor);
+    store.set_primary_handle_for_did(actor, "alice:local.host");
+
+    let display = crate::views::member_display::resolve_member_display(&store, TEST_REALM_ID, &row);
+
+    assert_eq!(display.label, "alice:local.host");
+    assert_eq!(display.primary_handle.as_deref(), Some("alice:local.host"));
+}
+
+#[test]
 fn member_handle_lookup_requires_disclosed_or_verified_subject() {
     let row = RealmMemberRow {
         actor_id: "did:webvh:zQmPrincipal".to_owned(),

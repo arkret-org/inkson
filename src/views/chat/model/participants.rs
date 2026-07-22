@@ -161,19 +161,14 @@ pub(crate) fn space_participants(
     state_store: &LocalStateStore,
     realm_id: &str,
     account_did: &str,
-    account_primary_handle: Option<&str>,
 ) -> Vec<SpaceParticipant> {
     let mut participants = Vec::new();
 
     for row in crate::views::member_display::realm_member_roster(projection) {
         let is_self = row.actor_id.trim() == account_did.trim()
             || row.subject_id.as_deref().map(str::trim) == Some(account_did.trim());
-        let display = crate::views::member_display::resolve_member_display(
-            state_store,
-            realm_id,
-            &row,
-            is_self.then_some(account_primary_handle).flatten(),
-        );
+        let display =
+            crate::views::member_display::resolve_member_display(state_store, realm_id, &row);
         upsert_participant(
             &mut participants,
             &row.actor_id,
@@ -193,13 +188,9 @@ pub(crate) fn space_participants(
 
     if !account_did.trim().is_empty() && !participants.iter().any(|participant| participant.is_self)
     {
-        let account_handle = account_primary_handle
-            .and_then(mention_handle_label_from_value)
-            .or_else(|| {
-                state_store
-                    .primary_handle_for_did(account_did)
-                    .and_then(|handle| mention_handle_label_from_value(&handle))
-            });
+        let account_handle = state_store
+            .primary_handle_for_did(account_did)
+            .and_then(|handle| mention_handle_label_from_value(&handle));
         upsert_participant(
             &mut participants,
             account_did,
@@ -235,7 +226,7 @@ pub(crate) fn display_label_for_actor(
         .iter()
         .find(|participant| participant.did == did)
         .and_then(participant_sender_label)
-        .unwrap_or_else(|| crate::views::helpers::display_name_for_did(state_store, did))
+        .unwrap_or_else(|| crate::views::helpers::actor_display_label(state_store, did))
 }
 
 pub(crate) fn is_own_message_sender(sender: &str, account_did: &str) -> bool {
@@ -337,7 +328,7 @@ pub(crate) fn participant_roster_display_label(
         return agent_member_label(participant);
     }
     participant_sender_label(participant).unwrap_or_else(|| {
-        crate::views::helpers::display_name_for_did(state_store, &participant.did)
+        crate::views::helpers::actor_display_label(state_store, &participant.did)
     })
 }
 

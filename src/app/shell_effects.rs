@@ -125,17 +125,9 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
         if handle.trim().is_empty() || account.trim().is_empty() {
             return;
         }
-        let storage_key = account_primary_handle_storage_key(&account);
-        if state_store
-            .peek()
-            .load_private_data(&account, &storage_key)
-            .as_deref()
-            != Some(handle.as_str())
-        {
-            state_store
-                .write()
-                .save_private_data(&account, storage_key, handle);
-        }
+        state_store
+            .write()
+            .set_primary_handle_for_did(&account, &handle);
     });
 
     let mut previous_unread_notification_count = use_signal(|| Option::<usize>::None);
@@ -254,8 +246,10 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
             personal_handles_status.set("Loading handles".to_owned());
             let base = lookup_base_url.clone();
             let actor = lookup_actor.clone();
+            let lookup_subject = actor.clone();
             let api_token = lookup_token.clone();
             let existing_personal_handles = personal_handles();
+            let mut handle_store = state_store;
             spawn(async move {
                 match crate::transport::auth::with_authed_sdk_client(
                     &base,
@@ -277,6 +271,10 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                             .primary_handle
                             .as_ref()
                             .map(|handle| handle.canonical().to_owned());
+                        handle_store.write().set_primary_handle_for_did(
+                            &lookup_subject,
+                            directory_primary_handle.as_deref().unwrap_or_default(),
+                        );
                         let directory_handles = display_handles_from_directory_response(&res);
                         // A successful directory response is a complete,
                         // current projection. Replace the viewer fallback

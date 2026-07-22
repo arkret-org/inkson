@@ -25,7 +25,7 @@ use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::card::Card;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
-use crate::views::helpers::{display_name_for_did, persist_config, short_protocol_id};
+use crate::views::helpers::{actor_display_label, persist_config, short_protocol_id};
 
 #[derive(Clone, Debug)]
 struct CompletedLogin {
@@ -467,7 +467,7 @@ pub fn LoginPanel(
                         .dpop_device_key()
                         .map(|record| record.jkt)
                         .unwrap_or_default();
-                    let actor_label = display_name_for_did(&store_snapshot, &actor_value);
+                    let actor_label = actor_display_label(&store_snapshot, &actor_value);
                     drop(store_snapshot);
                     let show_session_diagnostics =
                         session_status != "signed-out" || !jkt_display.is_empty();

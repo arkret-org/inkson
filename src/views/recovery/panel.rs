@@ -24,7 +24,7 @@ use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::display_name_for_did;
+use crate::views::helpers::actor_display_label;
 
 const RESTORE_BACKUP_TIME_LIMIT: usize = 5;
 
@@ -566,7 +566,7 @@ pub fn RecoveryPanel(
                                 strong { "{g.label}" }
                                 {
                                     let guardian_did_label =
-                                        display_name_for_did(&state_store.read(), &g.did);
+                                        actor_display_label(&state_store.read(), &g.did);
                                     rsx! { span { title: "{g.did}", "{guardian_did_label}" } }
                                 }
                                 div { class: "muted",

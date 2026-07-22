@@ -19,7 +19,7 @@ use crate::components::{EmptyState, EmptyStateKind};
 use crate::transport::auth::with_authed_sdk_client;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::dialog::Dialog;
-use crate::views::helpers::{display_name_for_did, short_protocol_id};
+use crate::views::helpers::{actor_display_label, short_protocol_id};
 
 /// One row in the user's capability list. Backed by either the user
 /// being the subject (capability held) or the issuer (capability
@@ -132,9 +132,9 @@ pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<Strin
                     for row in rows.read().iter().cloned() {
                         {
                             let issuer_did_label =
-                                display_name_for_did(&state_store.read(), &row.issuer_did);
+                                actor_display_label(&state_store.read(), &row.issuer_did);
                             let subject_did_label =
-                                display_name_for_did(&state_store.read(), &row.subject_did);
+                                actor_display_label(&state_store.read(), &row.subject_did);
                             rsx! {
                                 li {
                                     class: "event",
@@ -213,11 +213,11 @@ pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<Strin
                                         ol { class: "settings-list",
                                             for (idx, step) in row.chain.iter().enumerate() {
                                                 {
-                                                    let issuer_did_label = display_name_for_did(
+                                                    let issuer_did_label = actor_display_label(
                                                         &state_store.read(),
                                                         &step.issuer_did,
                                                     );
-                                                    let subject_did_label = display_name_for_did(
+                                                    let subject_did_label = actor_display_label(
                                                         &state_store.read(),
                                                         &step.subject_did,
                                                     );

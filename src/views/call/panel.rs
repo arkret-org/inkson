@@ -23,7 +23,7 @@ use crate::transport::auth::with_event_submitter;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::views::call_signals::CallSignalHub;
-use crate::views::helpers::{display_name_for_did, short_protocol_id};
+use crate::views::helpers::{actor_display_label, short_protocol_id};
 
 #[component]
 #[allow(clippy::too_many_arguments)]
@@ -157,10 +157,10 @@ pub fn CallPanel(
         });
     }
 
-    let account_label = display_name_for_did(&state_store.read(), &account_did);
+    let account_label = actor_display_label(&state_store.read(), &account_did);
     let device_label = short_protocol_id(&device_id);
     let peer_input_value = peer_input();
-    let peer_input_label = display_name_for_did(&state_store.read(), &peer_input_value);
+    let peer_input_label = actor_display_label(&state_store.read(), &peer_input_value);
 
     let observed_signals = state_store
         .read()

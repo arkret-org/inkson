@@ -1896,17 +1896,11 @@ pub fn ChatPanel(
         .get(&selected_realm_id)
         .cloned();
     let account_display_label = account_display_name();
-    let account_roster_handle = if account_primary_handle.trim().is_empty() {
-        account_display_label.as_str()
-    } else {
-        account_primary_handle.as_str()
-    };
     let mut participants = space_participants(
         participant_projection.as_ref(),
         &state_store.read(),
         &selected_realm_id,
         &account_did,
-        Some(account_roster_handle),
     );
     let own_controller_handle = participants
         .iter()

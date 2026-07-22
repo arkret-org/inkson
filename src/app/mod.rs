@@ -37,7 +37,7 @@ use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::views::ConnectionState;
-use crate::views::helpers::{display_name_for_did, persist_config, short_protocol_id};
+use crate::views::helpers::{actor_display_label, persist_config, short_protocol_id};
 
 const REALM_KEY_SHARE_ANSWER_RETRY_BACKOFF_MS: u64 = 60_000;
 
@@ -244,13 +244,6 @@ fn AppBootstrap() -> Element {
     // is currently active.
     let initial_account_primary_handle = initial_state_store
         .primary_handle_for_did(&initial_config.account_did)
-        .filter(|handle| !handle.trim().is_empty())
-        .or_else(|| {
-            initial_state_store.load_private_data(
-                &initial_config.account_did,
-                &account_primary_handle_storage_key(&initial_config.account_did),
-            )
-        })
         .unwrap_or_default();
     let config_store = use_signal(LocalConfigStore::default);
     let mut state_store = use_signal_sync(LocalStateStore::default);
@@ -630,7 +623,7 @@ fn AppBootstrap() -> Element {
             personal_handles_value
                 .first()
                 .map(|handle| format!("@{handle}"))
-                .unwrap_or_else(|| display_name_for_did(&state_store.read(), &account_did_value))
+                .unwrap_or_else(|| actor_display_label(&state_store.read(), &account_did_value))
         }
     } else {
         "Not signed in".to_owned()
@@ -808,7 +801,7 @@ fn AppBootstrap() -> Element {
         .read()
         .iter()
         .filter(|contact| {
-            let display_name = display_name_for_did(&state_store.read(), &contact.peer);
+            let display_name = actor_display_label(&state_store.read(), &contact.peer);
             let scopes = contact
                 .bidirectional_scopes
                 .iter()
@@ -841,9 +834,9 @@ fn AppBootstrap() -> Element {
         let right_remark = contact_remarks_for_sidebar.get(&right.peer);
         let left_pinned = left_remark.is_some_and(|remark| remark.pinned);
         let right_pinned = right_remark.is_some_and(|remark| remark.pinned);
-        let left_label = display_name_for_did(&state_store.read(), &left.peer).to_ascii_lowercase();
+        let left_label = actor_display_label(&state_store.read(), &left.peer).to_ascii_lowercase();
         let right_label =
-            display_name_for_did(&state_store.read(), &right.peer).to_ascii_lowercase();
+            actor_display_label(&state_store.read(), &right.peer).to_ascii_lowercase();
         right_pinned
             .cmp(&left_pinned)
             .then_with(|| left_label.cmp(&right_label))
@@ -2025,7 +2018,7 @@ fn AppBootstrap() -> Element {
                             })
                             || sidebar_text_matches_query(
                                 &direct_sidebar_query_value,
-                                &[&account_did(), &display_name_for_did(&state_store.read(), &account_did()), &account_primary_handle()],
+                                &[&account_did(), &actor_display_label(&state_store.read(), &account_did()), &account_primary_handle()],
                             ))
                         {
                             {
@@ -2046,7 +2039,7 @@ fn AppBootstrap() -> Element {
                                 };
                                 let primary_handle = account_primary_handle();
                                 let self_label = if primary_handle.trim().is_empty() {
-                                    display_name_for_did(&state_store.read(), &self_did)
+                                    actor_display_label(&state_store.read(), &self_did)
                                 } else {
                                     primary_handle
                                 };
@@ -2226,7 +2219,7 @@ fn AppBootstrap() -> Element {
                                         contact.state == "accepted" && (has_direct_scope || has_active_direct);
                                     let contact_remark =
                                         contact_remarks_for_sidebar.get(&peer).cloned();
-                                    let display_name = display_name_for_did(&state_store.read(), &peer);
+                                    let display_name = actor_display_label(&state_store.read(), &peer);
                                     let opening_key = format!("contact:{peer}");
                                     let opening_target = direct_chat_opening();
                                     let chat_open_blocked = opening_target.is_some();

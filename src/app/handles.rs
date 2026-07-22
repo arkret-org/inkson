@@ -76,19 +76,6 @@ pub(crate) fn personal_handle_from_account_handle(account_handle: &str) -> Optio
     crate::identity::handle::normalize_user_handle_display(trimmed)
 }
 
-/// Private-data dictionary key (scoped per account DID) under which the
-/// account's resolved primary handle is persisted. Recording the handle lets
-/// signed-out diagnostics identify the account by its **handle** instead of
-/// falling back to the raw DID, which is the canonical id kept in
-/// `account_did`/config for every protocol call.
-///
-/// The DID is folded into the dictionary key — not just the XOR account key —
-/// so two accounts on the same browser never share one slot (a wrong-key
-/// decrypt would otherwise surface garbage).
-pub(crate) fn account_primary_handle_storage_key(account_did: &str) -> String {
-    format!("account_primary_handle:{}", account_did.trim())
-}
-
 pub(super) fn account_handles_display(handles: &[String], fallback: &str) -> String {
     if handles.is_empty() {
         fallback.to_owned()

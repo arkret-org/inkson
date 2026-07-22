@@ -6,7 +6,7 @@ use super::json_path_string;
 use super::model::*;
 use crate::operation::trim_realm_id;
 use crate::state::{LocalStateStore, RawOperationRecord};
-use crate::views::helpers::display_name_for_did;
+use crate::views::helpers::actor_display_label;
 #[cfg(test)]
 pub(super) use crate::views::member_display::member_label as member_display_label;
 pub(super) use crate::views::member_display::{
@@ -145,7 +145,7 @@ pub(super) fn card_author_display_label(
     if let Some(label) = member_display_label_for_actor(state_store, author_context, actor_id) {
         return label;
     }
-    display_name_for_did(state_store, actor_id)
+    actor_display_label(state_store, actor_id)
 }
 
 pub(super) fn member_display_label_for_actor(
@@ -167,10 +167,7 @@ pub(super) fn member_display_label_for_actor(
                 .map(str::trim)
                 .is_some_and(|subject| subject == actor_id)
     })?;
-    Some(
-        crate::views::member_display::resolve_member_display(state_store, realm_id, row, None)
-            .label,
-    )
+    Some(crate::views::member_display::resolve_member_display(state_store, realm_id, row).label)
 }
 
 pub(super) fn bare_member_row(actor_id: String) -> RealmMemberRow {
@@ -212,7 +209,7 @@ pub(super) fn assignee_label_for_actor(
         member_rows,
     };
     member_display_label_for_actor(state_store, Some(context), actor_id)
-        .unwrap_or_else(|| display_name_for_did(state_store, actor_id))
+        .unwrap_or_else(|| actor_display_label(state_store, actor_id))
 }
 
 pub(super) fn assignee_filter_matches(filter: &str, label: &str, actor_id: &str) -> bool {

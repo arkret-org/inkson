@@ -34,13 +34,35 @@ impl LocalStateStore {
     /// per-account entry is the single source of truth for the account
     /// selector's display label.
     pub fn set_primary_handle(&mut self, handle: &str) {
-        self.ensure_cached_loaded();
-        let handle = handle.trim();
-        if self.cached.primary_handle == handle {
+        let did = self.effective_account_key();
+        self.set_primary_handle_for_did(&did, handle);
+    }
+
+    /// Record one specific account's primary handle without relying on which
+    /// account happens to be active when an asynchronous lookup completes.
+    pub fn set_primary_handle_for_did(&mut self, did: &str, handle: &str) {
+        let did = did.trim();
+        if did.is_empty() {
             return;
         }
-        self.cached.primary_handle = handle.to_owned();
-        let _ = self.flush();
+        let handle = handle.trim();
+        let is_active = self.read_root().active_did.as_deref() == Some(did);
+        if is_active {
+            self.ensure_cached_loaded();
+            if self.cached.primary_handle == handle {
+                return;
+            }
+            self.cached.primary_handle = handle.to_owned();
+            let _ = self.flush();
+            return;
+        }
+
+        let mut state = self.read_account_state(did).unwrap_or_default();
+        if state.primary_handle == handle {
+            return;
+        }
+        state.primary_handle = handle.to_owned();
+        let _ = self.write_account_state(did, &state);
     }
 
     /// Read a SPECIFIC account's persisted primary handle by DID, without making

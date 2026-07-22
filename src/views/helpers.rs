@@ -1,6 +1,7 @@
 pub use arkret_sdk::MentionNode;
 use dioxus::prelude::*;
 
+pub(crate) use super::member_display::actor_display_label;
 use crate::api_error::normalize_wait_for_sync_token;
 use crate::config::{ClientConfig, LocalConfigStore};
 use crate::transport::auth::with_endpoint_clients;
@@ -45,32 +46,6 @@ pub fn persist_config(
 
 pub fn active_sync_token(sync_cursor: impl AsRef<str>) -> Option<String> {
     normalize_wait_for_sync_token(sync_cursor.as_ref())
-}
-
-/// F-REMARK-FANOUT-1: actor-private `local_name` lookup for a DID,
-/// reused everywhere inkson would otherwise show a raw `did:web:...`.
-///
-/// The actor's `ContactRemark` rows arrive via account_data sync
-/// (`ak.contacts.actor.<did>`) and live on `LocalStateStore`. Each
-/// view used to fall back to the raw DID — this helper centralises the
-/// "prefer the user's chosen alias, else the canonical DID" decision so
-/// chat headers, @mention popovers, directory rows, verify-device peer
-/// labels, and message-author lines stay consistent.
-///
-/// The DID is never interpreted as identity metadata. Without a verified
-/// handle or an actor-private remark, callers receive a compact protocol id.
-pub fn display_name_for_did(state_store: &crate::state::LocalStateStore, did: &str) -> String {
-    if let Some(handle) = state_store
-        .cached_member_handle_lookup(did, None, None)
-        .and_then(|entry| entry.primary_handle)
-        .and_then(|handle| crate::identity::handle::parse_user_handle(&handle).map(|h| h.display))
-    {
-        return handle;
-    }
-    match state_store.contact_remark(did) {
-        Some(remark) => remark.display_name(did).to_owned(),
-        None => short_protocol_id(did),
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

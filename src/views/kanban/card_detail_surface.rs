@@ -1178,12 +1178,16 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                 "data-testid": "card-synthesis-entry",
                                                                                 "data-synthesis-version-state": "{version_state}",
                                                                                 header { class: "card-synthesis-entry-head",
-                                                                                    span { class: "card-synthesis-author", title: "{actor_title}", "{display_revision.author_label}" }
-                                                                                    if synthesis_is_own {
-                                                                                        SelfAttributionBadge {
-                                                                                            class: Some("card-synthesis-self-badge".to_owned()),
-                                                                                            test_id: Some("card-synthesis-self-badge".to_owned()),
-                                                                                        }
+                                                                                    ActorIdentityLabel {
+                                                                                        label: display_revision.author_label.clone(),
+                                                                                        title: Some(actor_title),
+                                                                                        class: Some("card-synthesis-author".to_owned()),
+                                                                                        test_id: Some("card-synthesis-author".to_owned()),
+                                                                                        self_badge_test_id: Some("card-synthesis-self-badge".to_owned()),
+                                                                                        agent_badge_test_id: None,
+                                                                                        is_self: synthesis_is_own,
+                                                                                        agent_slug: None,
+                                                                                        agent_selector: None,
                                                                                     }
                                                                                     time { class: "card-synthesis-time", "{display_revision.timestamp_label}" }
                                                                                     span { class: "badge", "{version_label}" }
@@ -1270,12 +1274,16 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                                         if history_is_latest {
                                                                                                                             span { class: "badge badge-success", "latest" }
                                                                                                                         }
-                                                                                                                        span { title: "{history_author_title}", "{history_entry.author_label}" }
-                                                                                                                        if history_is_own {
-                                                                                                                            SelfAttributionBadge {
-                                                                                                                                class: Some("card-synthesis-history-self-badge".to_owned()),
-                                                                                                                                test_id: Some("card-synthesis-history-self-badge".to_owned()),
-                                                                                                                            }
+                                                                                                                        ActorIdentityLabel {
+                                                                                                                            label: history_entry.author_label.clone(),
+                                                                                                                            title: Some(history_author_title),
+                                                                                                                            class: Some("card-synthesis-history-author".to_owned()),
+                                                                                                                            test_id: Some("card-synthesis-history-author".to_owned()),
+                                                                                                                            self_badge_test_id: Some("card-synthesis-history-self-badge".to_owned()),
+                                                                                                                            agent_badge_test_id: None,
+                                                                                                                            is_self: history_is_own,
+                                                                                                                            agent_slug: None,
+                                                                                                                            agent_selector: None,
                                                                                                                         }
                                                                                                                         time { "{history_entry.timestamp_label}" }
                                                                                                                     }
@@ -2490,12 +2498,11 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                 let did = row.actor_id.clone();
                                                                                 let is_self = card_member_is_current_account(row, &account_did);
                                                                                 let store = state_store.read();
-                                                                                let label = crate::views::member_display::resolve_member_display(
-                                                                                    &store,
-                                                                                    &realm_context,
-                                                                                    row,
-                                                                                    is_self.then_some(account_primary_handle.as_str()),
-                                                                                ).label;
+                                                                                 let label = crate::views::member_display::resolve_member_display(
+                                                                                     &store,
+                                                                                     &realm_context,
+                                                                                     row,
+                                                                                 ).label;
                                                                                 let in_strand = participant_set.contains(&did);
                                                                                 rsx! {
                                                                                     CardMemberMentionRow {

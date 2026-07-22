@@ -49,7 +49,7 @@ use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
 use crate::ui::slider::Slider;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{display_name_for_did, short_protocol_id};
+use crate::views::helpers::{actor_display_label, short_protocol_id};
 use crate::workflows::blocked_release_workflows;
 
 /// `ak.account_data` key used by the read-receipt preferences entry. Spec:
@@ -2781,7 +2781,7 @@ pub fn SettingsPanel(
                                 for (actor_id, remark) in remarks {
                                     {
                                         let actor_id_label =
-                                            display_name_for_did(&state_store.read(), &actor_id);
+                                            actor_display_label(&state_store.read(), &actor_id);
                                         rsx! {
                                             div {
                                                 class: "actions",
@@ -2828,7 +2828,7 @@ pub fn SettingsPanel(
                                                                 state_store.read().contact_remarks(),
                                                             );
                                                             let did_label =
-                                                                display_name_for_did(&state_store.read(), &did);
+                                                                actor_display_label(&state_store.read(), &did);
                                                             if next.is_empty() {
                                                                 crate::components::feedback::toast_success(
                                                                     "feedback.contact_remark_cleared",
@@ -2868,7 +2868,7 @@ pub fn SettingsPanel(
                                                                 state_store.read().contact_remarks(),
                                                             );
                                                             let did_label =
-                                                                display_name_for_did(&state_store.read(), &did);
+                                                                actor_display_label(&state_store.read(), &did);
                                                             crate::components::feedback::toast_success(
                                                                 "feedback.contact_remark_cleared",
                                                                 vec![("name", did_label)],
@@ -2937,7 +2937,7 @@ pub fn SettingsPanel(
                                 new_contact_remark_did.set(String::new());
                                 new_contact_remark_name.set(String::new());
                                 let actor_label =
-                                    display_name_for_did(&state_store.read(), &actor_id);
+                                    actor_display_label(&state_store.read(), &actor_id);
                                 crate::components::feedback::toast_success(
                                     "feedback.contact_remark_saved",
                                     vec![
@@ -3071,7 +3071,7 @@ pub fn SettingsPanel(
                                     blocklist_snapshot.set(entries.clone());
                                     if changed {
                                         let did_label =
-                                            display_name_for_did(&state_store.read(), &did);
+                                            actor_display_label(&state_store.read(), &did);
                                         blocklist_did_input.set(String::new());
                                         blocklist_reason_input.set(String::new());
                                         blocklist_status.set(format!(
@@ -3083,7 +3083,7 @@ pub fn SettingsPanel(
                                         push_blocklist_account_data(base(), token(), entries);
                                     } else {
                                         let did_label =
-                                            display_name_for_did(&state_store.read(), &did);
+                                            actor_display_label(&state_store.read(), &did);
                                         blocklist_status.set(format!(
                                             "{} {did_label}",
                                             crate::i18n::tr(
@@ -3133,7 +3133,7 @@ pub fn SettingsPanel(
                             for entry in blocklist_snapshot.read().iter() {
                                 {
                                     let did_label =
-                                        display_name_for_did(&state_store.read(), &entry.did);
+                                        actor_display_label(&state_store.read(), &entry.did);
                                     rsx! {
                                         li { class: "settings-list-row", "data-testid": "blocklist-entry",
                                             div {
@@ -3159,7 +3159,7 @@ pub fn SettingsPanel(
                                                         blocklist_snapshot.set(entries.clone());
                                                         if changed {
                                                             let did_label =
-                                                                display_name_for_did(&state_store.read(), &did);
+                                                                actor_display_label(&state_store.read(), &did);
                                                             blocklist_status.set(format!(
                                                                 "{} {did_label}",
                                                                 crate::i18n::tr(
