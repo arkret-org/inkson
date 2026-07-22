@@ -3956,6 +3956,7 @@ fn decrypt_chat_encrypted_content_soft_fails_without_snapshot() {
             "ak:realm:none",
             "did:web:alice.example",
             "ak:device:01964137-0000-7000-8000-000000000001",
+            None,
             &envelope,
         )
         .is_none()
@@ -3975,6 +3976,30 @@ fn chat_message_from_event_flags_encrypted_payload_as_decrypting() {
     });
     let msg = chat_message_from_event("ak:realm:demo", &event).expect("message");
     assert_eq!(msg.crypto_state, MessageCryptoState::Decrypting);
+}
+
+#[test]
+fn circle_scoped_message_does_not_require_forbidden_payload_scope_field() {
+    let event = json!({
+        "event_id": "ak:event:01964137-0000-7000-8000-0000000000c1",
+        "kind": "ak.message.create",
+        "effective_scope": {
+            "kind": "circle",
+            "realm_id": "ak:realm:01964137-0000-7000-8000-0000000000c2",
+            "circle_id": "ak:circle:01964137-0000-7000-8000-0000000000c3"
+        },
+        "payload": {
+            "strand_id": "ak:strand:01964137-0000-7000-8000-0000000000c4",
+            "message_id": "message-circle-scoped",
+            "track_name": "discussion",
+            "content": { "body": "private" }
+        }
+    });
+
+    let message =
+        chat_message_from_event("ak:realm:01964137-0000-7000-8000-0000000000c2", &event).unwrap();
+    assert_eq!(message.crypto_state, MessageCryptoState::Plaintext);
+    assert_eq!(message.body, "private");
 }
 
 #[test]

@@ -352,18 +352,36 @@ impl LocalStateStore {
         payload_digest: &str,
         plaintext: &[u8],
     ) {
+        self.advance_mls_receive_chain_for_effective_scope(
+            realm_id,
+            None,
+            envelope,
+            payload_digest,
+            plaintext,
+        );
+    }
+
+    pub fn advance_mls_receive_chain_for_effective_scope(
+        &self,
+        realm_id: &str,
+        circle_id: Option<&str>,
+        envelope: crate::mls::persistence::MlsSnapshotEnvelope,
+        payload_digest: &str,
+        plaintext: &[u8],
+    ) {
         use base64::Engine as _;
         let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(plaintext);
-        let previous_snapshot = self.mls_snapshot_for(realm_id);
+        let scope_key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        let previous_snapshot = self.mls_snapshot_for_effective_scope(realm_id, circle_id);
         {
             let mut overlay = self.lock_mls_receive_overlay();
             if let Some(previous_snapshot) = previous_snapshot {
                 overlay
                     .recovery_snapshots
-                    .entry(realm_id.to_owned())
+                    .entry(scope_key.clone())
                     .or_insert(previous_snapshot);
             }
-            overlay.snapshots.insert(realm_id.to_owned(), envelope);
+            overlay.snapshots.insert(scope_key, envelope);
             overlay
                 .plaintexts
                 .entry(realm_id.to_owned())

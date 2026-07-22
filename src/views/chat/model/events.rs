@@ -805,6 +805,7 @@ pub(crate) fn decrypt_chat_encrypted_content(
     realm_id: &str,
     actor_id: &str,
     device_id: &str,
+    circle_id: Option<&str>,
     encrypted_content: &Value,
 ) -> Option<String> {
     let envelope =
@@ -812,12 +813,13 @@ pub(crate) fn decrypt_chat_encrypted_content(
     let payload_value =
         serde_json::to_value(arkret_sdk::mls::encrypted_envelope_to_payload(&envelope).ok()?)
             .ok()?;
-    let plaintext = crate::state::projection::try_local_mls_decrypt_core(
+    let plaintext = crate::state::projection::try_local_mls_decrypt_core_for_effective_scope(
         state_store,
         realm_id,
         actor_id,
         device_id,
         &payload_value,
+        circle_id,
     )?;
     let content_value = serde_json::from_slice::<Value>(&plaintext).ok()?;
     text_body_from_value(&content_value).map(ToOwned::to_owned)
@@ -1198,6 +1200,17 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         return None;
     }
     let candidates = message_candidates(event);
+    let effective_scope_circle = candidates
+        .iter()
+        .find_map(|candidate| {
+            candidate
+                .get("effective_scope")
+                .and_then(|scope| scope.get("circle_id"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .map(ToOwned::to_owned);
     if poll_content_from_candidates(&candidates)
         .and_then(|content| content.get("kind").and_then(Value::as_str))
         .is_some_and(|kind| kind == "ak.content.poll.response")
@@ -1273,7 +1286,14 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     };
     let decrypt_was_attempted = decrypt_context.is_some();
     let decrypted_body = decrypt_context.and_then(|(store, actor_id, device_id, encrypted)| {
-        decrypt_chat_encrypted_content(store, message_realm, actor_id, device_id, encrypted)
+        decrypt_chat_encrypted_content(
+            store,
+            message_realm,
+            actor_id,
+            device_id,
+            effective_scope_circle.as_deref(),
+            encrypted,
+        )
     });
     let body_was_decrypted = decrypted_body.is_some();
     let body = if is_redaction_tombstone {
@@ -1313,55 +1333,17 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         .filter(|value| value.starts_with("ak:strand:"))
         .unwrap_or("ak:strand:general")
         .to_owned();
-    // AKP-0007 P3B.2.7 — compare the envelope's `effective_scope`
-    // against the payload `scope_circle_id`. When they disagree we
-    // route the message into `NeedsVerification` so the UI badge
-    // surfaces the mismatch rather than presenting a body decrypted
-    // under the wrong MLS group as trustworthy.
-    let effective_scope_circle = candidates
-        .iter()
-        .find_map(|candidate| {
-            candidate
-                .get("effective_scope")
-                .and_then(|scope| scope.get("circle_id"))
-                .and_then(|value| value.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-        })
-        .map(ToOwned::to_owned);
-    let payload_scope_circle = candidates
-        .iter()
-        .find_map(|candidate| {
-            candidate
-                .get("scope_circle_id")
-                .or_else(|| {
-                    candidate
-                        .get("content")
-                        .and_then(|content| content.get("scope_circle_id"))
-                })
-                .and_then(|value| value.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-        })
-        .map(ToOwned::to_owned);
-    let scope_mismatch = match (
-        effective_scope_circle.as_deref(),
-        payload_scope_circle.as_deref(),
-    ) {
-        (None, None) => false,
-        (Some(env), Some(payload)) => env != payload,
-        // One side mentions a Circle but the other doesn't — flag it
-        // so the user is prompted to verify before trusting the body.
-        _ => true,
-    };
+    // Message submit payloads normatively do not carry `scope_circle_id`.
+    // The reducer stamps the immutable Event `effective_scope`; selecting the
+    // matching Circle snapshot above binds decryption to that scope without
+    // inventing a payload field that v1 forbids.
     let crypto_state = if is_expiry_stub {
         MessageCryptoState::Plaintext
     } else if late_recovery_rejection.is_some() {
         MessageCryptoState::LateRecoveryRejected
-    } else if scope_mismatch || proof_verdict == ChatProofVerdict::Unresolved {
-        // Either a Circle-scope mismatch, OR a present sender proof whose verify
-        // key is not yet resolvable from the directory cache — flag for
-        // verification rather than presenting the body as trusted.
+    } else if proof_verdict == ChatProofVerdict::Unresolved {
+        // A present sender proof whose verify key is not yet resolvable from
+        // the directory cache is flagged rather than presented as trusted.
         MessageCryptoState::NeedsVerification
     } else if body_from_sidecar || body_was_decrypted {
         // X9: the author's own plaintext was recovered from the local sidecar,

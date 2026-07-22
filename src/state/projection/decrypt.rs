@@ -21,15 +21,34 @@ pub(crate) fn try_local_mls_decrypt_core(
     device_id: &str,
     payload_value: &Value,
 ) -> Option<Vec<u8>> {
+    try_local_mls_decrypt_core_for_effective_scope(
+        state_store,
+        realm_id,
+        actor_id,
+        device_id,
+        payload_value,
+        None,
+    )
+}
+
+pub(crate) fn try_local_mls_decrypt_core_for_effective_scope(
+    state_store: &LocalStateStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    payload_value: &Value,
+    circle_id: Option<&str>,
+) -> Option<Vec<u8>> {
     let payload: arkret_sdk::EncryptedPayload =
         serde_json::from_value(payload_value.clone()).ok()?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    crate::mls::runtime::decrypt_application_payload(
+    crate::mls::runtime::decrypt_application_payload_for_effective_scope(
         state_store,
         secure_store.as_ref(),
         realm_id,
         actor_id,
         device_id,
         &payload,
+        circle_id,
     )
 }

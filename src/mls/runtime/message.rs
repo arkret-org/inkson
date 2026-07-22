@@ -120,6 +120,29 @@ pub fn decrypt_application_payload(
     device_id: &str,
     payload: &arkret_sdk::EncryptedPayload,
 ) -> Option<Vec<u8>> {
+    decrypt_application_payload_for_effective_scope(
+        state_store,
+        secure_store,
+        realm_id,
+        actor_id,
+        device_id,
+        payload,
+        None,
+    )
+}
+
+pub fn decrypt_application_payload_for_effective_scope(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    payload: &arkret_sdk::EncryptedPayload,
+    circle_id: Option<&str>,
+) -> Option<Vec<u8>> {
+    let circle = circle_id
+        .map(str::trim)
+        .filter(|circle_id| !circle_id.is_empty());
     let digest = payload.payload_digest.as_str();
     if let Some(plaintext) = state_store.mls_decrypted_plaintext_for(realm_id, digest) {
         return Some(plaintext);
@@ -138,29 +161,36 @@ pub fn decrypt_application_payload(
     // `history_secret` — so a never-Welcomed joiner (no snapshot) can still read
     // granted history via the group-free standalone path below. When no snapshot
     // is present we skip straight to tier-3 history decrypt.
-    let Some(snapshot) = state_store.mls_snapshot_for(realm_id) else {
-        let plaintext = try_history_decrypt_standalone(state_store, realm_id, payload);
+    let Some(snapshot) = state_store.mls_snapshot_for_effective_scope(realm_id, circle) else {
+        let plaintext = circle
+            .is_none()
+            .then(|| try_history_decrypt_standalone(state_store, realm_id, payload))
+            .flatten();
         if plaintext.is_none() {
-            warn_mls_decrypt_once(
-                realm_id,
-                digest,
-                payload.epoch,
-                None,
-                "no local MLS snapshot or granted history secret",
-            );
+            if circle.is_none() {
+                warn_mls_decrypt_once(
+                    realm_id,
+                    digest,
+                    payload.epoch,
+                    None,
+                    "no local MLS snapshot or granted history secret",
+                );
+            }
         }
         return plaintext;
     };
     let secret = match load_device_snapshot_secret(secure_store, actor_id, device_id) {
         Ok(secret) => secret,
         Err(error) => {
-            warn_mls_decrypt_once(
-                realm_id,
-                digest,
-                payload.epoch,
-                Some(snapshot.epoch),
-                &format!("device snapshot secret unavailable: {error}"),
-            );
+            if circle.is_none() {
+                warn_mls_decrypt_once(
+                    realm_id,
+                    digest,
+                    payload.epoch,
+                    Some(snapshot.epoch),
+                    &format!("device snapshot secret unavailable: {error}"),
+                );
+            }
             return None;
         }
     };
@@ -171,13 +201,15 @@ pub fn decrypt_application_payload(
     let mut group = match crate::mls::persistence::restore_envelope(&snapshot, &secret, 0) {
         Ok(group) => group,
         Err(error) => {
-            warn_mls_decrypt_once(
-                realm_id,
-                digest,
-                payload.epoch,
-                Some(snapshot.epoch),
-                &format!("restore local MLS snapshot: {error}"),
-            );
+            if circle.is_none() {
+                warn_mls_decrypt_once(
+                    realm_id,
+                    digest,
+                    payload.epoch,
+                    Some(snapshot.epoch),
+                    &format!("restore local MLS snapshot: {error}"),
+                );
+            }
             return None;
         }
     };
@@ -212,17 +244,22 @@ pub fn decrypt_application_payload(
             // payload's epoch and decrypt it as `mls-exporter-aead-v1` content.
             // This is group-free, so it works whether or not the snapshot could
             // ratchet to the payload's epoch.
-            let plaintext = try_history_decrypt_standalone(state_store, realm_id, payload);
+            let plaintext = circle
+                .is_none()
+                .then(|| try_history_decrypt_standalone(state_store, realm_id, payload))
+                .flatten();
             if plaintext.is_none() {
-                warn_mls_decrypt_once(
-                    realm_id,
-                    digest,
-                    payload.epoch,
-                    Some(snapshot.epoch),
-                    &format!(
-                        "live MLS decrypt failed ({live_error}); no granted history secret opened the payload"
-                    ),
-                );
+                if circle.is_none() {
+                    warn_mls_decrypt_once(
+                        realm_id,
+                        digest,
+                        payload.epoch,
+                        Some(snapshot.epoch),
+                        &format!(
+                            "live MLS decrypt failed ({live_error}); no granted history secret opened the payload"
+                        ),
+                    );
+                }
             }
             return plaintext;
         }
@@ -235,15 +272,23 @@ pub fn decrypt_application_payload(
     let advanced = export_receive_chain_envelope(&group, realm_id, &secret, &snapshot);
     match advanced {
         Ok(envelope) => {
-            state_store.advance_mls_receive_chain(realm_id, envelope, digest, &plaintext);
+            state_store.advance_mls_receive_chain_for_effective_scope(
+                realm_id, circle, envelope, digest, &plaintext,
+            );
         }
         Err(err) => {
-            tracing::error!(
-                %realm_id,
-                error = %err.user_message(),
-                "MLS receive-chain write-back failed after successful decrypt \
-                 (spec §5.6 violation risk: message may be unreadable after restart)",
-            );
+            if circle.is_none() {
+                tracing::error!(
+                    %realm_id,
+                    error = %err.user_message(),
+                    "MLS receive-chain write-back failed after successful decrypt \
+                     (spec §5.6 violation risk: message may be unreadable after restart)",
+                );
+            } else {
+                tracing::error!(
+                    "Circle-scoped MLS receive-chain write-back failed after successful decrypt"
+                );
+            }
             return None;
         }
     }

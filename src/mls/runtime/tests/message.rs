@@ -303,6 +303,53 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn circle_scoped_decrypt_uses_and_advances_only_the_circle_snapshot() {
+    let mut state = temp_state_store("circle-scoped-receive-chain");
+    let secure = MemorySecureKeyStore::new();
+    let realm = "ak:realm:01904100-0000-7000-8000-0000000000b3";
+    let circle = "ak:circle:01904100-0000-7000-8000-0000000000b4";
+    let bob_actor = "did:web:bob.example";
+    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b5";
+
+    let mut alice_group =
+        two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
+    let circle_snapshot = state.mls_snapshot_for(realm).unwrap();
+    state.drop_mls_snapshot(realm);
+    state.save_mls_snapshot_for_effective_scope(
+        realm.to_owned(),
+        Some(circle),
+        circle_snapshot.clone(),
+    );
+    let encrypted = alice_group
+        .encrypt_payload("application/json", br#"{"body":"sidecar"}"#)
+        .unwrap();
+
+    assert!(
+        decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &encrypted)
+            .is_none(),
+        "Realm-scoped decrypt must not borrow a Circle snapshot"
+    );
+    let plaintext = decrypt_application_payload_for_effective_scope(
+        &state,
+        &secure,
+        realm,
+        bob_actor,
+        bob_device,
+        &encrypted,
+        Some(circle),
+    )
+    .expect("Circle-scoped message decrypts with the Circle snapshot");
+    assert_eq!(plaintext, br#"{"body":"sidecar"}"#);
+    assert!(state.mls_snapshot_for(realm).is_none());
+    let advanced = state
+        .mls_snapshot_for_effective_scope(realm, Some(circle))
+        .unwrap();
+    assert_ne!(advanced.ciphertext_hex, circle_snapshot.ciphertext_hex);
+    assert_eq!(advanced.app_messages_observed, 1);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn out_of_order_skipped_keys_survive_restart() {
     // §5.6: the persisted state includes the bounded skipped-message-key
     // cache. Bob decrypts m3 first (m1/m2 keys become skipped keys),
