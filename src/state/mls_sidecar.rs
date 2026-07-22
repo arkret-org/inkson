@@ -392,6 +392,50 @@ impl LocalStateStore {
         self.load().mls_genesis_emitted.contains(&key)
     }
 
+    pub fn pending_mls_genesis_event_for_effective_scope(
+        &self,
+        realm_id: &str,
+        circle_id: Option<&str>,
+    ) -> Option<arkret_sdk::Event> {
+        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        self.load()
+            .pending_mls_genesis_events
+            .get(&key)
+            .and_then(|event| serde_json::from_str(event).ok())
+    }
+
+    pub fn save_pending_mls_genesis_event_for_effective_scope(
+        &mut self,
+        realm_id: &str,
+        circle_id: Option<&str>,
+        event: arkret_sdk::Event,
+    ) -> Result<(), serde_json::Error> {
+        self.ensure_cached_loaded();
+        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        self.cached
+            .pending_mls_genesis_events
+            .insert(key, serde_json::to_string(&event)?);
+        let _ = self.flush();
+        Ok(())
+    }
+
+    pub fn clear_pending_mls_genesis_event_for_effective_scope(
+        &mut self,
+        realm_id: &str,
+        circle_id: Option<&str>,
+    ) {
+        self.ensure_cached_loaded();
+        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        if self
+            .cached
+            .pending_mls_genesis_events
+            .remove(&key)
+            .is_some()
+        {
+            let _ = self.flush();
+        }
+    }
+
     /// Record that a `ak.mls.genesis` event has been submitted for this
     /// Realm so it is never re-emitted (idempotent).
     pub fn mark_mls_genesis_emitted(&mut self, realm_id: impl Into<String>) {
@@ -437,6 +481,12 @@ impl LocalStateStore {
         let realm_id = realm_id.into();
         let key = mls_effective_scope_snapshot_key(&realm_id, circle_id);
         let mut changed = self.cached.mls_genesis_emitted.insert(key);
+        let pending_key = mls_effective_scope_snapshot_key(&realm_id, circle_id);
+        changed |= self
+            .cached
+            .pending_mls_genesis_events
+            .remove(&pending_key)
+            .is_some();
         if circle_id.is_none() {
             let event_ref = genesis_event_id.as_str().to_owned();
             let view = self.cached.seal_views.entry(realm_id).or_default();

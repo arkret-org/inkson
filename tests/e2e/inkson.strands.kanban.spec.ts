@@ -122,6 +122,34 @@ test("owned agent sidecar labels private messages in discussion", async ({ page 
   await expect(privacyBadge).toHaveAttribute("data-visibility", "private-sidecar");
 });
 
+test("pending sidecar reconciliation blocks contextual send without claiming readiness", async ({ page }) => {
+  await openKanban(page);
+  await page.getByTestId("kanban-card").first().click();
+  const detailPopup = page.getByTestId("card-detail-modal");
+  await detailPopup.getByTestId("card-detail-sidebar-tab-members").click();
+  await detailPopup
+    .getByTestId("card-detail-agent-row")
+    .getByTestId("card-detail-member-mention-button")
+    .click();
+  await detailPopup.getByTestId("chat-input").fill("@me/assistant inspect privately");
+
+  const ensureResponse = page.waitForResponse(
+    (response) => response.url().endsWith("/_arkret/self/agent-sidecars:ensure"),
+    { timeout: 20_000 },
+  );
+  await detailPopup.getByTestId("send-chat-button").click();
+  await expect((await ensureResponse).ok()).toBeTruthy();
+
+  await expect(page).toHaveURL(/\/direct\/.*\/ak:strand:/);
+  await expect(page.getByTestId("sidecar-security-state")).toHaveText(
+    "Reconciling access",
+  );
+  await expect(page.getByTestId("sidecar-readiness-gate")).toContainText(
+    "1 principal",
+  );
+  await expect(page.getByTestId("send-chat-button")).toBeDisabled();
+});
+
 test("kanban hides list creation until a board exists", async ({ page }) => {
   await page.route("**/_arkret/self/realms/*/spaces", async (route) => {
     return route.fulfill({

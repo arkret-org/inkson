@@ -50,6 +50,26 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope(
     actor_id: &str,
     device_id: &str,
 ) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
+    ensure_creator_mls_snapshot_for_effective_scope_with_binding(
+        state_store,
+        secure_store,
+        realm_id,
+        circle_id,
+        actor_id,
+        device_id,
+        None,
+    )
+}
+
+pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
+    state_store: &mut crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    actor_id: &str,
+    device_id: &str,
+    sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
+) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
     let realm = realm_id.trim();
     if realm.is_empty() {
         return Err(MlsRuntimeError::Genesis(
@@ -82,6 +102,12 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope(
     let governance_binding =
         crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
             .map_err(MlsRuntimeError::Genesis)?;
+    let governance_binding = match sidecar_binding {
+        Some(binding) => governance_binding
+            .with_sidecar_binding(binding)
+            .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?,
+        None => governance_binding,
+    };
     let group = identity
         .create_group_with_governance_binding(group_seed.as_bytes(), &governance_binding)
         .map_err(|err| MlsRuntimeError::Genesis(format!("create group: {err}")))?;
@@ -142,6 +168,26 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope(
     actor_id: &str,
     device_id: &str,
 ) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
+    initial_mls_snapshot_summary_from_existing_for_effective_scope_with_binding(
+        state_store,
+        secure_store,
+        realm_id,
+        circle_id,
+        actor_id,
+        device_id,
+        None,
+    )
+}
+
+pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope_with_binding(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    actor_id: &str,
+    device_id: &str,
+    sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
+) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
     let realm = realm_id.trim();
     if realm.is_empty() {
         return Err(MlsRuntimeError::Genesis(
@@ -176,6 +222,12 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope(
     let expected_binding =
         crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
             .map_err(MlsRuntimeError::Genesis)?;
+    let expected_binding = match sidecar_binding {
+        Some(binding) => expected_binding
+            .with_sidecar_binding(binding)
+            .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?,
+        None => expected_binding,
+    };
     let current_binding = group.current_governance_binding().map_err(|err| {
         MlsRuntimeError::Genesis(format!("read epoch-0 governance binding: {err}"))
     })?;

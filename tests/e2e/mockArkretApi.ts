@@ -12,6 +12,8 @@ const CHILD_REALM = "ak:realm:0196419b-0000-7000-8000-00000000c001";
 const GRANDCHILD_REALM = "ak:realm:0196419b-0000-7000-8000-00000000c002";
 const DIRECT_BOB_REALM = "ak:realm:01964137-0000-7000-8000-00000000d0b1";
 const DIRECT_BOB_STRAND = "ak:strand:01964137-0000-7000-8000-00000000d0b2";
+const DIRECT_OWN_AGENT_REALM = "ak:realm:01964137-0000-7000-8000-0000000000a1";
+const DIRECT_OWN_AGENT_STRAND = "ak:strand:01964137-0000-7000-8000-0000000000a2";
 const DEMO_CIRCLE = "ak:circle:0196419b-0000-7000-8000-00000000c1c1";
 const DEMO_BOARD_SPACE = "ak:space:0196419b-0000-7000-8000-00000000b0a0";
 const DEMO_SECOND_BOARD_SPACE = "ak:space:0196419b-0000-7000-8000-00000000b0b0";
@@ -2240,11 +2242,18 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/direct-conversations/resolve" &&
       route.request().method() === "POST"
     ) {
+      const body = ((await contractRequestBody(route)) ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const ownedAgent = body.peer === "did:web:agents.example:assistant";
       return json(route, {
         state: "found",
-        realm_id: DIRECT_BOB_REALM,
-        main_strand_id: DIRECT_BOB_STRAND,
-        binding_event_ref: "ak:event:0196419b-0000-7000-8000-000000000103",
+        realm_id: ownedAgent ? DIRECT_OWN_AGENT_REALM : DIRECT_BOB_REALM,
+        main_strand_id: ownedAgent ? DIRECT_OWN_AGENT_STRAND : DIRECT_BOB_STRAND,
+        binding_event_ref: ownedAgent
+          ? "ak:event:0196419b-0000-7000-8000-0000000000a3"
+          : "ak:event:0196419b-0000-7000-8000-000000000103",
         created: false,
       });
     }

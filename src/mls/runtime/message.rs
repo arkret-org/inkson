@@ -1166,9 +1166,14 @@ fn verify_welcome_governance_binding(
         binding.next_epoch(),
     )?;
     let verified = crate::mls::governance_proof::cached_verified_binding(state_store, &request)?;
-    if verified != binding {
+    let proof_binding = if binding.sidecar_binding().is_some() {
+        binding.clone().without_sidecar_binding()
+    } else {
+        binding.clone()
+    };
+    if verified != proof_binding {
         return Err(
-            "durable Welcome governance_binding differs from the locally verified Seal proof"
+            "durable Welcome governance binding base differs from the locally verified Seal proof"
                 .to_owned(),
         );
     }

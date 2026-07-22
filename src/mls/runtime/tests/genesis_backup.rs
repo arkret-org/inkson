@@ -167,6 +167,49 @@ fn mls_genesis_emitted_flag_is_idempotent() {
 }
 
 #[test]
+fn pending_genesis_event_round_trips_exactly_and_clears_on_accept() {
+    let mut state = temp_state_store("pending-genesis-event");
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
+    let actor = "did:web:alice.example";
+    let group_id = arkret_sdk::base64url_encode(realm.as_bytes());
+    let binding = genesis_governance_binding(&group_id);
+    let summary = InitialMlsSnapshotSummary {
+        realm_id: realm.to_owned(),
+        group_id: group_id.clone(),
+        epoch: 0,
+        ratchet_tree: "cmF0Y2hldC10cmVl".to_owned(),
+        schedule_hash: format!("sha256:{}", "4".repeat(64)),
+        cipher_suite: arkret_sdk::ARKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned(),
+    };
+    let payload = build_mls_genesis_payload(
+        &summary,
+        actor,
+        "ak:device:01904100-0000-7000-8000-000000000001",
+        &binding,
+    )
+    .unwrap();
+    let event =
+        crate::operation::ak_ops::mls_genesis_with_governance(realm, actor, &group_id, &payload)
+            .build_sdk_event("inkson")
+            .unwrap();
+
+    state
+        .save_pending_mls_genesis_event_for_effective_scope(realm, None, event.clone())
+        .unwrap();
+    assert_eq!(
+        state.pending_mls_genesis_event_for_effective_scope(realm, None),
+        Some(event.clone())
+    );
+
+    state.mark_mls_genesis_emitted_for_effective_scope_with_event(realm, None, &event.event_id);
+    assert!(
+        state
+            .pending_mls_genesis_event_for_effective_scope(realm, None)
+            .is_none()
+    );
+}
+
+#[test]
 fn mls_history_backup_body_decodes_to_snapshot_envelope() {
     let envelope = crate::mls::persistence::encrypt_state(
         "ak:realm:01904100-0000-7000-8000-000000000001",

@@ -566,6 +566,22 @@ mod personal_agent_tests {
                 .get("evidence_ref")
                 .is_none()
         );
+
+        let mut noncanonical_key_state = key_state.clone();
+        noncanonical_key_state["pairing_expires_at"] =
+            serde_json::json!("2026-07-06T00:15:00.000123Z");
+        let error = build_agent_key_authorize_event_for_pairing(
+            controller,
+            service_id,
+            &noncanonical_key_state,
+            &request,
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("canonical millisecond timestamp")
+        );
     }
 
     #[test]

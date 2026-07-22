@@ -1,7 +1,5 @@
 import { expect, test } from "@playwright/test";
 import {
-  DEMO_BOARD_SPACE,
-  DEMO_REALM,
   registerStrandsBeforeEach,
   latestTestId,
   dismissBlockingRecoveryModal,
@@ -54,8 +52,12 @@ test("workspace sidebar separates contact-based direct chats", async ({ page }) 
   await expect(shell.getByTestId("contacts-sidebar-search-input")).toBeVisible();
   await expect(shell.getByTestId("sidebar-new-contact-cta")).toBeVisible();
   await expect(shell.getByTestId("contacts-sidebar-summary")).toHaveCount(0);
-  await expect(shell.getByTestId("contact-sidebar-self-row")).toContainText("alice:local.host");
+  const selfRow = shell.getByTestId("contact-sidebar-self-row");
+  await expect(selfRow).toContainText("alice:local.host");
   await expect(shell.getByTestId("contact-sidebar-self-badge")).toHaveText("ME");
+  await expect(selfRow.locator(".contact-sidebar-user-avatar .default-avatar")).toHaveText("A");
+  await expect(selfRow).not.toContainText("Agents 1");
+  await expect(shell.getByTestId("contact-sidebar-self-agent-toggle")).toBeVisible();
   await expect(shell.locator(".contact-sidebar-group").first()).toHaveAttribute(
     "data-testid",
     "contact-sidebar-self-group",
@@ -97,130 +99,38 @@ test("workspace sidebar separates contact-based direct chats", async ({ page }) 
   await expect(shell.getByTestId("contacts-manage-page")).toContainText("bob:example.com");
 });
 
-test("owned agent ensure activates Sidecar inside the source Strand shell", async ({ page }) => {
-  await gotoAndDismissRecovery(page, `/kanban/${DEMO_REALM}/board/${DEMO_BOARD_SPACE}`);
-  const shell = latestTestId(page, "client-shell");
-  await shell.getByTestId("realm-sidebar-tab-direct").click();
-
-  let releaseEnsure!: () => void;
-  let ensureRequestBody: Record<string, any> | null = null;
-  const ensureGate = new Promise<void>((resolve) => {
-    releaseEnsure = resolve;
-  });
-  await page.route("**/_arkret/self/agent-sidecars:ensure", async (route) => {
-    ensureRequestBody = await route.request().postDataJSON();
-    await ensureGate;
-    await route.fallback();
-  });
-
-  const ownedAgentRow = shell
-    .getByTestId("contact-sidebar-agent-row")
-    .filter({ hasText: "Alice Assistant" });
-  await expect(ownedAgentRow).toHaveAttribute(
-    "aria-label",
-    "Chat with Alice Assistant",
-  );
-  const ensureResponse = page.waitForResponse(
-    (response) =>
-      response.url().includes("/_arkret/self/agent-sidecars:ensure"),
-    { timeout: 20_000 },
-  );
-  const contextResponse = page.waitForResponse(
-    (response) =>
-      response.url().includes(`/_arkret/self/realms/${DEMO_REALM}/strands`),
-    { timeout: 20_000 },
-  );
-  try {
-    await ownedAgentRow.click();
-    const projectedStrands = await contextResponse;
-    expect(projectedStrands.ok()).toBeTruthy();
-    await expect(ownedAgentRow).toHaveAttribute("aria-busy", "true");
-    await expect(ownedAgentRow).toBeDisabled();
-    await expect(ownedAgentRow).toContainText("Opening...");
-  } finally {
-    releaseEnsure();
-  }
-  await expect((await ensureResponse).ok()).toBeTruthy();
-  expect(ensureRequestBody?.context_ref).toEqual({
-    realm_id: DEMO_REALM,
-    strand_id: "ak:strand:0196419b-0000-7000-8000-000000000101",
-  });
-
-  await expect(page).toHaveURL(
-    /\/direct\/.*\/ak:strand:0196419b-0000-7000-8000-000000000101$/,
-  );
-  await expect(shell.getByTestId("sidecar-context-strip")).toBeVisible();
-  await expect(shell.getByTestId("sidecar-mode-context-merged")).toHaveClass(/active/);
-  await shell.getByTestId("sidecar-mode-sidecar-only").click();
-  await expect(shell.getByTestId("sidecar-mode-sidecar-only")).toHaveClass(/active/);
-  await expect(shell.getByTestId("sidecar-addressed-now")).toContainText(
-    "assistant",
-  );
-  await expect(shell.getByTestId("sidecar-security-state")).toContainText(
-    "E2EE",
-  );
-  await expect(shell.getByTestId("sidecar-plaintext-disclosure")).toHaveCount(0);
-  await expect(shell.getByTestId("send-e2ee-move-button")).toHaveCount(0);
-  await expect(shell.getByTestId("send-chat-button")).toBeEnabled();
-  await expect(shell.getByTestId("discussion-users-panel")).toHaveCount(0);
-  await expect(shell.getByTestId("chat-call-voice-button")).toBeHidden();
-
-  const eventLoopDelay = await page.evaluate(async () => {
-    const startedAt = performance.now();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    return performance.now() - startedAt;
-  });
-  expect(eventLoopDelay).toBeLessThan(1_000);
-  await expect(shell.getByTestId("chat-panel")).toHaveCount(1);
-
-  await shell.getByRole("button", { name: "Access" }).click();
-  await expect(shell.getByTestId("sidecar-access-panel")).toContainText(
-    "Addressed now",
-  );
-  await expect(shell.getByTestId("sidecar-access-panel")).toContainText(
-    "assistant",
-  );
-  await expect(shell.getByTestId("sidecar-agent-row")).toHaveCount(1);
-
-  await shell.getByTestId("mention-trigger-button").click();
-  const sidecarMentionButtons = shell.locator(
-    '[data-testid="mention-picker"] button[data-testid="mention-suggestion"]',
-  );
-  await expect(sidecarMentionButtons).toHaveCount(1);
-  await expect(sidecarMentionButtons).toHaveAttribute(
-    "data-mention-did",
-    "did:web:agents.example:assistant",
-  );
-  await shell.getByTestId("mention-picker-close-button").click();
-
-  await shell.getByTestId("discussion-settings-toggle").click();
-  await expect(shell.getByTestId("sidecar-connection-details")).toContainText(
-    "Trace ID",
-  );
-});
-
-test("pending sidecar reconciliation blocks send without claiming readiness", async ({ page }) => {
+test("owned agent opens an independent two-principal Direct Conversation Realm", async ({ page }) => {
   const shell = latestTestId(page, "client-shell");
   await dismissBlockingRecoveryModal(page);
   await shell.getByTestId("realm-sidebar-tab-direct").click();
-  const ensureResponse = page.waitForResponse(
-    (response) =>
-      response.url().endsWith("/_arkret/self/agent-sidecars:ensure"),
+  let directRequestBody: Record<string, unknown> | null = null;
+  let sidecarEnsureCount = 0;
+  await page.route("**/_arkret/self/direct-conversations/resolve", async (route) => {
+    directRequestBody = await route.request().postDataJSON();
+    await route.fallback();
+  });
+  await page.route("**/_arkret/self/agent-sidecars:ensure", async (route) => {
+    sidecarEnsureCount += 1;
+    await route.fallback();
+  });
+  const directResponse = page.waitForResponse(
+    (response) => response.url().endsWith("/_arkret/self/direct-conversations/resolve"),
     { timeout: 20_000 },
   );
-  await shell
+  const ownedAgentRow = shell
     .getByTestId("contact-sidebar-agent-row")
-    .filter({ hasText: "Alice Assistant" })
-    .click();
-  await expect((await ensureResponse).ok()).toBeTruthy();
-
-  await expect(shell.getByTestId("sidecar-security-state")).toHaveText(
-    "Reconciling access",
-  );
-  await expect(shell.getByTestId("sidecar-readiness-gate")).toContainText(
-    "1 principal",
-  );
-  await expect(shell.getByTestId("send-chat-button")).toBeDisabled();
+    .filter({ hasText: "Alice Assistant" });
+  await ownedAgentRow.click();
+  await expect((await directResponse).ok()).toBeTruthy();
+  expect(directRequestBody).toEqual({
+    peer: "did:web:agents.example:assistant",
+    create: true,
+  });
+  await expect(page).toHaveURL(/\/direct\/.*0000000000a1\/.*0000000000a2$/);
+  await expect(shell.getByTestId("chat-panel")).toHaveCount(1);
+  await expect(shell.getByTestId("sidecar-context-strip")).toHaveCount(0);
+  await page.waitForTimeout(250);
+  expect(sidecarEnsureCount).toBe(0);
 });
 
 test("new space strand uses sidebar realm context without home realm picker", async ({ page }) => {

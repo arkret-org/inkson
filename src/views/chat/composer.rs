@@ -962,8 +962,10 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             let realm = selected_realm_id.clone();
                             let actor = account_did.clone();
                             let own_controller_handle = own_controller_handle.clone();
+                            let sidecar_device_id = device_id.clone();
                             move |_| {
                                 let own_controller_handle = own_controller_handle.clone();
+                                let device_id_for_sidecar = sidecar_device_id.clone();
                                 let body = chat_draft().trim().to_owned();
                                 if body.is_empty() {
                                     return;
@@ -1054,14 +1056,18 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             api_token,
                                             &trace_id,
                                             &actor,
+                                            &device_id_for_sidecar,
                                             &realm,
                                             &strand_id,
                                             &addressed_agent_ids,
+                                            state_store,
                                         )
                                         .await;
                                         sidecar_route_pending.set(false);
                                         match sidecar_outcome {
-                                            Ok(Some((sidecar, backing_scope_circle_id))) => {
+                                            Ok(Some((sidecar, sidecar_view))) => {
+                                                let backing_scope_circle_id =
+                                                    sidecar_view.sidecar.backing_circle_id.clone();
                                                 let addressed_agent_ids = owned_agent_ids_from_mentions(
                                                     &resolved_mentions,
                                                     &actor,
@@ -1085,8 +1091,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     backing_scope_circle_id,
                                                     private_strand_id: sidecar.private_strand_id.to_string(),
                                                     private_relation_id: sidecar.private_relation_id.to_string(),
-                                                    access_readiness: sidecar.access_readiness,
-                                                    pending_access_reconciliations: sidecar.pending_access_reconciliations.clone(),
+                                                    access_readiness: sidecar_view.access_readiness,
+                                                    pending_access_reconciliations: sidecar_view.pending_access_reconciliations.clone(),
+                                                    mls_context: sidecar_view.mls_context,
                                                     display_mode: arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
                                                     migrated_draft: body_for_resolution,
                                                     opened_at: chrono::Utc::now(),
@@ -1330,8 +1337,10 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             let own_controller_handle = own_controller_handle.clone();
                             let selected_strand = selected_channel_value.clone();
                             let pending_mls_binding = selected_realm_pending_mls_binding;
+                            let sidecar_device_id = device_id.clone();
                             move |_| {
                                 let own_controller_handle = own_controller_handle.clone();
+                                let device_id_for_sidecar = sidecar_device_id.clone();
                                 if pending_mls_binding {
                                     status_msg.set(
                                         "epoch_update_required: membership frontier changed; MLS Remove commit required"
@@ -1425,14 +1434,18 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             api_token,
                                             &trace_id,
                                             &actor_for_sidecar,
+                                            &device_id_for_sidecar,
                                             &realm_for_sidecar,
                                             &strand_for_sidecar,
                                             &addressed_agent_ids,
+                                            state_store,
                                         )
                                         .await;
                                         sidecar_route_pending.set(false);
                                         match sidecar_outcome {
-                                            Ok(Some((sidecar, backing_scope_circle_id))) => {
+                                            Ok(Some((sidecar, sidecar_view))) => {
+                                                let backing_scope_circle_id =
+                                                    sidecar_view.sidecar.backing_circle_id.clone();
                                                 let addressed_agent_ids = owned_agent_ids_from_mentions(
                                                     &resolved_mentions,
                                                     &actor_for_sidecar,
@@ -1456,8 +1469,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     backing_scope_circle_id,
                                                     private_strand_id: sidecar.private_strand_id.to_string(),
                                                     private_relation_id: sidecar.private_relation_id.to_string(),
-                                                    access_readiness: sidecar.access_readiness,
-                                                    pending_access_reconciliations: sidecar.pending_access_reconciliations.clone(),
+                                                    access_readiness: sidecar_view.access_readiness,
+                                                    pending_access_reconciliations: sidecar_view.pending_access_reconciliations.clone(),
+                                                    mls_context: sidecar_view.mls_context,
                                                     display_mode: arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
                                                     migrated_draft: body_for_resolution,
                                                     opened_at: chrono::Utc::now(),
