@@ -196,6 +196,24 @@ impl LocalStateStore {
             .any(|record| record.state == MoveSubmissionState::PendingMlsBinding)
     }
 
+    /// User-facing reason for the newest pending MLS binding in a Realm.
+    ///
+    /// The binding kind matters: an accepted membership Join requires an MLS
+    /// Add, while a Leave/Ban requires an MLS Remove. Callers must not label
+    /// the generic state as one proposal type without consulting the tracked
+    /// canonical transition.
+    pub fn realm_pending_mls_binding_reason(&self, realm_id: &str) -> Option<String> {
+        self.move_submissions_for_realm(realm_id)
+            .into_iter()
+            .find(|record| record.state == MoveSubmissionState::PendingMlsBinding)
+            .map(|record| {
+                record.reason.unwrap_or_else(|| {
+                    "epoch_update_required: membership frontier changed; MLS commit required"
+                        .to_owned()
+                })
+            })
+    }
+
     /// Resolve locally tracked membership transitions once the server reports
     /// no remaining Realm or Circle MLS Remove obligations.  Membership Event
     /// lifecycle and MLS epoch lifecycle are distinct, so the Event becoming
@@ -207,6 +225,29 @@ impl LocalStateStore {
         for record in self.cached.move_submissions.values_mut() {
             if record.realm_id == realm_id
                 && record.kind == "mls_member_remove"
+                && record.state == MoveSubmissionState::PendingMlsBinding
+            {
+                record.state = MoveSubmissionState::Effective;
+                record.reason = None;
+                updated += 1;
+            }
+        }
+        if updated > 0 {
+            let _ = self.flush();
+        }
+        updated
+    }
+
+    /// Resolve tracked Join transitions after an accepted MLS Add commit has
+    /// brought the local group roster into exact agreement with canonical
+    /// Realm membership. The reconciliation caller is responsible for that
+    /// cryptographic roster check; Event effectiveness alone is insufficient.
+    pub fn resolve_member_add_mls_bindings(&mut self, realm_id: &str) -> usize {
+        self.ensure_cached_loaded();
+        let mut updated = 0;
+        for record in self.cached.move_submissions.values_mut() {
+            if record.realm_id == realm_id
+                && record.kind == "mls_member_add"
                 && record.state == MoveSubmissionState::PendingMlsBinding
             {
                 record.state = MoveSubmissionState::Effective;

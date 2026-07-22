@@ -159,6 +159,66 @@ fn move_submission_pending_mls_binding_drives_toast() {
 }
 
 #[test]
+fn add_binding_requires_explicit_mls_reconciliation_resolution() {
+    let path = temp_state_path("move-mls-add-binding");
+    let mut store = LocalStateStore::with_path(path);
+    let realm = "ak:realm:0196419b-0000-7000-8000-000000000004";
+    store.record_move_submission(
+        "ak:event:0196419b-0000-7000-8000-000000000004",
+        realm,
+        "mls_member_add",
+        MoveSubmissionState::PendingMlsBinding,
+        Some("epoch_update_required".to_owned()),
+        None,
+    );
+
+    assert!(store.realm_has_pending_mls_binding(realm));
+    assert_eq!(store.resolve_member_remove_mls_bindings(realm), 0);
+    assert!(store.realm_has_pending_mls_binding(realm));
+    assert_eq!(store.resolve_member_add_mls_bindings(realm), 1);
+    assert!(!store.realm_has_pending_mls_binding(realm));
+}
+
+#[test]
+fn pending_mls_binding_reason_preserves_add_and_remove_semantics() {
+    let path = temp_state_path("move-mls-binding-reason");
+    let mut store = LocalStateStore::with_path(path);
+    let add_realm = "ak:realm:0196419b-0000-7000-8000-00000000000a";
+    let remove_realm = "ak:realm:0196419b-0000-7000-8000-00000000000b";
+    let add_reason = "epoch_update_required: membership frontier changed; MLS Add commit required";
+    let remove_reason =
+        "epoch_update_required: membership frontier changed; MLS Remove commit required";
+
+    store.record_move_submission(
+        "ak:event:0196419b-0000-7000-8000-00000000000a",
+        add_realm,
+        "mls_member_add",
+        MoveSubmissionState::PendingMlsBinding,
+        Some(add_reason.to_owned()),
+        None,
+    );
+    store.record_move_submission(
+        "ak:event:0196419b-0000-7000-8000-00000000000b",
+        remove_realm,
+        "mls_member_remove",
+        MoveSubmissionState::PendingMlsBinding,
+        Some(remove_reason.to_owned()),
+        None,
+    );
+
+    assert_eq!(
+        store.realm_pending_mls_binding_reason(add_realm).as_deref(),
+        Some(add_reason)
+    );
+    assert_eq!(
+        store
+            .realm_pending_mls_binding_reason(remove_realm)
+            .as_deref(),
+        Some(remove_reason)
+    );
+}
+
+#[test]
 fn move_submission_state_label_and_badge_class_distinct_per_state() {
     for state in [
         MoveSubmissionState::PendingSeal,

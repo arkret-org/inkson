@@ -12,6 +12,7 @@ pub(super) struct ChatComposerContext {
     pub plaintext_service_id: String,
     pub selected_channel_security_encrypted: bool,
     pub selected_realm_pending_mls_binding: bool,
+    pub selected_realm_pending_mls_binding_reason: Option<String>,
     pub sidecar_send_block_reason: Option<String>,
     pub public_agent_dids: std::collections::BTreeSet<String>,
     pub own_controller_handle: Option<String>,
@@ -54,6 +55,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         plaintext_service_id,
         selected_channel_security_encrypted,
         selected_realm_pending_mls_binding,
+        selected_realm_pending_mls_binding_reason,
         sidecar_send_block_reason,
         public_agent_dids,
         own_controller_handle,
@@ -1408,13 +1410,17 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             let selected_strand = selected_channel_value.clone();
                             let pending_mls_binding = selected_realm_pending_mls_binding;
                             let sidecar_device_id = device_id.clone();
+                            let pending_mls_binding_reason =
+                                selected_realm_pending_mls_binding_reason.clone();
                             move |_| {
                                 let own_controller_handle = own_controller_handle.clone();
                                 let device_id_for_sidecar = sidecar_device_id.clone();
                                 if pending_mls_binding {
                                     status_msg.set(
-                                        "epoch_update_required: membership frontier changed; MLS Remove commit required"
-                                            .to_owned(),
+                                        pending_mls_binding_reason.clone().unwrap_or_else(|| {
+                                            "epoch_update_required: membership frontier changed; MLS commit required"
+                                                .to_owned()
+                                        }),
                                     );
                                     return;
                                 }
