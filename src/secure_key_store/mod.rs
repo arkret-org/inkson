@@ -58,6 +58,8 @@ pub use local_storage::LocalStorageSecureKeyStore;
 pub use platform::AndroidKeystoreSecureKeyStore;
 #[cfg(any(feature = "mobile-ios", target_os = "ios"))]
 pub use platform::IosKeychainSecureKeyStore;
+#[cfg(test)]
+pub(crate) use signing_seed::delete_signing_seed_scoped;
 pub use signing_seed::{
     GRANT_BINDING_SEED_KEY, SIGNING_SEED_KEY, SigningSeedMaterial, account_scoped_device_key,
     account_scoped_device_key_for, active_device_seed_scope, adopt_device_seed_scope_on_login,

@@ -1346,7 +1346,9 @@ impl EventSubmitter {
             && events.len() == 2
             && events.get(1).is_some_and(|event| {
                 event.kind.as_str() == arkret_sdk::events::EventKind::DEVICE_AUTHORIZE
-            });
+            })
+            && arkret_sdk::identity::validate_self_principal_bootstrap_unit(&events[0], &events[1])
+                .is_ok();
         let is_managed_agent_pcr_create = first_is_realm_create
             && events.len() == 1
             && arkret_sdk::identity::materialize_managed_agent_pcr_control(&events).is_ok();
@@ -1358,19 +1360,33 @@ impl EventSubmitter {
             } else {
                 false
             };
+        let is_genesis_unit =
+            is_ordinary_realm_bootstrap || is_identity_anchor_unit || is_managed_agent_pcr_create;
         for event in &mut events {
             attach_capability_grant_payload_proof(event)?;
         }
         let mut batch_frontiers =
             BTreeMap::<(arkret_sdk::RealmId, arkret_sdk::Did), (u64, arkret_sdk::EventId)>::new();
-        for event in &mut events {
+        for (index, event) in events.iter_mut().enumerate() {
             let scope = (event.realm_id.clone(), event.actor_id.clone());
             if event.proofs.is_empty() {
                 if let Some((actor_seq, event_id)) = batch_frontiers.get(&scope) {
-                    event.prev_refs = vec![event_id.clone()];
-                    event.actor_seq = actor_seq.checked_add(1).ok_or_else(|| {
+                    let next_actor_seq = actor_seq.checked_add(1).ok_or_else(|| {
                         anyhow::anyhow!("actor sequence exhausted for batch scope")
                     })?;
+                    apply_actor_chain_basis_to_sdk_event(
+                        event,
+                        next_actor_seq,
+                        std::slice::from_ref(event_id),
+                    );
+                    let stamp = crate::signing_stamp::issue_event_stamp(event).await?;
+                    event.hlc = stamp.hlc;
+                } else if index == 0 && is_genesis_unit {
+                    // A registered Realm/identity genesis unit creates its own
+                    // `(realm_id, actor_id)` chain. The Realm does not exist yet,
+                    // so a remote frontier lookup cannot distinguish genesis from
+                    // an invisible Realm and MUST NOT be used to author this unit.
+                    apply_actor_chain_basis_to_sdk_event(event, 0, &[]);
                     let stamp = crate::signing_stamp::issue_event_stamp(event).await?;
                     event.hlc = stamp.hlc;
                 } else {
@@ -1563,19 +1579,31 @@ fn apply_actor_frontier_to_sdk_event(
         );
     }
     frontier.validate()?;
+    apply_actor_chain_basis_to_sdk_event(
+        event,
+        frontier.next_actor_seq,
+        &frontier.frontier_event_ids,
+    );
+    Ok(())
+}
+
+fn apply_actor_chain_basis_to_sdk_event(
+    event: &mut arkret_sdk::Event,
+    next_actor_seq: u64,
+    frontier_event_ids: &[arkret_sdk::EventId],
+) {
     let previous_actor_seq = event.actor_seq;
-    event.actor_seq = frontier.next_actor_seq;
-    event.prev_refs.clone_from(&frontier.frontier_event_ids);
+    event.actor_seq = next_actor_seq;
+    event.prev_refs = frontier_event_ids.to_vec();
     // Ordered-log effects use the Event actor sequence as their per-issuer
     // deduplication key. Builders create unsigned drafts before the canonical
     // actor frontier is known, so refreshing actor_seq must update any effect
     // that was bound to the draft sequence before the envelope is signed.
     for effect in &mut event.effects {
         if effect.op.issuer_seq == Some(previous_actor_seq) {
-            effect.op.issuer_seq = Some(frontier.next_actor_seq);
+            effect.op.issuer_seq = Some(next_actor_seq);
         }
     }
-    Ok(())
 }
 
 fn mls_genesis_event_id_from_events(
@@ -2024,6 +2052,108 @@ mod tests {
 
         assert_eq!(event.actor_seq, 0);
         assert!(event.prev_refs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn realm_bootstrap_preparation_authors_genesis_without_remote_frontier() {
+        let _signer = crate::event_signer::ActiveSignerTestGuard::replace(Some(
+            std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
+                [42_u8; 32],
+                "did:web:alice.example",
+                "ak:device:01904100-0000-7000-8000-a11ce0000001",
+            )),
+        ));
+        let events = crate::event_builders::build_realm_bootstrap_events(
+            "ak:realm:0196419b-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "did:web:server.example",
+            "Engineering",
+            Some("Realm genesis must not query its own nonexistent frontier"),
+            "listed",
+            "invite",
+            "shared",
+            "mls_rfc9420",
+            "standard",
+            "restricted",
+            "single_did",
+            "sha256",
+            "ak:trust_domain:server.example",
+            &[],
+            &["did:web:server.example".to_owned()],
+            None,
+            None,
+        )
+        .unwrap();
+        let http = arkret_sdk::http_client::Client::builder("http://127.0.0.1:9/".parse().unwrap())
+            .allow_insecure_localhost()
+            .build()
+            .unwrap();
+
+        let seed_scope = crate::secure_key_store::active_device_seed_scope();
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        let previous_seed = crate::secure_key_store::load_signing_seed_scoped(
+            secure_store.as_ref(),
+            seed_scope.as_deref(),
+        )
+        .unwrap();
+        crate::secure_key_store::store_signing_seed_scoped(
+            secure_store.as_ref(),
+            seed_scope.as_deref(),
+            &[42_u8; 32],
+        )
+        .unwrap();
+        let previous_proof_mode = crate::operation::current_proof_mode();
+        crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
+        let prepared = EventSubmitter::new(http)
+            .prepare_sdk_events_batch(events)
+            .await;
+        crate::operation::set_proof_mode(previous_proof_mode);
+        if let Some(previous_seed) = previous_seed {
+            crate::secure_key_store::store_signing_seed_scoped(
+                secure_store.as_ref(),
+                seed_scope.as_deref(),
+                &previous_seed.seed,
+            )
+            .unwrap();
+        } else {
+            crate::secure_key_store::delete_signing_seed_scoped(
+                secure_store.as_ref(),
+                seed_scope.as_deref(),
+            )
+            .unwrap();
+        }
+        let prepared =
+            prepared.expect("validated Realm bootstrap must be authored from local genesis");
+
+        assert!(!prepared.is_empty());
+        for (index, event) in prepared.iter().enumerate() {
+            assert_eq!(event.actor_seq, index as u64);
+            if index == 0 {
+                assert!(event.prev_refs.is_empty());
+            } else {
+                assert_eq!(event.prev_refs, vec![prepared[index - 1].event_id.clone()]);
+            }
+            assert!(!event.proofs.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn ordinary_event_preparation_still_requires_remote_frontier() {
+        let event = sdk_event_without_proof("did:web:alice.example");
+        let http = arkret_sdk::http_client::Client::builder("http://127.0.0.1:9/".parse().unwrap())
+            .allow_insecure_localhost()
+            .build()
+            .unwrap();
+
+        let error = EventSubmitter::new(http)
+            .prepare_sdk_events_batch(vec![event])
+            .await
+            .expect_err("ordinary Realm Event must refresh its combined actor frontier");
+
+        assert!(
+            format!("{error:#}")
+                .contains("refresh actor frontier for did:web:alice.example before submit")
+        );
     }
 
     #[test]
