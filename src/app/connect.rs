@@ -1415,8 +1415,8 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 ) {
                                     Ok(true) => continue,
                                     Ok(false) => {}
-                                    Err(error) => {
-                                        tracing::warn!(%error, %data_type, "Sidecar exchange projection ingest failed");
+                                    Err(_) => {
+                                        tracing::warn!("Sidecar exchange projection ingest failed");
                                         continue;
                                     }
                                 }

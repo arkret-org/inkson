@@ -16,8 +16,17 @@ fn circle_scope_request_is_single_flight_and_semantically_deduplicated() {
 }
 
 fn sidecar_projection_message(id: &str, strand_id: &str, body: &str) -> ChatMessage {
+    sidecar_projection_message_for_realm("ak:realm:test", id, strand_id, body)
+}
+
+fn sidecar_projection_message_for_realm(
+    realm_id: &str,
+    id: &str,
+    strand_id: &str,
+    body: &str,
+) -> ChatMessage {
     ChatMessage {
-        realm_id: "ak:realm:test".to_owned(),
+        realm_id: realm_id.to_owned(),
         id: id.to_owned(),
         protocol_message_id: None,
         sender: "did:web:example.test:alice".to_owned(),
@@ -122,9 +131,9 @@ fn source_routed_echo_is_private_and_stably_follows_its_anchor() {
         updated_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
     };
     let messages = vec![
-        sidecar_projection_message(anchor, source, "anchor"),
-        sidecar_projection_message(later, source, "later shared"),
-        sidecar_projection_message(echo, private, "private echo"),
+        sidecar_projection_message_for_realm(realm, anchor, source, "anchor"),
+        sidecar_projection_message_for_realm(realm, later, source, "later shared"),
+        sidecar_projection_message_for_realm(realm, echo, private, "private echo"),
     ];
 
     let visible = project_visible_messages(&messages, source, realm, None, &[projection]);
@@ -137,6 +146,70 @@ fn source_routed_echo_is_private_and_stably_follows_its_anchor() {
         vec![anchor, echo, later]
     );
     assert_eq!(visible[1].strand_id, private);
+}
+
+#[test]
+fn source_routed_echo_waits_until_its_anchor_is_visible() {
+    let realm = "ak:realm:01964137-0000-7000-8000-000000000001";
+    let source = "ak:strand:01964137-0000-7000-8000-000000000002";
+    let private = "ak:strand:01964137-0000-7000-8000-000000000003";
+    let missing_anchor = "ak:event:01964137-0000-7000-8000-000000000004";
+    let echo = "ak:event:01964137-0000-7000-8000-000000000005";
+    let mut projection = arkret_sdk::AgentSidecarExchangeProjection {
+        schema: arkret_sdk::AgentSidecarExchangeProjectionSchema::V1,
+        controller_id: arkret_sdk::Did::new("did:web:example.test:alice").unwrap(),
+        sidecar_id: arkret_sdk::SidecarId::new("ak:sidecar:01964137-0000-7000-8000-000000000007")
+            .unwrap(),
+        private_strand_id: arkret_sdk::StrandId::new(private).unwrap(),
+        exchange_id: arkret_sdk::AgentSidecarExchangeId::new("exchange-01964137000000000008")
+            .unwrap(),
+        origin: arkret_sdk::AgentSidecarExchangeOrigin::SourceTrackRouted,
+        source_track_ref: arkret_sdk::AgentSidecarSourceTrackRef {
+            realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+            strand_id: arkret_sdk::StrandId::new(source).unwrap(),
+            track_name: "discussion".to_owned(),
+        },
+        source_frontier_anchor: Some(arkret_sdk::EventId::new(missing_anchor).unwrap()),
+        source_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
+        client_order_key: arkret_sdk::NonEmptyString::new("device-1-1").unwrap(),
+        addressed_agent_ids: vec![
+            arkret_sdk::Did::new("did:web:example.test:agents:assistant").unwrap(),
+        ],
+        participating_agent_ids: Vec::new(),
+        private_request_event_id: arkret_sdk::EventId::new(echo).unwrap(),
+        user_facing_response_event_ids: Vec::new(),
+        status: arkret_sdk::AgentSidecarExchangeStatus::Delivered,
+        failure_code: None,
+        updated_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
+    };
+    let messages = vec![sidecar_projection_message_for_realm(
+        realm,
+        echo,
+        private,
+        "private echo",
+    )];
+
+    assert!(
+        project_visible_messages(&messages, source, realm, None, &[projection.clone()]).is_empty()
+    );
+
+    projection.source_frontier_anchor = None;
+    let visible = project_visible_messages(&messages, source, realm, None, &[projection]);
+    assert_eq!(visible.len(), 1);
+    assert_eq!(visible[0].id, echo);
+}
+
+#[test]
+fn sidecar_native_message_never_appears_in_the_source_without_a_projection() {
+    let realm = "ak:realm:01964137-0000-7000-8000-000000000001";
+    let source = "ak:strand:01964137-0000-7000-8000-000000000002";
+    let private = "ak:strand:01964137-0000-7000-8000-000000000003";
+    let native = "ak:event:01964137-0000-7000-8000-000000000004";
+    let messages = vec![sidecar_projection_message_for_realm(
+        realm, native, private, "native",
+    )];
+
+    assert!(project_visible_messages(&messages, source, realm, None, &[]).is_empty());
 }
 
 const CHAT_FIXTURE_DEVICE: &str = "ak:device:01964137-0000-7000-8000-00000000cafe";

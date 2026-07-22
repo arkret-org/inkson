@@ -208,6 +208,29 @@ fn project_visible_messages(
             visible.push(message.clone());
         }
     }
+    let source_strand_id = sidecar_projection
+        .map(|(source_strand_id, ..)| source_strand_id)
+        .unwrap_or(selected_channel_id);
+    let visible_source_ids = visible
+        .iter()
+        .filter(|message| message.strand_id == source_strand_id)
+        .map(|message| message.id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let wait_for_source_anchor = !sidecar_projection.is_some_and(|(_, _, display_mode)| {
+        display_mode == arkret_sdk::AgentSidecarDisplayMode::SidecarOnly
+    });
+    if wait_for_source_anchor {
+        visible.retain(|message| {
+            echo_projection_by_event
+                .get(&message.id)
+                .is_none_or(|projection| {
+                    projection
+                        .source_frontier_anchor
+                        .as_ref()
+                        .is_none_or(|anchor| visible_source_ids.contains(anchor.as_str()))
+                })
+        });
+    }
     let mut echoes = visible
         .iter()
         .filter_map(|message| {
@@ -221,7 +244,7 @@ fn project_visible_messages(
             .iter()
             .map(|(event_id, _)| event_id.as_str())
             .collect::<std::collections::BTreeSet<_>>();
-        let original = visible.drain(..).collect::<Vec<_>>();
+        let original = std::mem::take(&mut visible);
         let mut by_id = original
             .iter()
             .cloned()
@@ -855,10 +878,12 @@ async fn submit_source_routed_sidecar_message(
     {
         anyhow::bail!("Sidecar MLS access is not ready for a private routed write");
     }
-    let addressed = addressed_agent_ids
+    let mut addressed = addressed_agent_ids
         .iter()
         .map(|agent_id| arkret_sdk::Did::new(agent_id.clone()))
         .collect::<Result<Vec<_>, _>>()?;
+    addressed.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    addressed.dedup();
     if addressed.is_empty()
         || addressed
             .iter()
@@ -885,6 +910,11 @@ async fn submit_source_routed_sidecar_message(
         sdk_payload_value(content.to_value(), "Sidecar routed content block serialize")?;
     let content_bytes = serde_json::to_vec(&content_value)?;
     let message_id = new_chat_message_id();
+    let exchange_id = arkret_sdk::AgentSidecarExchangeId::new(uuid_v7())?;
+    let source_hlc =
+        crate::signing_stamp::issue_protocol_hlc(controller_id, device_id, source_realm_id)?;
+    let client_order_key =
+        arkret_sdk::NonEmptyString::new(uuid_v7()).map_err(anyhow::Error::msg)?;
     let circle_id = view.sidecar.backing_circle_id.to_string();
     let seal_view = state_store.read().seal_view_for_realm(source_realm_id);
     let build = crate::views::secure_send::build_secure_send(
@@ -903,6 +933,33 @@ async fn submit_source_routed_sidecar_message(
     )
     .map_err(anyhow::Error::msg)?;
     let local_operation_id = sdk_event_local_operation_id(&build.message_event).to_owned();
+    let mut projection = arkret_sdk::AgentSidecarExchangeProjection {
+        schema: arkret_sdk::AgentSidecarExchangeProjectionSchema::V1,
+        controller_id: arkret_sdk::Did::new(controller_id.to_owned())?,
+        sidecar_id: view.sidecar.id.clone(),
+        private_strand_id: arkret_sdk::StrandId::new(private_strand_id.to_owned())?,
+        exchange_id,
+        origin: arkret_sdk::AgentSidecarExchangeOrigin::SourceTrackRouted,
+        source_track_ref: arkret_sdk::AgentSidecarSourceTrackRef {
+            realm_id: arkret_sdk::RealmId::new(source_realm_id.to_owned())?,
+            strand_id: arkret_sdk::StrandId::new(source_strand_id.to_owned())?,
+            track_name: "discussion".to_owned(),
+        },
+        source_frontier_anchor: source_frontier_anchor
+            .filter(|anchor| !anchor.trim().is_empty())
+            .and_then(|anchor| arkret_sdk::EventId::new(anchor.to_owned()).ok()),
+        source_hlc: source_hlc.clone(),
+        client_order_key,
+        addressed_agent_ids: addressed,
+        participating_agent_ids: Vec::new(),
+        private_request_event_id: build.message_event.event_id.clone(),
+        user_facing_response_event_ids: Vec::new(),
+        status: arkret_sdk::AgentSidecarExchangeStatus::Pending,
+        failure_code: None,
+        updated_hlc: source_hlc,
+    };
+    projection.validate()?;
+    crate::sidecar::stage_sidecar_exchange_projection(&mut state_store.write(), &projection)?;
     let api = crate::transport::auth::authed_api_with_sync(base_url, api_token.clone(), None)?;
     let outcome = crate::views::secure_send::submit_secure_send(
         &api,
@@ -947,42 +1004,22 @@ async fn submit_source_routed_sidecar_message(
             body,
         );
     }
-    let source_hlc =
+    projection.private_request_event_id = arkret_sdk::EventId::new(event_id.clone())?;
+    projection.status = arkret_sdk::AgentSidecarExchangeStatus::Delivered;
+    projection.updated_hlc =
         crate::signing_stamp::issue_protocol_hlc(controller_id, device_id, source_realm_id)?;
-    let projection = arkret_sdk::AgentSidecarExchangeProjection {
-        schema: arkret_sdk::AgentSidecarExchangeProjectionSchema::V1,
-        controller_id: arkret_sdk::Did::new(controller_id.to_owned())?,
-        sidecar_id: view.sidecar.id.clone(),
-        private_strand_id: arkret_sdk::StrandId::new(private_strand_id.to_owned())?,
-        exchange_id: arkret_sdk::AgentSidecarExchangeId::new(uuid_v7())?,
-        origin: arkret_sdk::AgentSidecarExchangeOrigin::SourceTrackRouted,
-        source_track_ref: arkret_sdk::AgentSidecarSourceTrackRef {
-            realm_id: arkret_sdk::RealmId::new(source_realm_id.to_owned())?,
-            strand_id: arkret_sdk::StrandId::new(source_strand_id.to_owned())?,
-            track_name: "discussion".to_owned(),
-        },
-        source_frontier_anchor: source_frontier_anchor
-            .filter(|anchor| !anchor.trim().is_empty())
-            .and_then(|anchor| arkret_sdk::EventId::new(anchor.to_owned()).ok()),
-        source_hlc: source_hlc.clone(),
-        client_order_key: arkret_sdk::NonEmptyString::new(uuid_v7()).map_err(anyhow::Error::msg)?,
-        addressed_agent_ids: addressed,
-        participating_agent_ids: Vec::new(),
-        private_request_event_id: arkret_sdk::EventId::new(event_id.clone())?,
-        user_facing_response_event_ids: Vec::new(),
-        status: arkret_sdk::AgentSidecarExchangeStatus::Delivered,
-        failure_code: None,
-        updated_hlc: source_hlc,
-    };
-    if let Err(error) = crate::sidecar::persist_sidecar_exchange_projection(
+    if crate::sidecar::persist_sidecar_exchange_projection(
         base_url,
         api_token,
         state_store,
         &projection,
     )
     .await
+    .is_err()
     {
-        tracing::warn!(%error, exchange_id = %projection.exchange_id, "Sidecar private message accepted; cross-device echo projection upload is pending");
+        tracing::warn!(
+            "Sidecar private message accepted; cross-device echo projection upload is pending"
+        );
     }
     Ok(SourceRoutedSidecarMessageOutcome { event_id })
 }
@@ -1407,6 +1444,7 @@ pub fn ChatPanel(
     let navigator = use_navigator();
     let controller = use_chat_controller(&selected_realm_id, &initial_strand_id, &account_did);
     let mut migrated_draft_applied_for = use_signal(String::new);
+    let mut sidecar_projection_retry_basis_seen = use_signal(String::new);
     {
         let actor = account_did.clone();
         let state_store = state_store;
@@ -1721,6 +1759,78 @@ pub fn ChatPanel(
             folded
         }
     });
+    {
+        let base_url = base_url.clone();
+        let account_did = account_did.clone();
+        let device_id = device_id.clone();
+        let selected_realm_id = selected_realm_id.clone();
+        let all_messages_for_retry = all_messages_snapshot;
+        use_effect(move || {
+            let cursor = sync_cursor();
+            let realm_epoch = realm_live_epoch();
+            let accepted_event_ids = all_messages_for_retry
+                .read()
+                .iter()
+                .filter(|message| !message.pending && !message.failed)
+                .map(|message| message.id.clone())
+                .collect::<std::collections::BTreeSet<_>>();
+            let pending = crate::sidecar::cached_sidecar_exchange_projections(
+                &state_store.read(),
+                &account_did,
+                &selected_realm_id,
+            )
+            .into_iter()
+            .filter(|projection| {
+                projection.status == arkret_sdk::AgentSidecarExchangeStatus::Pending
+                    && accepted_event_ids.contains(projection.private_request_event_id.as_str())
+            })
+            .collect::<Vec<_>>();
+            if pending.is_empty() {
+                return;
+            }
+            let basis = format!(
+                "{cursor}\u{1f}{realm_epoch}\u{1f}{}",
+                pending
+                    .iter()
+                    .map(|projection| projection.exchange_id.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\u{1e}")
+            );
+            if sidecar_projection_retry_basis_seen.peek().as_str() == basis {
+                return;
+            }
+            sidecar_projection_retry_basis_seen.set(basis);
+            let credential = token();
+            for mut projection in pending {
+                let Ok(updated_hlc) = crate::signing_stamp::issue_protocol_hlc(
+                    &account_did,
+                    &device_id,
+                    &selected_realm_id,
+                ) else {
+                    continue;
+                };
+                projection.status = arkret_sdk::AgentSidecarExchangeStatus::Delivered;
+                projection.updated_hlc = updated_hlc;
+                let base_url = base_url.clone();
+                let credential = credential.clone();
+                spawn(async move {
+                    if crate::sidecar::persist_sidecar_exchange_projection(
+                        &base_url,
+                        credential,
+                        state_store,
+                        &projection,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        tracing::warn!(
+                            "Pending Sidecar exchange projection retry did not complete"
+                        );
+                    }
+                });
+            }
+        });
+    }
     let all_messages_snapshot = all_messages_snapshot.read().clone();
     let sidecar_projection = sidecar_session.as_ref().map(|session| {
         (

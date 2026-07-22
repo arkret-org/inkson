@@ -23,7 +23,6 @@
 //! [`SecureSendOutcome`] returned here.
 
 use dioxus::prelude::*;
-use serde_json::json;
 
 use crate::operation::{OperationBuilder, sdk_event_local_operation_id, uuid_v7};
 use crate::state::{LocalSealView, LocalStateStore, MoveSubmissionState};
@@ -107,40 +106,6 @@ pub(crate) fn run_local_mls_encrypt(
         new_snapshot,
         pending_history_secrets,
     )
-}
-
-/// Normalise a seal/state reference to a bare `sha256:<hex>` hash when it is
-/// one (peeling `ak:seal:` / `ak:state:` prefixes), else `None`.
-// Single canonical digest-grammar validator; moved to the MLS core layer
-// (YGN-ARCH-01 step 2) and re-exported for this module's callers.
-pub(crate) use crate::mls::group_events::mls_sha256_hash_from_ref;
-
-/// Derive the base group-state ref (the MLS commit's `base_group_state_ref` /
-/// the encrypted envelope's `group_state_ref` when no commit is forced) from
-/// the Realm seal view, with a deterministic canonical-hash fallback.
-pub(crate) fn mls_base_epoch_ref(seal_view: &LocalSealView, realm_id: &str) -> String {
-    seal_view
-        .frontier
-        .iter()
-        .chain(seal_view.leaves.iter())
-        .chain(seal_view.state_root.iter())
-        .find_map(|value| {
-            if value.starts_with("ak:event:") && arkret_sdk::EventId::new(value.clone()).is_ok() {
-                Some(value.clone())
-            } else {
-                mls_sha256_hash_from_ref(value)
-            }
-        })
-        .unwrap_or_else(|| {
-            crate::canonical::canonical_sha256(&json!({
-                "kind": "chat_mls_base_epoch",
-                "realm_id": realm_id,
-                "epoch": seal_view.mls_epoch.unwrap_or(0),
-            }))
-            .unwrap_or_else(|_| {
-                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
-            })
-        })
 }
 
 fn circle_effective_scope(

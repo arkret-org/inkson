@@ -2670,8 +2670,8 @@ pub(crate) fn apply_account_data_entries(
         ) {
             Ok(true) => continue,
             Ok(false) => {}
-            Err(error) => {
-                tracing::warn!(%error, %data_type, "Sidecar exchange projection ingest failed");
+            Err(_) => {
+                tracing::warn!("Sidecar exchange projection ingest failed");
                 continue;
             }
         }

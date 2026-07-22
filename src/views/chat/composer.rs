@@ -25,6 +25,22 @@ pub(super) fn sidecar_activation_should_navigate(embedded: bool) -> bool {
     !embedded
 }
 
+fn latest_source_event_anchor(
+    messages: &[ChatMessage],
+    realm_id: &str,
+    strand_id: &str,
+) -> Option<String> {
+    messages
+        .iter()
+        .rev()
+        .find(|message| {
+            message.realm_id == realm_id
+                && message.strand_id == strand_id
+                && arkret_sdk::EventId::new(message.id.clone()).is_ok()
+        })
+        .map(|message| message.id.clone())
+}
+
 #[component]
 pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerContext) -> Element {
     let ChatComposerContext {
@@ -951,7 +967,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 }
                 }
                 div { class: "actions",
-                    if !selected_channel_security_encrypted {
+                    if !selected_channel_security_encrypted && active_sidecar_session.is_none() {
                     Button {
                         variant: ButtonVariant::Primary,
                         "data-testid": "send-chat-button",
@@ -1026,6 +1042,11 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     let inserted_candidates_for_sidecar = inserted_candidates;
                                     let participants_for_sidecar =
                                         participants_for_plaintext_sidecar.clone();
+                                    let source_frontier_anchor = latest_source_event_anchor(
+                                        &messages.read(),
+                                        &realm,
+                                        &strand_id,
+                                    );
                                     let navigator = navigator;
                                     spawn(async move {
                                         for mention in resolve_agent_selector_mentions(
@@ -1077,8 +1098,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                 );
                                                 let private_strand_id =
                                                     sidecar.private_strand_id.to_string();
-                                                let source_frontier_anchor =
-                                                    frontier_state.peek().clone();
                                                 let routed = super::submit_source_routed_sidecar_message(
                                                     &base,
                                                     api_token,
@@ -1087,7 +1106,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     &realm,
                                                     &strand_id,
                                                     &private_strand_id,
-                                                    Some(source_frontier_anchor.as_str()),
+                                                    source_frontier_anchor.as_deref(),
                                                     &body_for_resolution,
                                                     &resolved_mentions,
                                                     &addressed_agent_ids,
@@ -1424,8 +1443,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     &inserted_candidates,
                                     &actor,
                                 );
+                                let active_sidecar_for_send = sidecar_session();
                                 let targets_owned_agent = should_route_owned_agent_to_sidecar(
-                                    sidecar_session().is_some(),
+                                    active_sidecar_for_send.is_some(),
                                     selected_channel_is_circle_scoped,
                                     !local_owned_agent_ids.is_empty(),
                                     parse_agent_selector_mention_tokens(&body)
@@ -1455,6 +1475,11 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     let inserted_candidates_for_sidecar = inserted_candidates;
                                     let participants_for_sidecar =
                                         participants_for_encrypted_sidecar.clone();
+                                    let source_frontier_anchor = latest_source_event_anchor(
+                                        &messages.read(),
+                                        &realm_for_sidecar,
+                                        &strand_for_sidecar,
+                                    );
                                     let navigator = navigator;
                                     spawn(async move {
                                         for mention in resolve_agent_selector_mentions(
@@ -1506,8 +1531,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                 );
                                                 let private_strand_id =
                                                     sidecar.private_strand_id.to_string();
-                                                let source_frontier_anchor =
-                                                    frontier_state.peek().clone();
                                                 let routed = super::submit_source_routed_sidecar_message(
                                                     &base,
                                                     api_token,
@@ -1516,7 +1539,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     &realm_for_sidecar,
                                                     &strand_for_sidecar,
                                                     &private_strand_id,
-                                                    Some(source_frontier_anchor.as_str()),
+                                                    source_frontier_anchor.as_deref(),
                                                     &body_for_resolution,
                                                     &resolved_mentions,
                                                     &addressed_agent_ids,
@@ -1596,6 +1619,31 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     });
                                     return;
                                 }
+                                let (sidecar_circle_id, sidecar_binding) =
+                                    if let Some(session) = active_sidecar_for_send.as_ref() {
+                                        if !session.membership_ready() {
+                                            status_msg.set(
+                                                "Private Sidecar MLS access is not ready"
+                                                    .to_owned(),
+                                            );
+                                            return;
+                                        }
+                                        let binding = match session.mls_binding() {
+                                            Ok(binding) => binding,
+                                            Err(error) => {
+                                                status_msg.set(format!(
+                                                    "Private Sidecar MLS binding is invalid: {error}"
+                                                ));
+                                                return;
+                                            }
+                                        };
+                                        (
+                                            Some(session.backing_scope_circle_id.to_string()),
+                                            Some(binding),
+                                        )
+                                    } else {
+                                        (None, None)
+                                    };
                                 // P2: preserve the composer's reply target on the
                                 // encrypted path (it was silently dropped before).
                                 let reply_to = reply_to_message()
@@ -1772,8 +1820,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     reply_to.as_deref(),
                                     &secure_content_bytes,
                                     None,
-                                    None,
-                                    None,
+                                    sidecar_circle_id.as_deref(),
+                                    sidecar_binding,
                                 ) {
                                     Ok(build) => build,
                                     Err(message) => {
@@ -1791,6 +1839,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 let base = base.clone();
                                 let realm_for_record = realm.clone();
                                 let actor_for_audit = actor.clone();
+                                let is_sidecar_native_send = sidecar_circle_id.is_some();
                                 let audit_delivered: Vec<String> = secure_build
                                     .member_dids
                                     .iter()
@@ -1861,7 +1910,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         base.clone(),
                                         token_for_backup_trigger.clone(),
                                         actor_for_backup_trigger.clone(),
-                                        None,
+                                        sidecar_circle_id.clone(),
                                     )
                                     .await;
                                     let resp = match outcome {
@@ -1948,8 +1997,14 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         found.failed = false;
                                         found.error = None;
                                     }
-                                    frontier_state.set(resp_event_id.clone());
-                                    status_msg.set("Encrypted message sent".to_owned());
+                                    if !is_sidecar_native_send {
+                                        frontier_state.set(resp_event_id.clone());
+                                    }
+                                    status_msg.set(if is_sidecar_native_send {
+                                        "Private Sidecar message sent".to_owned()
+                                    } else {
+                                        "Encrypted message sent".to_owned()
+                                    });
                                     crate::components::schedule_mls_private_plaintext_backup_after_encrypted_write(
                                         base_for_backup_trigger.clone(),
                                         token_for_backup_trigger.clone(),
@@ -1980,6 +2035,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     // successful E2EE commit. Actor-private +
                                     // fire-and-forget; non-profile servers store it
                                     // as a regular operation.
+                                    if is_sidecar_native_send {
+                                        return;
+                                    }
                                     let audit_op = build_audit_ryw_receipt(
                                         &realm_for_record,
                                         &actor_for_audit,

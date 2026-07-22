@@ -40,6 +40,17 @@ impl HostedSidecarState {
     pub fn membership_ready(&self) -> bool {
         self.access_readiness == arkret_sdk::AgentSidecarAccessReadiness::Ready
             && self.pending_access_reconciliations.is_empty()
+            && self.mls_context.current_controller_device_ready
+    }
+
+    pub fn mls_binding(&self) -> arkret_sdk::Result<arkret_sdk::SidecarMlsBinding> {
+        let binding = arkret_sdk::SidecarMlsBinding {
+            sidecar_id: self.sidecar_id.clone(),
+            desired_access_digest: self.mls_context.desired_access_digest.clone(),
+            control_frontier: self.mls_context.control_frontier.clone(),
+        };
+        binding.validate()?;
+        Ok(binding)
     }
 
     pub fn pending_reconciliation_count(&self) -> usize {
@@ -154,6 +165,14 @@ fn cache_sidecar_exchange_projection(
     Ok(should_replace)
 }
 
+pub(crate) fn stage_sidecar_exchange_projection(
+    store: &mut crate::state::LocalStateStore,
+    projection: &arkret_sdk::AgentSidecarExchangeProjection,
+) -> anyhow::Result<bool> {
+    let controller_id = projection.controller_id.to_string();
+    cache_sidecar_exchange_projection(store, &controller_id, projection)
+}
+
 pub fn ingest_sidecar_exchange_projection_account_data(
     store: &mut crate::state::LocalStateStore,
     account_did: &str,
@@ -209,7 +228,6 @@ pub async fn persist_sidecar_exchange_projection(
     projection.validate()?;
     let controller_id = projection.controller_id.to_string();
     let data_type = projection.account_data_type();
-    cache_sidecar_exchange_projection(&mut store.write(), &controller_id, projection)?;
     let plaintext = serde_json::to_value(projection)?;
     let body =
         crate::views::settings::account_data::encrypted_account_data_value(&data_type, &plaintext)?;
@@ -220,7 +238,10 @@ pub async fn persist_sidecar_exchange_projection(
         .await
         .map_err(|error| anyhow::anyhow!(error.display()))?;
     match result {
-        crate::models::AccountDataSetResult::Stored { .. } => Ok(()),
+        crate::models::AccountDataSetResult::Stored { .. } => {
+            cache_sidecar_exchange_projection(&mut store.write(), &controller_id, projection)?;
+            Ok(())
+        }
         crate::models::AccountDataSetResult::Unsupported { status } => {
             anyhow::bail!("Sidecar exchange projection account data is unsupported: {status}")
         }
@@ -505,6 +526,25 @@ mod tests {
     }
 
     #[test]
+    fn sidecar_readiness_and_mls_binding_require_the_current_device() {
+        let mut session = session(Vec::new());
+        assert!(!session.membership_ready());
+        session.mls_context.current_controller_device_ready = true;
+        assert!(session.membership_ready());
+
+        let binding = session.mls_binding().unwrap();
+        assert_eq!(binding.sidecar_id, session.sidecar_id);
+        assert_eq!(
+            binding.desired_access_digest,
+            session.mls_context.desired_access_digest
+        );
+        assert_eq!(
+            binding.control_frontier,
+            session.mls_context.control_frontier
+        );
+    }
+
+    #[test]
     fn route_match_requires_realm_and_source_strand() {
         let session = session(Vec::new());
         assert!(session.matches_route(&session.source_realm_id, &session.source_strand_id));
@@ -550,6 +590,60 @@ mod tests {
         assert_eq!(
             cached_sidecar_display_mode(&store, account, &session),
             Some(arkret_sdk::AgentSidecarDisplayMode::SidecarOnly)
+        );
+    }
+
+    #[test]
+    fn sidecar_exchange_cache_is_per_exchange_lww_and_controller_bound() {
+        let account = "did:web:alice.example";
+        let path = std::env::temp_dir().join(format!(
+            "inkson-sidecar-exchange-{}.json",
+            crate::operation::uuid_v7()
+        ));
+        let mut store = crate::state::LocalStateStore::with_path(path);
+        let session = session(Vec::new());
+        let mut projection = arkret_sdk::AgentSidecarExchangeProjection {
+            schema: arkret_sdk::AgentSidecarExchangeProjectionSchema::V1,
+            controller_id: arkret_sdk::Did::new(account).unwrap(),
+            sidecar_id: session.sidecar_id.clone(),
+            private_strand_id: arkret_sdk::StrandId::new(session.private_strand_id.clone())
+                .unwrap(),
+            exchange_id: arkret_sdk::AgentSidecarExchangeId::new("exchange-01964137000000000008")
+                .unwrap(),
+            origin: arkret_sdk::AgentSidecarExchangeOrigin::SourceTrackRouted,
+            source_track_ref: arkret_sdk::AgentSidecarSourceTrackRef {
+                realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+                strand_id: arkret_sdk::StrandId::new(session.source_strand_id.clone()).unwrap(),
+                track_name: "discussion".to_owned(),
+            },
+            source_frontier_anchor: None,
+            source_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
+            client_order_key: arkret_sdk::NonEmptyString::new("device-1-1").unwrap(),
+            addressed_agent_ids: vec![
+                arkret_sdk::Did::new("did:web:agents.example:assistant").unwrap(),
+            ],
+            participating_agent_ids: Vec::new(),
+            private_request_event_id: arkret_sdk::EventId::new(
+                "ak:event:01964137-0000-7000-8000-000000000009",
+            )
+            .unwrap(),
+            user_facing_response_event_ids: Vec::new(),
+            status: arkret_sdk::AgentSidecarExchangeStatus::Pending,
+            failure_code: None,
+            updated_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
+        };
+
+        assert!(stage_sidecar_exchange_projection(&mut store, &projection).unwrap());
+        projection.status = arkret_sdk::AgentSidecarExchangeStatus::Delivered;
+        projection.updated_hlc = arkret_sdk::Hlc::new("01970e589d21-0002-a13f9c2e").unwrap();
+        assert!(stage_sidecar_exchange_projection(&mut store, &projection).unwrap());
+
+        let cached =
+            cached_sidecar_exchange_projections(&store, account, session.source_realm_id.as_str());
+        assert_eq!(cached, vec![projection.clone()]);
+        assert!(
+            cache_sidecar_exchange_projection(&mut store, "did:web:bob.example", &projection,)
+                .is_err()
         );
     }
 }
