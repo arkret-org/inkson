@@ -1563,8 +1563,18 @@ fn apply_actor_frontier_to_sdk_event(
         );
     }
     frontier.validate()?;
+    let previous_actor_seq = event.actor_seq;
     event.actor_seq = frontier.next_actor_seq;
     event.prev_refs.clone_from(&frontier.frontier_event_ids);
+    // Ordered-log effects use the Event actor sequence as their per-issuer
+    // deduplication key. Builders create unsigned drafts before the canonical
+    // actor frontier is known, so refreshing actor_seq must update any effect
+    // that was bound to the draft sequence before the envelope is signed.
+    for effect in &mut event.effects {
+        if effect.op.issuer_seq == Some(previous_actor_seq) {
+            effect.op.issuer_seq = Some(frontier.next_actor_seq);
+        }
+    }
     Ok(())
 }
 
@@ -1969,6 +1979,33 @@ mod tests {
 
         assert_eq!(event.actor_seq, 8);
         assert_eq!(event.prev_refs, vec![frontier_event_id]);
+    }
+
+    #[test]
+    fn apply_actor_frontier_rebinds_ordered_log_effect_to_next_sequence() {
+        let mut event = sdk_event_without_proof("did:web:alice.example");
+        event.effects = vec![
+            arkret_sdk::identity::managed_agent_principal_control_create_effect(
+                &event.realm_id,
+                event.actor_seq,
+            )
+            .unwrap(),
+        ];
+        let frontier = arkret_sdk::RealmActorFrontierView::new(
+            event.realm_id.clone(),
+            event.actor_id.clone(),
+            8,
+            vec![
+                arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000002").unwrap(),
+            ],
+            arkret_sdk::canonical::DigestSuite::Sha256,
+        )
+        .unwrap();
+
+        apply_actor_frontier_to_sdk_event(&mut event, &frontier).unwrap();
+
+        assert_eq!(event.actor_seq, 8);
+        assert_eq!(event.effects[0].op.issuer_seq, Some(8));
     }
 
     #[test]
