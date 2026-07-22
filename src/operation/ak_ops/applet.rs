@@ -9,6 +9,10 @@
 //! `service_id` for registration / discovery) as `target_ref` so
 //! soland's `target-ref-required` envelope-shape check passes.
 
+use arkret_models_integration::{
+    AppletBridgeErrorClass, AppletBridgeErrorPayload, AppletBridgeVisibilityScope,
+};
+use arkret_wire::{AppletId, AppletIdentifier, Did, NonEmptyString, RealmId};
 use serde_json::json;
 
 use super::OperationBuilder;
@@ -35,18 +39,18 @@ pub fn applet_discovery(
 }
 
 /// Validate an `applet_id` against the canonical
-/// [`arkret_sdk::AppletIdentifier`] shape (DID *or*
+/// [`AppletIdentifier`] shape (DID *or*
 /// `ak:applet:<uuidv7>`). Returns the typed identifier so callers
 /// can stash it without re-parsing. Wire-breaking: plain strings
 /// outside these two forms are rejected.
-pub fn parse_applet_identifier(applet_id: &str) -> Result<arkret_sdk::AppletIdentifier, String> {
+pub fn parse_applet_identifier(applet_id: &str) -> Result<AppletIdentifier, String> {
     if applet_id.starts_with("did:") {
-        arkret_sdk::Did::new(applet_id)
-            .map(arkret_sdk::AppletIdentifier::Did)
+        Did::new(applet_id)
+            .map(AppletIdentifier::Did)
             .map_err(|e| format!("invalid applet DID: {e}"))
     } else if applet_id.starts_with("ak:applet:") {
-        arkret_sdk::AppletId::new(applet_id)
-            .map(arkret_sdk::AppletIdentifier::Cx)
+        AppletId::new(applet_id)
+            .map(AppletIdentifier::Cx)
             .map_err(|e| format!("invalid ak:applet:<uuidv7>: {e}"))
     } else {
         Err(format!(
@@ -69,18 +73,26 @@ pub fn applet_bridge_error(
     message: &str,
 ) -> anyhow::Result<OperationBuilder> {
     let visibility_scope = match visibility_scope.trim() {
-        "realm_admins" => arkret_sdk::AppletBridgeVisibilityScope::RealmAdmins,
-        "applet_controller" => arkret_sdk::AppletBridgeVisibilityScope::AppletController,
-        "realm_members" => arkret_sdk::AppletBridgeVisibilityScope::RealmMembers,
+        "realm_admins" => AppletBridgeVisibilityScope::RealmAdmins,
+        "applet_controller" => AppletBridgeVisibilityScope::AppletController,
+        "realm_members" => AppletBridgeVisibilityScope::RealmMembers,
         other => anyhow::bail!("invalid applet bridge visibility_scope {other:?}"),
     };
-    let payload = arkret_sdk::AppletBridgeErrorPayload {
+    let error_class = match error_class.trim() {
+        "external_network" => AppletBridgeErrorClass::ExternalNetwork,
+        "auth" => AppletBridgeErrorClass::Auth,
+        "schema" => AppletBridgeErrorClass::Schema,
+        "rate_limit" => AppletBridgeErrorClass::RateLimit,
+        "policy" => AppletBridgeErrorClass::Policy,
+        other => anyhow::bail!("invalid applet bridge error_class {other:?}"),
+    };
+    let payload = AppletBridgeErrorPayload {
         applet_id: parse_applet_identifier(applet_id).map_err(anyhow::Error::msg)?,
-        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())
+        realm_id: RealmId::new(realm_id.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid realm id {realm_id:?}: {err}"))?,
         failed_transaction_ref: failed_transaction_ref.to_owned(),
-        error_class: error_class.to_owned(),
-        error_code: arkret_sdk::NonEmptyString::new(error_code).map_err(anyhow::Error::msg)?,
+        error_class,
+        error_code: NonEmptyString::new(error_code).map_err(anyhow::Error::msg)?,
         retriable,
         visibility_scope,
         external_ref: None,

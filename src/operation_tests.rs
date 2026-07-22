@@ -922,6 +922,21 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
     assert_eq!(err.payload["error_code"], "applet_unavailable");
     assert!(err.payload.get("session_id").is_none());
     assert_registered_payload_valid(&err);
+
+    assert!(
+        ak_ops::applet_bridge_error(
+            realm,
+            actor,
+            applet_id,
+            "ak:event:01904100-0000-7000-8000-aa55aa55aa56",
+            "unregistered_class",
+            "applet_unavailable",
+            true,
+            "realm_admins",
+            "service did not respond",
+        )
+        .is_err()
+    );
 }
 
 #[test]

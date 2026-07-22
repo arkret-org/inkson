@@ -111,7 +111,9 @@ mobile-ios = []
 # arbitrary tags via `dangerous_inner_html`.
 anyhow = {workspace = true}
 arkret-crypto = {workspace = true}
+arkret-models-integration = {version = "0.3.0",path = "../arkret-rust-sdk/crates/models-integration",default-features = false}
 arkret-policy = {version = "0.3.0",path = "../arkret-rust-sdk/crates/policy",default-features = false}
+arkret-wire = {version = "0.3.0",path = "../arkret-rust-sdk/crates/wire",default-features = false}
 hex = "0.4.3"
 argon2 = {workspace = true}
 base64 = {workspace = true}
