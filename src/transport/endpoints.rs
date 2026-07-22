@@ -110,18 +110,16 @@ impl MlsEndpoints<'_> {
     ) -> anyhow::Result<arkret_sdk::KeyPackagesUploadOutcome> {
         let device_id = device_id.trim();
         let entry = crate::mls_api_helpers::mls_key_package_record_upload_entry(record)?;
-        let key_package_values = vec![serde_json::to_value(&entry)?];
-        let device_signature =
-            crate::mls_api_helpers::sign_keypackage_upload_batch(device_id, &key_package_values)?;
-        let body = arkret_sdk::KeyPackagesUploadRequestBody {
+        let unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {
             principal_id: record.principal_id.clone(),
             device_id: arkret_sdk::DeviceId::new(device_id.to_owned())?,
             key_packages: vec![entry],
-            device_signature,
             expires_at: None,
             strand_id: None,
             mls_group_id: None,
         };
+        let device_signature = crate::mls_api_helpers::sign_keypackage_upload_batch(&unsigned)?;
+        let body = unsigned.into_signed(device_signature);
         self.transport
             .http()
             .keypackages_upload(&body)
@@ -136,20 +134,9 @@ impl MlsEndpoints<'_> {
     ) -> anyhow::Result<arkret_sdk::KeyPackagesConsumeOutcome> {
         let key_package_refs = vec![candidate.key_package_id.clone()];
         let claim_ids = vec![candidate.claim_id.clone()];
-        let signature = crate::mls_api_helpers::sign_keypackage_consume(
-            &key_package_refs,
-            consumer_device_id,
-            &claim_ids,
-            Some(&candidate.welcome_event_id),
-            Some(&candidate.realm_id),
-            candidate.strand_id.as_deref(),
-            Some(&candidate.mls_group_id),
-            Some(candidate.epoch),
-        )?;
-        let body = arkret_sdk::KeyPackagesConsumeRequestBody {
+        let unsigned = arkret_sdk::KeyPackagesConsumeUnsignedRequest {
             key_package_refs,
             consumer_device_id: arkret_sdk::DeviceId::new(consumer_device_id.to_owned())?,
-            signature,
             claim_ids,
             welcome_ref: Some(candidate.welcome_event_id.clone()),
             realm_id: Some(arkret_sdk::RealmId::new(candidate.realm_id.clone())?),
@@ -161,6 +148,8 @@ impl MlsEndpoints<'_> {
             mls_group_id: Some(candidate.mls_group_id.clone()),
             epoch: Some(candidate.epoch),
         };
+        let signature = crate::mls_api_helpers::sign_keypackage_consume(&unsigned)?;
+        let body = unsigned.into_signed(signature);
         self.transport
             .http()
             .keypackages_consume(&body)

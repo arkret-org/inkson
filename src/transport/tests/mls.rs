@@ -1,3 +1,4 @@
+use chrono::{TimeZone as _, Utc};
 use serde_json::json;
 
 use crate::mls_api_helpers;
@@ -9,15 +10,36 @@ fn keypackage_upload_device_signature_is_raw_signature_tuple() {
         "did:web:alice.example",
         "did:web:alice.example#device",
     );
-    let signature = mls_api_helpers::sign_keypackage_upload_batch_with_signer(
-        &signer,
-        "ak:device:0196419b-0000-7000-8000-000000000001",
-        &[json!({
-            "keypackage_id": "ak:mls:kp:0196419b-0000-7000-8000-000000000001",
-            "keypackage_ref": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-        })],
-    )
-    .expect("KeyPackage upload signature builds");
+    let timestamp = Utc.timestamp_opt(1_774_310_400, 0).single().unwrap();
+    let unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {
+        principal_id: arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+        device_id: arkret_sdk::DeviceId::new(
+            "ak:device:0196419b-0000-7000-8000-000000000001".to_owned(),
+        )
+        .unwrap(),
+        key_packages: vec![arkret_sdk::KeyPackageUploadEntry {
+            keypackage_id: "ak:mls:kp:0196419b-0000-7000-8000-000000000001".to_owned(),
+            keypackage_ref:
+                "sha256:1111111111111111111111111111111111111111111111111111111111111111".to_owned(),
+            keypackage_digest: arkret_sdk::Hash::new(
+                "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                    .to_owned(),
+            )
+            .unwrap(),
+            key_package: arkret_sdk::Base64UrlString::new("AA").unwrap(),
+            cipher_suites: vec!["MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519".to_owned()],
+            capabilities: vec!["ak.content.v1".to_owned()],
+            expires_at: timestamp + chrono::Duration::days(7),
+            created_at: timestamp,
+            device_signature: None,
+            last_resort: None,
+        }],
+        expires_at: None,
+        strand_id: None,
+        mls_group_id: None,
+    };
+    let signature = mls_api_helpers::sign_keypackage_upload_batch_with_signer(&signer, &unsigned)
+        .expect("KeyPackage upload signature builds");
 
     assert_eq!(signature.alg.as_deref(), Some("EdDSA"));
     assert_eq!(signature.kid.as_str(), "did:web:alice.example#device");
