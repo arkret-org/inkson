@@ -25,7 +25,37 @@ pub(crate) fn api_error_status_and_envelope(
     {
         return Some((StatusCode::from_u16(*status).ok()?, error.as_ref()));
     }
+    if let Some(arkret_sdk::http_client::Error::Api { status, error }) =
+        error.downcast_ref::<arkret_sdk::http_client::Error>()
+    {
+        return Some((StatusCode::from_u16(*status).ok()?, error.as_ref()));
+    }
     None
+}
+
+/// Render an API error for user-facing status text, including the server's
+/// unstable diagnostic when one was deliberately returned. Soland exposes
+/// privacy-sensitive `reason_detail` values only in development mode, so the
+/// client does not need to infer deployment posture or loosen production
+/// redaction locally.
+pub(crate) fn display_with_reason_detail(error: &anyhow::Error) -> String {
+    let rendered = error.to_string();
+    let Some((_, envelope)) = api_error_status_and_envelope(error) else {
+        return rendered;
+    };
+    let Some(detail) = envelope
+        .details()
+        .get("reason_detail")
+        .and_then(Value::as_str)
+        .filter(|detail| !detail.trim().is_empty())
+    else {
+        return rendered;
+    };
+    if rendered.contains(detail) {
+        rendered
+    } else {
+        format!("{rendered} (diagnostic: {detail})")
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,4 +142,42 @@ pub(crate) fn maybe_dispatch_policy_deny(status: StatusCode, envelope: &ErrorEnv
         envelope.message().to_owned(),
         obligations,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sdk_http_error_display_includes_returned_reason_detail() {
+        let envelope = ErrorEnvelope::new(
+            "direct_conversation_unavailable",
+            "direct conversation is unavailable",
+        )
+        .with_detail(
+            "reason_detail",
+            Value::String("owned Agent controller binding is stale".to_owned()),
+        );
+        let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: 412,
+            error: Box::new(envelope),
+        });
+
+        let displayed = display_with_reason_detail(&error);
+        assert!(displayed.contains("direct_conversation_unavailable"));
+        assert!(displayed.contains("owned Agent controller binding is stale"));
+    }
+
+    #[test]
+    fn api_error_display_is_unchanged_without_reason_detail() {
+        let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: 412,
+            error: Box::new(ErrorEnvelope::new(
+                "direct_conversation_unavailable",
+                "direct conversation is unavailable",
+            )),
+        });
+
+        assert_eq!(display_with_reason_detail(&error), error.to_string());
+    }
 }

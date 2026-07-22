@@ -79,9 +79,15 @@ impl ApiCallError {
     /// signals.
     pub fn display(&self) -> String {
         match self {
-            Self::Unavailable(err) => format!("API unavailable: {err}"),
-            Self::AuthExpired(err) => format!("Session expired: {err}"),
-            Self::Failed(err) => format!("{err}"),
+            Self::Unavailable(err) => format!(
+                "API unavailable: {}",
+                crate::api_error::display_with_reason_detail(err)
+            ),
+            Self::AuthExpired(err) => format!(
+                "Session expired: {}",
+                crate::api_error::display_with_reason_detail(err)
+            ),
+            Self::Failed(err) => crate::api_error::display_with_reason_detail(err),
         }
     }
 }
