@@ -1053,7 +1053,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         );
                                         let sidecar_outcome = ensure_owned_agent_sidecar(
                                             &base,
-                                            api_token,
+                                            api_token.clone(),
                                             &trace_id,
                                             &actor,
                                             &device_id_for_sidecar,
@@ -1063,7 +1063,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             state_store,
                                         )
                                         .await;
-                                        sidecar_route_pending.set(false);
                                         match sidecar_outcome {
                                             Ok(Some((sidecar, sidecar_view))) => {
                                                 let backing_scope_circle_id =
@@ -1076,10 +1075,61 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     &addressed_agent_ids,
                                                     &participants_for_sidecar,
                                                 );
-                                                status_msg.set(
-                                                    "Private AI sidecar opened; the message has not been sent."
-                                                        .to_owned(),
-                                                );
+                                                let private_strand_id =
+                                                    sidecar.private_strand_id.to_string();
+                                                let source_frontier_anchor =
+                                                    frontier_state.peek().clone();
+                                                let routed = super::submit_source_routed_sidecar_message(
+                                                    &base,
+                                                    api_token,
+                                                    &actor,
+                                                    &device_id_for_sidecar,
+                                                    &realm,
+                                                    &strand_id,
+                                                    &private_strand_id,
+                                                    Some(source_frontier_anchor.as_str()),
+                                                    &body_for_resolution,
+                                                    &resolved_mentions,
+                                                    &addressed_agent_ids,
+                                                    state_store,
+                                                    &sidecar_view,
+                                                )
+                                                .await;
+                                                let routed = match routed {
+                                                    Ok(routed) => routed,
+                                                    Err(error) => {
+                                                        status_msg.set(format!(
+                                                            "Private Sidecar message was not sent: {error:#}"
+                                                        ));
+                                                        sidecar_route_pending.set(false);
+                                                        return;
+                                                    }
+                                                };
+                                                messages.write().push(ChatMessage {
+                                                    realm_id: realm.clone(),
+                                                    id: routed.event_id.clone(),
+                                                    protocol_message_id: Some(routed.event_id.clone()),
+                                                    sender: actor.clone(),
+                                                    executed_by: None,
+                                                    body: body_for_resolution.clone(),
+                                                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                                                    created_at: Some(chrono::Utc::now()),
+                                                    strand_id: private_strand_id.clone(),
+                                                    reply_to: None,
+                                                    reactions: Vec::new(),
+                                                    redacted: false,
+                                                    edited: false,
+                                                    revisions: Vec::new(),
+                                                    pending: false,
+                                                    failed: false,
+                                                    error: None,
+                                                    mentions: resolved_mentions.clone(),
+                                                    crypto_state: MessageCryptoState::Plaintext,
+                                                });
+                                                chat_draft.set(String::new());
+                                                mention_picker_state.write().clear();
+                                                reply_to_message.set(None);
+                                                status_msg.set("Private Sidecar message sent".to_owned());
                                                 sidecar_session.set(Some(crate::sidecar::HostedSidecarState {
                                                     trace_id,
                                                     controller_id: actor.clone(),
@@ -1089,13 +1139,13 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     source_strand_id: strand_id.clone(),
                                                     sidecar_id: sidecar.sidecar_id.clone(),
                                                     backing_scope_circle_id,
-                                                    private_strand_id: sidecar.private_strand_id.to_string(),
+                                                    private_strand_id,
                                                     private_relation_id: sidecar.private_relation_id.to_string(),
                                                     access_readiness: sidecar_view.access_readiness,
                                                     pending_access_reconciliations: sidecar_view.pending_access_reconciliations.clone(),
                                                     mls_context: sidecar_view.mls_context,
                                                     display_mode: arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
-                                                    migrated_draft: body_for_resolution,
+                                                    migrated_draft: String::new(),
                                                     opened_at: chrono::Utc::now(),
                                                 }));
                                                 if sidecar_activation_should_navigate(embedded) {
@@ -1113,6 +1163,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                 "Could not open private AI sidecar: {error:#}"
                                             )),
                                         }
+                                        sidecar_route_pending.set(false);
                                     });
                                     return;
                                 }
@@ -1431,7 +1482,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         );
                                         let sidecar_outcome = ensure_owned_agent_sidecar(
                                             &base,
-                                            api_token,
+                                            api_token.clone(),
                                             &trace_id,
                                             &actor_for_sidecar,
                                             &device_id_for_sidecar,
@@ -1441,7 +1492,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             state_store,
                                         )
                                         .await;
-                                        sidecar_route_pending.set(false);
                                         match sidecar_outcome {
                                             Ok(Some((sidecar, sidecar_view))) => {
                                                 let backing_scope_circle_id =
@@ -1454,10 +1504,61 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     &addressed_agent_ids,
                                                     &participants_for_sidecar,
                                                 );
-                                                status_msg.set(
-                                                    "Private AI sidecar opened; the message has not been sent."
-                                                        .to_owned(),
-                                                );
+                                                let private_strand_id =
+                                                    sidecar.private_strand_id.to_string();
+                                                let source_frontier_anchor =
+                                                    frontier_state.peek().clone();
+                                                let routed = super::submit_source_routed_sidecar_message(
+                                                    &base,
+                                                    api_token,
+                                                    &actor_for_sidecar,
+                                                    &device_id_for_sidecar,
+                                                    &realm_for_sidecar,
+                                                    &strand_for_sidecar,
+                                                    &private_strand_id,
+                                                    Some(source_frontier_anchor.as_str()),
+                                                    &body_for_resolution,
+                                                    &resolved_mentions,
+                                                    &addressed_agent_ids,
+                                                    state_store,
+                                                    &sidecar_view,
+                                                )
+                                                .await;
+                                                let routed = match routed {
+                                                    Ok(routed) => routed,
+                                                    Err(error) => {
+                                                        status_msg.set(format!(
+                                                            "Private Sidecar message was not sent: {error:#}"
+                                                        ));
+                                                        sidecar_route_pending.set(false);
+                                                        return;
+                                                    }
+                                                };
+                                                messages.write().push(ChatMessage {
+                                                    realm_id: realm_for_sidecar.clone(),
+                                                    id: routed.event_id.clone(),
+                                                    protocol_message_id: Some(routed.event_id.clone()),
+                                                    sender: actor_for_sidecar.clone(),
+                                                    executed_by: None,
+                                                    body: body_for_resolution.clone(),
+                                                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                                                    created_at: Some(chrono::Utc::now()),
+                                                    strand_id: private_strand_id.clone(),
+                                                    reply_to: None,
+                                                    reactions: Vec::new(),
+                                                    redacted: false,
+                                                    edited: false,
+                                                    revisions: Vec::new(),
+                                                    pending: false,
+                                                    failed: false,
+                                                    error: None,
+                                                    mentions: resolved_mentions.clone(),
+                                                    crypto_state: MessageCryptoState::Plaintext,
+                                                });
+                                                chat_draft.set(String::new());
+                                                mention_picker_state.write().clear();
+                                                reply_to_message.set(None);
+                                                status_msg.set("Private Sidecar message sent".to_owned());
                                                 sidecar_session.set(Some(crate::sidecar::HostedSidecarState {
                                                     trace_id,
                                                     controller_id: actor_for_sidecar.clone(),
@@ -1467,13 +1568,13 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     source_strand_id: strand_for_sidecar.clone(),
                                                     sidecar_id: sidecar.sidecar_id.clone(),
                                                     backing_scope_circle_id,
-                                                    private_strand_id: sidecar.private_strand_id.to_string(),
+                                                    private_strand_id,
                                                     private_relation_id: sidecar.private_relation_id.to_string(),
                                                     access_readiness: sidecar_view.access_readiness,
                                                     pending_access_reconciliations: sidecar_view.pending_access_reconciliations.clone(),
                                                     mls_context: sidecar_view.mls_context,
                                                     display_mode: arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
-                                                    migrated_draft: body_for_resolution,
+                                                    migrated_draft: String::new(),
                                                     opened_at: chrono::Utc::now(),
                                                 }));
                                                 if sidecar_activation_should_navigate(embedded) {
@@ -1491,6 +1592,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                 "Could not open private AI sidecar: {error:#}"
                                             )),
                                         }
+                                        sidecar_route_pending.set(false);
                                     });
                                     return;
                                 }
@@ -1670,6 +1772,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     reply_to.as_deref(),
                                     &secure_content_bytes,
                                     None,
+                                    None,
+                                    None,
                                 ) {
                                     Ok(build) => build,
                                     Err(message) => {
@@ -1757,6 +1861,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         base.clone(),
                                         token_for_backup_trigger.clone(),
                                         actor_for_backup_trigger.clone(),
+                                        None,
                                     )
                                     .await;
                                     let resp = match outcome {

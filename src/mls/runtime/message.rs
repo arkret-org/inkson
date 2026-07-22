@@ -1425,6 +1425,8 @@ pub(crate) fn encrypt_values_with_device_snapshot(
         Some(self_update_with_verified_governance_binding(
             state_store,
             realm_id,
+            None,
+            None,
             &mut group,
         )?)
     } else {
@@ -1557,9 +1559,14 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     content_type: &str,
     aad: arkret_sdk::EncryptedEnvelopeAad,
     plaintext: &[u8],
+    circle_id: Option<&str>,
+    sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
 ) -> Result<DeviceSnapshotEncryption, MlsRuntimeError> {
+    let circle = circle_id
+        .map(str::trim)
+        .filter(|circle_id| !circle_id.is_empty());
     let snapshot = state_store
-        .mls_snapshot_for(realm_id)
+        .mls_snapshot_for_effective_scope(realm_id, circle)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     // SEC-08 (§2.9) — fail-closed: a `minimal_metadata_realm` message MUST use
     // `aad_visibility=hidden`. Enforce before any optional commit/encrypt so a
@@ -1585,6 +1592,8 @@ pub(crate) fn encrypt_message_with_device_snapshot(
         Some(self_update_with_verified_governance_binding(
             state_store,
             realm_id,
+            circle,
+            sidecar_binding,
             &mut group,
         )?)
     } else {
@@ -1594,7 +1603,8 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     // The routing `aad` rides the envelope (`EncryptedPayload.aad` + digest); the
     // AEAD itself binds the epoch via `history_content_aad_bytes`, matching the
     // decrypt-side `try_history_decrypt_standalone`.
-    let use_exporter_aead = realm_content_scheme_is_exporter_aead(state_store, realm_id);
+    let use_exporter_aead =
+        circle.is_none() && realm_content_scheme_is_exporter_aead(state_store, realm_id);
     let encrypted = if use_exporter_aead {
         let aad_bytes = history_content_aad_bytes(realm_id, group.epoch())
             .map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
@@ -1665,7 +1675,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     new_envelope = new_envelope
         .carry_epoch_started_at(&snapshot)
         .with_app_messages_observed(snapshot.app_messages_observed.saturating_add(1));
-    state_store.save_mls_snapshot(realm_id.to_owned(), new_envelope);
+    state_store.save_mls_snapshot_for_effective_scope(realm_id.to_owned(), circle, new_envelope);
     Ok((
         schedule_hash,
         member_dids,
@@ -1679,19 +1689,26 @@ pub(crate) fn encrypt_message_with_device_snapshot(
 fn self_update_with_verified_governance_binding(
     state_store: &crate::state::LocalStateStore,
     realm_id: &str,
+    circle_id: Option<&str>,
+    sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
     group: &mut arkret_sdk::ArkretMlsGroup,
 ) -> Result<arkret_sdk::MlsCommitEnvelope, MlsRuntimeError> {
     let request = crate::mls::governance_proof::proof_request(
         state_store,
         realm_id,
-        None,
+        circle_id,
         group.group_id(),
         group.epoch(),
         group.epoch().saturating_add(1),
     )
     .map_err(MlsRuntimeError::Commit)?;
-    let binding = crate::mls::governance_proof::cached_verified_binding(state_store, &request)
+    let mut binding = crate::mls::governance_proof::cached_verified_binding(state_store, &request)
         .map_err(MlsRuntimeError::Commit)?;
+    if let Some(sidecar_binding) = sidecar_binding {
+        binding = binding
+            .with_sidecar_binding(sidecar_binding.clone())
+            .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
+    }
     group
         .update_governance_binding(&binding)
         .map_err(|error| MlsRuntimeError::Commit(error.to_string()))

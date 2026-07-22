@@ -2662,6 +2662,19 @@ pub(crate) fn apply_account_data_entries(
                 continue;
             }
         }
+        match crate::sidecar::ingest_sidecar_exchange_projection_account_data(
+            store,
+            account_did,
+            data_type,
+            &entry.payload,
+        ) {
+            Ok(true) => continue,
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(%error, %data_type, "Sidecar exchange projection ingest failed");
+                continue;
+            }
+        }
         // ak.client.ui_state — theme + avatar pointer.
         if data_type == "ak.client.ui_state" {
             match crate::account_data::decrypt_account_data_entry(

@@ -61,7 +61,7 @@ fn object_ref_from_seal_ref(value: &str) -> Option<String> {
     None
 }
 
-fn mls_base_epoch_ref_for_scope(
+pub(crate) fn mls_base_epoch_ref_for_scope(
     seal_view: &LocalSealView,
     realm_id: &str,
     circle_id: Option<&str>,

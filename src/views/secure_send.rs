@@ -68,6 +68,8 @@ pub(crate) fn run_local_mls_encrypt(
     principal_id: &str,
     device_id: &str,
     plaintext_bytes: &[u8],
+    circle_id: Option<&str>,
+    sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
 ) -> LocalMlsEncryptResult {
     let empty = (None, Vec::new(), None, None, None, None);
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -91,6 +93,8 @@ pub(crate) fn run_local_mls_encrypt(
         "application/vnd.arkret.message+json",
         aad.clone(),
         plaintext_bytes,
+        circle_id,
+        sidecar_binding,
     )
     else {
         return empty;
@@ -139,6 +143,18 @@ pub(crate) fn mls_base_epoch_ref(seal_view: &LocalSealView, realm_id: &str) -> S
         })
 }
 
+fn circle_effective_scope(
+    realm_id: &str,
+    circle_id: &str,
+) -> Result<arkret_sdk::models::EffectiveScope, String> {
+    Ok(arkret_sdk::models::EffectiveScope::Circle {
+        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())
+            .map_err(|error| format!("invalid MLS scope Realm id: {error:?}"))?,
+        circle_id: arkret_sdk::CircleId::new(circle_id.to_owned())
+            .map_err(|error| format!("invalid MLS scope Circle id: {error:?}"))?,
+    })
+}
+
 /// The built (but not yet submitted) secure-send artifacts: the optional
 /// forced MLS commit event, the encrypted `ak.message.create` event, and
 /// the metadata the caller needs to drive UI / persist-on-accept.
@@ -181,6 +197,8 @@ pub(crate) fn build_secure_send(
     reply_to: Option<&str>,
     plaintext_bytes: &[u8],
     expiry: Option<arkret_sdk::DisappearingMessageExpiry>,
+    circle_id: Option<&str>,
+    sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<SecureSendBuild, String> {
     let seal_ref = seal_view.move_seal_ref();
     let (
@@ -190,8 +208,15 @@ pub(crate) fn build_secure_send(
         real_commit_envelope,
         new_mls_snapshot,
         pending_history_secrets,
-    ): LocalMlsEncryptResult =
-        run_local_mls_encrypt(state_store, realm_id, actor, device_id, plaintext_bytes);
+    ): LocalMlsEncryptResult = run_local_mls_encrypt(
+        state_store,
+        realm_id,
+        actor,
+        device_id,
+        plaintext_bytes,
+        circle_id,
+        sidecar_binding.as_ref(),
+    );
 
     let Some((encrypted_payload, envelope_aad)) = encrypted_message else {
         return Err("Send Secure could not produce an MLS encrypted payload".to_owned());
@@ -203,7 +228,8 @@ pub(crate) fn build_secure_send(
         return Err("Send Secure could not resolve MLS group members".to_owned());
     }
 
-    let base_group_state_ref = mls_base_epoch_ref(seal_view, realm_id);
+    let base_group_state_ref =
+        crate::mls::group_events::mls_base_epoch_ref_for_scope(seal_view, realm_id, circle_id);
     let (group_state_ref, commit_envelope) =
         if let Some(real_commit_envelope) = real_commit_envelope.as_ref() {
             let mls_commit_epoch = real_commit_envelope.epoch;
@@ -217,15 +243,20 @@ pub(crate) fn build_secure_send(
             let proof_request = crate::mls::governance_proof::proof_request(
                 &state_store.read(),
                 realm_id,
-                None,
+                circle_id,
                 real_commit_envelope.group_id.clone(),
                 prev_epoch,
                 mls_commit_epoch,
             )?;
-            let governance_binding = crate::mls::governance_proof::cached_verified_binding(
+            let mut governance_binding = crate::mls::governance_proof::cached_verified_binding(
                 &state_store.read(),
                 &proof_request,
             )?;
+            if let Some(sidecar_binding) = sidecar_binding.as_ref() {
+                governance_binding = governance_binding
+                    .with_sidecar_binding(sidecar_binding.clone())
+                    .map_err(|error| error.to_string())?;
+            }
             let mls_commit_payload = arkret_sdk::MlsCommitPayload::new(
                 real_commit_envelope.group_id.clone(),
                 prev_epoch,
@@ -247,6 +278,9 @@ pub(crate) fn build_secure_send(
                 .build_sdk_event("inkson")
                 .map_err(|err| format!("MLS commit SDK Event conversion failed: {err}"))?;
             commit_event.event_id = commit_event_id_typed;
+            if let Some(circle_id) = circle_id {
+                commit_event.effective_scope = Some(circle_effective_scope(realm_id, circle_id)?);
+            }
             (commit_event_id, Some(commit_event))
         } else {
             (base_group_state_ref, None)
@@ -288,8 +322,11 @@ pub(crate) fn build_secure_send(
     .build_sdk_event("inkson");
 
     let commit_event = commit_envelope;
-    let message_event = message_envelope
+    let mut message_event = message_envelope
         .map_err(|err| format!("Send Secure SDK Event conversion failed: {err}"))?;
+    if let Some(circle_id) = circle_id {
+        message_event.effective_scope = Some(circle_effective_scope(realm_id, circle_id)?);
+    }
 
     Ok(SecureSendBuild {
         commit_event,
@@ -332,6 +369,7 @@ pub(crate) async fn submit_secure_send(
     base_url: String,
     api_token: String,
     actor: String,
+    circle_id: Option<String>,
 ) -> SecureSendOutcome {
     let SecureSendBuild {
         commit_event,
@@ -368,20 +406,24 @@ pub(crate) async fn submit_secure_send(
                 // pre-commit epoch, so the next Send Secure retries at the
                 // correct `expected_prev_epoch` instead of skewing forever.
                 if let Some(snapshot) = new_mls_snapshot {
-                    state_store
-                        .write()
-                        .save_mls_snapshot(realm_id.to_owned(), snapshot);
+                    state_store.write().save_mls_snapshot_for_effective_scope(
+                        realm_id.to_owned(),
+                        circle_id.as_deref(),
+                        snapshot,
+                    );
                     // §7.10 continuous backup: the commit advanced the epoch,
                     // so re-upload this Realm's mls_history series tail
                     // (debounced; no-op until the 24-word Recovery Key exists).
-                    crate::components::schedule_mls_history_backup_after_commit(
-                        base_url.clone(),
-                        api_token.clone(),
-                        actor.clone(),
-                        device_id.to_owned(),
-                        realm_id.to_owned(),
-                        state_store,
-                    );
+                    if circle_id.is_none() {
+                        crate::components::schedule_mls_history_backup_after_commit(
+                            base_url.clone(),
+                            api_token.clone(),
+                            actor.clone(),
+                            device_id.to_owned(),
+                            realm_id.to_owned(),
+                            state_store,
+                        );
+                    }
                 }
                 if let Some(commit_op_id) = commit_op_id {
                     state_store.write().record_move_submission_with_event_id(

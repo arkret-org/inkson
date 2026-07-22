@@ -126,6 +126,107 @@ pub fn ingest_sidecar_view_state_account_data(
     Ok(true)
 }
 
+fn cache_sidecar_exchange_projection(
+    store: &mut crate::state::LocalStateStore,
+    account_did: &str,
+    projection: &arkret_sdk::AgentSidecarExchangeProjection,
+) -> anyhow::Result<bool> {
+    projection.validate()?;
+    if projection.controller_id.as_str() != account_did {
+        anyhow::bail!("Sidecar exchange controller does not match the account holder");
+    }
+    let key = projection.account_data_type();
+    let current = store.load_private_data(account_did, &key).and_then(|raw| {
+        serde_json::from_str::<arkret_sdk::AgentSidecarExchangeProjection>(&raw).ok()
+    });
+    let should_replace = current.as_ref().is_none_or(|current| {
+        (
+            projection.updated_hlc.to_string(),
+            projection.client_order_key.as_str(),
+        ) > (
+            current.updated_hlc.to_string(),
+            current.client_order_key.as_str(),
+        )
+    });
+    if should_replace {
+        store.save_private_data(account_did, key, serde_json::to_string(projection)?);
+    }
+    Ok(should_replace)
+}
+
+pub fn ingest_sidecar_exchange_projection_account_data(
+    store: &mut crate::state::LocalStateStore,
+    account_did: &str,
+    data_type: &str,
+    entry: &impl serde::Serialize,
+) -> anyhow::Result<bool> {
+    if !data_type.starts_with("ak.agent.sidecar_projection.v1:") {
+        return Ok(false);
+    }
+    let projection: arkret_sdk::AgentSidecarExchangeProjection = serde_json::from_value(
+        crate::account_data::decrypt_account_data_entry(account_did, data_type, entry)?,
+    )?;
+    projection.validate_account_data_type(data_type)?;
+    cache_sidecar_exchange_projection(store, account_did, &projection)?;
+    Ok(true)
+}
+
+pub fn cached_sidecar_exchange_projections(
+    store: &crate::state::LocalStateStore,
+    account_did: &str,
+    source_realm_id: &str,
+) -> Vec<arkret_sdk::AgentSidecarExchangeProjection> {
+    let prefix = format!("ak.agent.sidecar_projection.v1:{account_did}:{source_realm_id}:");
+    let mut projections = store
+        .private_data_keys()
+        .into_iter()
+        .filter(|key| key.starts_with(&prefix))
+        .filter_map(|key| store.load_private_data(account_did, &key))
+        .filter_map(|raw| {
+            serde_json::from_str::<arkret_sdk::AgentSidecarExchangeProjection>(&raw).ok()
+        })
+        .filter(|projection| projection.validate().is_ok())
+        .collect::<Vec<_>>();
+    projections.sort_by(|left, right| {
+        (
+            left.source_hlc.to_string(),
+            left.exchange_id.as_str().to_owned(),
+        )
+            .cmp(&(
+                right.source_hlc.to_string(),
+                right.exchange_id.as_str().to_owned(),
+            ))
+    });
+    projections
+}
+
+pub async fn persist_sidecar_exchange_projection(
+    base_url: &str,
+    api_token: String,
+    mut store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
+    projection: &arkret_sdk::AgentSidecarExchangeProjection,
+) -> anyhow::Result<()> {
+    projection.validate()?;
+    let controller_id = projection.controller_id.to_string();
+    let data_type = projection.account_data_type();
+    cache_sidecar_exchange_projection(&mut store.write(), &controller_id, projection)?;
+    let plaintext = serde_json::to_value(projection)?;
+    let body =
+        crate::views::settings::account_data::encrypted_account_data_value(&data_type, &plaintext)?;
+    let result =
+        crate::transport::auth::with_event_submitter(base_url, api_token, |submitter| async move {
+            crate::transport::account::set_account_data(&submitter, &data_type, body).await
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!(error.display()))?;
+    match result {
+        crate::models::AccountDataSetResult::Stored { .. } => Ok(()),
+        crate::models::AccountDataSetResult::Unsupported { status } => {
+            anyhow::bail!("Sidecar exchange projection account data is unsupported: {status}")
+        }
+    }
+}
+
 pub fn cached_sidecar_display_mode(
     store: &crate::state::LocalStateStore,
     account_did: &str,

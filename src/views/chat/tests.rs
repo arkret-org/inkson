@@ -59,6 +59,7 @@ fn hosted_sidecar_projection_dedupes_echo_and_prefers_private_event() {
             private,
             arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
         )),
+        &[],
     );
     assert_eq!(merged.len(), 3);
     assert_eq!(merged[0].body, "private event");
@@ -75,6 +76,7 @@ fn hosted_sidecar_projection_dedupes_echo_and_prefers_private_event() {
             private,
             arkret_sdk::AgentSidecarDisplayMode::SidecarOnly,
         )),
+        &[],
     );
     assert_eq!(private_only.len(), 2);
     assert!(
@@ -82,6 +84,59 @@ fn hosted_sidecar_projection_dedupes_echo_and_prefers_private_event() {
             .iter()
             .all(|message| message.strand_id == private)
     );
+}
+
+#[test]
+fn source_routed_echo_is_private_and_stably_follows_its_anchor() {
+    let realm = "ak:realm:01964137-0000-7000-8000-000000000001";
+    let source = "ak:strand:01964137-0000-7000-8000-000000000002";
+    let private = "ak:strand:01964137-0000-7000-8000-000000000003";
+    let anchor = "ak:event:01964137-0000-7000-8000-000000000004";
+    let echo = "ak:event:01964137-0000-7000-8000-000000000005";
+    let later = "ak:event:01964137-0000-7000-8000-000000000006";
+    let projection = arkret_sdk::AgentSidecarExchangeProjection {
+        schema: arkret_sdk::AgentSidecarExchangeProjectionSchema::V1,
+        controller_id: arkret_sdk::Did::new("did:web:example.test:alice").unwrap(),
+        sidecar_id: arkret_sdk::SidecarId::new("ak:sidecar:01964137-0000-7000-8000-000000000007")
+            .unwrap(),
+        private_strand_id: arkret_sdk::StrandId::new(private).unwrap(),
+        exchange_id: arkret_sdk::AgentSidecarExchangeId::new("exchange-01964137000000000008")
+            .unwrap(),
+        origin: arkret_sdk::AgentSidecarExchangeOrigin::SourceTrackRouted,
+        source_track_ref: arkret_sdk::AgentSidecarSourceTrackRef {
+            realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+            strand_id: arkret_sdk::StrandId::new(source).unwrap(),
+            track_name: "discussion".to_owned(),
+        },
+        source_frontier_anchor: Some(arkret_sdk::EventId::new(anchor).unwrap()),
+        source_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
+        client_order_key: arkret_sdk::NonEmptyString::new("device-1-1").unwrap(),
+        addressed_agent_ids: vec![
+            arkret_sdk::Did::new("did:web:example.test:agents:assistant").unwrap(),
+        ],
+        participating_agent_ids: Vec::new(),
+        private_request_event_id: arkret_sdk::EventId::new(echo).unwrap(),
+        user_facing_response_event_ids: Vec::new(),
+        status: arkret_sdk::AgentSidecarExchangeStatus::Delivered,
+        failure_code: None,
+        updated_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
+    };
+    let messages = vec![
+        sidecar_projection_message(anchor, source, "anchor"),
+        sidecar_projection_message(later, source, "later shared"),
+        sidecar_projection_message(echo, private, "private echo"),
+    ];
+
+    let visible = project_visible_messages(&messages, source, realm, None, &[projection]);
+
+    assert_eq!(
+        visible
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect::<Vec<_>>(),
+        vec![anchor, echo, later]
+    );
+    assert_eq!(visible[1].strand_id, private);
 }
 
 const CHAT_FIXTURE_DEVICE: &str = "ak:device:01964137-0000-7000-8000-00000000cafe";
