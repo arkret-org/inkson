@@ -454,11 +454,18 @@ pub(crate) fn build_mls_welcome_payload_value(
     let claim_trust_binding = match (
         claim.ssk_generation.and_then(std::num::NonZeroU64::new),
         claim.device_authorize_event_id.as_deref(),
+        claim.agent_key_authorize_event_id.as_deref(),
     ) {
-        (Some(generation), None) => arkret_sdk::MlsClaimTrustBinding::SskGeneration(generation),
-        (None, Some(event_id)) => arkret_sdk::MlsClaimTrustBinding::DeviceAuthorizeEventId(
+        (Some(generation), None, None) => {
+            arkret_sdk::MlsClaimTrustBinding::SskGeneration(generation)
+        }
+        (None, Some(event_id), None) => arkret_sdk::MlsClaimTrustBinding::DeviceAuthorizeEventId(
             arkret_sdk::NonEmptyString::new(event_id)
                 .map_err(|err| format!("invalid device authorization event id: {err}"))?,
+        ),
+        (None, None, Some(event_id)) => arkret_sdk::MlsClaimTrustBinding::AgentKeyAuthorizeEventId(
+            arkret_sdk::NonEmptyString::new(event_id)
+                .map_err(|err| format!("invalid Agent key authorization event id: {err}"))?,
         ),
         _ => return Err("MLS KeyPackage claim must contain exactly one trust binding".to_owned()),
     };
@@ -639,6 +646,7 @@ mod tests {
             capabilities_digest: record.keypackage_ref.clone(),
             ssk_generation: Some(ssk_generation),
             device_authorize_event_id: None,
+            agent_key_authorize_event_id: None,
             expires_at: crate::clock::now_utc() + chrono::Duration::hours(1),
             device_signature: arkret_sdk::KeyOperationSignature {
                 kid: arkret_sdk::NonEmptyString::new(format!(
