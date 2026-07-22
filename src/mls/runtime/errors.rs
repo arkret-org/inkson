@@ -40,6 +40,13 @@ pub enum MlsRuntimeError {
     Genesis(String),
     Welcome(String),
     SnapshotRestore(String),
+    /// A complete sync roster hint differs from the local MLS group, or a
+    /// verified §2.4.1 binding transition is still pending. Encrypted
+    /// application writes must pause instead of using the old epoch.
+    EncryptionTransitionPending,
+    /// §2.10: the verified current Realm content-scheme projection is not yet
+    /// available. Sending must pause instead of guessing a wire scheme.
+    EncryptionPolicyPending,
     Commit(String),
     Encrypt(String),
     Backup(String),
@@ -67,6 +74,8 @@ impl MlsRuntimeError {
                 MlsRuntimeStatus::SnapshotDecryptFailed(reason.clone())
             }
             Self::Genesis(_)
+            | Self::EncryptionTransitionPending
+            | Self::EncryptionPolicyPending
             | Self::Commit(_)
             | Self::Encrypt(_)
             | Self::Backup(_)
@@ -87,6 +96,8 @@ impl MlsRuntimeError {
             Self::Identity(reason) => format!("MLS identity unavailable: {reason}"),
             Self::Genesis(reason) => format!("MLS initial group setup failed: {reason}"),
             Self::Welcome(reason) => format!("MLS Welcome could not be applied: {reason}"),
+            Self::EncryptionTransitionPending => "encryption_transition_pending: the synced Realm roster and verified local MLS group have not converged; wait for the admission commit and Welcome delivery".to_owned(),
+            Self::EncryptionPolicyPending => "encryption_policy_pending: the Realm content scheme is not projected yet; wait for verified policy sync before sending".to_owned(),
             Self::Commit(reason) => format!("MLS commit failed: {reason}"),
             Self::Encrypt(reason) => format!("MLS payload encryption failed: {reason}"),
             Self::Backup(reason) => format!("MLS history backup failed: {reason}"),

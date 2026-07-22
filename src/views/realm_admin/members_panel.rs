@@ -1398,7 +1398,7 @@ async fn retain_current_history_secret_durable(
 
 pub(crate) async fn submit_mls_admission_for_invitee(
     api: &crate::transport::TransportClient,
-    mut state_store: SyncSignal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     actor_id: String,
     device_id: String,
@@ -1433,6 +1433,10 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         &device_id,
     )
     .await?;
+    // Verify the current governance frontier before consuming a one-time
+    // KeyPackage. The roster projection only schedules this attempt; it never
+    // authorizes the claim or the resulting Add commit.
+    ensure_mls_governance_proof_for_next_commit(api, state_store, &realm_id).await?;
     let claim_nonce = crate::mls_api_helpers::generate_mls_claim_nonce()?;
     let mls_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
     let claim_outcome = mls_clients
@@ -1454,6 +1458,8 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             .unwrap_or_else(|| "no MLS KeyPackage was available for the invitee".to_owned());
         anyhow::anyhow!("{reason}")
     })?;
+    // Refresh after the claim as well: membership/policy may have advanced
+    // while the remote claim request was in flight.
     ensure_mls_governance_proof_for_next_commit(api, state_store, &realm_id).await?;
     // History sharing (encryption-and-audit.md): retain the CURRENT (pre-commit)
     // epoch's `history_secret` BEFORE building the admission commit. The commit
@@ -1487,47 +1493,23 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     };
     let next_epoch = admission.snapshot.epoch;
     let invitee_device_id = claim.device_id.clone();
-    // Fail-closed ordering: submit the add-member `ak.mls.commit` FIRST and
-    // confirm soland accepted it BEFORE delivering the Welcome. The Welcome
-    // hands the invitee the post-add (epoch N+1) group state; if it landed while
-    // the commit was rejected (e.g. `governance_binding_mismatch`), the invitee
-    // would join at epoch N+1 while this admin and the server stayed at epoch N —
-    // a permanent fork in which neither side can decrypt the other's messages.
-    // Submitting the Welcome only after the commit confirms keeps every member
-    // on one epoch chain.
-    let commit_event_id = admission.commit.event_id.clone();
-    let commit_outcome = api
-        .event_submitter()?
-        .submit_sdk_events_batch(&realm_id, vec![admission.commit], None)
-        .await?;
-    let commit_accepted = commit_outcome
-        .accepted
-        .iter()
-        .chain(commit_outcome.duplicate.iter())
-        .any(|event_id| event_id == &commit_event_id);
-    if !commit_accepted {
-        return Err(anyhow::anyhow!(
-            "MLS admission commit for invitee was not accepted (status={:?}, rejected={:?}); invitee not admitted to avoid an epoch fork",
-            commit_outcome.status,
-            commit_outcome.rejected
-        ));
-    }
+    // Persist the entire fail-closed admission saga before the first write.
+    // The durable outbound item submits Commit first, then the exact signed
+    // Welcome, then installs the snapshot/history secret. A page close between
+    // any two steps resumes from the same immutable material on the next sync
+    // drain instead of consuming the KeyPackage and losing the Welcome.
+    let post_accept_store = crate::app::runtime_adapter::state_store_handle(state_store);
     api.event_submitter()?
-        .submit_sdk_events_batch(&realm_id, vec![admission.welcome], None)
+        .submit_mls_admission_with_snapshot(
+            admission.commit,
+            vec![admission.welcome],
+            realm_id.clone(),
+            actor_id.clone(),
+            device_id.clone(),
+            admission.snapshot,
+            post_accept_store,
+        )
         .await?;
-    state_store
-        .write()
-        .save_mls_snapshot(realm_id.clone(), admission.snapshot);
-    // Retain the post-admission epoch only after the snapshot is installed,
-    // and do not report admission completion until its durable write commits.
-    retain_current_history_secret_durable(
-        state_store,
-        secure_store.as_ref(),
-        &realm_id,
-        &actor_id,
-        &device_id,
-    )
-    .await?;
     // Eager RRK seal (encryption-and-audit.md §2.10.8): if this Realm declares an
     // effective `durability_policy` (mode != none + mls-exporter-aead-v1), seal
     // the retained history_secret(s) to every recovery recipient right after the
@@ -2376,6 +2358,53 @@ pub(crate) fn joined_member_signature_for_realm(store: &LocalStateStore, realm_i
     dids.join(",")
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum MembershipCompleteness {
+    #[default]
+    Unavailable,
+    Limited,
+    Complete,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ProjectedRealmMembershipHint {
+    joined: BTreeSet<String>,
+    completeness: MembershipCompleteness,
+}
+
+/// Account-sync `members[]` is a current roster projection hint. It is more
+/// suitable than the bounded raw-operation cache for reconciliation wakeups,
+/// but it is not membership authority: the governance proof and server-side
+/// Event auth still gate every KeyPackage claim and MLS Commit.
+fn projected_realm_membership_hint(
+    store: &LocalStateStore,
+    realm_id: &str,
+) -> ProjectedRealmMembershipHint {
+    let state = store.load();
+    let Some(projection) = state.realm_tree_projections.get(realm_id) else {
+        return ProjectedRealmMembershipHint::default();
+    };
+    let Some(_) = projection.get("members").and_then(Value::as_array) else {
+        return ProjectedRealmMembershipHint::default();
+    };
+    let joined = crate::views::member_display::realm_member_roster(Some(projection))
+        .into_iter()
+        .filter(|member| member.membership.as_deref() == Some("join"))
+        .map(|member| member.actor_id)
+        .filter(|actor_id| !actor_id.trim().is_empty())
+        .collect();
+    let completeness = if projection.get("members_limited").and_then(Value::as_bool) == Some(false)
+    {
+        MembershipCompleteness::Complete
+    } else {
+        MembershipCompleteness::Limited
+    };
+    ProjectedRealmMembershipHint {
+        joined,
+        completeness,
+    }
+}
+
 fn accepted_membership_profiles_for_realm(
     store: &LocalStateStore,
     realm_id: &str,
@@ -2406,32 +2435,6 @@ fn accepted_membership_profiles_for_realm(
     rows.into_values().map(|(_, _, profile)| profile).collect()
 }
 
-pub(super) fn realm_mls_roster_matches_accepted_membership(
-    state_store: &LocalStateStore,
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    realm_id: &str,
-    actor_id: &str,
-    device_id: &str,
-) -> bool {
-    let canonical_joined: BTreeSet<String> =
-        accepted_membership_profiles_for_realm(state_store, realm_id)
-            .into_iter()
-            .filter(|member| member.normalized_membership() == Some("join"))
-            .map(|member| member.actor_id)
-            .filter(|did| !did.trim().is_empty())
-            .collect();
-    crate::mls::runtime::mls_group_member_principal_ids_for_realm(
-        state_store,
-        secure_store,
-        realm_id,
-        actor_id,
-        device_id,
-    )
-    .map(|members| members.into_iter().collect::<BTreeSet<_>>())
-    .as_ref()
-        == Some(&canonical_joined)
-}
-
 fn raw_operation_event_time(record: &RawOperationRecord) -> chrono::DateTime<chrono::Utc> {
     raw_operation_path_string(&record.payload, &["created_at"])
         .and_then(|timestamp| chrono::DateTime::parse_from_rfc3339(&timestamp).ok())
@@ -2439,16 +2442,49 @@ fn raw_operation_event_time(record: &RawOperationRecord) -> chrono::DateTime<chr
         .unwrap_or(record.received_at)
 }
 
-fn accepted_joined_member_signature_for_realm(store: &LocalStateStore, realm_id: &str) -> String {
-    let mut dids: Vec<String> = accepted_membership_profiles_for_realm(store, realm_id)
+/// Admission candidates combine the positive roster hint with locally verified
+/// membership state. Accepted state wins on conflict; the hint fills actors for
+/// which the bounded local state-event cache has no cell and wakes reconciliation
+/// when a membership-only projection arrives.
+fn admission_joined_members_for_realm(store: &LocalStateStore, realm_id: &str) -> BTreeSet<String> {
+    let hint = projected_realm_membership_hint(store, realm_id);
+    let mut joined = hint.joined;
+    for member in accepted_membership_profiles_for_realm(store, realm_id) {
+        let actor_id = member.actor_id.trim();
+        if actor_id.is_empty() {
+            continue;
+        }
+        if member.normalized_membership() == Some("join") {
+            joined.insert(actor_id.to_owned());
+        } else {
+            joined.remove(actor_id);
+        }
+    }
+    joined
+}
+
+pub(super) fn realm_mls_roster_matches_complete_membership_hint(
+    state_store: &LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> bool {
+    crate::mls::runtime::realm_mls_roster_matches_complete_membership_hint(
+        state_store,
+        secure_store,
+        realm_id,
+        actor_id,
+        device_id,
+    )
+    .unwrap_or(false)
+}
+
+fn admission_joined_member_signature_for_realm(store: &LocalStateStore, realm_id: &str) -> String {
+    admission_joined_members_for_realm(store, realm_id)
         .into_iter()
-        .filter(|member| member.normalized_membership() == Some("join"))
-        .map(|member| member.actor_id)
-        .filter(|did| !did.trim().is_empty())
-        .collect();
-    dids.sort();
-    dids.dedup();
-    dids.join(",")
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 pub(crate) fn mls_admission_candidate_realms_for_actor(
@@ -2478,7 +2514,7 @@ pub(crate) fn mls_admission_candidate_realms_for_actor(
                 && store.realm_projection_is_mls_encrypted(realm_id)
         })
         .filter_map(|realm_id| {
-            let joined_sig = accepted_joined_member_signature_for_realm(store, &realm_id);
+            let joined_sig = admission_joined_member_signature_for_realm(store, &realm_id);
             let other_joined = joined_sig
                 .split(',')
                 .map(str::trim)
@@ -2550,10 +2586,8 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
     // Joined Realm members not yet represented in the MLS group, excluding self.
     let pending: Vec<String> = {
         let store = state_store.read();
-        accepted_membership_profiles_for_realm(&store, &realm_id)
+        admission_joined_members_for_realm(&store, &realm_id)
             .into_iter()
-            .filter(|member| member.normalized_membership() == Some("join"))
-            .map(|member| member.actor_id)
             .filter(|did| {
                 let did = did.trim();
                 !did.is_empty() && did != actor_id.trim() && !group_member_dids.contains(did)
@@ -2625,11 +2659,13 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
     if outcome.admitted > 0 {
         // An accepted Add commit is necessary but not by itself sufficient to
         // release the send gate. Only exact agreement between the current MLS
-        // roster and the accepted canonical Join projection proves that every
-        // pending Add obligation for this Realm is represented in the epoch.
+        // roster and the complete sync hint shows that every currently
+        // projected Add obligation is represented in the epoch. This only
+        // resolves the locally tracked transition after an accepted Commit;
+        // the hint itself is never membership or send authorization.
         if {
             let store = state_store.read();
-            realm_mls_roster_matches_accepted_membership(
+            realm_mls_roster_matches_complete_membership_hint(
                 &store,
                 secure_store.as_ref(),
                 &realm_id,
@@ -2647,7 +2683,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
 
 pub(crate) async fn submit_mls_admission_for_invitees(
     api: &crate::transport::TransportClient,
-    mut state_store: SyncSignal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     actor_id: String,
     device_id: String,
@@ -2686,6 +2722,11 @@ pub(crate) async fn submit_mls_admission_for_invitees(
     )
     .await?;
 
+    // Fail closed before consuming any one-time KeyPackage. Candidate rows are
+    // synchronization hints; only a verified governance frontier plus service
+    // authorization may advance the MLS group.
+    ensure_mls_governance_proof_for_next_commit(api, state_store, &realm_id).await?;
+
     let mut claims = Vec::<(arkret_sdk::KeyPackageClaimRecord, String)>::new();
     let mls_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
     for invitee_did in invitees {
@@ -2711,6 +2752,8 @@ pub(crate) async fn submit_mls_admission_for_invitees(
         })?;
         claims.push((claim, claim_nonce));
     }
+    // Refresh after the batch of claims to bind the Commit to the latest
+    // accepted frontier observed after those network round trips.
     ensure_mls_governance_proof_for_next_commit(api, state_store, &realm_id).await?;
     let admission = {
         let store = state_store.read();
@@ -2724,33 +2767,18 @@ pub(crate) async fn submit_mls_admission_for_invitees(
         )
         .map_err(|err| anyhow::anyhow!(err))?
     };
-    // Fail-closed ordering (see `submit_mls_admission_for_invitee`): the
-    // batched add-member `ak.mls.commit` MUST be accepted before its Welcomes
-    // ship, or rejected-commit-but-delivered-Welcome forks the invitees onto an
-    // epoch this admin and the server never reach.
-    let commit_event_id = admission.commit.event_id.clone();
-    let commit_outcome = api
-        .event_submitter()?
-        .submit_sdk_events_batch(&realm_id, vec![admission.commit], None)
-        .await?;
-    let commit_accepted = commit_outcome
-        .accepted
-        .iter()
-        .chain(commit_outcome.duplicate.iter())
-        .any(|event_id| event_id == &commit_event_id);
-    if !commit_accepted {
-        return Err(anyhow::anyhow!(
-            "MLS batch admission commit was not accepted (status={:?}, rejected={:?}); invitees not admitted to avoid an epoch fork",
-            commit_outcome.status,
-            commit_outcome.rejected
-        ));
-    }
+    let post_accept_store = crate::app::runtime_adapter::state_store_handle(state_store);
     api.event_submitter()?
-        .submit_sdk_events_batch(&realm_id, admission.welcomes, None)
+        .submit_mls_admission_with_snapshot(
+            admission.commit,
+            admission.welcomes,
+            realm_id,
+            actor_id,
+            device_id,
+            admission.snapshot,
+            post_accept_store,
+        )
         .await?;
-    state_store
-        .write()
-        .save_mls_snapshot(realm_id, admission.snapshot);
     Ok(claims.len())
 }
 
@@ -5027,13 +5055,14 @@ mod tests {
     }
 
     #[test]
-    fn admission_candidate_realms_include_encrypted_snapshot_with_raw_join() {
+    fn accepted_join_overrides_conflicting_complete_roster_hint() {
         let realm_id = "ak:realm:test";
         let mut store = temp_store("admission-candidate-raw-join");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
             serde_json::json!({
                 "encrypted": true,
+                "members_limited": false,
                 "members": [
                     { "actor_id": "did:web:alice.example", "membership": "join" },
                     { "actor_id": "did:web:bob.example", "membership": "invite" }
@@ -5060,12 +5089,44 @@ mod tests {
 
         let candidates = mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example");
         assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].0, realm_id);
-        assert_eq!(candidates[0].1, "did:web:bob.example");
+        assert_eq!(candidates[0].1, "did:web:alice.example,did:web:bob.example");
     }
 
     #[test]
-    fn admission_candidate_realms_follow_latest_accepted_membership_state() {
+    fn limited_roster_does_not_erase_accepted_join_candidate() {
+        let realm_id = "ak:realm:test";
+        let mut store = temp_store("admission-candidate-limited-roster");
+        store.save_realm_tree_projection(
+            realm_id.to_owned(),
+            serde_json::json!({
+                "encrypted": true,
+                "members_limited": true,
+                "members": [
+                    { "actor_id": "did:web:alice.example", "membership": "join" }
+                ]
+            }),
+        );
+        store.save_mls_snapshot(realm_id.to_owned(), dummy_mls_snapshot(realm_id));
+        store.append_raw_operation(
+            "ak:event:member-join".to_owned(),
+            Some(realm_id.to_owned()),
+            serde_json::json!({
+                "kind": "ak.member.state",
+                "write_state": "synced",
+                "body": {
+                    "actor_id": "did:web:bob.example",
+                    "membership": "join"
+                }
+            }),
+        );
+
+        let candidates = mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].1, "did:web:alice.example,did:web:bob.example");
+    }
+
+    #[test]
+    fn admission_candidates_follow_latest_accepted_state_over_roster_hint() {
         let realm_id = "ak:realm:test";
         let mut store = temp_store("admission-candidate-latest-membership");
         store.save_realm_tree_projection(
@@ -5110,8 +5171,25 @@ mod tests {
             mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example").is_empty()
         );
 
+        store.save_realm_tree_projection(
+            realm_id.to_owned(),
+            serde_json::json!({
+                "encrypted": true,
+                "members_limited": false,
+                "members": [
+                    { "actor_id": "did:web:alice.example", "membership": "join" },
+                    { "actor_id": "did:web:bob.example", "membership": "join" }
+                ]
+            }),
+        );
+
+        assert!(
+            mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example").is_empty(),
+            "accepted leave must win over a conflicting roster hint"
+        );
+
         store.append_raw_operation(
-            "ak:event:member-join-2".to_owned(),
+            "ak:event:member-rejoin".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ak.member.state",
@@ -5123,20 +5201,20 @@ mod tests {
                 }
             }),
         );
-
         let candidates = mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example");
         assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].1, "did:web:bob.example");
+        assert_eq!(candidates[0].1, "did:web:alice.example,did:web:bob.example");
     }
 
     #[test]
-    fn admission_candidate_realms_ignore_roster_only_join_hint() {
+    fn admission_candidate_realms_include_roster_hint_join_without_raw_event() {
         let realm_id = "ak:realm:test";
         let mut store = temp_store("admission-candidate-roster-only-join");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
             serde_json::json!({
                 "encrypted": true,
+                "members_limited": false,
                 "members": [
                     { "actor_id": "did:web:alice.example", "membership": "join" },
                     { "actor_id": "did:web:bob.example", "membership": "join" }
@@ -5145,8 +5223,42 @@ mod tests {
         );
         store.save_mls_snapshot(realm_id.to_owned(), dummy_mls_snapshot(realm_id));
 
-        assert!(
-            mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example").is_empty()
+        let candidates = mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].0, realm_id);
+        assert_eq!(candidates[0].1, "did:web:alice.example,did:web:bob.example");
+
+        let membership = projected_realm_membership_hint(&store, realm_id);
+        assert_eq!(membership.completeness, MembershipCompleteness::Complete);
+        assert_eq!(
+            membership.joined,
+            BTreeSet::from([
+                "did:web:alice.example".to_owned(),
+                "did:web:bob.example".to_owned()
+            ])
+        );
+    }
+
+    #[test]
+    fn projected_membership_uses_positive_limited_roster_without_claiming_completeness() {
+        let realm_id = "ak:realm:test";
+        let mut store = temp_store("accepted-membership-limited-roster");
+        store.save_realm_tree_projection(
+            realm_id.to_owned(),
+            serde_json::json!({
+                "encrypted": true,
+                "members_limited": true,
+                "members": [
+                    { "actor_id": "did:web:bob.example", "membership": "join" }
+                ]
+            }),
+        );
+
+        let membership = projected_realm_membership_hint(&store, realm_id);
+        assert_eq!(membership.completeness, MembershipCompleteness::Limited);
+        assert_eq!(
+            membership.joined,
+            BTreeSet::from(["did:web:bob.example".to_owned()])
         );
     }
 

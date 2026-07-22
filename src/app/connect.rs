@@ -343,205 +343,45 @@ pub(super) fn adopt_live_token_for_api(
     }
 }
 
-/// Enroll the current session `device` through the delegated account authority
-/// (decision 0002 §5.4). Resolves the gate base from the Principal Server's
-/// describe, derives this device's `device_public_key` from the persisted
-/// signing seed, reads the next `actor_seq` from the principal control stream,
-/// asks the Account Authority to mint a signed `service_attested`
-/// `ak.device.authorize`, and submits it via `principal_api`
-/// (`POST /_arkret/self/events`).
-async fn enroll_current_session_device(
-    base: &str,
-    actor: &str,
+fn device_authorization_probe_from_account_viewer(
+    viewer: &serde_json::Value,
     device: &str,
-    principal_api: &TransportClient,
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
-    fallback_grant_jwt: &str,
-) -> anyhow::Result<()> {
-    let actor = actor.trim();
-    if actor.is_empty() {
-        anyhow::bail!("device enrollment requires a known account DID");
-    }
-    // Enrollment needs only the grant JWT (DPoP `ath` binding + request body). The
-    // injected-grant seam and the post-reload rehydration path both restore only
-    // the bearer credential (`config.session_credential`) into the connect-held
-    // `token`, WITHOUT reconstructing a full `PersistedSessionGrant` into
-    // local_state — so `session_grant()` reads None here even though the session is
-    // live. Fall back to the connect-held bearer in that case instead of failing
-    // the whole self-enrollment (which is what left the browser's real event-signer
-    // key unauthorized and dropped cross-member chat proofs).
-    let grant_jwt = {
-        let held = state_store
-            .read()
-            .session_grant()
-            .map(|grant| grant.grant_jwt)
-            .filter(|jwt| !jwt.trim().is_empty());
-        match held {
-            Some(jwt) => jwt,
-            None => {
-                let fallback = fallback_grant_jwt.trim();
-                if fallback.is_empty() {
-                    anyhow::bail!("device enrollment requires an active session grant");
-                }
-                fallback.to_owned()
-            }
-        }
-    };
-
-    let signer = match crate::event_signer::active_signer() {
-        Some(signer) => signer,
-        None => crate::event_signer::bootstrap_default_signer("inkson")
-            .map_err(|error| anyhow::anyhow!("bootstrap device signer: {error}"))?,
-    };
-    let signer = crate::event_signer::bind_active_signer_device_id(device)
-        .map_err(|error| anyhow::anyhow!("bind event signer to device: {error}"))?
-        .unwrap_or(signer);
-    let device_public_key = signer.public_key_multibase().ok_or_else(|| {
-        anyhow::anyhow!("device enrollment requires a local Ed25519 active signer")
-    })?;
-
-    let gate_account_base =
-        crate::identity::account_auth::resolve_principal_gate_account_base(base)
-            .await
-            .map_err(|error| anyhow::anyhow!("resolve account authority: {error}"))?;
-
-    let device_key = {
-        let mut store = state_store.write();
-        crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)
-            .map_err(|error| anyhow::anyhow!("load grant-binding key: {error}"))?
-    };
-    let account_client = {
-        let sdk_base_url = crate::identity::session_refresh::sdk_base_url_from_gate_account_base(
-            &gate_account_base,
-        )?;
-        arkret_sdk::http_client::ClientBuilder::new(sdk_base_url)
-            .allow_insecure_localhost()
-            .auth(arkret_sdk::http_client::Auth::Dpop(
-                device_key.sdk_dpop_auth_for_access_token(grant_jwt),
-            ))
-            .build()
-            .map_err(|error| anyhow::anyhow!("build device-enroll HTTP client: {error}"))?
-    };
-
-    // The typed Realm actor frontier directly carries the next sequence. An
-    // empty chain is 0; after the root-signed PCR bootstrap it is 1.
-    let actor_did = arkret_sdk::Did::new(actor.to_owned())
-        .map_err(|error| anyhow::anyhow!("invalid enrollment actor DID: {error}"))?;
-    let actor_seq = match principal_api
-        .event_submitter()?
-        .events_frontier_actor(actor, &arkret_sdk::principal_control_realm_id(&actor_did))
-        .await
-    {
-        Ok(view) => view.next_actor_seq,
-        Err(error) => return Err(error.context("query principal-control actor frontier")),
-    };
-    if actor_seq == 0 {
-        anyhow::bail!(
-            "first-device enrollment requires the cold-root PCR bootstrap unit; continue identity setup from Onboarding"
-        );
-    }
-
-    // §5.4: the enrollment authority attests the device verify key, HPKE
-    // sealing key AND the canonical algorithm set. Advertise this device's
-    // stable X25519 HPKE public key (same keypair the history-sharing /
-    // secret-send paths open with).
-    let hpke_key = {
-        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        let (_privkey, pubkey) = crate::mls::runtime::load_or_create_device_hpke_keypair(
-            secure_store.as_ref(),
-            actor,
-            device,
-        )
-        .map_err(|error| anyhow::anyhow!("load device HPKE keypair for enrollment: {error}"))?;
-        crate::identity::did_key::encode_x25519_multibase(&pubkey)
-    };
-    let request = crate::identity::device_enrollment::DeviceEnrollmentRequest {
-        device_id: device.to_owned(),
-        device_public_key,
-        actor_seq,
-        bootstrap_create_event_id: None,
-        not_before: None,
-        hpke_key,
-        algorithms: crate::identity::device_enrollment::inkson_device_algorithms(),
-    };
-    crate::identity::device_enrollment::enroll_current_device(
-        &account_client,
-        principal_api,
-        &request,
-        device,
-    )
-    .await
+    signer_matches_directory: bool,
+) -> (bool, bool) {
+    let has_other = account_has_other_active_devices_from_account_viewer(viewer, device);
+    let needs_authorization = device_authorization_required_from_account_viewer(viewer, device)
+        || !signer_matches_directory;
+    (needs_authorization, has_other)
 }
 
-async fn probe_device_authorization_with_auto_enroll(
-    base: &str,
+/// Determine whether the current device is durably authorized. This is a
+/// read-only probe: the account-first onboarding flow owns the atomic founding
+/// device bootstrap, while every later or key-mismatched device must use the
+/// user-approved pairing/recovery flow from key-management.md §5.1.
+pub(super) async fn probe_device_authorization(
     actor: &str,
     device: &str,
     principal_api: &TransportClient,
-    state_store: SyncSignal<crate::state::LocalStateStore>,
-    fallback_grant_jwt: &str,
 ) -> anyhow::Result<(bool, bool)> {
     // The account-viewer helpers read `devices[]` leniently via `Value`
     // accessors; serialize the typed `AccountView` back to its wire JSON.
     let viewer = serde_json::to_value(
         &crate::transport::keys::list_devices(&principal_api.sdk_http_client()?).await?,
     )?;
-    let mut has_other = account_has_other_active_devices_from_account_viewer(&viewer, device);
-    let mut needs_authorization =
-        device_authorization_required_from_account_viewer(&viewer, device)
-            || !current_event_signer_matches_directory(principal_api, actor, device).await?;
-
-    if needs_authorization {
-        match enroll_current_session_device(
-            base,
-            actor,
-            device,
-            principal_api,
-            state_store,
-            fallback_grant_jwt,
-        )
-        .await
-        {
-            Ok(()) => {
-                match crate::transport::keys::list_devices(&principal_api.sdk_http_client()?).await
-                {
-                    Ok(viewer) => {
-                        let viewer = serde_json::to_value(&viewer)?;
-                        has_other =
-                            account_has_other_active_devices_from_account_viewer(&viewer, device);
-                        needs_authorization =
-                            device_authorization_required_from_account_viewer(&viewer, device)
-                                || !current_event_signer_matches_directory(
-                                    principal_api,
-                                    actor,
-                                    device,
-                                )
-                                .await?;
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            ?error,
-                            "device authorization re-check failed after enrollment"
-                        );
-                        needs_authorization = true;
-                    }
-                }
-            }
-            Err(error) => {
-                tracing::warn!(?error, "device enrollment failed");
-            }
-        }
-    }
-
-    Ok((needs_authorization, has_other))
+    let signer_matches_directory =
+        current_event_signer_matches_directory(principal_api, actor, device).await?;
+    Ok(device_authorization_probe_from_account_viewer(
+        &viewer,
+        device,
+        signer_matches_directory,
+    ))
 }
 
 /// An `active` account-viewer row is not sufficient authorization for
 /// persistent Event proofs: the authoritative keys directory must carry the
-/// exact Ed25519 key used by this browser's active signer. Seeded/test accounts
-/// may already have an active device inventory row without that key; treating
-/// status alone as complete suppresses self-enrollment and makes every remote
-/// receiver correctly reject the device's messages.
+/// exact Ed25519 key used by this browser's active signer. A mismatch is a
+/// subsequent-device or key-loss condition and must never overwrite the
+/// accepted device through the founding enrollment endpoint.
 async fn current_event_signer_matches_directory(
     principal_api: &TransportClient,
     actor: &str,
@@ -1002,14 +842,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 );
                 match bootstrap_request(
                     "device authorization check",
-                    probe_device_authorization_with_auto_enroll(
-                        &base,
-                        &canonical_actor,
-                        &device,
-                        &authed,
-                        state_store,
-                        &session_credential,
-                    ),
+                    probe_device_authorization(&canonical_actor, &device, &authed),
                 )
                 .await
                 {
@@ -1038,14 +871,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 authed = rebound;
                                 match bootstrap_request(
                                     "device authorization retry",
-                                    probe_device_authorization_with_auto_enroll(
-                                        &base,
-                                        &canonical_actor,
-                                        &device,
-                                        &authed,
-                                        state_store,
-                                        &session_credential,
-                                    ),
+                                    probe_device_authorization(&canonical_actor, &device, &authed),
                                 )
                                 .await
                                 {
@@ -1915,4 +1741,53 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
         });
         sync_bootstrap_complete.set(true);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn authorized_device_requires_exact_directory_signer_match() {
+        let viewer = serde_json::json!({
+            "current_device_id": "ak:device:current",
+            "devices": [{
+                "device_id": "ak:device:current",
+                "verification_state": "verified",
+                "is_current_session_device": true
+            }]
+        });
+
+        assert_eq!(
+            device_authorization_probe_from_account_viewer(&viewer, "ak:device:current", true),
+            (false, false)
+        );
+        assert_eq!(
+            device_authorization_probe_from_account_viewer(&viewer, "ak:device:current", false),
+            (true, false)
+        );
+    }
+
+    #[test]
+    fn unauthorized_current_device_detects_existing_pairing_provider() {
+        let viewer = serde_json::json!({
+            "current_device_id": "ak:device:new",
+            "devices": [
+                {
+                    "device_id": "ak:device:new",
+                    "verification_state": "pending",
+                    "is_current_session_device": true
+                },
+                {
+                    "device_id": "ak:device:existing",
+                    "verification_state": "verified"
+                }
+            ]
+        });
+
+        assert_eq!(
+            device_authorization_probe_from_account_viewer(&viewer, "ak:device:new", false),
+            (true, true)
+        );
+    }
 }

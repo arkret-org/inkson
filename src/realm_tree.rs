@@ -354,7 +354,7 @@ pub(crate) fn realm_projection_content_scheme(body: &Value) -> Option<String> {
         }
     }
 
-    projected_state_event_values(body)
+    let create_scheme = projected_state_event_values(body)
         .filter(|event| {
             event
                 .get("kind")
@@ -365,7 +365,25 @@ pub(crate) fn realm_projection_content_scheme(body: &Value) -> Option<String> {
         .find_map(|event| {
             non_empty_string(event.pointer("/payload/object/content_scheme"))
                 .or_else(|| non_empty_string(event.pointer("/content/object/content_scheme")))
+        });
+    if create_scheme.is_some() {
+        return create_scheme;
+    }
+
+    // The spec default is only safe once an authoritative create event is
+    // actually present. A transient account-sync projection can contain a
+    // roster/summary before either the create snapshot or policy-components
+    // cell arrives; callers must distinguish that unknown state (`None`) from
+    // an accepted create that deliberately omitted content_scheme (RFC9420).
+    projected_state_event_values(body)
+        .any(|event| {
+            event
+                .get("kind")
+                .or_else(|| event.get("type"))
+                .and_then(Value::as_str)
+                == Some(arkret_sdk::events::EventKind::REALM_CREATE)
         })
+        .then(|| "mls-rfc9420".to_owned())
 }
 
 fn nested_string_field(value: &Value, parent: &str, keys: &[&str]) -> Option<String> {
@@ -1118,6 +1136,30 @@ mod tests {
         assert_eq!(
             realm_projection_content_scheme(&projection).as_deref(),
             Some("mls-exporter-aead-v1")
+        );
+    }
+
+    #[test]
+    fn content_scheme_defaults_only_after_canonical_create_is_visible() {
+        let accepted_default = json!({
+            "state": {"events": [{
+                "kind": "ak.realm.create",
+                "payload": {"object": {"encryption_profile": "mls_rfc9420"}}
+            }]}
+        });
+        let transient_projection = json!({
+            "members_limited": false,
+            "members": []
+        });
+
+        assert_eq!(
+            realm_projection_content_scheme(&accepted_default).as_deref(),
+            Some("mls-rfc9420")
+        );
+        assert_eq!(
+            realm_projection_content_scheme(&transient_projection),
+            None,
+            "a roster-only sync frame must not silently select a content wire scheme"
         );
     }
 

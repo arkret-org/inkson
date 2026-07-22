@@ -59,8 +59,9 @@ pub(crate) type LocalMlsEncryptResult = (
 /// Runs on wasm: the underlying `mls::runtime::encrypt_message_with_device_snapshot`
 /// uses the same wasm-enabled OpenMLS path as kanban strand-content encryption.
 ///
-/// On any failure (missing Welcome/snapshot, restore fails, encrypt fails) it
-/// returns an all-empty result and the caller aborts.
+/// On any failure (missing Welcome/snapshot, restore fails, encrypt fails),
+/// preserve the typed runtime error so the caller can surface the actual
+/// fail-closed reason instead of a generic "could not produce" message.
 pub(crate) fn run_local_mls_encrypt(
     mut state_store: SyncSignal<LocalStateStore>,
     realm_id: &str,
@@ -69,21 +70,22 @@ pub(crate) fn run_local_mls_encrypt(
     plaintext_bytes: &[u8],
     circle_id: Option<&str>,
     sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
-) -> LocalMlsEncryptResult {
-    let empty = (None, Vec::new(), None, None, None, None);
+) -> Result<LocalMlsEncryptResult, crate::mls::runtime::MlsRuntimeError> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let Ok(aad_realm_id) = arkret_sdk::RealmId::new(realm_id.to_owned()) else {
-        return empty;
-    };
+    let aad_realm_id = arkret_sdk::RealmId::new(realm_id.to_owned()).map_err(|error| {
+        crate::mls::runtime::MlsRuntimeError::Serialize(format!(
+            "invalid Realm id for encrypted AAD: {error:?}"
+        ))
+    })?;
     let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(aad_realm_id, "ak.message.create");
-    let Ok((
+    let (
         schedule_hash,
         member_dids,
         payload,
         commit_envelope,
         new_snapshot,
         pending_history_secrets,
-    )) = crate::mls::runtime::encrypt_message_with_device_snapshot(
+    ) = crate::mls::runtime::encrypt_message_with_device_snapshot(
         &mut state_store.write(),
         secure_store.as_ref(),
         realm_id,
@@ -94,18 +96,15 @@ pub(crate) fn run_local_mls_encrypt(
         plaintext_bytes,
         circle_id,
         sidecar_binding,
-    )
-    else {
-        return empty;
-    };
-    (
+    )?;
+    Ok((
         Some(schedule_hash),
         member_dids,
         Some((payload, aad)),
         commit_envelope,
         new_snapshot,
         pending_history_secrets,
-    )
+    ))
 }
 
 fn circle_effective_scope(
@@ -181,7 +180,8 @@ pub(crate) fn build_secure_send(
         plaintext_bytes,
         circle_id,
         sidecar_binding.as_ref(),
-    );
+    )
+    .map_err(|error| error.user_message())?;
 
     let Some((encrypted_payload, envelope_aad)) = encrypted_message else {
         return Err("Send Secure could not produce an MLS encrypted payload".to_owned());

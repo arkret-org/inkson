@@ -36,6 +36,8 @@ pub(super) struct RouteSurfaceState {
     pub(super) contact_manage_query: Signal<String>,
     pub(super) manage_contact_selection: Signal<BTreeSet<String>>,
     pub(super) secure_store_bootstrap_ready: Signal<bool>,
+    pub(super) needs_device_authorization: Signal<bool>,
+    pub(super) device_authorization_check_complete: Signal<bool>,
     pub(super) can_list_handles_for_subject: bool,
     pub(super) push_state: Signal<String>,
     pub(super) locale: Signal<Locale>,
@@ -81,6 +83,8 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
         contact_manage_query,
         manage_contact_selection,
         secure_store_bootstrap_ready,
+        needs_device_authorization,
+        device_authorization_check_complete,
         can_list_handles_for_subject,
         push_state,
         locale,
@@ -459,6 +463,8 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             device_id,
                             config_store,
                             account_primary_handle,
+                            needs_device_authorization,
+                            device_authorization_check_complete,
                         }
                     },
                     Route::Quarantine => rsx! {

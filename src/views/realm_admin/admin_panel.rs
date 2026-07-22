@@ -1002,13 +1002,13 @@ pub fn RealmAdminPanel(
                                             // MLS roster.  Never clear the send gate
                                             // merely because the Event is effective:
                                             // require this accepted Commit and exact
-                                            // canonical-membership/MLS-roster agreement.
+                                            // complete-hint/MLS-roster agreement.
                                             let secure_store = crate::secure_key_store::
                                                 default_secure_key_store("inkson");
                                             let roster_aligned = {
                                                 let store = state_store.read();
                                                 super::members_panel::
-                                                    realm_mls_roster_matches_accepted_membership(
+                                                    realm_mls_roster_matches_complete_membership_hint(
                                                         &store,
                                                         secure_store.as_ref(),
                                                         &realm,

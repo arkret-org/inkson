@@ -68,6 +68,17 @@ pub(crate) enum PostAcceptAction {
         realm_id: String,
         snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
     },
+    /// Durable admission saga. The Add commit is the queued Event; only after
+    /// that Event is accepted (or confirmed duplicate) may the exact signed
+    /// Welcome(s) be submitted. Keeping the Welcome material inside the same
+    /// durable queue item closes the browser-unload gap between the two writes.
+    MlsAdmission {
+        realm_id: String,
+        actor_id: String,
+        device_id: String,
+        welcomes: Vec<arkret_sdk::Event>,
+        snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
+    },
 }
 
 fn deserialize_required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
@@ -102,26 +113,71 @@ impl OutboundPostAcceptHook for InksonPostAcceptHook {
             let Some(action) = queued.post_accept else {
                 return Ok(());
             };
-            let store = self.state_store.as_ref().ok_or_else(|| {
-                garth::Error::Protocol(
-                    "queued post-accept action has no host state-store adapter".to_owned(),
-                )
-            })?;
-            let barrier = match action {
-                PostAcceptAction::MlsSnapshot { realm_id, snapshot } => store.write(|store| {
-                    store.save_mls_snapshot(realm_id, snapshot);
-                    store.begin_durable_flush().map_err(|error| {
-                        garth::Error::Protocol(format!(
-                            "begin durable MLS post-accept snapshot persist: {error}"
-                        ))
-                    })
-                })?,
-            };
-            barrier.wait().await.map_err(|error| {
-                garth::Error::Protocol(format!("persist MLS post-accept snapshot: {error}"))
-            })
+            // Admission persistence runs inside the submitter so failures can
+            // use the unbounded durable RetryAfter path. Garth's generic hook
+            // error policy is intentionally bounded and must not terminally
+            // cancel an accepted Commit's only staged state after eight tries.
+            if matches!(action, PostAcceptAction::MlsAdmission { .. }) {
+                return Ok(());
+            }
+            persist_post_accept_action(self.state_store.as_ref(), action).await
         })
     }
+}
+
+async fn persist_post_accept_action(
+    state_store: Option<&crate::runtime::input::StateStoreHandle>,
+    action: PostAcceptAction,
+) -> Result<(), garth::Error> {
+    let store = state_store.ok_or_else(|| {
+        garth::Error::Protocol(
+            "queued post-accept action has no host state-store adapter".to_owned(),
+        )
+    })?;
+    let (realm_id, snapshot, retain_history_for) = match action {
+        PostAcceptAction::MlsSnapshot { realm_id, snapshot } => (realm_id, snapshot, None),
+        PostAcceptAction::MlsAdmission {
+            realm_id,
+            actor_id,
+            device_id,
+            welcomes: _,
+            snapshot,
+        } => (realm_id, snapshot, Some((actor_id, device_id))),
+    };
+    let snapshot_realm_id = realm_id.clone();
+    let barrier = store.write(|store| {
+        store.save_mls_snapshot(snapshot_realm_id, snapshot);
+        store.begin_durable_flush().map_err(|error| {
+            garth::Error::Protocol(format!(
+                "begin durable MLS post-accept snapshot persist: {error}"
+            ))
+        })
+    })?;
+    barrier.wait().await.map_err(|error| {
+        garth::Error::Protocol(format!("persist MLS post-accept snapshot: {error}"))
+    })?;
+    if let Some((actor_id, device_id)) = retain_history_for {
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        let derived = store
+            .read(|store| {
+                crate::mls::runtime::derive_and_retain_realm_history_secret(
+                    store,
+                    secure_store.as_ref(),
+                    &realm_id,
+                    &actor_id,
+                    &device_id,
+                )
+            })
+            .map_err(|error| garth::Error::Protocol(error.user_message()))?;
+        if let Some((_epoch, _secret, pending)) = derived {
+            pending
+                .persist(secure_store.as_ref())
+                .await
+                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+            store.write(|store| store.publish_history_secrets(pending));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn is_durably_queued_error(error: &anyhow::Error) -> bool {
@@ -137,6 +193,7 @@ struct OutboundAttemptResults {
 struct EventOutboundSubmitter<'a> {
     owner: &'a EventSubmitter,
     results: &'a OutboundAttemptResults,
+    state_store: Option<crate::runtime::input::StateStoreHandle>,
 }
 
 impl OutboundSubmitter for EventOutboundSubmitter<'_> {
@@ -179,6 +236,51 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                 .await
             {
                 Ok(result) => {
+                    // The admission queue item is not accepted until every
+                    // bound Welcome has also been delivered. A failure here
+                    // leaves the same immutable commit + Welcome material in
+                    // Garth; retry confirms the commit as duplicate and resumes
+                    // the Welcome before the post-accept snapshot is installed.
+                    if let Some(action @ PostAcceptAction::MlsAdmission { welcomes, .. }) =
+                        queued.post_accept.as_ref()
+                    {
+                        for welcome in welcomes {
+                            let canonical_body_bytes =
+                                arkret_sdk::canonical::canonical_json_bytes(welcome)
+                                    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+                            let idempotency_key = welcome.event_id.to_string();
+                            if let Err(error) = self
+                                .owner
+                                .post_persisted_signed_sdk_event(
+                                    welcome,
+                                    &idempotency_key,
+                                    &canonical_body_bytes,
+                                )
+                                .await
+                            {
+                                let reason = format!("{error:#}");
+                                // The Commit is already accepted and cannot be
+                                // rolled back. Never terminally discard its
+                                // exact Welcome material: even a deterministic
+                                // rejection must remain durably diagnosable and
+                                // retryable after server/policy repair, or the
+                                // sender would be stranded on the old epoch.
+                                let delay = mls_admission_welcome_retry_delay(&error);
+                                return Ok(OutboundSubmitOutcome::RetryAfter { delay, reason });
+                            }
+                        }
+                        if let Err(error) =
+                            persist_post_accept_action(self.state_store.as_ref(), action.clone())
+                                .await
+                        {
+                            return Ok(OutboundSubmitOutcome::RetryAfter {
+                                delay: Duration::from_secs(60),
+                                reason: format!(
+                                    "MLS admission state persistence remains repairable: {error}"
+                                ),
+                            });
+                        }
+                    }
                     let event_id =
                         arkret_sdk::EventId::new(result.event_id.clone()).map_err(|error| {
                             garth::Error::Protocol(format!(
@@ -198,6 +300,24 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                     }
                 }
                 Err(error) => {
+                    if matches!(
+                        queued.post_accept.as_ref(),
+                        Some(PostAcceptAction::MlsAdmission { .. })
+                    ) {
+                        let reason = if crate::api_error::actor_seq_cas_conflict_details(&error)
+                            .is_some()
+                        {
+                            "MLS admission commit frontier changed; the bound Welcome cannot be reauthored independently".to_owned()
+                        } else {
+                            format!("immutable MLS admission attempt was rejected: {error:#}")
+                        };
+                        // The queue cannot know whether a previous transport
+                        // attempt accepted the Commit before the response was
+                        // lost. Preserve the exact Commit/Welcome/snapshot for
+                        // duplicate confirmation or explicit repair on every
+                        // deterministic response as well as transient errors.
+                        return Ok(mls_admission_repair_retry_outcome(&reason));
+                    }
                     if let Some(details) = crate::api_error::actor_seq_cas_conflict_details(&error)
                     {
                         if details.current_frontier.realm_id != event.realm_id
@@ -281,6 +401,17 @@ fn outbound_retry_delay(error: &anyhow::Error) -> Option<Duration> {
                 _ => None,
             })
     })
+}
+
+fn mls_admission_welcome_retry_delay(error: &anyhow::Error) -> Duration {
+    outbound_retry_delay(error).unwrap_or_else(|| Duration::from_secs(60))
+}
+
+fn mls_admission_repair_retry_outcome(reason: &str) -> OutboundSubmitOutcome {
+    OutboundSubmitOutcome::RetryAfter {
+        delay: Duration::from_secs(60),
+        reason: format!("MLS admission repair required: {reason}"),
+    }
 }
 
 fn verified_recovery_gate_cache() -> &'static Mutex<std::collections::BTreeSet<String>> {
@@ -442,6 +573,21 @@ impl EventSubmitter {
                 continue;
             }
             let queued = decode_queued_sdk_event(item.content.clone())?;
+            if matches!(
+                queued.post_accept.as_ref(),
+                Some(PostAcceptAction::MlsAdmission { .. })
+            ) {
+                // An admission item may be resuming after its Commit was
+                // accepted but before Welcome/snapshot completion. A later
+                // signer generation must not cancel that immutable transcript;
+                // submit it again and let the service confirm duplicate or
+                // leave it durably repair-required.
+                decisions.insert(
+                    item.transaction_id,
+                    OutboundGenerationFenceDecision::Current,
+                );
+                continue;
+            }
             let decision = match crate::identity::authoring_generation::resolve_current_event_authoring_generation(
                 &self.http,
                 &queued.event,
@@ -478,6 +624,7 @@ impl EventSubmitter {
         let submitter = EventOutboundSubmitter {
             owner: self,
             results: &results,
+            state_store: None,
         };
         let mut completed = 0usize;
         loop {
@@ -526,6 +673,7 @@ impl EventSubmitter {
         let submitter = EventOutboundSubmitter {
             owner: self,
             results: &results,
+            state_store: Some(state_store.clone()),
         };
         let hook = InksonPostAcceptHook {
             state_store: Some(state_store),
@@ -987,11 +1135,6 @@ impl EventSubmitter {
             "local_operation_idempotency_alias".to_owned(),
             Value::String(local_operation_id.clone()),
         );
-        let mut transaction_id = local_operation_id;
-        let durable_post_accept = post_accept.is_some();
-        let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
-            &outbound_store_scope(event, durable_post_accept),
-        )?);
         let authoring_generation =
             match crate::identity::authoring_generation::resolve_event_authoring_generation(
                 &self.http, &intent,
@@ -1013,6 +1156,108 @@ impl EventSubmitter {
                 }
                 Err(error) => return Err(error),
             };
+        self.enqueue_and_drive_sdk_event(
+            event,
+            QueuedSdkEvent {
+                event: intent,
+                local_operation_id,
+                transport_idempotency_key: String::new(),
+                canonical_body_bytes: Vec::new(),
+                supersedes_event_id: None,
+                authoring_generation,
+                post_accept,
+            },
+            state_store,
+        )
+        .await
+    }
+
+    /// Persist an MLS Add commit together with the exact signed Welcome(s) and
+    /// post-commit snapshot before the first network write. Garth only marks the
+    /// commit item sent after the post-accept hook has delivered every Welcome
+    /// and durably installed the snapshot, so a reload at any await boundary can
+    /// resume the same immutable admission saga.
+    pub(crate) async fn submit_mls_admission_with_snapshot(
+        &self,
+        commit: arkret_sdk::Event,
+        welcomes: Vec<arkret_sdk::Event>,
+        realm_id: String,
+        actor_id: String,
+        device_id: String,
+        snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
+        state_store: crate::runtime::input::StateStoreHandle,
+    ) -> anyhow::Result<SubmitEventResult> {
+        if welcomes.is_empty() {
+            anyhow::bail!("MLS admission requires at least one Welcome");
+        }
+        let _single_writer = outbound_submit_lock().lock().await;
+        self.ensure_recovery_material_ready(&commit).await?;
+        let mut unit = Vec::with_capacity(1 + welcomes.len());
+        unit.push(commit);
+        unit.extend(welcomes);
+        let mut prepared = self.prepare_sdk_events_batch(unit).await?;
+        let signed_commit = prepared.remove(0);
+        let local_operation_id = signed_commit
+            .unsigned
+            .get("local_operation_idempotency_alias")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| signed_commit.event_id.to_string());
+        let authoring_generation =
+            match crate::identity::authoring_generation::resolve_event_authoring_generation(
+                &self.http,
+                &signed_commit,
+            )
+            .await
+            {
+                Ok(generation) => generation,
+                Err(error) if outbound_retry_delay(&error).is_some() => {
+                    crate::identity::authoring_generation::cached_event_authoring_generation(
+                        &signed_commit,
+                    )?
+                    .ok_or_else(|| {
+                        error.context(
+                            "retryable admission authoring-generation lookup failed without a verified cache entry",
+                        )
+                    })?
+                }
+                Err(error) => return Err(error),
+            };
+        let canonical_body_bytes = arkret_sdk::canonical::canonical_json_bytes(&signed_commit)?;
+        let transport_idempotency_key = signed_commit.event_id.to_string();
+        self.enqueue_and_drive_sdk_event(
+            &signed_commit,
+            QueuedSdkEvent {
+                event: signed_commit.clone(),
+                local_operation_id,
+                transport_idempotency_key,
+                canonical_body_bytes,
+                supersedes_event_id: None,
+                authoring_generation,
+                post_accept: Some(PostAcceptAction::MlsAdmission {
+                    realm_id,
+                    actor_id,
+                    device_id,
+                    welcomes: prepared,
+                    snapshot,
+                }),
+            },
+            Some(state_store),
+        )
+        .await
+    }
+
+    async fn enqueue_and_drive_sdk_event(
+        &self,
+        event: &arkret_sdk::Event,
+        queued: QueuedSdkEvent,
+        state_store: Option<crate::runtime::input::StateStoreHandle>,
+    ) -> anyhow::Result<SubmitEventResult> {
+        let mut transaction_id = queued.local_operation_id.clone();
+        let durable_post_accept = queued.post_accept.is_some();
+        let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
+            &outbound_store_scope(event, durable_post_accept),
+        )?);
         outbound
             .enqueue_scoped(
                 Some(transaction_id.clone()),
@@ -1021,15 +1266,7 @@ impl EventSubmitter {
                 garth::SendQueueItemKind::Custom {
                     kind: event.kind.to_string(),
                 },
-                serde_json::to_value(QueuedSdkEvent {
-                    event: intent,
-                    local_operation_id: transaction_id.clone(),
-                    transport_idempotency_key: String::new(),
-                    canonical_body_bytes: Vec::new(),
-                    supersedes_event_id: None,
-                    authoring_generation,
-                    post_accept,
-                })?,
+                serde_json::to_value(queued)?,
                 Vec::new(),
             )
             .await?;
@@ -1038,6 +1275,7 @@ impl EventSubmitter {
         let submitter = EventOutboundSubmitter {
             owner: self,
             results: &results,
+            state_store: state_store.clone(),
         };
         let hook = InksonPostAcceptHook { state_store };
         loop {
@@ -1781,6 +2019,30 @@ mod tests {
     }
 
     #[test]
+    fn accepted_admission_commit_never_discards_welcome_on_protocol_rejection() {
+        let error = anyhow::anyhow!("welcome rejected with deterministic policy error");
+
+        assert_eq!(outbound_retry_delay(&error), None);
+        assert_eq!(
+            mls_admission_welcome_retry_delay(&error),
+            Duration::from_secs(60)
+        );
+    }
+
+    #[test]
+    fn admission_cas_conflict_keeps_exact_saga_queued_for_repair() {
+        let outcome = mls_admission_repair_retry_outcome("frontier changed");
+
+        match outcome {
+            OutboundSubmitOutcome::RetryAfter { delay, reason } => {
+                assert_eq!(delay, Duration::from_secs(60));
+                assert!(reason.contains("repair required"));
+            }
+            other => panic!("admission CAS conflict must remain retryable, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn pending_chat_projection_ignores_sent_items() {
         let realm =
             arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001".to_owned())
@@ -1985,6 +2247,115 @@ mod tests {
                 .epoch,
             7
         );
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn queued_mls_admission_round_trips_exact_welcome_material() {
+        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
+        let commit = sdk_event_with_kind(
+            "ak:event:01904100-0000-7000-8000-000000000010",
+            realm_id,
+            "ak.mls.commit",
+            "did:web:alice.example",
+        );
+        let mut welcome = sdk_event_with_kind(
+            "ak:event:01904100-0000-7000-8000-000000000011",
+            realm_id,
+            "ak.mls.welcome",
+            "did:web:alice.example",
+        );
+        welcome.payload = serde_json::from_value(json!({
+            "commit_ref": commit.event_id,
+            "recipient_principal_id": "did:web:bob.example"
+        }))
+        .unwrap();
+        let snapshot = crate::mls::persistence::MlsSnapshotEnvelope {
+            realm_id: realm_id.to_owned(),
+            group_id: "010203".to_owned(),
+            epoch: 1,
+            salt_hex: "00".repeat(16),
+            ciphertext_hex: "11".repeat(32),
+            mac_hex: "22".repeat(12),
+            recorded_at: chrono::Utc::now(),
+            epoch_started_at: chrono::Utc::now(),
+            app_messages_observed: 0,
+            aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
+        };
+        let queued = QueuedSdkEvent {
+            event: commit.clone(),
+            local_operation_id: "mls-admission-operation".to_owned(),
+            transport_idempotency_key: commit.event_id.to_string(),
+            canonical_body_bytes: arkret_sdk::canonical::canonical_json_bytes(&commit).unwrap(),
+            supersedes_event_id: None,
+            authoring_generation: test_authoring_generation(),
+            post_accept: Some(PostAcceptAction::MlsAdmission {
+                realm_id: realm_id.to_owned(),
+                actor_id: "did:web:alice.example".to_owned(),
+                device_id: "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
+                welcomes: vec![welcome.clone()],
+                snapshot,
+            }),
+        };
+
+        let decoded = decode_queued_sdk_event(serde_json::to_value(&queued).unwrap()).unwrap();
+        let Some(PostAcceptAction::MlsAdmission { welcomes, .. }) = decoded.post_accept else {
+            panic!("queued admission action was not preserved");
+        };
+        assert_eq!(welcomes, vec![welcome]);
+        assert_eq!(decoded.canonical_body_bytes, queued.canonical_body_bytes);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn mls_admission_persistence_installs_snapshot_before_reporting_completion() {
+        use std::sync::{Arc, Mutex};
+
+        let path = std::env::temp_dir().join(format!(
+            "inkson-mls-admission-post-accept-{}-{}.json",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let store = Arc::new(Mutex::new(crate::state::LocalStateStore::with_path(&path)));
+        let read_store = Arc::clone(&store);
+        let write_store = Arc::clone(&store);
+        let handle = crate::runtime::input::StateStoreHandle::new(
+            move |read| read(&read_store.lock().unwrap()),
+            move |write| write(&mut write_store.lock().unwrap()),
+        );
+        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
+        let welcome = sdk_event_with_kind(
+            "ak:event:01904100-0000-7000-8000-000000000011",
+            realm_id,
+            "ak.mls.welcome",
+            "did:web:alice.example",
+        );
+        let snapshot = crate::mls::persistence::MlsSnapshotEnvelope {
+            realm_id: realm_id.to_owned(),
+            group_id: "010203".to_owned(),
+            epoch: 1,
+            salt_hex: "00".repeat(16),
+            ciphertext_hex: "11".repeat(32),
+            mac_hex: "22".repeat(12),
+            recorded_at: chrono::Utc::now(),
+            epoch_started_at: chrono::Utc::now(),
+            app_messages_observed: 0,
+            aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
+        };
+        let action = PostAcceptAction::MlsAdmission {
+            realm_id: realm_id.to_owned(),
+            actor_id: "did:web:alice.example".to_owned(),
+            device_id: "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
+            welcomes: vec![welcome],
+            snapshot,
+        };
+
+        let error = persist_post_accept_action(Some(&handle), action)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("snapshot secret unavailable"));
+        assert!(store.lock().unwrap().mls_snapshot_for(realm_id).is_some());
         drop(store);
         let _ = std::fs::remove_file(path);
     }

@@ -112,6 +112,29 @@ pub(crate) fn realm_content_scheme_is_exporter_aead(
         .is_some_and(|scheme| scheme == "mls-exporter-aead-v1")
 }
 
+fn realm_content_scheme_is_exporter_aead_for_send(
+    state_store: &crate::state::LocalStateStore,
+    realm_id: &str,
+    circle: Option<&str>,
+) -> Result<bool, MlsRuntimeError> {
+    if circle.is_some() {
+        return Ok(false);
+    }
+    let scheme = state_store
+        .realm_content_scheme(realm_id)
+        .ok_or(MlsRuntimeError::EncryptionPolicyPending)?
+        .trim()
+        .to_ascii_lowercase()
+        .replace('_', "-");
+    match scheme.as_str() {
+        "mls-exporter-aead-v1" => Ok(true),
+        "mls-rfc9420" => Ok(false),
+        unsupported => Err(MlsRuntimeError::Encrypt(format!(
+            "unsupported Realm content scheme: {unsupported}"
+        ))),
+    }
+}
+
 pub fn decrypt_application_payload(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -1494,6 +1517,9 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+    ensure_realm_membership_is_covered_for_send(state_store, realm_id, circle, &group)?;
+    let use_exporter_aead =
+        realm_content_scheme_is_exporter_aead_for_send(state_store, realm_id, circle)?;
     let should_commit = should_force_epoch_advance(
         state_store.realm_projection_is_minimal_metadata(realm_id),
         snapshot.epoch_started_at,
@@ -1519,8 +1545,6 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     // forward-secret `mls-rfc9420` PrivateMessage path. The epoch is read AFTER
     // any forced commit above, so the AEAD aad binds the epoch the content
     // actually rides; it MUST match the decrypt-side `history_content_aad_bytes`.
-    let use_exporter_aead =
-        circle.is_none() && realm_content_scheme_is_exporter_aead(state_store, realm_id);
     let mut encrypted_values = Vec::with_capacity(plaintext_values.len());
     let exporter_aad = use_exporter_aead
         .then(|| history_content_aad_bytes(realm_id, group.epoch()))
@@ -1662,6 +1686,9 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+    ensure_realm_membership_is_covered_for_send(state_store, realm_id, circle, &group)?;
+    let use_exporter_aead =
+        realm_content_scheme_is_exporter_aead_for_send(state_store, realm_id, circle)?;
     let should_commit = should_force_epoch_advance(
         is_minimal_metadata,
         snapshot.epoch_started_at,
@@ -1684,8 +1711,6 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     // The routing `aad` rides the envelope (`EncryptedPayload.aad` + digest); the
     // AEAD itself binds the epoch via `history_content_aad_bytes`, matching the
     // decrypt-side `try_history_decrypt_standalone`.
-    let use_exporter_aead =
-        circle.is_none() && realm_content_scheme_is_exporter_aead(state_store, realm_id);
     let encrypted = if use_exporter_aead {
         let aad_bytes = history_content_aad_bytes(realm_id, group.epoch())
             .map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
@@ -1765,6 +1790,55 @@ pub(crate) fn encrypt_message_with_device_snapshot(
         None,
         pending_history_secrets,
     ))
+}
+
+fn ensure_realm_membership_is_covered_for_send(
+    state_store: &crate::state::LocalStateStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    group: &arkret_sdk::ArkretMlsGroup,
+) -> Result<(), MlsRuntimeError> {
+    // Circle membership has its own projection/frontier and must not be
+    // compared to the Realm-default roster.
+    if circle_id.is_some() {
+        return Ok(());
+    }
+    let Some(joined) = state_store.complete_joined_member_hint_for_realm(realm_id) else {
+        return Ok(());
+    };
+    let group_members = group
+        .member_principal_ids()
+        .into_iter()
+        .map(|did| did.to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    if group_members != joined {
+        return Err(MlsRuntimeError::EncryptionTransitionPending);
+    }
+    Ok(())
+}
+
+/// UI/readiness form of the conservative roster-hint check. `None` means
+/// account sync has not supplied a complete hint (or local MLS state is not
+/// restorable); `Some(false)` pauses encryption. `Some(true)` is not itself
+/// authorization and cannot replace the verified governance-binding gates.
+pub(crate) fn realm_mls_roster_matches_complete_membership_hint(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> Option<bool> {
+    let joined = state_store.complete_joined_member_hint_for_realm(realm_id)?;
+    let members = mls_group_member_principal_ids_for_realm(
+        state_store,
+        secure_store,
+        realm_id,
+        actor_id,
+        device_id,
+    )?
+    .into_iter()
+    .collect::<std::collections::BTreeSet<_>>();
+    Some(members == joined)
 }
 
 fn self_update_with_verified_governance_binding(
