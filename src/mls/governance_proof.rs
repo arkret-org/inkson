@@ -4,6 +4,34 @@ use arkret_sdk::identity::{DidResolver, verification_method_did};
 use arkret_sdk::{NotarySig, Seal};
 use dioxus::prelude::{ReadableExt, WritableExt};
 
+pub(crate) trait GovernanceProofStateStore: Clone {
+    fn with_read<R>(&self, read: impl FnOnce(&crate::state::LocalStateStore) -> R) -> R;
+    fn with_write<R>(&self, write: impl FnOnce(&mut crate::state::LocalStateStore) -> R) -> R;
+}
+
+impl GovernanceProofStateStore for dioxus::prelude::SyncSignal<crate::state::LocalStateStore> {
+    fn with_read<R>(&self, read: impl FnOnce(&crate::state::LocalStateStore) -> R) -> R {
+        let store = ReadableExt::read(self);
+        read(&store)
+    }
+
+    fn with_write<R>(&self, write: impl FnOnce(&mut crate::state::LocalStateStore) -> R) -> R {
+        let mut signal = *self;
+        let mut store = WritableExt::write(&mut signal);
+        write(&mut store)
+    }
+}
+
+impl GovernanceProofStateStore for crate::runtime::input::StateStoreHandle {
+    fn with_read<R>(&self, read: impl FnOnce(&crate::state::LocalStateStore) -> R) -> R {
+        self.read(read)
+    }
+
+    fn with_write<R>(&self, write: impl FnOnce(&mut crate::state::LocalStateStore) -> R) -> R {
+        self.write(write)
+    }
+}
+
 #[derive(Default)]
 struct StaticProofDidResolver {
     documents: BTreeMap<String, arkret_sdk::DidDocument>,
@@ -80,9 +108,9 @@ pub(crate) fn proof_request(
     Ok(request)
 }
 
-pub(crate) async fn fetch_proof_bundle(
+async fn fetch_proof_bundle<S: GovernanceProofStateStore>(
     api: &crate::transport::TransportClient,
-    mut state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
+    state_store: S,
     request: &arkret_sdk::MlsGovernanceProofRequest,
 ) -> Result<arkret_sdk::MaterializedMlsGovernanceProofBundle, String> {
     let http = api
@@ -92,34 +120,31 @@ pub(crate) async fn fetch_proof_bundle(
     first_request.chunk_index = 0;
     first_request.expected_bundle_digest = None;
     let first = fetch_proof_chunk_with_retry(&http, &first_request).await?;
-    let mut chunks = state_store
-        .read()
-        .cached_mls_governance_acquisition(&first_request)
-        .unwrap_or_default();
+    let mut chunks = state_store.with_read(|store| {
+        store
+            .cached_mls_governance_acquisition(&first_request)
+            .unwrap_or_default()
+    });
     let cached_matches = chunks.first().is_some_and(|cached| {
         cached.bundle_digest == first.bundle_digest
             && cached.proof_request_digest == first.proof_request_digest
             && cached.chunk_manifest == first.chunk_manifest
     });
     if !cached_matches {
-        state_store
-            .write()
-            .clear_mls_governance_acquisition(&first_request)?;
+        state_store.with_write(|store| store.clear_mls_governance_acquisition(&first_request))?;
         chunks.clear();
         chunks.push(first.clone());
-        state_store
-            .write()
-            .persist_mls_governance_acquisition_chunk(&first_request, &first)?;
+        state_store.with_write(|store| {
+            store.persist_mls_governance_acquisition_chunk(&first_request, &first)
+        })?;
     }
     let chunk_count = first.chunk_manifest.chunk_count as usize;
     if chunks.len() > chunk_count {
-        state_store
-            .write()
-            .clear_mls_governance_acquisition(&first_request)?;
+        state_store.with_write(|store| store.clear_mls_governance_acquisition(&first_request))?;
         chunks = vec![first.clone()];
-        state_store
-            .write()
-            .persist_mls_governance_acquisition_chunk(&first_request, &first)?;
+        state_store.with_write(|store| {
+            store.persist_mls_governance_acquisition_chunk(&first_request, &first)
+        })?;
     }
     for chunk_index in chunks.len()..chunk_count {
         let mut next_request = first_request.clone();
@@ -132,22 +157,19 @@ pub(crate) async fn fetch_proof_bundle(
             || chunk.chunk_manifest != first.chunk_manifest
         {
             state_store
-                .write()
-                .clear_mls_governance_acquisition(&first_request)?;
+                .with_write(|store| store.clear_mls_governance_acquisition(&first_request))?;
             return Err(
                 "MLS governance proof service changed manifest during acquisition".to_owned(),
             );
         }
-        state_store
-            .write()
-            .persist_mls_governance_acquisition_chunk(&first_request, &chunk)?;
+        state_store.with_write(|store| {
+            store.persist_mls_governance_acquisition_chunk(&first_request, &chunk)
+        })?;
         chunks.push(chunk);
     }
     let materialized = arkret_sdk::assemble_mls_governance_proof_chunks(&first_request, &chunks)
         .map_err(|error| format!("assemble MLS governance proof chunks: {error}"))?;
-    state_store
-        .write()
-        .clear_mls_governance_acquisition(&first_request)?;
+    state_store.with_write(|store| store.clear_mls_governance_acquisition(&first_request))?;
     Ok(materialized)
 }
 
@@ -224,9 +246,9 @@ pub(crate) fn welcome_proof_requests(
     Ok(requests)
 }
 
-pub(crate) async fn fetch_verify_and_cache_proof(
+pub(crate) async fn fetch_verify_and_cache_proof<S: GovernanceProofStateStore>(
     api: &crate::transport::TransportClient,
-    state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
+    state_store: S,
     request: &arkret_sdk::MlsGovernanceProofRequest,
 ) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
     Ok(
@@ -236,16 +258,17 @@ pub(crate) async fn fetch_verify_and_cache_proof(
     )
 }
 
-pub(crate) async fn fetch_verify_and_cache_proof_bundle(
+pub(crate) async fn fetch_verify_and_cache_proof_bundle<S: GovernanceProofStateStore>(
     api: &crate::transport::TransportClient,
-    mut state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
+    state_store: S,
     request: &arkret_sdk::MlsGovernanceProofRequest,
 ) -> Result<arkret_sdk::MaterializedMlsGovernanceProofBundle, String> {
-    let bundle = fetch_proof_bundle(api, state_store, request).await?;
+    let bundle = fetch_proof_bundle(api, state_store.clone(), request).await?;
     let existing_pin = state_store
-        .read()
-        .trusted_mls_governance_anchor(request.realm_id.as_str());
-    if existing_pin.is_none() && !bundle_intersects_local_seal_view(&state_store.read(), &bundle) {
+        .with_read(|store| store.trusted_mls_governance_anchor(request.realm_id.as_str()));
+    if existing_pin.is_none()
+        && !state_store.with_read(|store| bundle_intersects_local_seal_view(store, &bundle))
+    {
         let observed = api
             .event_submitter()
             .map_err(|error| format!("MLS governance proof frontier client: {error}"))?
@@ -265,9 +288,9 @@ pub(crate) async fn fetch_verify_and_cache_proof_bundle(
                 observed.seal_id, observed.state_root
             ));
         }
-        state_store
-            .write()
-            .set_realm_seal_view(request.realm_id.as_str(), observed_view);
+        state_store.with_write(|store| {
+            store.set_realm_seal_view(request.realm_id.as_str(), observed_view)
+        });
     }
     let trusted_anchor = request.trusted_anchor_seal_id.clone();
 
@@ -316,12 +339,15 @@ pub(crate) async fn fetch_verify_and_cache_proof_bundle(
         }
     }
     verify_proof_bundle(request, &bundle, &trusted_anchor, &resolver)?;
-    let mut store = state_store.write();
-    if existing_pin.is_none() {
-        store
-            .pin_mls_governance_anchor(request.realm_id.as_str(), &bundle.trusted_anchor_seal_id)?;
-    }
-    store.cache_verified_mls_governance_proof(request.clone(), &bundle)?;
+    state_store.with_write(|store| {
+        if existing_pin.is_none() {
+            store.pin_mls_governance_anchor(
+                request.realm_id.as_str(),
+                &bundle.trusted_anchor_seal_id,
+            )?;
+        }
+        store.cache_verified_mls_governance_proof(request.clone(), &bundle)
+    })?;
     Ok(bundle)
 }
 

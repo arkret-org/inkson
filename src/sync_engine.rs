@@ -573,6 +573,30 @@ fn to_device_backfill_cursor(updates: &arkret_sdk::SyncUpdates) -> Option<String
         .flatten()
 }
 
+fn scope_rotate_realm_ids(
+    response: &AccountSyncStep,
+    state_store: &LocalStateStore,
+) -> Vec<String> {
+    let mut realm_ids = response
+        .updates
+        .realm_updates
+        .iter()
+        .filter(|update| realm_update_has_durable_projection(update))
+        .map(|update| update.realm_id.as_str().to_owned())
+        .collect::<BTreeSet<_>>();
+    realm_ids.extend(
+        state_store
+            .all_move_submissions()
+            .into_iter()
+            .filter(|record| {
+                record.kind == "mls_member_remove"
+                    && record.state == crate::state::MoveSubmissionState::PendingMlsBinding
+            })
+            .map(|record| record.realm_id),
+    );
+    realm_ids.into_iter().collect()
+}
+
 impl InksonAccountPostCommit {
     fn active(&self) -> bool {
         self.generation.get() == self.start_generation && !self.ctx.effect.is_cancelled()
@@ -681,17 +705,15 @@ impl AccountPostCommitHook<crate::client_core::InksonAccountTransport> for Inkso
             return Ok(self.classify_error(error));
         }
 
-        // Typing/presence/call-signal deltas also carry a Realm envelope, but
-        // they cannot create Circle MLS removal obligations. Scanning the
-        // Circle endpoint for those ephemeral-only frames amplified one
-        // typing signal into an extra GET on every account reconnect.
-        let realm_ids = response
-            .updates
-            .realm_updates
-            .iter()
-            .filter(|update| realm_update_has_durable_projection(update))
-            .map(|update| update.realm_id.as_str().to_owned())
-            .collect::<Vec<_>>();
+        // Typing/presence/call-signal deltas cannot create MLS removal
+        // obligations. A previously discovered PendingMlsBinding does need a
+        // retry on a later bounded poll, however, even when that poll carries
+        // no new durable Realm delta (for example after a transient proof
+        // fetch failure).
+        let realm_ids = self
+            .ctx
+            .state_store
+            .read(|store| scope_rotate_realm_ids(&response, store));
         if !realm_ids.is_empty() {
             run_circle_scope_rotate_pass(
                 self.start_generation,
@@ -700,9 +722,8 @@ impl AccountPostCommitHook<crate::client_core::InksonAccountTransport> for Inkso
                 &realm_ids,
             )
             .await;
-            // This remains an opportunistic durability pass, but it is now
-            // driven only by durable Realm work. Ephemeral deltas must never
-            // fan out MLS reads or writes.
+            // This remains an opportunistic durability pass, driven by new
+            // durable Realm work or an explicit pending reconciliation.
             run_idle_self_update_pass(self.start_generation, self.generation.clone(), &self.ctx)
                 .await;
         }
@@ -786,12 +807,99 @@ pub async fn run_sync_engine(
     }
 }
 
-/// Background Circle MLS scope-rotate worker.
+fn realm_membership_removal_basis(
+    projection: &Value,
+) -> Option<(BTreeSet<String>, Vec<arkret_sdk::EventId>)> {
+    // A truncated roster is not negative membership evidence.  Waiting for a
+    // complete projection is required before comparing it with the MLS tree.
+    if projection.get("members_limited").and_then(Value::as_bool) != Some(false) {
+        return None;
+    }
+    let active_members = projection
+        .get("members")?
+        .as_array()?
+        .iter()
+        .filter(|member| member.get("membership").and_then(Value::as_str) == Some("join"))
+        .filter_map(|member| member.get("actor_id").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    let mut membership_frontier = sync_realm_state_events(projection)
+        .into_iter()
+        .filter(|event| {
+            event
+                .get("kind")
+                .or_else(|| event.get("event_kind"))
+                .and_then(Value::as_str)
+                == Some("ak.member.state")
+        })
+        .filter(|event| {
+            let payload = event
+                .get("payload")
+                .or_else(|| event.get("content"))
+                .unwrap_or(&Value::Null);
+            matches!(
+                payload
+                    .get("membership")
+                    .or_else(|| payload.get("target_state"))
+                    .or_else(|| payload.get("state"))
+                    .and_then(Value::as_str),
+                Some("leave" | "ban")
+            )
+        })
+        .filter_map(|event| {
+            event
+                .get("event_id")
+                .and_then(Value::as_str)
+                .and_then(|event_id| arkret_sdk::EventId::new(event_id.to_owned()).ok())
+        })
+        .collect::<Vec<_>>();
+    membership_frontier.sort();
+    membership_frontier.dedup();
+    (!membership_frontier.is_empty()).then_some((active_members, membership_frontier))
+}
+
+fn realm_default_mls_removal_candidates(
+    state_store: &LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> Option<Vec<(String, Vec<arkret_sdk::EventId>)>> {
+    let state = state_store.load();
+    let Some(projection) = state.realm_tree_projections.get(realm_id) else {
+        return None;
+    };
+    let Some((active_members, membership_frontier)) = realm_membership_removal_basis(projection)
+    else {
+        return None;
+    };
+    let Some(mut mls_members) = crate::mls::runtime::mls_group_member_principal_ids_for_realm(
+        state_store,
+        secure_store,
+        realm_id,
+        actor_id,
+        device_id,
+    ) else {
+        return None;
+    };
+    mls_members.sort();
+    mls_members.dedup();
+    Some(
+        mls_members
+            .into_iter()
+            .filter(|member| !active_members.contains(member))
+            .map(|member| (member, membership_frontier.clone()))
+            .collect(),
+    )
+}
+
+/// Background Realm-default + Circle MLS scope-rotate worker.
 ///
-/// Scans the Realm ids that changed in the just-applied sync response, discovers
-/// pending Circle remove obligations from the typed Circle list endpoint, builds
-/// a real OpenMLS remove commit from the local Circle snapshot, and persists the
-/// post-commit snapshot only after the server accepts or deduplicates the event.
+/// Scans the Realm ids that changed in the just-applied sync response. Realm
+/// removals are derived from the canonical account-sync membership projection;
+/// Circle obligations come from the registered typed Circle list response. It
+/// builds real OpenMLS Remove commits and persists each post-commit snapshot
+/// only after the canonical Events are accepted.
 /// One commit is submitted per pass so competing clients and multi-Realm
 /// accounts do not burst writes after a sync wakeup.
 async fn run_circle_scope_rotate_pass(
@@ -847,6 +955,210 @@ async fn run_circle_scope_rotate_pass(
                 continue;
             }
         };
+
+        // circle.md §10.2/§10.3: a Realm membership removal rotates the
+        // Realm-default MLS group in addition to every MLS-backed Circle.
+        // Derive the Realm obligation exclusively from canonical sync state:
+        // a complete active-member roster, accepted ak.member.state
+        // leave/ban frontier Events, and the local RFC 9420 group roster.
+        // No private server flag or unregistered HTTP field participates.
+        let realm_removals = ctx.state_store.read(|store| {
+            realm_default_mls_removal_candidates(
+                store,
+                secure_store.as_ref(),
+                &realm_id,
+                &actor_id,
+                &device_id,
+            )
+        });
+        if let Some(removals) = realm_removals
+            .as_ref()
+            .filter(|removals| !removals.is_empty())
+        {
+            let target_principal_ids: Vec<String> = removals
+                .iter()
+                .map(|(principal_id, _)| principal_id.clone())
+                .collect();
+            let mut revocation_membership_frontier: Vec<arkret_sdk::EventId> = removals
+                .iter()
+                .flat_map(|(_, frontier)| frontier.iter().cloned())
+                .collect();
+            revocation_membership_frontier.sort();
+            revocation_membership_frontier.dedup();
+            if !ctx
+                .state_store
+                .read(|store| store.realm_has_pending_mls_binding(&realm_id))
+            {
+                let tracking_id = format!(
+                    "mls-binding:{}:{}",
+                    realm_id,
+                    revocation_membership_frontier
+                        .first()
+                        .map(arkret_sdk::EventId::as_str)
+                        .unwrap_or("membership-frontier")
+                );
+                ctx.state_store.write(|store| {
+                    store.record_move_submission(
+                        tracking_id,
+                        realm_id.clone(),
+                        "mls_member_remove",
+                        crate::state::MoveSubmissionState::PendingMlsBinding,
+                        Some(
+                            "epoch_update_required: membership frontier changed; MLS Remove commit required"
+                                .to_owned(),
+                        ),
+                        None,
+                    );
+                });
+            }
+            let Some(snapshot) = ctx
+                .state_store
+                .read(|store| store.mls_snapshot_for(&realm_id))
+            else {
+                tracing::debug!(
+                    %realm_id,
+                    ?target_principal_ids,
+                    "sync_engine: Realm MLS remove skipped without local snapshot",
+                );
+                continue;
+            };
+            let proof_request = ctx.state_store.read(|store| {
+                crate::mls::governance_proof::proof_request(
+                    store,
+                    &realm_id,
+                    None,
+                    snapshot.group_id.clone(),
+                    snapshot.epoch,
+                    snapshot.epoch.saturating_add(1),
+                )
+            });
+            let proof_request = match proof_request {
+                Ok(request) => request,
+                Err(error) => {
+                    tracing::debug!(
+                        %realm_id,
+                        ?target_principal_ids,
+                        %error,
+                        "sync_engine: Realm MLS remove proof request deferred",
+                    );
+                    continue;
+                }
+            };
+            let realm_for_submit = realm_id.clone();
+            let actor_for_submit = actor_id.clone();
+            let device_for_submit = device_id.clone();
+            let targets_for_submit = target_principal_ids.clone();
+            let frontier_for_submit = revocation_membership_frontier.clone();
+            let state_store = ctx.state_store.clone();
+            let submitted = crate::transport::auth::with_authed_api(
+                &base,
+                token.clone(),
+                move |api| async move {
+                    crate::mls::governance_proof::fetch_verify_and_cache_proof(
+                        &api,
+                        state_store.clone(),
+                        &proof_request,
+                    )
+                    .await
+                    .map_err(anyhow::Error::msg)?;
+                    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+                    let draft = state_store
+                        .read(|store| {
+                            let target_refs: Vec<&str> =
+                                targets_for_submit.iter().map(String::as_str).collect();
+                            crate::circle_mls::build_realm_remove_members_scope_rotate_draft(
+                                store,
+                                secure_store.as_ref(),
+                                &realm_for_submit,
+                                &actor_for_submit,
+                                &device_for_submit,
+                                &target_refs,
+                                &frontier_for_submit,
+                            )
+                        })
+                        .map_err(anyhow::Error::msg)?;
+                    let post_commit_snapshot = draft.post_commit_snapshot;
+                    let removed_principals = draft.removed_principals;
+                    let submitter = api.event_submitter()?;
+                    for event in draft.events {
+                        submitter.submit_sdk_event(&event).await?;
+                    }
+                    Ok::<_, anyhow::Error>((post_commit_snapshot, removed_principals))
+                },
+            )
+            .await;
+            match submitted {
+                Ok((post_commit_snapshot, removed_principals)) => {
+                    if generation.get() != start_generation {
+                        return;
+                    }
+                    ctx.state_store.write(|store| {
+                        store.save_mls_snapshot(realm_id.clone(), post_commit_snapshot)
+                    });
+                    tracing::info!(
+                        %realm_id,
+                        ?target_principal_ids,
+                        ?removed_principals,
+                        "sync_engine: Realm-default MLS remove commit accepted",
+                    );
+                    // One canonical MLS group rotation per pass. Every Realm
+                    // removal obligation is included in this single Commit;
+                    // the accepted Event wakes sync for Circle obligations.
+                    return;
+                }
+                Err(error) => {
+                    if error.is_auth_expired() {
+                        return;
+                    }
+                    tracing::debug!(
+                        %realm_id,
+                        ?target_principal_ids,
+                        error = %error.display(),
+                        "sync_engine: Realm-default MLS remove commit deferred",
+                    );
+                    continue;
+                }
+            }
+        }
+
+        let has_pending_circle_removals = circles
+            .circles
+            .iter()
+            .any(|circle| !circle.pending_mls_removals.is_empty());
+        if has_pending_circle_removals
+            && !ctx
+                .state_store
+                .read(|store| store.realm_has_pending_mls_binding(&realm_id))
+        {
+            let tracking_suffix = circles
+                .circles
+                .iter()
+                .find_map(|circle| {
+                    circle
+                        .pending_mls_removals
+                        .first()
+                        .map(|removal| format!("{}:{}", circle.circle_id, removal.principal_id()))
+                })
+                .unwrap_or_else(|| "circle-membership-frontier".to_owned());
+            ctx.state_store.write(|store| {
+                store.record_move_submission(
+                    format!("mls-binding:{realm_id}:{tracking_suffix}"),
+                    realm_id.clone(),
+                    "mls_member_remove",
+                    crate::state::MoveSubmissionState::PendingMlsBinding,
+                    Some(
+                        "epoch_update_required: membership frontier changed; MLS Remove commit required"
+                            .to_owned(),
+                    ),
+                    None,
+                );
+            });
+        }
+        if realm_removals.as_ref().is_some_and(Vec::is_empty) && !has_pending_circle_removals {
+            ctx.state_store.write(|store| {
+                store.resolve_member_remove_mls_bindings(&realm_id);
+            });
+        }
         for circle in circles.circles {
             if generation.get() != start_generation {
                 return;
@@ -882,13 +1194,13 @@ async fn run_circle_scope_rotate_pass(
                 );
                 continue;
             }
+            let mut target_principal_ids = Vec::new();
+            let mut revocation_membership_frontier = Vec::new();
+            let mut missing_frontier = false;
             for target in circle.pending_mls_removals {
-                if generation.get() != start_generation {
-                    return;
-                }
                 let target_principal_id = target.principal_id().to_string();
-                let revocation_membership_frontier = target.membership_frontier().to_vec();
-                if revocation_membership_frontier.is_empty() {
+                if target.membership_frontier().is_empty() {
+                    missing_frontier = true;
                     tracing::debug!(
                         %realm_id,
                         %circle_id,
@@ -897,84 +1209,95 @@ async fn run_circle_scope_rotate_pass(
                     );
                     continue;
                 }
-                let draft = ctx.state_store.read(|store| {
-                    crate::circle_mls::build_circle_remove_scope_rotate_draft(
-                        store,
-                        secure_store.as_ref(),
-                        &realm_id,
-                        &circle_id,
-                        &actor_id,
-                        &device_id,
-                        &target_principal_id,
-                        &revocation_membership_frontier,
-                    )
-                });
-                let draft = match draft {
-                    Ok(draft) => draft,
+                target_principal_ids.push(target_principal_id);
+                revocation_membership_frontier.extend(target.membership_frontier().iter().cloned());
+            }
+            // Server validation is all-or-nothing for the pending obligations
+            // in one effective scope; a partial Remove commit must not be sent.
+            if missing_frontier || target_principal_ids.is_empty() {
+                continue;
+            }
+            revocation_membership_frontier.sort();
+            revocation_membership_frontier.dedup();
+            let draft = ctx.state_store.read(|store| {
+                let target_refs: Vec<&str> =
+                    target_principal_ids.iter().map(String::as_str).collect();
+                crate::circle_mls::build_circle_remove_members_scope_rotate_draft(
+                    store,
+                    secure_store.as_ref(),
+                    &realm_id,
+                    &circle_id,
+                    &actor_id,
+                    &device_id,
+                    &target_refs,
+                    &revocation_membership_frontier,
+                )
+            });
+            let draft = match draft {
+                Ok(draft) => draft,
+                Err(err) => {
+                    tracing::debug!(
+                        %realm_id,
+                        %circle_id,
+                        ?target_principal_ids,
+                        error = %err,
+                        "sync_engine: Circle scope-rotate draft build skipped",
+                    );
+                    continue;
+                }
+            };
+            let events = draft.events;
+            let post_commit_snapshot = draft.post_commit_snapshot;
+            let removed_leaves = draft.removed_leaves;
+            let removed_principals = draft.removed_principals;
+            let outcome =
+                match crate::transport::auth::with_event_submitter(&base, token.clone(), {
+                    let circle_id = circle_id.clone();
+                    move |sub| async move {
+                        crate::transport::circle::submit_circle_scope_rotate_events(
+                            &sub, &circle_id, &events, None,
+                        )
+                        .await
+                    }
+                })
+                .await
+                {
+                    Ok(outcome) => outcome,
                     Err(err) => {
+                        if err.is_auth_expired() {
+                            return;
+                        }
                         tracing::debug!(
                             %realm_id,
                             %circle_id,
-                            %target_principal_id,
-                            error = %err,
-                            "sync_engine: Circle scope-rotate draft build skipped",
+                            ?target_principal_ids,
+                            error = %err.display(),
+                            "sync_engine: Circle scope-rotate submit failed",
                         );
                         continue;
                     }
                 };
-                let events = draft.events;
-                let post_commit_snapshot = draft.post_commit_snapshot;
-                let removed_leaves = draft.removed_leaves;
-                let removed_principals = draft.removed_principals;
-                let outcome =
-                    match crate::transport::auth::with_event_submitter(&base, token.clone(), {
-                        let circle_id = circle_id.clone();
-                        move |sub| async move {
-                            crate::transport::circle::submit_circle_scope_rotate_events(
-                                &sub, &circle_id, &events, None,
-                            )
-                            .await
-                        }
-                    })
-                    .await
-                    {
-                        Ok(outcome) => outcome,
-                        Err(err) => {
-                            if err.is_auth_expired() {
-                                return;
-                            }
-                            tracing::debug!(
-                                %realm_id,
-                                %circle_id,
-                                %target_principal_id,
-                                error = %err.display(),
-                                "sync_engine: Circle scope-rotate submit failed",
-                            );
-                            continue;
-                        }
-                    };
-                if generation.get() != start_generation {
-                    return;
-                }
-                ctx.state_store.write(|store| {
-                    store.save_mls_snapshot_for_effective_scope(
-                        realm_id.clone(),
-                        Some(&circle_id),
-                        post_commit_snapshot,
-                    )
-                });
-                tracing::info!(
-                    %realm_id,
-                    %circle_id,
-                    %target_principal_id,
-                    ?removed_leaves,
-                    ?removed_principals,
-                    mls_group_ref = ?outcome.mls_group_ref,
-                    note = ?outcome.note,
-                    "sync_engine: Circle scope-rotate commit accepted",
-                );
+            if generation.get() != start_generation {
                 return;
             }
+            ctx.state_store.write(|store| {
+                store.save_mls_snapshot_for_effective_scope(
+                    realm_id.clone(),
+                    Some(&circle_id),
+                    post_commit_snapshot,
+                )
+            });
+            tracing::info!(
+                %realm_id,
+                %circle_id,
+                ?target_principal_ids,
+                ?removed_leaves,
+                ?removed_principals,
+                mls_group_ref = ?outcome.mls_group_ref,
+                note = ?outcome.note,
+                "sync_engine: Circle scope-rotate commit accepted",
+            );
+            return;
         }
     }
 }
@@ -2511,6 +2834,64 @@ mod tests {
         let replacement = live_device_id.get();
         assert_ne!(replacement, revoked);
         assert!(crate::config::is_valid_device_id(&replacement));
+    }
+
+    #[test]
+    fn realm_mls_removal_basis_requires_complete_roster_and_accepted_frontier() {
+        let removal_event = "ak:event:0196419b-0000-7000-8000-0000000000bb";
+        let projection = json!({
+            "members_limited": false,
+            "members": [{
+                "actor_id": "did:webvh:z6mkfixture:alice.example",
+                "membership": "join"
+            }],
+            "state": {"events": [{
+                "event_id": removal_event,
+                "kind": "ak.member.state",
+                "payload": {
+                    "actor_id": "did:webvh:z6mkfixture:bob.example",
+                    "membership": "ban"
+                }
+            }]}
+        });
+
+        let (active, frontier) = realm_membership_removal_basis(&projection).unwrap();
+        assert_eq!(
+            active,
+            BTreeSet::from(["did:webvh:z6mkfixture:alice.example".to_owned()])
+        );
+        assert_eq!(
+            frontier,
+            vec![arkret_sdk::EventId::new(removal_event.to_owned()).unwrap()]
+        );
+
+        let mut truncated = projection;
+        truncated["members_limited"] = json!(true);
+        assert!(realm_membership_removal_basis(&truncated).is_none());
+    }
+
+    #[test]
+    fn pending_mls_binding_retries_on_empty_account_poll_until_resolved() {
+        let realm_id = "ak:realm:0196419b-0000-7000-8000-0000000000cc";
+        let response = empty_response("ak:cursor:mls-retry");
+        let mut store = temp_store("mls-remove-empty-poll-retry");
+
+        assert!(scope_rotate_realm_ids(&response, &store).is_empty());
+        store.record_move_submission(
+            "ak:event:0196419b-0000-7000-8000-0000000000cd",
+            realm_id,
+            "mls_member_remove",
+            crate::state::MoveSubmissionState::PendingMlsBinding,
+            Some("epoch_update_required".to_owned()),
+            None,
+        );
+
+        assert_eq!(
+            scope_rotate_realm_ids(&response, &store),
+            vec![realm_id.to_owned()]
+        );
+        assert_eq!(store.resolve_member_remove_mls_bindings(realm_id), 1);
+        assert!(scope_rotate_realm_ids(&response, &store).is_empty());
     }
 
     fn empty_response(cursor: &str) -> AccountSyncStep {

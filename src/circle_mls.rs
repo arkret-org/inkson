@@ -42,9 +42,9 @@ fn circle_effective_scope(
     })
 }
 
-fn build_circle_remove_proposal_event(
+fn build_remove_proposal_event(
     realm_id: &str,
-    circle_id: &str,
+    circle_id: Option<&str>,
     actor_id: &str,
     target_principal_id: &str,
     proposal: &arkret_sdk::MlsProposalEnvelope,
@@ -72,81 +72,32 @@ fn build_circle_remove_proposal_event(
     .map_err(|err| format!("MLS proposal payload failed: {err}"))?
     .build_sdk_event("inkson")
     .map_err(|err| format!("MLS proposal SDK Event conversion failed: {err}"))?;
-    event.effective_scope = Some(circle_effective_scope(realm_id, circle_id)?);
+    if let Some(circle_id) = circle_id {
+        event.effective_scope = Some(circle_effective_scope(realm_id, circle_id)?);
+    }
     Ok(event)
-}
-
-pub fn build_circle_remove_scope_rotate_draft(
-    state_store: &LocalStateStore,
-    secure_store: &dyn SecureKeyStore,
-    realm_id: &str,
-    circle_id: &str,
-    actor_id: &str,
-    device_id: &str,
-    target_principal_id: &str,
-    revocation_membership_frontier: &[arkret_sdk::EventId],
-) -> Result<CircleScopeRotateDraft, String> {
-    build_remove_scope_rotate_draft(
-        state_store,
-        secure_store,
-        realm_id,
-        circle_id,
-        actor_id,
-        device_id,
-        target_principal_id,
-        revocation_membership_frontier,
-        None,
-    )
-}
-
-pub fn build_sidecar_remove_scope_rotate_draft(
-    state_store: &LocalStateStore,
-    secure_store: &dyn SecureKeyStore,
-    realm_id: &str,
-    circle_id: &str,
-    actor_id: &str,
-    device_id: &str,
-    target_principal_id: &str,
-    revocation_membership_frontier: &[arkret_sdk::EventId],
-    sidecar_binding: arkret_sdk::SidecarMlsBinding,
-) -> Result<CircleScopeRotateDraft, String> {
-    build_remove_scope_rotate_draft(
-        state_store,
-        secure_store,
-        realm_id,
-        circle_id,
-        actor_id,
-        device_id,
-        target_principal_id,
-        revocation_membership_frontier,
-        Some(sidecar_binding),
-    )
 }
 
 fn build_remove_scope_rotate_draft(
     state_store: &LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    circle_id: &str,
+    circle_id: Option<&str>,
     actor_id: &str,
     device_id: &str,
-    target_principal_id: &str,
+    target_principal_ids: &[&str],
     revocation_membership_frontier: &[arkret_sdk::EventId],
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<CircleScopeRotateDraft, String> {
-    let circle = circle_id.trim();
-    if circle.is_empty() {
-        return Err("circle_id is required for Circle MLS scope rotate".to_owned());
-    }
     let (remove, post_commit_snapshot) =
-        crate::mls::runtime::build_mls_remove_commit_for_effective_scope_with_sidecar_binding(
+        crate::mls::runtime::build_mls_remove_members_commit_for_effective_scope_with_sidecar_binding(
             state_store,
             secure_store,
             realm_id,
-            Some(circle),
+            circle_id,
             actor_id,
             device_id,
-            target_principal_id,
+            target_principal_ids,
             revocation_membership_frontier,
             sidecar_binding.clone(),
         )
@@ -154,13 +105,21 @@ fn build_remove_scope_rotate_draft(
     if remove.proposals.is_empty() {
         return Err("OpenMLS remove did not produce durable proposal artifacts".to_owned());
     }
+    if remove.proposals.len() != remove.removed_principals.len() {
+        return Err(
+            "OpenMLS remove proposal artifacts do not align with removed principals".to_owned(),
+        );
+    }
     let mut events = Vec::with_capacity(remove.proposals.len().saturating_add(1));
     let mut proposal_refs = Vec::with_capacity(remove.proposals.len());
     let proposal_governance_binding = if let Some(sidecar_binding) = sidecar_binding.as_ref() {
+        let circle_id = circle_id.ok_or_else(|| {
+            "Sidecar MLS removal requires the backing Circle effective scope".to_owned()
+        })?;
         let request = crate::mls::governance_proof::proof_request(
             state_store,
             realm_id,
-            Some(circle),
+            Some(circle_id),
             remove.commit.group_id.clone(),
             remove.commit.epoch.saturating_sub(1),
             remove.commit.epoch,
@@ -173,12 +132,16 @@ fn build_remove_scope_rotate_draft(
     } else {
         None
     };
-    for proposal in &remove.proposals {
-        let proposal_event = build_circle_remove_proposal_event(
+    for (proposal, removed_principal) in remove
+        .proposals
+        .iter()
+        .zip(remove.removed_principals.iter())
+    {
+        let proposal_event = build_remove_proposal_event(
             realm_id,
-            circle,
+            circle_id,
             actor_id,
-            target_principal_id,
+            removed_principal.as_str(),
             proposal,
             proposal_governance_binding.clone(),
         )?;
@@ -186,10 +149,13 @@ fn build_remove_scope_rotate_draft(
         events.push(proposal_event);
     }
     let commit_event = if let Some(sidecar_binding) = sidecar_binding {
+        let circle_id = circle_id.ok_or_else(|| {
+            "Sidecar MLS removal requires the backing Circle effective scope".to_owned()
+        })?;
         crate::mls::group_events::mls_remove_commit_event_from_store_for_effective_scope_with_sidecar_binding(
             state_store,
             realm_id,
-            circle,
+            circle_id,
             actor_id,
             &remove.commit,
             proposal_refs,
@@ -200,7 +166,7 @@ fn build_remove_scope_rotate_draft(
         crate::mls::group_events::mls_remove_commit_event_from_store_for_effective_scope_with_proposal_refs(
             state_store,
             realm_id,
-            Some(circle),
+            circle_id,
             actor_id,
             &remove.commit,
             proposal_refs,
@@ -218,6 +184,125 @@ fn build_remove_scope_rotate_draft(
             .map(|did| did.to_string())
             .collect(),
     })
+}
+
+pub fn build_sidecar_remove_scope_rotate_draft(
+    state_store: &LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    target_principal_id: &str,
+    revocation_membership_frontier: &[arkret_sdk::EventId],
+    sidecar_binding: arkret_sdk::SidecarMlsBinding,
+) -> Result<CircleScopeRotateDraft, String> {
+    let circle = circle_id.trim();
+    if circle.is_empty() {
+        return Err("circle_id is required for Sidecar MLS scope rotate".to_owned());
+    }
+    build_remove_scope_rotate_draft(
+        state_store,
+        secure_store,
+        realm_id,
+        Some(circle),
+        actor_id,
+        device_id,
+        &[target_principal_id],
+        revocation_membership_frontier,
+        Some(sidecar_binding),
+    )
+}
+
+pub fn build_realm_remove_scope_rotate_draft(
+    state_store: &LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    target_principal_id: &str,
+    revocation_membership_frontier: &[arkret_sdk::EventId],
+) -> Result<CircleScopeRotateDraft, String> {
+    build_realm_remove_members_scope_rotate_draft(
+        state_store,
+        secure_store,
+        realm_id,
+        actor_id,
+        device_id,
+        &[target_principal_id],
+        revocation_membership_frontier,
+    )
+}
+
+pub fn build_realm_remove_members_scope_rotate_draft(
+    state_store: &LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    target_principal_ids: &[&str],
+    revocation_membership_frontier: &[arkret_sdk::EventId],
+) -> Result<CircleScopeRotateDraft, String> {
+    build_remove_scope_rotate_draft(
+        state_store,
+        secure_store,
+        realm_id,
+        None,
+        actor_id,
+        device_id,
+        target_principal_ids,
+        revocation_membership_frontier,
+        None,
+    )
+}
+
+pub fn build_circle_remove_scope_rotate_draft(
+    state_store: &LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    target_principal_id: &str,
+    revocation_membership_frontier: &[arkret_sdk::EventId],
+) -> Result<CircleScopeRotateDraft, String> {
+    build_circle_remove_members_scope_rotate_draft(
+        state_store,
+        secure_store,
+        realm_id,
+        circle_id,
+        actor_id,
+        device_id,
+        &[target_principal_id],
+        revocation_membership_frontier,
+    )
+}
+
+pub fn build_circle_remove_members_scope_rotate_draft(
+    state_store: &LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    target_principal_ids: &[&str],
+    revocation_membership_frontier: &[arkret_sdk::EventId],
+) -> Result<CircleScopeRotateDraft, String> {
+    let circle = circle_id.trim();
+    if circle.is_empty() {
+        return Err("circle_id is required for Circle MLS scope rotate".to_owned());
+    }
+    build_remove_scope_rotate_draft(
+        state_store,
+        secure_store,
+        realm_id,
+        Some(circle),
+        actor_id,
+        device_id,
+        target_principal_ids,
+        revocation_membership_frontier,
+        None,
+    )
 }
 
 pub async fn submit_circle_scope_rotate_draft(
@@ -284,10 +369,13 @@ pub async fn drain_circle_scope_rotate_obligations(
             });
             continue;
         }
+        let mut target_principal_ids = Vec::new();
+        let mut revocation_membership_frontier = Vec::new();
+        let mut missing_frontier = false;
         for target in circle.pending_mls_removals {
             let target_principal_id = target.principal_id().to_string();
-            let revocation_membership_frontier = target.membership_frontier().to_vec();
-            if revocation_membership_frontier.is_empty() {
+            if target.membership_frontier().is_empty() {
+                missing_frontier = true;
                 outcome.skipped.push(CircleScopeRotateDrainSkip {
                     circle_id: circle_id.clone(),
                     target_principal_id: Some(target_principal_id),
@@ -295,35 +383,51 @@ pub async fn drain_circle_scope_rotate_obligations(
                 });
                 continue;
             }
-            let draft = match build_circle_remove_scope_rotate_draft(
-                state_store,
-                secure_store,
-                realm_id,
-                &circle_id,
-                actor_id,
-                device_id,
-                &target_principal_id,
-                &revocation_membership_frontier,
-            ) {
-                Ok(draft) => draft,
-                Err(reason) => {
+            target_principal_ids.push(target_principal_id);
+            revocation_membership_frontier.extend(target.membership_frontier().iter().cloned());
+        }
+        // The server validates a scope rotation against every pending Remove
+        // obligation in that scope. Never submit a partial batch.
+        if missing_frontier || target_principal_ids.is_empty() {
+            continue;
+        }
+        revocation_membership_frontier.sort();
+        revocation_membership_frontier.dedup();
+        let target_refs: Vec<&str> = target_principal_ids.iter().map(String::as_str).collect();
+        let draft = match build_circle_remove_members_scope_rotate_draft(
+            state_store,
+            secure_store,
+            realm_id,
+            &circle_id,
+            actor_id,
+            device_id,
+            &target_refs,
+            &revocation_membership_frontier,
+        ) {
+            Ok(draft) => draft,
+            Err(reason) => {
+                for target_principal_id in target_principal_ids {
                     outcome.failed.push(CircleScopeRotateDrainFailure {
                         circle_id: circle_id.clone(),
                         target_principal_id,
-                        reason,
+                        reason: reason.clone(),
                     });
-                    continue;
                 }
-            };
-            match submit_circle_scope_rotate_draft(api, state_store, realm_id, &circle_id, draft)
-                .await
-            {
-                Ok(submitted) => outcome.submitted.push(submitted),
-                Err(err) => outcome.failed.push(CircleScopeRotateDrainFailure {
-                    circle_id: circle_id.clone(),
-                    target_principal_id,
-                    reason: err.to_string(),
-                }),
+                continue;
+            }
+        };
+        match submit_circle_scope_rotate_draft(api, state_store, realm_id, &circle_id, draft).await
+        {
+            Ok(submitted) => outcome.submitted.push(submitted),
+            Err(err) => {
+                let reason = err.to_string();
+                for target_principal_id in target_principal_ids {
+                    outcome.failed.push(CircleScopeRotateDrainFailure {
+                        circle_id: circle_id.clone(),
+                        target_principal_id,
+                        reason: reason.clone(),
+                    });
+                }
             }
         }
     }

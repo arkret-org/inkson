@@ -640,7 +640,13 @@ async fn reconcile_sidecar_mls_removals(
     let device_id = device_id.to_owned();
     let sidecar_binding = sidecar_mls_binding(&view);
     crate::transport::auth::with_authed_api(base_url, api_token, move |api| async move {
-        let submit_pending = |pending: &PendingSidecarMlsRemoval| async {
+        let persisted = {
+            state_store
+                .read()
+                .load_private_data(&controller_id, &pending_key)
+        };
+        if let Some(raw) = persisted {
+            let pending = serde_json::from_str::<PendingSidecarMlsRemoval>(&raw)?;
             let body = arkret_sdk::CircleScopeRotateRequestBody {
                 events: pending.events.clone(),
                 idempotency_key: Some(pending.idempotency_key.clone()),
@@ -648,14 +654,7 @@ async fn reconcile_sidecar_mls_removals(
             api.sdk_http_client()?
                 .circle_scope_rotate(&circle_id, &pending.idempotency_key, &body)
                 .await
-                .map_err(anyhow::Error::from)
-        };
-        if let Some(raw) = state_store
-            .read()
-            .load_private_data(&controller_id, &pending_key)
-        {
-            let pending = serde_json::from_str::<PendingSidecarMlsRemoval>(&raw)?;
-            submit_pending(&pending).await?;
+                .map_err(anyhow::Error::from)?;
             state_store.write().save_mls_snapshot_for_effective_scope(
                 realm_id.clone(),
                 Some(&circle_id),
@@ -722,7 +721,14 @@ async fn reconcile_sidecar_mls_removals(
                 pending_key.clone(),
                 serde_json::to_string(&pending)?,
             );
-            submit_pending(&pending).await?;
+            let body = arkret_sdk::CircleScopeRotateRequestBody {
+                events: pending.events.clone(),
+                idempotency_key: Some(pending.idempotency_key.clone()),
+            };
+            api.sdk_http_client()?
+                .circle_scope_rotate(&circle_id, &pending.idempotency_key, &body)
+                .await
+                .map_err(anyhow::Error::from)?;
             state_store.write().save_mls_snapshot_for_effective_scope(
                 realm_id.clone(),
                 Some(&circle_id),

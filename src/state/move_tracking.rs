@@ -196,6 +196,30 @@ impl LocalStateStore {
             .any(|record| record.state == MoveSubmissionState::PendingMlsBinding)
     }
 
+    /// Resolve locally tracked membership transitions once the server reports
+    /// no remaining Realm or Circle MLS Remove obligations.  Membership Event
+    /// lifecycle and MLS epoch lifecycle are distinct, so the Event becoming
+    /// effective alone must not clear the send gate; the reconciliation worker
+    /// calls this only after the cryptographic frontier has caught up.
+    pub fn resolve_member_remove_mls_bindings(&mut self, realm_id: &str) -> usize {
+        self.ensure_cached_loaded();
+        let mut updated = 0;
+        for record in self.cached.move_submissions.values_mut() {
+            if record.realm_id == realm_id
+                && record.kind == "mls_member_remove"
+                && record.state == MoveSubmissionState::PendingMlsBinding
+            {
+                record.state = MoveSubmissionState::Effective;
+                record.reason = None;
+                updated += 1;
+            }
+        }
+        if updated > 0 {
+            let _ = self.flush();
+        }
+        updated
+    }
+
     /// Drop a tracked Move (after it terminates and the user
     /// dismisses the row). Idempotent.
     pub fn drop_move_submission(&mut self, move_id: &str) {
