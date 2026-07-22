@@ -1652,9 +1652,10 @@ pub fn ChatPanel(
             .and_then(|channel| channel.security_encrypted)
             .unwrap_or(selected_realm_security_encrypted)
     };
-    let selected_realm_pending_mls_binding = state_store
+    let selected_realm_pending_mls_binding_reason = state_store
         .read()
-        .realm_has_pending_mls_binding(&selected_realm_id);
+        .realm_pending_mls_binding_reason(&selected_realm_id);
+    let selected_realm_pending_mls_binding = selected_realm_pending_mls_binding_reason.is_some();
     let sidecar_security_label = sidecar_session.as_ref().map(|session| {
         if !session.membership_ready() {
             "Reconciling access"
@@ -2675,7 +2676,7 @@ pub fn ChatPanel(
                         class: "event warning-banner",
                         "data-testid": "epoch-update-required-banner",
                         role: "alert",
-                        "epoch_update_required: membership frontier changed; MLS Remove commit required"
+                        {selected_realm_pending_mls_binding_reason.as_deref().unwrap_or("epoch_update_required")}
                     }
                 }
 
@@ -3300,6 +3301,7 @@ pub fn ChatPanel(
                     plaintext_service_id: plaintext_service_id.clone(),
                     selected_channel_security_encrypted,
                     selected_realm_pending_mls_binding,
+                    selected_realm_pending_mls_binding_reason: selected_realm_pending_mls_binding_reason.clone(),
                     sidecar_send_block_reason: sidecar_send_block_reason.clone(),
                     public_agent_dids: public_agent_dids.clone(),
                     own_controller_handle: own_controller_handle.clone(),

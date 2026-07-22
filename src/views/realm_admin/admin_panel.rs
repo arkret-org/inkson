@@ -995,6 +995,32 @@ pub fn RealmAdminPanel(
                                             state_store
                                                 .write()
                                                 .save_mls_snapshot(realm.clone(), snapshot);
+                                            // A self-update is also the spec-defined
+                                            // recovery commit when a historical
+                                            // membership transition changed the
+                                            // frontier without changing the current
+                                            // MLS roster.  Never clear the send gate
+                                            // merely because the Event is effective:
+                                            // require this accepted Commit and exact
+                                            // canonical-membership/MLS-roster agreement.
+                                            let secure_store = crate::secure_key_store::
+                                                default_secure_key_store("inkson");
+                                            let roster_aligned = {
+                                                let store = state_store.read();
+                                                super::members_panel::
+                                                    realm_mls_roster_matches_accepted_membership(
+                                                        &store,
+                                                        secure_store.as_ref(),
+                                                        &realm,
+                                                        &actor_id,
+                                                        &device,
+                                                    )
+                                            };
+                                            if roster_aligned {
+                                                let mut store = state_store.write();
+                                                store.resolve_member_add_mls_bindings(&realm);
+                                                store.resolve_member_remove_mls_bindings(&realm);
+                                            }
                                             status_msg.set(format!(
                                                 "rotated to epoch {next_epoch}"
                                             ));

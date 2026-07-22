@@ -2429,6 +2429,32 @@ fn accepted_membership_profiles_for_realm(
     rows.into_values().map(|(_, _, profile)| profile).collect()
 }
 
+pub(super) fn realm_mls_roster_matches_accepted_membership(
+    state_store: &LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> bool {
+    let canonical_joined: BTreeSet<String> =
+        accepted_membership_profiles_for_realm(state_store, realm_id)
+            .into_iter()
+            .filter(|member| member.normalized_membership() == Some("join"))
+            .map(|member| member.actor_id)
+            .filter(|did| !did.trim().is_empty())
+            .collect();
+    crate::mls::runtime::mls_group_member_principal_ids_for_realm(
+        state_store,
+        secure_store,
+        realm_id,
+        actor_id,
+        device_id,
+    )
+    .map(|members| members.into_iter().collect::<BTreeSet<_>>())
+    .as_ref()
+        == Some(&canonical_joined)
+}
+
 fn raw_operation_event_time(record: &RawOperationRecord) -> chrono::DateTime<chrono::Utc> {
     raw_operation_path_string(&record.payload, &["created_at"])
         .and_then(|timestamp| chrono::DateTime::parse_from_rfc3339(&timestamp).ok())
@@ -2508,7 +2534,7 @@ pub(crate) struct MlsAdmissionReconcileOutcome {
 
 pub(crate) async fn reconcile_mls_admissions_for_realm(
     api: &crate::transport::TransportClient,
-    state_store: SyncSignal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     actor_id: String,
     device_id: String,
@@ -2617,6 +2643,26 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
                     "admission deferred: claim/commit/welcome step failed (bounded retry scheduled)"
                 );
             }
+        }
+    }
+    if outcome.admitted > 0 {
+        // An accepted Add commit is necessary but not by itself sufficient to
+        // release the send gate. Only exact agreement between the current MLS
+        // roster and the accepted canonical Join projection proves that every
+        // pending Add obligation for this Realm is represented in the epoch.
+        if {
+            let store = state_store.read();
+            realm_mls_roster_matches_accepted_membership(
+                &store,
+                secure_store.as_ref(),
+                &realm_id,
+                &actor_id,
+                &device_id,
+            )
+        } {
+            state_store
+                .write()
+                .resolve_member_add_mls_bindings(&realm_id);
         }
     }
     Ok(outcome)
