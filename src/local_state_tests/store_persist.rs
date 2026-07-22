@@ -439,6 +439,55 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
 }
 
 #[test]
+fn local_state_store_dismisses_answered_realm_key_request_by_message_id() {
+    let path = temp_state_path("realm-key-request-dismiss");
+    let request: arkret_sdk::DeviceMessageEnvelope = serde_json::from_value(serde_json::json!({
+        "message_id": "ak:device_message:0196419b-0000-7000-8000-000000000072",
+        "kind": "ak.realm_key.request",
+        "sender_principal_id": "did:webvh:z6mkfixture:bob.example",
+        "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
+        "recipient_principal_id": "did:webvh:z6mkfixture:alice.example",
+        "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
+        "sent_at": "2026-07-17T00:00:00.000Z",
+        "expires_at": "2099-07-17T00:10:00.000Z",
+        "content": {
+            "key_scope": {
+                "effective_scope": {
+                    "kind": "realm",
+                    "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000003"
+                },
+                "from_epoch": 0,
+                "to_epoch": 0
+            },
+            "recipient_principal_id": "did:webvh:z6mkfixture:bob.example",
+            "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
+            "recipient_hpke_public_key": "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
+            "requested_source_class": "verified_member_device",
+            "target_source_ref": {
+                "kind": "device",
+                "device_id": "ak:device:0196419b-0000-7000-8000-000000000001"
+            },
+            "target_principal_id": "did:webvh:z6mkfixture:alice.example",
+            "created_at": "2026-07-17T00:00:00.000Z"
+        }
+    }))
+    .unwrap();
+
+    let mut store = LocalStateStore::with_path(path.clone());
+    assert_eq!(store.ingest_to_device_messages(&[request]), 1);
+    assert_eq!(store.to_device_inbox().len(), 1);
+    assert_eq!(
+        store.dismiss_realm_key_request_to_device_message(
+            "ak:device_message:0196419b-0000-7000-8000-000000000072",
+        ),
+        1
+    );
+
+    let reopened = LocalStateStore::with_path(path);
+    assert!(reopened.to_device_inbox().is_empty());
+}
+
+#[test]
 fn local_state_store_keeps_thread_read_cursors_separate() {
     let path = temp_state_path("thread-read-cursor");
     let mut store = LocalStateStore::with_path(path);

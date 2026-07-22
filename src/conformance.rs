@@ -396,7 +396,8 @@ pub fn profile_ready(server: Option<&ServiceDescribe>, profile_id: &str) -> bool
 /// not what the server has to expose. The server-side gate is about
 /// "can I call the endpoints I'd need" only.
 fn missing_requirements(profile_id: &str, server: &ServiceDescribe) -> Vec<String> {
-    let Some(req) = arkret_sdk::generated::profile_requirements::requirements_for(profile_id)
+    let Some(req) =
+        arkret_sdk::schema::generated::profile_requirements::requirements_for(profile_id)
     else {
         return vec![format!("unknown profile {profile_id}")];
     };

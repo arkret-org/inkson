@@ -1582,6 +1582,11 @@ pub(crate) fn realm_key_source_ref_str(source_ref: &arkret_sdk::RealmKeySourceRe
 fn realm_key_request_envelope_request_id(envelope: &Value) -> Option<String> {
     envelope
         .get("request_id")
+        // The production to-device relay identifies deliveries with
+        // `message_id`; RealmKeyRequestPayload itself has no `request_id`.
+        // Treat that delivery id as the request identity so the provider can
+        // remove a successfully answered envelope from its local inbox.
+        .or_else(|| envelope.get("message_id"))
         .or_else(|| {
             envelope
                 .get("content")
@@ -1589,8 +1594,18 @@ fn realm_key_request_envelope_request_id(envelope: &Value) -> Option<String> {
         })
         .or_else(|| {
             envelope
+                .get("content")
+                .and_then(|content| content.get("message_id"))
+        })
+        .or_else(|| {
+            envelope
                 .get("payload")
                 .and_then(|payload| payload.get("request_id"))
+        })
+        .or_else(|| {
+            envelope
+                .get("payload")
+                .and_then(|payload| payload.get("message_id"))
         })
         .and_then(Value::as_str)
         .map(str::trim)
@@ -5548,6 +5563,51 @@ mod tests {
         assert_eq!(
             realm_key_source_ref_str(&parsed.payload.target_source_ref),
             PROVIDER_DEVICE
+        );
+    }
+
+    #[test]
+    fn parses_relayed_realm_key_request_message_id() {
+        let realm = TEST_REALM;
+        let request = arkret_sdk::RealmKeyRequestPayload {
+            key_scope: arkret_sdk::RealmKeyRequestScope {
+                effective_scope: arkret_sdk::models::EffectiveScope::Realm {
+                    realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+                },
+                policy_digest: None,
+                membership_frontier_digest: None,
+                from_epoch: 0,
+                to_epoch: 0,
+                history_visibility: None,
+            },
+            recipient_principal_id: arkret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
+            recipient_device_id: arkret_sdk::DeviceId::new(SELF_DEVICE).unwrap(),
+            recipient_hpke_public_key: arkret_sdk::NonEmptyString::new(
+                "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
+            )
+            .unwrap(),
+            requested_source_class: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
+            target_source_ref: arkret_sdk::RealmKeySourceRef::Device(
+                arkret_sdk::DeviceId::new(PROVIDER_DEVICE).unwrap(),
+            ),
+            target_principal_id: arkret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
+            created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33.000Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+        };
+        let envelope = json!({
+            "message_id": "ak:device_message:0196419b-0000-7000-8000-000000000072",
+            "kind": "ak.realm_key.request",
+            "sender_device_id": SELF_DEVICE,
+            "content": request,
+        });
+
+        let parsed = parse_realm_key_request_envelope(&envelope)
+            .expect("production to-device request envelope should parse");
+        assert_eq!(parsed.realm_id, realm);
+        assert_eq!(
+            parsed.request_id.as_deref(),
+            Some("ak:device_message:0196419b-0000-7000-8000-000000000072")
         );
     }
 
