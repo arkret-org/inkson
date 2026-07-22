@@ -19,6 +19,36 @@ pub(super) struct CardDetailContext {
     pub projected_strand_ids: BTreeSet<String>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct SidecarTrackEditContext {
+    source_strand_id: String,
+    private_strand_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct SuspendedTrackEdit {
+    pub(super) scope: CardEditScope,
+    pub(super) body: String,
+    pub(super) synthesis: String,
+    pub(super) synthesis_target_id: Option<String>,
+}
+
+pub(super) fn suspend_track_edit(
+    scope: CardEditScope,
+    body: String,
+    synthesis: String,
+    synthesis_target_id: Option<String>,
+) -> Option<SuspendedTrackEdit> {
+    matches!(scope, CardEditScope::Description | CardEditScope::Synthesis).then_some(
+        SuspendedTrackEdit {
+            scope,
+            body,
+            synthesis,
+            synthesis_target_id,
+        },
+    )
+}
+
 #[component]
 fn CardMemberMentionRow(
     did: String,
@@ -205,27 +235,67 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
         mut board_status,
         command_queue: _,
     } = controller;
-    let mut sidecar_edit_context_seen = use_signal(String::new);
+    let mut sidecar_edit_context_seen = use_signal(SidecarTrackEditContext::default);
+    let mut suspended_shared_track_edits = use_signal(BTreeMap::<String, SuspendedTrackEdit>::new);
+    let mut suspended_private_track_edits = use_signal(BTreeMap::<String, SuspendedTrackEdit>::new);
     let edit_context_realm_id = selected_realm_id.clone();
     use_effect(move || {
-        let selected_strand = selected_card().map(|card| card.primary_strand_id);
-        let next = hosted_sidecar_state()
+        let selected_strand = selected_card()
+            .map(|card| card.primary_strand_id)
+            .unwrap_or_default();
+        let private_strand_id = hosted_sidecar_state()
             .filter(|session| {
                 session.source_realm_id == edit_context_realm_id
-                    && selected_strand.as_deref() == Some(session.source_strand_id.as_str())
+                    && selected_strand == session.source_strand_id
             })
-            .map(|session| session.private_strand_id)
-            .unwrap_or_default();
-        if sidecar_edit_context_seen.peek().as_str() == next {
+            .map(|session| session.private_strand_id);
+        let next = SidecarTrackEditContext {
+            source_strand_id: selected_strand,
+            private_strand_id,
+        };
+        let previous = sidecar_edit_context_seen.peek().clone();
+        if previous == next {
             return;
         }
         if editing_card_detail() {
+            if let Some(edit) = suspend_track_edit(
+                card_edit_scope(),
+                card_edit_body(),
+                card_edit_synthesis(),
+                card_edit_synthesis_target_id(),
+            ) {
+                if let Some(private_strand_id) = previous.private_strand_id {
+                    suspended_private_track_edits
+                        .write()
+                        .insert(private_strand_id, edit);
+                } else if !previous.source_strand_id.is_empty() {
+                    suspended_shared_track_edits
+                        .write()
+                        .insert(previous.source_strand_id, edit);
+                }
+            }
             editing_card_detail.set(false);
             card_detail_actions_open.set(false);
             card_detail_edit_status.set(String::new());
             card_edit_synthesis_target_id.set(None);
         }
+        let suspended = if let Some(private_strand_id) = next.private_strand_id.as_ref() {
+            suspended_private_track_edits
+                .write()
+                .remove(private_strand_id)
+        } else {
+            suspended_shared_track_edits
+                .write()
+                .remove(&next.source_strand_id)
+        };
         sidecar_edit_context_seen.set(next);
+        if let Some(edit) = suspended {
+            card_edit_scope.set(edit.scope);
+            card_edit_body.set(edit.body);
+            card_edit_synthesis.set(edit.synthesis);
+            card_edit_synthesis_target_id.set(edit.synthesis_target_id);
+            editing_card_detail.set(true);
+        }
     });
 
     rsx! {

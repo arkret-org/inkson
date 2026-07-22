@@ -23,6 +23,42 @@ async fn sidecar_private_editor_rejects_realm_scoped_image_uploads() {
 }
 
 #[test]
+fn sidecar_transition_suspends_only_track_edits_without_mixing_drafts() {
+    let shared = suspend_track_edit(
+        CardEditScope::Description,
+        "shared draft".to_owned(),
+        String::new(),
+        None,
+    )
+    .unwrap();
+    let private = suspend_track_edit(
+        CardEditScope::Synthesis,
+        String::new(),
+        "private draft".to_owned(),
+        Some("private-entry".to_owned()),
+    )
+    .unwrap();
+
+    assert_eq!(shared.scope, CardEditScope::Description);
+    assert_eq!(shared.body, "shared draft");
+    assert_eq!(private.scope, CardEditScope::Synthesis);
+    assert_eq!(private.synthesis, "private draft");
+    assert_eq!(
+        private.synthesis_target_id.as_deref(),
+        Some("private-entry")
+    );
+    assert!(
+        suspend_track_edit(
+            CardEditScope::Summary,
+            "summary".to_owned(),
+            String::new(),
+            None,
+        )
+        .is_none()
+    );
+}
+
+#[test]
 fn sidecar_private_track_card_uses_only_private_strand_updates() {
     let source_id = "ak:strand:0196419b-0000-7000-8000-000000000011";
     let private_id = "ak:strand:0196419b-0000-7000-8000-000000000012";
