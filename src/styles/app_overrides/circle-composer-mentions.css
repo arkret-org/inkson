@@ -1181,6 +1181,7 @@
 }
 
 .contact-sidebar-user-avatar .avatar-img,
+.contact-sidebar-agent-avatar .avatar-img,
 .contact-sidebar-user-avatar .content-block-image,
 .contact-sidebar-user-avatar .content-block-image img,
 .contact-sidebar-agent-avatar .content-block-image,
@@ -1192,16 +1193,9 @@
   object-fit: cover;
 }
 
-.contact-sidebar-user-avatar .default-avatar,
-.contact-sidebar-agent-avatar .default-avatar {
-  font-size: 11px;
-  font-weight: 700;
+.contact-sidebar-user-avatar .generated-avatar,
+.contact-sidebar-agent-avatar .generated-avatar {
   box-shadow: none;
-}
-
-.contact-sidebar-user-avatar .default-avatar::after,
-.contact-sidebar-agent-avatar .default-avatar::after {
-  inset: 3px;
 }
 
 .contact-agent-count,

@@ -465,15 +465,8 @@ button[data-style="link"]:disabled:hover {
 .avatar.lg { width: 40px; height: 40px; font-size: 14px; }
 .avatar.xl { width: 56px; height: 56px; font-size: 18px; }
 .avatar.xs { width: 18px; height: 18px; font-size: 9px; }
-.avatar.bot   { background: linear-gradient(135deg, #1f6b4f, #3b8a67); }
-.avatar.org   { background: linear-gradient(135deg, #b67a1f, #8a5a17); border-radius: 6px; }
-.avatar.ghost { background: linear-gradient(135deg, #94a3b8, #475569); }
-.avatar.agent { background: linear-gradient(135deg, #2b6b4f, #4b946a); border-radius: 6px; }
-
-/* Image-backed avatars (uploaded blob / remote URL), distinct from the
-   text-initial `.avatar` above. `.sm`/`.lg` size them; `.placeholder`
-   renders the empty dashed-circle fallback. Replaces the repeated long
-   inline avatar styles in directory.rs / settings/mod.rs. */
+/* Identity avatars use an uploaded blob when present and the global
+   GitHub-style identicon fallback otherwise. */
 .avatar-img {
   border-radius: 50%;
   overflow: hidden;
@@ -482,47 +475,10 @@ button[data-style="link"]:disabled:hover {
 }
 .avatar-img.sm { width: 36px; height: 36px; }
 .avatar-img.lg { width: 64px; height: 64px; border: 1px solid var(--border-default, #333); }
-.avatar-img.default-avatar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  color: #fffaf6;
-  font-size: 24px;
-  font-weight: 800;
-  line-height: 1;
-  box-shadow: var(--shadow-sm);
-  position: relative;
-}
-.avatar-img.default-avatar::after {
-  content: "";
-  position: absolute;
-  inset: 9px;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: inherit;
-}
-.avatar-img.default-avatar span {
-  position: relative;
-  z-index: 1;
-}
-.avatar-img.default-avatar.tone-1 { background: linear-gradient(135deg, #b45309, #c65b72); }
-.avatar-img.default-avatar.tone-2 { background: linear-gradient(135deg, #1f6b4f, #586fcb); }
-.avatar-img.default-avatar.tone-3 { background: linear-gradient(135deg, #7c3aed, #0f766e); }
-.avatar-img.default-avatar.tone-4 { background: linear-gradient(135deg, #b91c1c, #b97824); }
-.avatar-img.default-avatar.tone-5 { background: linear-gradient(135deg, #334155, #2b6b4f); }
-.avatar-img.default-avatar.tone-6 { background: linear-gradient(135deg, #0f5f78, #a33a50); }
-.avatar-img.placeholder {
-  border: 1px dashed var(--border-default, #333);
-  background: var(--bg-elevated, #1a1d22);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--muted, #888);
-}
 .avatar-img.generated-avatar {
   display: block;
   background: #f0f3f6;
-  padding: 7px;
+  padding: 12%;
   box-shadow: var(--shadow-sm);
 }
 .avatar-img.generated-avatar svg {
@@ -611,8 +567,6 @@ label.avatar-upload-button:active,
     grid-template-columns: 1fr;
   }
 }
-.avatar.applet{ background: linear-gradient(135deg, #f59e0b, #d946ef); border-radius: 6px; }
-
 .settings-avatar-actions {
   align-items: center;
   gap: 16px;

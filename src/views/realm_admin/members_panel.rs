@@ -922,22 +922,6 @@ fn member_handles_line_label(all_handles: &[String], visible_handles: &[String])
     }
 }
 
-fn member_avatar_initial(profile: &MemberProfile) -> String {
-    if let Some(initial) = profile
-        .remark_name
-        .as_deref()
-        .or(profile.display_name.as_deref())
-        .and_then(crate::views::helpers::avatar_initial_from_identity_value)
-    {
-        return initial;
-    }
-    let identity = profile
-        .subject_id
-        .as_deref()
-        .unwrap_or(profile.actor_id.as_str());
-    crate::views::helpers::identity_avatar_initial(&profile.handles, identity)
-}
-
 #[component]
 fn MemberRowActions(
     token: Signal<String>,
@@ -1221,7 +1205,6 @@ fn PendingInviteRow(
     let mut state_store = crate::app::SessionContext::get().state_store;
     let member = profile.actor_id.clone();
     let member_label = profile.primary_label();
-    let avatar_initial = member_avatar_initial(&profile);
     let avatar_blob_ref = profile.avatar_blob_ref.as_ref().map(ToString::to_string);
     let invite_id = profile.invite_id.clone().unwrap_or_default();
     let can_cancel_this_invite = can_cancel_invite && !invite_id.trim().is_empty();
@@ -1259,17 +1242,11 @@ fn PendingInviteRow(
                 div {
                     class: "member-avatar member-avatar-pending",
                     title: "{member}",
-                    if let Some(blob_ref) = avatar_blob_ref.clone() {
-                        div { class: "member-avatar-image",
-                            crate::content::renderer::AuthenticatedBlobImage {
-                                blob_ref,
-                                alt_text: member_label.clone(),
-                            }
-                        }
-                    } else if avatar_initial == "?" {
-                        crate::components::UiIcon { name: "user-plus" }
-                    } else {
-                        "{avatar_initial}"
+                    crate::components::IdentityAvatar {
+                        seed: member.clone(),
+                        alt_text: member_label.clone(),
+                        blob_ref: avatar_blob_ref.clone(),
+                        class: "avatar-img member-avatar-image".to_owned(),
                     }
                 }
                 div { class: "member-row-text",
@@ -3313,8 +3290,12 @@ pub fn RealmMembersPanel(
                                             rsx! {
                                                 div { class: "member-self-agent-row", "data-testid": "available-realm-agent-row", "data-agent-did": "{agent_id}",
                                                     div { class: "member-agent-summary",
-                                                        div { class: "member-avatar member-avatar-agent", "aria-hidden": "true",
-                                                            crate::components::UiIcon { name: "bot" }
+                                                        div { class: "member-avatar member-avatar-agent",
+                                                            crate::components::IdentityAvatar {
+                                                                seed: agent_id.clone(),
+                                                                alt_text: agent_title.clone(),
+                                                                class: "avatar-img member-avatar-image".to_owned(),
+                                                            }
                                                         }
                                                         div { class: "member-row-text",
                                                             div { class: "member-row-title",
@@ -3998,7 +3979,6 @@ pub fn RealmMembersPanel(
                             } else {
                                 "member-group"
                             };
-                            let avatar_initial = member_avatar_initial(&member_profile);
                             let avatar_blob_ref = member_profile
                                 .avatar_blob_ref
                                 .as_ref()
@@ -4036,15 +4016,11 @@ pub fn RealmMembersPanel(
                                                     class: "member-avatar",
                                                     "data-testid": "member-self-avatar",
                                                     title: "{member}",
-                                                    if let Some(blob_ref) = avatar_blob_ref.clone() {
-                                                        div { class: "member-avatar-image",
-                                                            crate::content::renderer::AuthenticatedBlobImage {
-                                                                blob_ref,
-                                                                alt_text: member_label.clone(),
-                                                            }
-                                                        }
-                                                    } else {
-                                                        "{avatar_initial}"
+                                                    crate::components::IdentityAvatar {
+                                                        seed: member.clone(),
+                                                        alt_text: member_label.clone(),
+                                                        blob_ref: avatar_blob_ref.clone(),
+                                                        class: "avatar-img member-avatar-image".to_owned(),
                                                     }
                                                 }
                                             } else {
@@ -4052,15 +4028,11 @@ pub fn RealmMembersPanel(
                                                     class: "member-avatar",
                                                     "data-testid": "member-avatar",
                                                     title: "{member}",
-                                                    if let Some(blob_ref) = avatar_blob_ref.clone() {
-                                                        div { class: "member-avatar-image",
-                                                            crate::content::renderer::AuthenticatedBlobImage {
-                                                                blob_ref,
-                                                                alt_text: member_label.clone(),
-                                                            }
-                                                        }
-                                                    } else {
-                                                        "{avatar_initial}"
+                                                    crate::components::IdentityAvatar {
+                                                        seed: member.clone(),
+                                                        alt_text: member_label.clone(),
+                                                        blob_ref: avatar_blob_ref.clone(),
+                                                        class: "avatar-img member-avatar-image".to_owned(),
                                                     }
                                                 }
                                             }
@@ -4182,8 +4154,12 @@ pub fn RealmMembersPanel(
                                                             rsx! {
                                                                 div { class: "member-self-agent-row", "data-testid": "member-self-agent-row", "data-agent-did": "{agent_id}",
                                                                     div { class: "member-agent-summary",
-                                                                        div { class: "member-avatar member-avatar-agent", "aria-hidden": "true",
-                                                                            crate::components::UiIcon { name: "bot" }
+                                                                        div { class: "member-avatar member-avatar-agent",
+                                                                            crate::components::IdentityAvatar {
+                                                                                seed: agent_id.clone(),
+                                                                                alt_text: agent_title.clone(),
+                                                                                class: "avatar-img member-avatar-image".to_owned(),
+                                                                            }
                                                                         }
                                                                         div { class: "member-row-text",
                                                                             div { class: "member-row-title",
@@ -4621,26 +4597,6 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].membership.as_deref(), Some("invite"));
         assert_eq!(rows[0].handles, vec!["bob:example.com"]);
-    }
-
-    #[test]
-    fn member_avatar_initial_uses_identity_not_did_prefix() {
-        let bob = member("did:web:bob.example");
-        let carol = member("did:web:carol.example");
-
-        assert_eq!(member_avatar_initial(&bob), "B");
-        assert_eq!(member_avatar_initial(&carol), "C");
-    }
-
-    #[test]
-    fn member_avatar_initial_prefers_display_and_handle_identity() {
-        let mut display = member("did:web:bob.example");
-        display.display_name = Some("Robert Example".to_owned());
-        assert_eq!(member_avatar_initial(&display), "R");
-
-        let mut handled = member("did:web:acme.example:users:bob");
-        handled.handles.push("bob:acme.example".to_owned());
-        assert_eq!(member_avatar_initial(&handled), "B");
     }
 
     #[test]

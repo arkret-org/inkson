@@ -437,6 +437,10 @@ fn AppBootstrap() -> Element {
     let mut personal_handles = use_signal(Vec::<String>::new);
     let mut personal_handles_status = use_signal(|| "Not published".to_owned());
     let mut personal_handles_lookup_key = use_signal(String::new);
+    let current_account_display_name = use_signal(String::new);
+    let current_account_avatar_blob_ref = use_signal(String::new);
+    let current_device_display_name = use_signal(String::new);
+    let mut account_identity_lookup_key = use_signal(String::new);
     let contact_handles_lookup_key = use_signal(String::new);
     let contact_handles_fetching = use_signal(BTreeSet::<String>::new);
     let mut global_query = use_signal(String::new);
@@ -617,29 +621,36 @@ fn AppBootstrap() -> Element {
     } else {
         personal_handles_value.join(", ")
     };
+    let account_display_name = current_account_display_name();
+    let device_display_name = current_device_display_name();
     let account_label = if has_session {
-        personal_handles_value
-            .first()
-            .map(|handle| format!("@{handle}"))
-            .unwrap_or_else(|| display_name_for_did(&state_store.read(), &account_did_value))
+        if !account_display_name.trim().is_empty() {
+            account_display_name.clone()
+        } else {
+            personal_handles_value
+                .first()
+                .map(|handle| format!("@{handle}"))
+                .unwrap_or_else(|| display_name_for_did(&state_store.read(), &account_did_value))
+        }
     } else {
         "Not signed in".to_owned()
     };
     let account_detail = if has_session {
-        format!("device {device_id_label}")
+        let device = if device_display_name.trim().is_empty() {
+            device_id_label.clone()
+        } else {
+            device_display_name.clone()
+        };
+        personal_handles_value
+            .first()
+            .map(|handle| format!("@{handle} · {device}"))
+            .unwrap_or(device)
     } else {
         "Refresh server metadata, then sign in".to_owned()
     };
-    // Topbar account avatar — mirror the Account identity avatar from
-    // settings so the menu trigger shows the same uploaded photo (or the
-    // same default letter + tone circle) instead of a generic person glyph.
-    let topbar_avatar_initial =
-        crate::views::settings::default_avatar_initial(&personal_handles_value, &account_did_value);
-    let topbar_avatar_tone =
-        crate::views::settings::default_avatar_tone(&personal_handles_value, &account_did_value);
-    // Wrapped in `use_memo` so the App only re-renders when the avatar ref
-    // actually changes — reading `state_store` directly here would subscribe
-    // the whole shell to every (frequent) state_store write (drafts, etc.).
+    // The actor-private mirror is authoritative when present (including an
+    // explicit empty tombstone after clearing an avatar). Otherwise use the
+    // public Actor Profile projection loaded from account/viewer.
     let topbar_avatar_blob_ref = use_memo(move || {
         if token().trim().is_empty() {
             String::new()
@@ -647,15 +658,9 @@ fn AppBootstrap() -> Element {
             state_store
                 .read()
                 .load_private_data(&account_did(), "avatar_blob_ref")
-                .unwrap_or_default()
+                .unwrap_or_else(|| current_account_avatar_blob_ref())
         }
     })();
-    let frontier_label = frontier_state();
-    let frontier_label_display = short_protocol_id(&frontier_label);
-    let push_label = push_state();
-    let crypto_label = crypto_state();
-    let account_session_label = account_session_state();
-    let queue_label = device_queue().to_string();
     let minimal_ready = profile_ready(active_server_description.as_ref(), PROFILE_MINIMAL_CLIENT);
     let kanban_ready = profile_ready(active_server_description.as_ref(), PROFILE_KANBAN_MVP);
     let full_ready = profile_ready(active_server_description.as_ref(), PROFILE_FULL_CLIENT);
@@ -1246,6 +1251,11 @@ fn AppBootstrap() -> Element {
                     personal_handles,
                     personal_handles_status,
                     personal_handles_lookup_key,
+                    device_id,
+                    current_account_display_name,
+                    current_account_avatar_blob_ref,
+                    current_device_display_name,
+                    account_identity_lookup_key,
                     contact_handles_lookup_key,
                     contact_handles_fetching,
                     direct_contact_rows,
@@ -2059,17 +2069,11 @@ fn AppBootstrap() -> Element {
                                             title: "{self_agents_button_label}",
                                             onclick: move |_| own_agents_expanded.toggle(),
                                             span { class: "sidebar-nav-icon contact-sidebar-user-avatar",
-                                                if !topbar_avatar_blob_ref.trim().is_empty() {
-                                                    crate::content::renderer::AuthenticatedBlobImage {
-                                                        blob_ref: topbar_avatar_blob_ref.trim().to_owned(),
-                                                        alt_text: self_label.clone(),
-                                                    }
-                                                } else {
-                                                    span {
-                                                        class: "avatar-img default-avatar tone-{topbar_avatar_tone}",
-                                                        "aria-hidden": "true",
-                                                        span { "{topbar_avatar_initial}" }
-                                                    }
+                                                crate::components::IdentityAvatar {
+                                                    seed: self_did.clone(),
+                                                    alt_text: self_label.clone(),
+                                                    blob_ref: Some(topbar_avatar_blob_ref.clone()),
+                                                    class: "avatar-img".to_owned(),
                                                 }
                                             }
                                             span { class: "grow truncate", "{self_label}" }
@@ -2096,17 +2100,6 @@ fn AppBootstrap() -> Element {
                                                             .as_ref()
                                                             .map(ToString::to_string)
                                                             .unwrap_or_default();
-                                                        let agent_avatar_labels = [agent_label.clone()];
-                                                        let agent_avatar_initial =
-                                                            crate::views::settings::default_avatar_initial(
-                                                                &agent_avatar_labels,
-                                                                &agent_id,
-                                                            );
-                                                        let agent_avatar_tone =
-                                                            crate::views::settings::default_avatar_tone(
-                                                                &agent_avatar_labels,
-                                                                &agent_id,
-                                                            );
                                                         let controller_id = self_did.clone();
                                                         let opening_key = format!("owned-agent:{agent_id}");
                                                         let opening_target = direct_chat_opening();
@@ -2185,17 +2178,11 @@ fn AppBootstrap() -> Element {
                                                                     }
                                                                 },
                                                                 span { class: "sidebar-nav-icon contact-sidebar-agent-avatar",
-                                                                    if avatar_blob_ref.is_empty() {
-                                                                        span {
-                                                                            class: "avatar-img default-avatar tone-{agent_avatar_tone}",
-                                                                            "aria-hidden": "true",
-                                                                            span { "{agent_avatar_initial}" }
-                                                                        }
-                                                                    } else {
-                                                                        crate::content::renderer::AuthenticatedBlobImage {
-                                                                            blob_ref: avatar_blob_ref,
-                                                                            alt_text: agent_label.clone(),
-                                                                        }
+                                                                    crate::components::IdentityAvatar {
+                                                                        seed: agent_id.clone(),
+                                                                        alt_text: agent_label.clone(),
+                                                                        blob_ref: Some(avatar_blob_ref),
+                                                                        class: "avatar-img".to_owned(),
                                                                     }
                                                                 }
                                                                 span { class: "grow truncate", "{agent_label}" }
@@ -2237,11 +2224,6 @@ fn AppBootstrap() -> Element {
                                         .is_some_and(|summary| summary.state == "active");
                                     let can_resolve =
                                         contact.state == "accepted" && (has_direct_scope || has_active_direct);
-                                    let icon_name = if has_active_direct {
-                                        "message"
-                                    } else {
-                                        "user"
-                                    };
                                     let contact_remark =
                                         contact_remarks_for_sidebar.get(&peer).cloned();
                                     let display_name = display_name_for_did(&state_store.read(), &peer);
@@ -2377,7 +2359,13 @@ fn AppBootstrap() -> Element {
                                                         });
                                                     }
                                                 },
-                                                span { class: "sidebar-nav-icon", UiIcon { name: icon_name.to_owned() } }
+                                                span { class: "sidebar-nav-icon contact-sidebar-user-avatar",
+                                                    crate::components::IdentityAvatar {
+                                                        seed: peer.clone(),
+                                                        alt_text: display_name.clone(),
+                                                        class: "avatar-img".to_owned(),
+                                                    }
+                                                }
                                                 span { class: "grow truncate", "{display_name}" }
                                                 if has_contact_remark {
                                                     span {
@@ -2529,17 +2517,6 @@ fn AppBootstrap() -> Element {
                                                         .as_ref()
                                                         .map(ToString::to_string)
                                                         .unwrap_or_default();
-                                                    let agent_avatar_labels = [agent_label.clone()];
-                                                    let agent_avatar_initial =
-                                                        crate::views::settings::default_avatar_initial(
-                                                            &agent_avatar_labels,
-                                                            &agent_id,
-                                                        );
-                                                    let agent_avatar_tone =
-                                                        crate::views::settings::default_avatar_tone(
-                                                            &agent_avatar_labels,
-                                                            &agent_id,
-                                                        );
                                                     let controller = peer.clone();
                                                     let opening_key = format!("contact-agent:{agent_id}");
                                                     let opening_target = direct_chat_opening();
@@ -2628,17 +2605,11 @@ fn AppBootstrap() -> Element {
                                                                 }
                                                             },
                                                             span { class: "sidebar-nav-icon contact-sidebar-agent-avatar",
-                                                                if avatar_blob_ref.is_empty() {
-                                                                    span {
-                                                                        class: "avatar-img default-avatar tone-{agent_avatar_tone}",
-                                                                        "aria-hidden": "true",
-                                                                        span { "{agent_avatar_initial}" }
-                                                                    }
-                                                                } else {
-                                                                    crate::content::renderer::AuthenticatedBlobImage {
-                                                                        blob_ref: avatar_blob_ref,
-                                                                        alt_text: agent_label.clone(),
-                                                                    }
+                                                                crate::components::IdentityAvatar {
+                                                                    seed: agent_id.clone(),
+                                                                    alt_text: agent_label.clone(),
+                                                                    blob_ref: Some(avatar_blob_ref),
+                                                                    class: "avatar-img".to_owned(),
                                                                 }
                                                             }
                                                             span { class: "grow truncate", "{agent_label}" }
@@ -3343,21 +3314,12 @@ fn AppBootstrap() -> Element {
                                     server_menu_open.set(false);
                                     account_menu_open.toggle();
                                 },
-                                if !topbar_avatar_blob_ref.trim().is_empty() {
-                                    span {
-                                        class: "avatar-img topbar-account-avatar",
-                                        key: "{topbar_avatar_blob_ref}",
-                                        crate::content::renderer::AuthenticatedBlobImage {
-                                            blob_ref: topbar_avatar_blob_ref.trim().to_owned(),
-                                            alt_text: crate::i18n::tr("topbar.account_menu"),
-                                        }
-                                    }
-                                } else {
-                                    span {
-                                        class: "avatar-img default-avatar topbar-account-avatar tone-{topbar_avatar_tone}",
-                                        "aria-hidden": "true",
-                                        span { "{topbar_avatar_initial}" }
-                                    }
+                                crate::components::IdentityAvatar {
+                                    seed: account_did_value.clone(),
+                                    alt_text: crate::i18n::tr("topbar.account_menu"),
+                                    blob_ref: Some(topbar_avatar_blob_ref.clone()),
+                                    class: "avatar-img topbar-account-avatar".to_owned(),
+                                    test_id: Some("topbar-account-avatar".to_owned()),
                                 }
                                 if has_session {
                                     span { class: "dot-online", title: "online" }
@@ -3371,25 +3333,16 @@ fn AppBootstrap() -> Element {
                                 }
                                 div { class: "account-menu", "data-testid": "account-menu", role: "menu",
                                     div { class: "account-menu__head",
-                                        if !topbar_avatar_blob_ref.trim().is_empty() {
-                                            span {
-                                                class: "avatar-img account-menu__avatar",
-                                                key: "{topbar_avatar_blob_ref}",
-                                                crate::content::renderer::AuthenticatedBlobImage {
-                                                    blob_ref: topbar_avatar_blob_ref.trim().to_owned(),
-                                                    alt_text: account_label.clone(),
-                                                }
-                                            }
-                                        } else {
-                                            span {
-                                                class: "avatar-img default-avatar account-menu__avatar tone-{topbar_avatar_tone}",
-                                                "aria-hidden": "true",
-                                                span { "{topbar_avatar_initial}" }
-                                            }
+                                        crate::components::IdentityAvatar {
+                                            seed: account_did_value.clone(),
+                                            alt_text: account_label.clone(),
+                                            blob_ref: Some(topbar_avatar_blob_ref.clone()),
+                                            class: "avatar-img account-menu__avatar".to_owned(),
+                                            test_id: Some("account-menu-avatar".to_owned()),
                                         }
                                         span { class: "grow",
-                                            span { class: "who", "{account_label}" }
-                                            span { class: "handle", "{account_detail}" }
+                                            span { class: "who", "data-testid": "account-menu-display-name", "{account_label}" }
+                                            span { class: "handle", "data-testid": "account-menu-account-detail", "{account_detail}" }
                                         }
                                         Link {
                                             class: "btn icon sm ghost account-menu__qr",
@@ -3417,7 +3370,7 @@ fn AppBootstrap() -> Element {
                                                         let value = account_did_value.clone();
                                                         move |_| {
                                                             copy_text_to_clipboard(&value);
-                                                            account_session_state.set("DID copied".to_owned());
+                                                            crate::components::feedback::toast_success("feedback.copied_did", vec![]);
                                                         }
                                                     },
                                                     UiIcon { name: "copy" }
@@ -3444,7 +3397,7 @@ fn AppBootstrap() -> Element {
                                                         let value = account_handles_title.clone();
                                                         move |_| {
                                                             copy_text_to_clipboard(&value);
-                                                            account_session_state.set("Handles copied".to_owned());
+                                                            crate::components::feedback::toast_success("feedback.copied_handles", vec![]);
                                                         }
                                                     },
                                                     UiIcon { name: "copy" }
@@ -3454,7 +3407,19 @@ fn AppBootstrap() -> Element {
                                         div { class: "account-menu__row",
                                             strong { "Device" }
                                             div { class: "account-menu__value",
-                                                span { class: "mono", "data-testid": "account-menu-device", title: "{device_id_value}", "{device_id_label}" }
+                                                div { class: "account-menu__device-text",
+                                                    span {
+                                                        class: "account-menu__device-name",
+                                                        "data-testid": "account-menu-device-name",
+                                                        if device_display_name.trim().is_empty() { "This device" } else { "{device_display_name}" }
+                                                    }
+                                                    span {
+                                                        class: "mono account-menu__device-id",
+                                                        "data-testid": "account-menu-device",
+                                                        title: "{device_id_value}",
+                                                        "{device_id_label}"
+                                                    }
+                                                }
                                                 Button {
                                                     variant: ButtonVariant::Ghost,
                                                     size: ButtonSize::Sm,
@@ -3466,7 +3431,7 @@ fn AppBootstrap() -> Element {
                                                         let value = device_id_value.clone();
                                                         move |_| {
                                                             copy_text_to_clipboard(&value);
-                                                            account_session_state.set("Device ID copied".to_owned());
+                                                            crate::components::feedback::toast_success("feedback.copied_device_id", vec![]);
                                                         }
                                                     },
                                                     UiIcon { name: "copy" }
@@ -3476,42 +3441,6 @@ fn AppBootstrap() -> Element {
                                         div { class: "account-menu__row",
                                             strong { "Server" }
                                             span { "{active_server_label}" }
-                                        }
-                                        div { class: "account-menu__row",
-                                            strong { "Frontier" }
-                                            span { class: "mono", "data-testid": "account-menu-frontier", title: "{frontier_label}", "{frontier_label_display}" }
-                                        }
-                                        div { class: "account-menu__row",
-                                            strong { "Push" }
-                                            span { class: "mono", "data-testid": "account-menu-push", "{push_label}" }
-                                        }
-                                        div { class: "account-menu__row",
-                                            strong { "Queue" }
-                                            span { class: "mono", "data-testid": "account-menu-queue", "{queue_label}" }
-                                        }
-                                        div { class: "account-menu__row",
-                                            strong { "Crypto" }
-                                            span { class: "mono", "data-testid": "account-menu-crypto", "{crypto_label}" }
-                                        }
-                                    }
-                                    div { class: "account-menu__section",
-                                        div { class: "account-menu__section-head",
-                                            span { "Session" }
-                                            span { "credential" }
-                                        }
-                                        div { class: "account-menu__rows",
-                                            div { class: "account-menu__row",
-                                                strong { "Credential" }
-                                                span { class: "mono", "data-testid": "account-menu-session-token", if has_session { "Credential loaded" } else { "No authenticated session" } }
-                                            }
-                                            div { class: "account-menu__row",
-                                                strong { "Crypto" }
-                                                span { class: "mono", "data-testid": "account-menu-session-crypto", "{crypto_label}" }
-                                            }
-                                            div { class: "account-menu__row",
-                                                strong { "State" }
-                                                span { class: "mono", "data-testid": "account-menu-session-state", "{account_session_label}" }
-                                            }
                                         }
                                     }
                                     div { class: "account-menu__actions",
@@ -3531,6 +3460,8 @@ fn AppBootstrap() -> Element {
                                                     let api_token = token();
                                                     let actor = account_did();
                                                     let device = device_id();
+                                                    personal_handles_lookup_key.set(String::new());
+                                                    account_identity_lookup_key.set(String::new());
                                                     account_session_state.set("Refreshing session".to_owned());
                                                     spawn(async move {
                                                         match self_authed_api(&base, api_token.clone()) {

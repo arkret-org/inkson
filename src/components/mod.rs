@@ -96,7 +96,9 @@ pub use feedback::{
     maybe_dispatch_circle_error, push_policy_deny_toast, push_toast, toast_error, toast_info,
     toast_success, toast_warning,
 };
-pub use generated_avatar::{GeneratedAvatar, GeneratedAvatarProps};
+pub use generated_avatar::{
+    GeneratedAvatar, GeneratedAvatarProps, IdentityAvatar, IdentityAvatarProps,
+};
 pub use mls_backup_prompt::{
     MlsBackupPrompt, MlsBackupSignal, maybe_auto_backup_mls_after_encrypted_write,
     try_needs_mls_backup_signal,

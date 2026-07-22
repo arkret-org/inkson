@@ -1,6 +1,5 @@
 import { expect, test } from "@playwright/test";
 import {
-  DEMO_FRONTIER_EVENT,
   registerStrandsBeforeEach,
   DEMO_REALM,
   latestTestId,
@@ -13,7 +12,7 @@ import {
 
 registerStrandsBeforeEach();
 
-test("topbar account menu shows identity and sync state", async ({ page }) => {
+test("topbar account menu shows profile identity and current device", async ({ page }) => {
   await refreshServer(page);
   await dismissBlockingRecoveryModal(page);
   await page.getByTestId("account-menu-button").click();
@@ -22,11 +21,15 @@ test("topbar account menu shows identity and sync state", async ({ page }) => {
   await expect(page.getByTestId("account-menu-copy-did")).toBeVisible();
   await expect(page.getByTestId("account-menu-copy-device")).toBeVisible();
   await page.getByTestId("account-menu-copy-did").click();
-  await expect(page.getByTestId("account-menu-session-state")).toHaveText("DID copied");
-  await expect(page.getByTestId("account-menu-frontier")).toHaveAttribute(
+  await expect(page.getByTestId("account-menu-display-name")).toHaveText("inkson");
+  await expect(page.getByTestId("account-menu-avatar")).toHaveClass(/generated-avatar/);
+  await expect(page.getByTestId("account-menu-avatar").locator("svg")).toBeVisible();
+  await expect(page.getByTestId("account-menu-device-name")).toHaveText("Current device");
+  await expect(page.getByTestId("account-menu-device")).toHaveAttribute(
     "title",
-    DEMO_FRONTIER_EVENT,
+    "ak:device:01964137-0000-7000-8000-0000000000a1",
   );
+  await expect(page.getByTestId("account-menu-session-state")).toHaveCount(0);
   await expect(page.getByTestId("account-menu-settings-qr")).toBeVisible();
   await expect(page.getByTestId("account-menu-settings")).toBeVisible();
   const menuBox = await page.getByTestId("account-menu").boundingBox();
@@ -75,7 +78,7 @@ test("account menu falls back to account localpart when handle directory lookup 
   expect(pageErrors).toEqual([]);
 });
 
-test("account menu keeps account handle when handle directory returns an empty page", async ({
+test("account menu replaces the viewer fallback when the handle directory returns an empty page", async ({
   page,
 }) => {
   let handleDirectoryRequests = 0;
@@ -91,8 +94,7 @@ test("account menu keeps account handle when handle directory returns an empty p
   await dismissBlockingRecoveryModal(page);
   await latestTestId(page, "account-menu-button").click();
 
-  await expect(latestTestId(page, "account-menu-handles")).toContainText("@alice:local.host");
-  await expect(latestTestId(page, "account-menu-handles")).not.toContainText("No handles published");
+  await expect(latestTestId(page, "account-menu-handles")).toHaveText("No handles published");
   expect(handleDirectoryRequests).toBeGreaterThan(0);
 });
 

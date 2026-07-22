@@ -45,6 +45,24 @@ pub struct GeneratedAvatarProps {
     pub test_id: Option<String>,
 }
 
+/// The single application-wide identity avatar policy. A published/uploaded
+/// blob wins; identities without one use the same deterministic GitHub-style
+/// identicon regardless of whether they are a person or an AI agent.
+#[derive(Clone, PartialEq, Props)]
+pub struct IdentityAvatarProps {
+    /// Stable protocol identity (normally a DID) so the same actor renders the
+    /// same avatar in every surface. Pre-creation forms may use their stable
+    /// draft label until an id exists.
+    pub seed: String,
+    pub alt_text: String,
+    #[props(default)]
+    pub blob_ref: Option<String>,
+    #[props(default = "avatar-img".to_owned())]
+    pub class: String,
+    #[props(default)]
+    pub test_id: Option<String>,
+}
+
 #[component]
 pub fn GeneratedAvatar(props: GeneratedAvatarProps) -> Element {
     let GeneratedAvatarProps {
@@ -79,6 +97,46 @@ pub fn GeneratedAvatar(props: GeneratedAvatarProps) -> Element {
                     }
                 }
             }
+        }
+    }
+}
+
+#[component]
+pub fn IdentityAvatar(props: IdentityAvatarProps) -> Element {
+    let IdentityAvatarProps {
+        seed,
+        alt_text,
+        blob_ref,
+        class,
+        test_id,
+    } = props;
+    let test_id = test_id.unwrap_or_default();
+    if let Some(blob_ref) = blob_ref.filter(|value| !value.trim().is_empty()) {
+        return rsx! {
+            div {
+                class: "{class}",
+                "data-testid": "{test_id}",
+                crate::content::renderer::AuthenticatedBlobImage {
+                    blob_ref: blob_ref.trim().to_owned(),
+                    alt_text,
+                }
+            }
+        };
+    }
+    let generated_class = if class
+        .split_ascii_whitespace()
+        .any(|name| name == "generated-avatar")
+    {
+        class
+    } else {
+        format!("{class} generated-avatar")
+    };
+    rsx! {
+        GeneratedAvatar {
+            seed,
+            alt_text,
+            class: generated_class,
+            test_id: Some(test_id),
         }
     }
 }

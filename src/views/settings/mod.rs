@@ -96,14 +96,6 @@ pub(crate) fn presence_expiry_to_clears_at(choice: &str) -> Option<String> {
     Some(arkret_sdk::canonical::format_timestamp_canonical(clears_at))
 }
 
-pub(crate) fn default_avatar_initial(handles: &[String], account_did: &str) -> String {
-    crate::views::helpers::identity_avatar_initial(handles, account_did)
-}
-
-pub(crate) fn default_avatar_tone(handles: &[String], account_did: &str) -> usize {
-    crate::views::helpers::identity_avatar_tone(handles, account_did)
-}
-
 /// A4a — push the current `ak.client.ui_state` payload (theme + sidebar
 /// collapsed) to soland's `ak.account_data.set` endpoint so other
 /// devices pick up the same preference. Same graceful-degradation
@@ -650,10 +642,6 @@ pub fn SettingsPanel(
     } else {
         personal_handles.join(", ")
     };
-    let account_default_avatar_initial = default_avatar_initial(&personal_handles, &account_did());
-    let account_default_avatar_tone = default_avatar_tone(&personal_handles, &account_did());
-    let account_default_avatar_class =
-        format!("avatar-img lg default-avatar tone-{account_default_avatar_tone}");
     let device_short_label = short_protocol_id(&device_label);
     {
         let account_key = account_did();
@@ -794,24 +782,13 @@ pub fn SettingsPanel(
                                     {
                                         let blob_ref = profile_avatar_blob_ref();
                                         rsx! {
-                                            if !blob_ref.trim().is_empty() {
-                                                div {
-                                                    class: "avatar-img lg",
-                                                    key: "{blob_ref}:{avatar_refresh_nonce()}",
-                                                    "data-testid": "settings-avatar-preview",
-                                                    crate::content::renderer::AuthenticatedBlobImage {
-                                                        key: "{blob_ref}:{avatar_refresh_nonce()}",
-                                                        blob_ref: blob_ref.trim().to_owned(),
-                                                        alt_text: "Avatar".to_owned(),
-                                                    }
-                                                }
-                                            } else {
-                                                div {
-                                                    class: "{account_default_avatar_class}",
-                                                    "data-testid": "settings-avatar-preview",
-                                                    "aria-label": "Default avatar",
-                                                    span { "{account_default_avatar_initial}" }
-                                                }
+                                            crate::components::IdentityAvatar {
+                                                key: "{blob_ref}:{avatar_refresh_nonce()}",
+                                                seed: account_did(),
+                                                alt_text: "Account avatar".to_owned(),
+                                                blob_ref: Some(blob_ref),
+                                                class: "avatar-img lg".to_owned(),
+                                                test_id: Some("settings-avatar-preview".to_owned()),
                                             }
                                         }
                                     }

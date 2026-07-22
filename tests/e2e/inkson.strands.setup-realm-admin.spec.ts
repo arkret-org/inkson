@@ -171,7 +171,7 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
   await expect(page.getByTestId("sidebar")).toContainText("Setup Strand Space");
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await page.getByTestId("account-menu-button").click();
-  await expect(page.getByTestId("account-menu-frontier")).toContainText("ak:event:");
+  await expect(page.getByTestId("account-menu-display-name")).toHaveText("inkson");
 });
 
 test("realm admin page handles metadata, modal member invite, epoch rotation and archive", async ({ page }) => {

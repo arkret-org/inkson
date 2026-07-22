@@ -135,36 +135,3 @@ fn presence_expiry_choice_resolves_to_future_clears_at() {
 fn blocklist_account_data_key_matches_spec() {
     assert_eq!(CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY, "ak.account.blocklist");
 }
-
-#[test]
-fn default_avatar_initial_prefers_handle_then_did() {
-    assert_eq!(
-        default_avatar_initial(&["alice".to_owned()], "did:web:example.test"),
-        "A"
-    );
-    assert_eq!(default_avatar_initial(&[], "did:web:bob.example"), "B");
-    assert_eq!(
-        default_avatar_initial(&[], "did:web:acme.example:users:bob"),
-        "B"
-    );
-    assert_eq!(
-        default_avatar_initial(&["org:example.com".to_owned()], "did:web:bob.example"),
-        "B"
-    );
-    assert_eq!(
-        default_avatar_initial(
-            &["org:example.com".to_owned()],
-            "did:web:acme.example:users:bob"
-        ),
-        "B"
-    );
-}
-
-#[test]
-fn default_avatar_tone_is_stable_and_bounded() {
-    let handles = vec!["alice".to_owned()];
-    let first = default_avatar_tone(&handles, "did:web:example.test");
-    let second = default_avatar_tone(&handles, "did:web:example.test");
-    assert_eq!(first, second);
-    assert!((1..=6).contains(&first));
-}

@@ -307,10 +307,6 @@ pub fn DashboardPanel(
                                             .as_ref()
                                             .map(|r| r.display_name(&node.title).to_owned())
                                             .unwrap_or_else(|| node.title.clone());
-                                        let avatar_seed = display_name
-                                            .chars()
-                                            .next()
-                                            .unwrap_or('S');
                                         let has_remark = remark
                                             .as_ref()
                                             .is_some_and(|r| !r.local_name.trim().is_empty());
@@ -341,7 +337,11 @@ pub fn DashboardPanel(
                                                     view.set(super::AppView::Kanban);
                                                 }
                                             },
-                                            span { class: "avatar org", "{avatar_seed}" }
+                                            crate::components::IdentityAvatar {
+                                                seed: node.id.clone(),
+                                                alt_text: display_name.clone(),
+                                                class: "avatar avatar-img".to_owned(),
+                                            }
                                             span { class: "grow",
                                                 span { class: "title", "{display_name}" }
                                                 span { class: "sub",

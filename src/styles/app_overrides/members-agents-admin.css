@@ -884,9 +884,7 @@
   border-right: 1px solid var(--nav-border);
 }
 
-.brand::before,
-.avatar.bot,
-.avatar.agent {
+.brand::before {
   background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
   color: var(--text-on-accent);
 }

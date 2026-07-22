@@ -863,10 +863,10 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                 "data-testid": "read-receipt-indicator",
                                                 "data-readers": "{attr}",
                                                 for did in &readers {
-                                                    span {
-                                                        class: "read-receipt-avatar",
-                                                        title: "{did}",
-                                                        "\u{2713}"
+                                                    crate::components::IdentityAvatar {
+                                                        seed: did.clone(),
+                                                        alt_text: did.clone(),
+                                                        class: "read-receipt-avatar avatar-img".to_owned(),
                                                     }
                                                 }
                                             }

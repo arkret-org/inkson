@@ -31,23 +31,14 @@
   box-shadow: 0 0 0 2px var(--surface);
 }
 
-/* Topbar account trigger shows the same avatar as the settings "Account
-   identity" card — the uploaded photo, or the default letter+tone circle —
-   instead of a generic person glyph. Frameless and sized to fill the
+/* Topbar account trigger shows the same uploaded photo or generated identicon
+   as every other identity surface. Frameless and sized to fill the
    topbar slot so it reads larger than the boxed icons next to it. */
 .account-menu-button .topbar-account-avatar {
   width: 32px;
   height: 32px;
   flex: 0 0 auto;
   transition: filter 120ms ease;
-}
-.account-menu-button .topbar-account-avatar.default-avatar {
-  font-size: 14px;
-  font-weight: 700;
-  box-shadow: none;
-}
-.account-menu-button .topbar-account-avatar.default-avatar::after {
-  inset: 4px;
 }
 .account-menu-button .topbar-account-avatar .content-block-image,
 .account-menu-button .topbar-account-avatar .content-block-image img {
@@ -110,21 +101,12 @@
   overflow-wrap: anywhere;
 }
 
-/* Account-menu header avatar — same identity avatar as the topbar trigger
-   (uploaded photo or default letter+tone circle), but larger to anchor the
-   menu header. */
+/* Account-menu header avatar — same identity avatar as the topbar trigger,
+   but larger to anchor the menu header. */
 .account-menu__head .account-menu__avatar {
   flex: 0 0 auto;
   width: 44px;
   height: 44px;
-}
-.account-menu__head .account-menu__avatar.default-avatar {
-  font-size: 18px;
-  font-weight: 700;
-  box-shadow: none;
-}
-.account-menu__head .account-menu__avatar.default-avatar::after {
-  inset: 6px;
 }
 .account-menu__head .account-menu__avatar .content-block-image,
 .account-menu__head .account-menu__avatar .content-block-image img {
@@ -189,6 +171,32 @@
   min-width: 0;
 }
 
+.account-menu__device-text {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+  min-width: 0;
+}
+
+.account-menu__device-name,
+.account-menu__device-id {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu__device-name {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.account-menu__device-id {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
 .account-menu__copy {
   flex: 0 0 auto;
   width: 28px;
@@ -201,23 +209,6 @@
 .account-menu__row:hover .account-menu__copy,
 .account-menu__row:focus-within .account-menu__copy {
   opacity: 1;
-}
-
-.account-menu__section {
-  display: grid;
-  gap: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-}
-
-.account-menu__section-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  color: var(--text-3);
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.06em;
 }
 
 .account-menu__actions {
@@ -331,10 +322,6 @@
   width: 128px;
   height: 128px;
   font-size: 42px;
-}
-
-.settings-avatar-card [data-testid="settings-avatar-preview"].default-avatar::after {
-  inset: 16px;
 }
 
 .settings-avatar-card [data-testid="settings-avatar-preview"] .content-block-image,

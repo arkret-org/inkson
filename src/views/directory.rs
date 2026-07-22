@@ -1084,22 +1084,22 @@ pub fn DirectoryPanel(
                                     .get("avatar_blob_ref")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("");
+                                let actor_id = actor
+                                    .get("did")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("-");
+                                let actor_label = actor
+                                    .get("display_name")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|value| !value.trim().is_empty())
+                                    .unwrap_or(actor_id);
                                 rsx! {
-                                    if !avatar_blob_ref.trim().is_empty() {
-                                        div {
-                                            class: "avatar-img sm",
-                                            "data-testid": "directory-actor-avatar",
-                                            crate::content::renderer::AuthenticatedBlobImage {
-                                                blob_ref: avatar_blob_ref.to_owned(),
-                                                alt_text: "Avatar".to_owned(),
-                                            }
-                                        }
-                                    } else {
-                                        div {
-                                            class: "avatar-img sm placeholder",
-                                            "data-testid": "directory-actor-avatar",
-                                            "aria-hidden": "true",
-                                        }
+                                    crate::components::IdentityAvatar {
+                                        seed: actor_id.to_owned(),
+                                        alt_text: format!("Avatar for {actor_label}"),
+                                        blob_ref: Some(avatar_blob_ref.to_owned()),
+                                        class: "avatar-img sm".to_owned(),
+                                        test_id: Some("directory-actor-avatar".to_owned()),
                                     }
                                 }
                             }

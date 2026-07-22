@@ -215,14 +215,6 @@ pub(super) fn assignee_label_for_actor(
         .unwrap_or_else(|| display_name_for_did(state_store, actor_id))
 }
 
-pub(super) fn assignee_avatar_initial(label: &str) -> String {
-    label
-        .chars()
-        .find(|ch| ch.is_alphanumeric())
-        .map(|ch| ch.to_uppercase().collect::<String>())
-        .unwrap_or_else(|| "?".to_owned())
-}
-
 pub(super) fn assignee_filter_matches(filter: &str, label: &str, actor_id: &str) -> bool {
     let filter = filter.trim().to_lowercase();
     if filter.is_empty() {

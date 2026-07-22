@@ -33,6 +33,11 @@ pub fn AccountSwitcher(
         .map(AccountProfile::display_label)
         .unwrap_or("Sign in")
         .to_owned();
+    let active_avatar_seed = profiles
+        .active()
+        .map(|profile| profile.account_did.clone())
+        .filter(|did| !did.trim().is_empty())
+        .unwrap_or_else(|| active_label.clone());
 
     rsx! {
         div {
@@ -46,7 +51,11 @@ pub fn AccountSwitcher(
                 "aria-haspopup": "menu",
                 "aria-expanded": if open() { "true" } else { "false" },
                 onclick: move |_| open.toggle(),
-                span { class: "avatar", "👤" }
+                crate::components::IdentityAvatar {
+                    seed: active_avatar_seed.clone(),
+                    alt_text: active_label.clone(),
+                    class: "avatar avatar-img".to_owned(),
+                }
                 span { class: "account-label", "{active_label}" }
                 span { class: "muted", "▾" }
             }
@@ -89,6 +98,11 @@ pub fn AccountSwitcher(
                                                 }
                                                 open.set(false);
                                             },
+                                            crate::components::IdentityAvatar {
+                                                seed: did.clone(),
+                                                alt_text: label.clone(),
+                                                class: "avatar xs avatar-img".to_owned(),
+                                            }
                                             span { class: "account-row-label", "{label}" }
                                             span { class: "muted", "{did}" }
                                         }

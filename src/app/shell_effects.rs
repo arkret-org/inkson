@@ -9,6 +9,11 @@ pub(super) struct ShellEffectState {
     pub personal_handles: Signal<Vec<String>>,
     pub personal_handles_status: Signal<String>,
     pub personal_handles_lookup_key: Signal<String>,
+    pub device_id: Signal<String>,
+    pub current_account_display_name: Signal<String>,
+    pub current_account_avatar_blob_ref: Signal<String>,
+    pub current_device_display_name: Signal<String>,
+    pub account_identity_lookup_key: Signal<String>,
     pub contact_handles_lookup_key: Signal<String>,
     pub contact_handles_fetching: Signal<BTreeSet<String>>,
     pub direct_contact_rows: Signal<Vec<crate::models::ContactListRow>>,
@@ -24,6 +29,11 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
         mut personal_handles,
         mut personal_handles_status,
         mut personal_handles_lookup_key,
+        device_id,
+        mut current_account_display_name,
+        mut current_account_avatar_blob_ref,
+        mut current_device_display_name,
+        mut account_identity_lookup_key,
         contact_handles_lookup_key,
         contact_handles_fetching,
         direct_contact_rows,
@@ -33,6 +43,81 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
         base_url,
     } = SessionContext::get();
     let navigator = use_navigator();
+
+    // Account-viewer is the authoritative source for the Actor Profile and
+    // device display_name. Keep those user-facing labels separate from the
+    // protocol IDs used by requests and copy actions.
+    use_effect(move || {
+        let lookup_base_url = base_url();
+        let lookup_actor = account_did();
+        let lookup_device = device_id();
+        let lookup_token = token();
+        let key = format!(
+            "{}|{}|{}|{}",
+            lookup_base_url,
+            lookup_actor,
+            lookup_device,
+            !lookup_token.trim().is_empty(),
+        );
+        if account_identity_lookup_key() == key {
+            return;
+        }
+        account_identity_lookup_key.set(key);
+        if lookup_token.trim().is_empty() || lookup_actor.trim().is_empty() {
+            current_account_display_name.set(String::new());
+            current_account_avatar_blob_ref.set(String::new());
+            current_device_display_name.set(String::new());
+            return;
+        }
+
+        // Never keep the previous account's labels visible while a new
+        // account/device lookup is in flight (or if that lookup fails).
+        current_account_display_name.set(String::new());
+        current_account_avatar_blob_ref.set(String::new());
+        current_device_display_name.set(String::new());
+
+        let base = lookup_base_url;
+        let actor = lookup_actor;
+        let device = lookup_device;
+        spawn(async move {
+            let result = crate::transport::auth::with_authed_sdk_client(
+                &base,
+                lookup_token,
+                |http| async move { crate::transport::keys::list_devices(&http).await },
+            )
+            .await;
+            let Ok(viewer) = result else {
+                return;
+            };
+            // Ignore a late response from the previous account.
+            if account_did().trim() != actor.trim() {
+                return;
+            }
+            let display_name = viewer
+                .profile
+                .as_ref()
+                .map(|profile| profile.display_name.trim().to_owned())
+                .unwrap_or_default();
+            let avatar_blob_ref = viewer
+                .profile
+                .as_ref()
+                .and_then(|profile| profile.avatar_blob_ref.as_ref())
+                .map(ToString::to_string)
+                .unwrap_or_default();
+            let device_display_name = viewer
+                .devices
+                .iter()
+                .find(|summary| summary.device_id.as_str() == device.trim())
+                .and_then(|summary| summary.display_name.as_deref())
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(ToOwned::to_owned)
+                .unwrap_or_default();
+            try_set_signal(current_account_display_name, display_name);
+            try_set_signal(current_account_avatar_blob_ref, avatar_blob_ref);
+            try_set_signal(current_device_display_name, device_display_name);
+        });
+    });
 
     use_effect(move || {
         let handle = account_primary_handle();
@@ -193,31 +278,21 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                             .as_ref()
                             .map(|handle| handle.canonical().to_owned());
                         let directory_handles = display_handles_from_directory_response(&res);
-                        if directory_handles.is_empty() {
-                            // Mirror the error branches below: keep any
-                            // account viewer primary handle claim already
-                            // loaded instead of clobbering it with an empty
-                            // directory page.
-                            if existing_personal_handles.is_empty() {
-                                try_set_signal(
-                                    personal_handles_status,
-                                    "No handles published".to_owned(),
-                                );
-                            }
+                        // A successful directory response is a complete,
+                        // current projection. Replace the viewer fallback
+                        // instead of merging, which kept revoked/renamed
+                        // handles in the menu for the rest of the session.
+                        try_set_signal(
+                            account_primary_handle,
+                            directory_primary_handle.unwrap_or_default(),
+                        );
+                        let status = if directory_handles.is_empty() {
+                            "No handles published".to_owned()
                         } else {
-                            if let Some(primary_handle) = directory_primary_handle {
-                                try_set_signal(account_primary_handle, primary_handle);
-                            }
-                            let handles = merge_personal_handles(
-                                &existing_personal_handles,
-                                directory_handles,
-                            );
-                            try_set_signal(
-                                personal_handles_status,
-                                personal_handles_status_for(&handles),
-                            );
-                            try_set_signal(personal_handles, handles);
-                        }
+                            personal_handles_status_for(&directory_handles)
+                        };
+                        try_set_signal(personal_handles_status, status);
+                        try_set_signal(personal_handles, directory_handles);
                     }
                     Err(err) => {
                         tracing::warn!(

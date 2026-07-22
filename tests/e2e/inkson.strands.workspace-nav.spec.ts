@@ -55,7 +55,13 @@ test("workspace sidebar separates contact-based direct chats", async ({ page }) 
   const selfRow = shell.getByTestId("contact-sidebar-self-row");
   await expect(selfRow).toContainText("alice:local.host");
   await expect(shell.getByTestId("contact-sidebar-self-badge")).toHaveText("ME");
-  await expect(selfRow.locator(".contact-sidebar-user-avatar .default-avatar")).toHaveText("A");
+  const selfAvatar = selfRow.locator(".contact-sidebar-user-avatar .generated-avatar");
+  const topbarAvatar = shell.getByTestId("topbar-account-avatar");
+  await expect(selfAvatar.locator("svg")).toBeVisible();
+  await expect(topbarAvatar.locator("svg")).toBeVisible();
+  expect(await selfAvatar.locator("svg").innerHTML()).toBe(
+    await topbarAvatar.locator("svg").innerHTML(),
+  );
   await expect(selfRow).not.toContainText("Agents 1");
   await expect(shell.getByTestId("contact-sidebar-self-agent-toggle")).toBeVisible();
   await expect(shell.locator(".contact-sidebar-group").first()).toHaveAttribute(

@@ -1,6 +1,5 @@
 import { expect, test } from "@playwright/test";
 import {
-  DEMO_FRONTIER_EVENT,
   registerStrandsBeforeEach,
   latestTestId,
   refreshServer,
@@ -24,12 +23,15 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
     page.getByTestId("realm-tree-node-button").filter({ hasText: "Launch Realm" }).locator(".sidebar-nav-icon"),
   ).toHaveAttribute("title", "Unencrypted Realm");
   await page.getByTestId("account-menu-button").click();
-  await expect(page.getByTestId("account-menu-frontier")).toHaveAttribute(
-    "title",
-    DEMO_FRONTIER_EVENT,
+  await expect(page.getByTestId("account-menu-display-name")).toHaveText("inkson");
+  await expect(page.getByTestId("account-menu-account-detail")).toContainText(
+    "@alice:local.host · Current device",
   );
-  await expect(page.getByTestId("account-menu-push")).toBeVisible();
-  await expect(page.getByTestId("account-menu-queue")).toHaveText("0");
+  await expect(page.getByTestId("account-menu-device-name")).toHaveText("Current device");
+  await expect(page.getByTestId("account-menu-frontier")).toHaveCount(0);
+  await expect(page.getByTestId("account-menu-push")).toHaveCount(0);
+  await expect(page.getByTestId("account-menu-queue")).toHaveCount(0);
+  await expect(page.getByTestId("account-menu-crypto")).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("dashboard-panel")).toBeVisible();
   await expect(page.getByTestId("realm-tree-summary")).toContainText("Recent Realms");
@@ -131,9 +133,7 @@ test("connect refresh canonicalizes stale account DID but preserves device overr
   await refreshServer(page);
 
   await latestTestId(page, "account-menu-button").click();
-  await expect(latestTestId(page, "account-menu-session-crypto")).not.toContainText(
-    "session credential loaded",
-  );
+  await expect(latestTestId(page, "account-menu-display-name")).toHaveText("inkson");
   await expect(latestTestId(page, "account-menu-handles")).toContainText("@alice:local.host");
   await expect(latestTestId(page, "account-menu-did")).toContainText("did:web:alice.example");
   await expect(latestTestId(page, "account-menu-device")).toHaveAttribute("title", deviceId);
@@ -152,9 +152,7 @@ test("session refresh canonicalizes stale account DID in settings", async ({ pag
   await expect(latestTestId(page, "account-menu-did")).toContainText("did:web:alice.example");
   await expect(latestTestId(page, "account-menu-did")).not.toContainText(staleDid);
   await latestTestId(page, "account-menu-session-refresh").click();
-  await expect(latestTestId(page, "account-menu-session-state")).toContainText(
-    "Session refresh ok: did:web:alice.example",
-  );
+  await expect(latestTestId(page, "account-menu-session-refresh")).toBeEnabled();
   await expect(latestTestId(page, "account-menu-did")).toContainText("did:web:alice.example");
   await expect.poll(() => readLocalConfig(page)).toMatchObject({
     account_did: "did:web:alice.example",

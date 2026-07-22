@@ -83,22 +83,16 @@ pub fn AvatarUploader(props: AvatarUploaderProps) -> Element {
             class: "avatar-uploader",
             "data-testid": "{test_id_prefix}",
             div { class: "avatar-uploader-preview",
-                if !current_blob_ref.trim().is_empty() {
-                    div {
-                        class: "avatar-img lg",
-                        "data-testid": "{preview_test_id}",
-                        crate::content::renderer::AuthenticatedBlobImage {
-                            blob_ref: current_blob_ref.trim().to_owned(),
-                            alt_text: alt_text.clone(),
-                        }
-                    }
-                } else {
-                    crate::components::GeneratedAvatar {
-                        seed: alt_text.clone(),
-                        alt_text: format!("Generated avatar for {alt_text}"),
-                        class: "avatar-img lg generated-avatar".to_owned(),
-                        test_id: Some(preview_test_id.clone()),
-                    }
+                crate::components::IdentityAvatar {
+                    seed: alt_text.clone(),
+                    alt_text: if current_blob_ref.trim().is_empty() {
+                        format!("Generated avatar for {alt_text}")
+                    } else {
+                        alt_text.clone()
+                    },
+                    blob_ref: Some(current_blob_ref.clone()),
+                    class: "avatar-img lg".to_owned(),
+                    test_id: Some(preview_test_id.clone()),
                 }
             }
             div { class: "avatar-uploader-controls",

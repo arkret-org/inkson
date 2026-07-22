@@ -3,7 +3,7 @@
 use dioxus::prelude::*;
 
 use super::model::*;
-use crate::components::{ActorIdentityLabel, UiIcon};
+use crate::components::ActorIdentityLabel;
 use crate::views::helpers::{MentionNode, short_protocol_id};
 
 pub(super) fn push_unique_mention_node(mentions: &mut Vec<MentionNode>, mention: MentionNode) {
@@ -129,14 +129,16 @@ pub(super) fn DiscussionParticipantRow(
     } else {
         "contact-row participant-row"
     };
-    let avatar_icon = if participant.is_agent { "bot" } else { "user" };
-
     rsx! {
         div {
             class: "{row_class}",
             "data-testid": if nested_agent { "discussion-agent-row" } else { "discussion-user-row" },
             "data-agent-controller-id": "{controller_id_attr}",
-            span { class: "participant-avatar", UiIcon { name: avatar_icon.to_owned() } }
+            crate::components::IdentityAvatar {
+                seed: participant_did_attr.clone(),
+                alt_text: display_label.clone(),
+                class: "avatar-img participant-avatar".to_owned(),
+            }
             div { class: "participant-main",
                 strong {
                     ActorIdentityLabel {

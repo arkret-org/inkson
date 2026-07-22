@@ -1631,8 +1631,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                             &realm_member_rows,
                                                                             actor_id,
                                                                         );
-                                                                        let initial = assignee_avatar_initial(&label);
-                                                                        (actor_id.clone(), label, initial)
+                                                                        (actor_id.clone(), label)
                                                                     })
                                                                     .collect::<Vec<_>>()
                                                             };
@@ -1659,7 +1658,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                             (
                                                                                 row.actor_id.clone(),
                                                                                 label.clone(),
-                                                                                assignee_avatar_initial(&label),
                                                                                 short_protocol_id(&row.actor_id),
                                                                             )
                                                                         })
@@ -1668,10 +1666,10 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             };
                                                             let assignee_label_lookup = {
                                                                 let mut labels = BTreeMap::new();
-                                                                for (actor_id, label, _) in &assigned_people {
+                                                                for (actor_id, label) in &assigned_people {
                                                                     labels.insert(actor_id.clone(), label.clone());
                                                                 }
-                                                                for (actor_id, label, _, _) in &picker_people {
+                                                                for (actor_id, label, _) in &picker_people {
                                                                     labels.insert(actor_id.clone(), label.clone());
                                                                 }
                                                                 labels
@@ -1731,12 +1729,16 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                     }
                                                                                 } else {
                                                                                     span { class: "assignee-chip-list",
-                                                                                        for (actor_id, label, initial) in assigned_people.iter() {
+                                                                                        for (actor_id, label) in assigned_people.iter() {
                                                                                             span {
                                                                                                 key: "{actor_id}",
                                                                                                 class: "assignee-chip",
                                                                                                 title: "{actor_id}",
-                                                                                                span { class: "assignee-avatar", "{initial}" }
+                                                                                                crate::components::IdentityAvatar {
+                                                                                                    seed: actor_id.clone(),
+                                                                                                    alt_text: label.clone(),
+                                                                                                    class: "avatar-img assignee-avatar".to_owned(),
+                                                                                                }
                                                                                                 span { class: "assignee-chip-label", "{label}" }
                                                                                             }
                                                                                         }
@@ -1820,7 +1822,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                         if picker_people.is_empty() {
                                                                                             div { class: "assignee-option-empty", "No members match" }
                                                                                         } else {
-                                                                                            for (actor_id, label, initial, compact_id) in picker_people.iter() {
+                                                                                            for (actor_id, label, compact_id) in picker_people.iter() {
                                                                                                 {
                                                                                                     let selected = selected_actor_ids.contains(actor_id);
                                                                                                     let option_class = if selected {
@@ -1851,7 +1853,11 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                                     UiIcon { name: "check" }
                                                                                                                 }
                                                                                                             }
-                                                                                                            span { class: "assignee-avatar", "{initial}" }
+                                                                                                            crate::components::IdentityAvatar {
+                                                                                                                seed: actor_id.clone(),
+                                                                                                                alt_text: label.clone(),
+                                                                                                                class: "avatar-img assignee-avatar".to_owned(),
+                                                                                                            }
                                                                                                             span { class: "assignee-option-main",
                                                                                                                 span { class: "assignee-option-label", "{label}" }
                                                                                                                 span { class: "assignee-option-meta", "{compact_id}" }
