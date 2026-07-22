@@ -1174,6 +1174,36 @@
   min-height: 36px;
 }
 
+.contact-sidebar-user-avatar,
+.contact-sidebar-agent-avatar {
+  overflow: hidden;
+  border-radius: 50%;
+}
+
+.contact-sidebar-user-avatar .avatar-img,
+.contact-sidebar-user-avatar .content-block-image,
+.contact-sidebar-user-avatar .content-block-image img,
+.contact-sidebar-agent-avatar .content-block-image,
+.contact-sidebar-agent-avatar .content-block-image img {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: cover;
+}
+
+.contact-sidebar-user-avatar .default-avatar,
+.contact-sidebar-agent-avatar .default-avatar {
+  font-size: 11px;
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.contact-sidebar-user-avatar .default-avatar::after,
+.contact-sidebar-agent-avatar .default-avatar::after {
+  inset: 3px;
+}
+
 .contact-agent-count,
 .contact-agent-chevron {
   flex: 0 0 auto;
@@ -1197,17 +1227,6 @@
 
 .contact-sidebar-agent-row .sidebar-nav-icon {
   color: var(--accent);
-}
-
-.contact-sidebar-agent-avatar {
-  overflow: hidden;
-  border-radius: 50%;
-}
-
-.contact-sidebar-agent-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
 }
 
 .shell.app.sidebar-collapsed .contact-agent-list,

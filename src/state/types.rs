@@ -826,6 +826,11 @@ pub struct ClientLocalState {
     /// needless round-trip on every encrypted write after the first).
     #[serde(default)]
     pub mls_genesis_emitted: BTreeSet<String>,
+    /// Exact not-yet-confirmed creator genesis Events, keyed by effective
+    /// scope. Persisting the complete Event before submission makes retry
+    /// replay the same Event id and bytes after a crash or lost response.
+    #[serde(default)]
+    pub pending_mls_genesis_events: BTreeMap<String, String>,
     /// MLS governance `policy_root` locked at `ak.mls.genesis`, keyed by the
     /// same effective-scope key as [`Self::mls_genesis_emitted`]
     /// (`mls_effective_scope_snapshot_key`).
@@ -1227,6 +1232,7 @@ impl Default for ClientLocalState {
             mls_snapshots: BTreeMap::new(),
             mls_receive_recovery_snapshots: BTreeMap::new(),
             mls_genesis_emitted: BTreeSet::new(),
+            pending_mls_genesis_events: BTreeMap::new(),
             mls_genesis_policy_root: BTreeMap::new(),
             mls_governance_proofs: BTreeMap::new(),
             mls_governance_proof_acquisitions: BTreeMap::new(),

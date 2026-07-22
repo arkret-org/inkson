@@ -291,7 +291,7 @@ fn AppBootstrap() -> Element {
         state_store,
         base_url,
     });
-    let mut sidecar_session = use_signal(|| None::<crate::sidecar::HostedSidecarState>);
+    let sidecar_session = use_signal(|| None::<crate::sidecar::HostedSidecarState>);
     use_context_provider(|| crate::sidecar::HostedSidecarStateContext(sidecar_session));
     // Construct the typed session coordinator once. Runtime and UI effects
     // share this owner instead of registering unrelated thread-local callbacks.
@@ -2040,9 +2040,6 @@ fn AppBootstrap() -> Element {
                                 } else {
                                     primary_handle
                                 };
-                                let own_agent_count = own_agent_rows.read().len();
-                                let owned_agent_context_hint =
-                                    crate::sidecar::sidecar_context_hint(&route, &active_realm_id);
                                 let self_agents_button_label = if own_agents_expanded() {
                                     "Hide your AI agents"
                                 } else {
@@ -2061,15 +2058,29 @@ fn AppBootstrap() -> Element {
                                             "aria-label": "{self_agents_button_label}",
                                             title: "{self_agents_button_label}",
                                             onclick: move |_| own_agents_expanded.toggle(),
-                                            span { class: "sidebar-nav-icon", UiIcon { name: "user" } }
+                                            span { class: "sidebar-nav-icon contact-sidebar-user-avatar",
+                                                if !topbar_avatar_blob_ref.trim().is_empty() {
+                                                    crate::content::renderer::AuthenticatedBlobImage {
+                                                        blob_ref: topbar_avatar_blob_ref.trim().to_owned(),
+                                                        alt_text: self_label.clone(),
+                                                    }
+                                                } else {
+                                                    span {
+                                                        class: "avatar-img default-avatar tone-{topbar_avatar_tone}",
+                                                        "aria-hidden": "true",
+                                                        span { "{topbar_avatar_initial}" }
+                                                    }
+                                                }
+                                            }
                                             span { class: "grow truncate", "{self_label}" }
                                             SelfAttributionBadge {
                                                 test_id: Some("contact-sidebar-self-badge".to_owned()),
                                             }
-                                            if own_agent_count > 0 {
-                                                span { class: "pill muted xs contact-agent-count", "Agents {own_agent_count}" }
+                                            span {
+                                                class: "contact-agent-chevron",
+                                                "data-testid": "contact-sidebar-self-agent-toggle",
+                                                UiIcon { name: if own_agents_expanded() { "chevron-down" } else { "chevron-right" } }
                                             }
-                                            span { class: "contact-agent-chevron", UiIcon { name: if own_agents_expanded() { "chevron-down" } else { "chevron-right" } } }
                                         }
                                         if own_agents_expanded() {
                                             div { class: "contact-agent-list", "data-testid": "contact-sidebar-self-agents",
@@ -2080,14 +2091,23 @@ fn AppBootstrap() -> Element {
                                                             .display_name
                                                             .clone()
                                                             .unwrap_or_else(|| agent.slug.clone());
-                                                        let agent_sidecar_label = agent.slug.clone();
                                                         let avatar_blob_ref = agent
                                                             .avatar_blob_ref
                                                             .as_ref()
                                                             .map(ToString::to_string)
                                                             .unwrap_or_default();
+                                                        let agent_avatar_labels = [agent_label.clone()];
+                                                        let agent_avatar_initial =
+                                                            crate::views::settings::default_avatar_initial(
+                                                                &agent_avatar_labels,
+                                                                &agent_id,
+                                                            );
+                                                        let agent_avatar_tone =
+                                                            crate::views::settings::default_avatar_tone(
+                                                                &agent_avatar_labels,
+                                                                &agent_id,
+                                                            );
                                                         let controller_id = self_did.clone();
-                                                        let context_hint = owned_agent_context_hint.clone();
                                                         let opening_key = format!("owned-agent:{agent_id}");
                                                         let opening_target = direct_chat_opening();
                                                         let chat_open_blocked = opening_target.is_some();
@@ -2114,9 +2134,6 @@ fn AppBootstrap() -> Element {
                                                                 onclick: {
                                                                     let base = base_url();
                                                                     let agent_id = agent_id.clone();
-                                                                    let agent_sidecar_label = agent_sidecar_label.clone();
-                                                                    let controller_id = controller_id.clone();
-                                                                    let context_hint = context_hint.clone();
                                                                     let opening_key = opening_key.clone();
                                                                     move |event: dioxus::events::MouseEvent| {
                                                                         event.prevent_default();
@@ -2124,132 +2141,44 @@ fn AppBootstrap() -> Element {
                                                                         if direct_chat_opening.read().is_some() {
                                                                             return;
                                                                         }
-                                                                        let Some(context_hint) = context_hint.clone() else {
-                                                                            crate::components::feedback::toast_info(
-                                                                                "feedback.direct_open_failed",
-                                                                                vec![],
-                                                                            );
-                                                                            return;
-                                                                        };
                                                                         direct_chat_opening.set(Some(opening_key.clone()));
                                                                         let api_token = token();
                                                                         let base = base.clone();
                                                                         let agent_id = agent_id.clone();
-                                                                        let agent_sidecar_label = agent_sidecar_label.clone();
-                                                                        let controller_id = controller_id.clone();
-                                                                        let context_hint = context_hint.clone();
-                                                                        let trace_id = crate::operation::uuid_v7();
-                                                                        tracing::info!(
-                                                                            target: "sidecar",
-                                                                            event = "sidecar.route.requested",
-                                                                            trace_id = %trace_id,
-                                                                            source_kind = "direct_agent",
-                                                                            addressed_agent_count = 1,
-                                                                        );
                                                                         spawn(async move {
-                                                                            tracing::info!(
-                                                                                target: "sidecar",
-                                                                                event = "sidecar.ensure.started",
-                                                                                trace_id = %trace_id,
-                                                                                context_ref_kind = "strand",
-                                                                                attempt = 1_u8,
-                                                                            );
-                                                                            let agent_id_for_request = agent_id.clone();
-                                                                            match crate::transport::auth::with_authed_sdk_client(
+                                                                            match crate::transport::auth::with_authed_api(
                                                                                 &base,
                                                                                 api_token,
-                                                                                |http| async move {
-                                                                                    let controller = if controller_id.trim().is_empty() {
-                                                                                        http.account_viewer()
-                                                                                            .await
-                                                                                            .map_err(anyhow::Error::from)?
-                                                                                            .principal_id
-                                                                                    } else {
-                                                                                        arkret_sdk::Did::new(controller_id)
-                                                                                            .map_err(anyhow::Error::from)?
-                                                                                    };
-                                                                                    let agent = arkret_sdk::Did::new(agent_id_for_request)
-                                                                                        .map_err(anyhow::Error::from)?;
-                                                                                    let projection = http
-                                                                                        .realm_strands(&context_hint.realm_id)
-                                                                                        .await
-                                                                                        .map_err(anyhow::Error::from)?;
-                                                                                    let context_strand_id = crate::sidecar::select_sidecar_context_strand(
-                                                                                        &projection,
-                                                                                        &context_hint,
-                                                                                    )
-                                                                                    .ok_or_else(|| anyhow::anyhow!(
-                                                                                        "No active Strand is available in the current Realm for the Agent chat context"
-                                                                                    ))?;
-                                                                                    let request = arkret_sdk::AgentSidecarEnsureRequestBody {
-                                                                                        controller_id: controller.clone(),
-                                                                                        addressed_agent_ids: vec![agent],
-                                                                                        context_ref: arkret_sdk::AgentSidecarContextRef::strand(
-                                                                                            arkret_sdk::RealmId::new(context_hint.realm_id.clone())
-                                                                                                .map_err(anyhow::Error::from)?,
-                                                                                            arkret_sdk::StrandId::new(context_strand_id.clone())
-                                                                                                .map_err(anyhow::Error::from)?,
-                                                                                        ),
-                                                                                    };
-                                                                                    let response = http
-                                                                                        .agent_sidecar_ensure(&request)
-                                                                                        .await
-                                                                                        .map_err(anyhow::Error::from)?;
-                                                                                    let sidecar_view = http
-                                                                                        .agent_sidecar_get(&response.sidecar_id)
-                                                                                        .await
-                                                                                        .map_err(anyhow::Error::from)?;
-                                                                                    Ok::<_, anyhow::Error>((
-                                                                                        controller,
-                                                                                        context_hint.realm_id,
-                                                                                        context_strand_id,
-                                                                                        response,
-                                                                                        sidecar_view.sidecar.backing_circle_id,
-                                                                                    ))
+                                                                                |api| async move {
+                                                                                    crate::transport::account::direct_conversation_resolve(
+                                                                                        &api,
+                                                                                        state_store,
+                                                                                        &agent_id,
+                                                                                        true,
+                                                                                    ).await
                                                                                 },
                                                                             ).await {
-                                                                                Ok((controller, realm_id, context_strand_id, response, backing_scope_circle_id)) => {
-                                                                                    let pending_count = response.pending_access_reconciliations.len();
-                                                                                    tracing::info!(
-                                                                                        target: "sidecar",
-                                                                                        event = "sidecar.ensure.completed",
-                                                                                        trace_id = %trace_id,
-                                                                                        pending_reconciliation_count = pending_count,
-                                                                                    );
-                                                                                    sidecar_session.set(Some(crate::sidecar::HostedSidecarState {
-                                                                                        trace_id,
-                                                                                        controller_id: controller.to_string(),
-                                                                                        addressed_agent_ids: vec![agent_id],
-                                                                                        addressed_agent_label: agent_sidecar_label,
-                                                                                        source_realm_id: realm_id.clone(),
-                                                                                        source_strand_id: context_strand_id.clone(),
-                                                                                        sidecar_id: response.sidecar_id.clone(),
-                                                                                        backing_scope_circle_id,
-                                                                                        private_strand_id: response.private_strand_id.to_string(),
-                                                                                        private_relation_id: response.private_relation_id.to_string(),
-                                                                                        access_readiness: response.access_readiness,
-                                                                                        pending_access_reconciliations: response.pending_access_reconciliations.clone(),
-                                                                                        display_mode: arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
-                                                                                        migrated_draft: String::new(),
-                                                                                        opened_at: chrono::Utc::now(),
-                                                                                    }));
-                                                                                    let _ = navigator.push(Route::DirectConversation {
-                                                                                        realm_id,
-                                                                                        strand_id: context_strand_id,
-                                                                                    });
+                                                                                Ok(response) if matches!(
+                                                                                    response.state,
+                                                                                    arkret_sdk::DirectConversationResolveState::Found
+                                                                                ) => {
+                                                                                    if let (Some(realm_id), Some(strand_id)) =
+                                                                                        (response.realm_id, response.main_strand_id)
+                                                                                    {
+                                                                                        let _ = navigator.push(Route::DirectConversation {
+                                                                                            realm_id: realm_id.to_string(),
+                                                                                            strand_id: strand_id.to_string(),
+                                                                                        });
+                                                                                    }
                                                                                 }
-                                                                                Err(err) => {
-                                                                                    tracing::warn!(
-                                                                                        target: "sidecar",
-                                                                                        event = "sidecar.ensure.failed",
-                                                                                        trace_id = %trace_id,
-                                                                                        stage = "ensure",
-                                                                                        error = %err.display(),
-                                                                                    );
-                                                                                    crate::components::feedback::toast_error(
-                                                                                        "feedback.direct_open_failed", vec![], Some(err.display()),
-                                                                                    );
-                                                                                }
+                                                                                Ok(response) => crate::components::feedback::toast_error(
+                                                                                    "feedback.direct_open_failed",
+                                                                                    vec![],
+                                                                                    Some(format!("state: {:?}", response.state)),
+                                                                                ),
+                                                                                Err(err) => crate::components::feedback::toast_error(
+                                                                                    "feedback.direct_open_failed", vec![], Some(err.display()),
+                                                                                ),
                                                                             }
                                                                             direct_chat_opening.set(None);
                                                                         });
@@ -2257,7 +2186,11 @@ fn AppBootstrap() -> Element {
                                                                 },
                                                                 span { class: "sidebar-nav-icon contact-sidebar-agent-avatar",
                                                                     if avatar_blob_ref.is_empty() {
-                                                                        UiIcon { name: "bot" }
+                                                                        span {
+                                                                            class: "avatar-img default-avatar tone-{agent_avatar_tone}",
+                                                                            "aria-hidden": "true",
+                                                                            span { "{agent_avatar_initial}" }
+                                                                        }
                                                                     } else {
                                                                         crate::content::renderer::AuthenticatedBlobImage {
                                                                             blob_ref: avatar_blob_ref,
@@ -2596,6 +2529,17 @@ fn AppBootstrap() -> Element {
                                                         .as_ref()
                                                         .map(ToString::to_string)
                                                         .unwrap_or_default();
+                                                    let agent_avatar_labels = [agent_label.clone()];
+                                                    let agent_avatar_initial =
+                                                        crate::views::settings::default_avatar_initial(
+                                                            &agent_avatar_labels,
+                                                            &agent_id,
+                                                        );
+                                                    let agent_avatar_tone =
+                                                        crate::views::settings::default_avatar_tone(
+                                                            &agent_avatar_labels,
+                                                            &agent_id,
+                                                        );
                                                     let controller = peer.clone();
                                                     let opening_key = format!("contact-agent:{agent_id}");
                                                     let opening_target = direct_chat_opening();
@@ -2685,7 +2629,11 @@ fn AppBootstrap() -> Element {
                                                             },
                                                             span { class: "sidebar-nav-icon contact-sidebar-agent-avatar",
                                                                 if avatar_blob_ref.is_empty() {
-                                                                    UiIcon { name: "bot" }
+                                                                    span {
+                                                                        class: "avatar-img default-avatar tone-{agent_avatar_tone}",
+                                                                        "aria-hidden": "true",
+                                                                        span { "{agent_avatar_initial}" }
+                                                                    }
                                                                 } else {
                                                                     crate::content::renderer::AuthenticatedBlobImage {
                                                                         blob_ref: avatar_blob_ref,

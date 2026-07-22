@@ -110,6 +110,36 @@ pub fn build_mls_remove_commit_for_effective_scope(
     ),
     MlsRuntimeError,
 > {
+    build_mls_remove_commit_for_effective_scope_with_sidecar_binding(
+        state_store,
+        secure_store,
+        realm_id,
+        circle_id,
+        actor_id,
+        device_id,
+        target_principal_id,
+        revocation_membership_frontier,
+        None,
+    )
+}
+
+pub fn build_mls_remove_commit_for_effective_scope_with_sidecar_binding(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    actor_id: &str,
+    device_id: &str,
+    target_principal_id: &str,
+    revocation_membership_frontier: &[arkret_sdk::EventId],
+    sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
+) -> Result<
+    (
+        arkret_sdk::MlsRemoveMemberResult,
+        crate::mls::persistence::MlsSnapshotEnvelope,
+    ),
+    MlsRuntimeError,
+> {
     canonical_mls_remove_membership_frontier(revocation_membership_frontier)?;
     let circle = circle_id
         .map(str::trim)
@@ -135,9 +165,14 @@ pub fn build_mls_remove_commit_for_effective_scope(
         group.epoch().saturating_add(1),
     )
     .map_err(MlsRuntimeError::Commit)?;
-    let governance_binding =
+    let mut governance_binding =
         crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
             .map_err(MlsRuntimeError::Commit)?;
+    if let Some(sidecar_binding) = sidecar_binding {
+        governance_binding = governance_binding
+            .with_sidecar_binding(sidecar_binding)
+            .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
+    }
     let remove = group
         .remove_member_by_principal_with_governance_binding(&target, &governance_binding)
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
@@ -197,6 +232,35 @@ pub fn build_add_member_commit_for_effective_scope(
     ),
     MlsRuntimeError,
 > {
+    build_add_member_commit_for_effective_scope_with_binding(
+        state_store,
+        secure_store,
+        realm_id,
+        circle_id,
+        actor_id,
+        device_id,
+        member_key_package,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_add_member_commit_for_effective_scope_with_binding(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    actor_id: &str,
+    device_id: &str,
+    member_key_package: &arkret_sdk::MlsKeyPackageRecord,
+    sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
+) -> Result<
+    (
+        arkret_sdk::MlsAddMemberResult,
+        crate::mls::persistence::MlsSnapshotEnvelope,
+    ),
+    MlsRuntimeError,
+> {
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
@@ -222,6 +286,12 @@ pub fn build_add_member_commit_for_effective_scope(
     let governance_binding =
         crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
             .map_err(MlsRuntimeError::Commit)?;
+    let governance_binding = match sidecar_binding {
+        Some(binding) => governance_binding
+            .with_sidecar_binding(binding)
+            .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?,
+        None => governance_binding,
+    };
     let add = group
         .add_member_with_governance_binding(member_key_package, &governance_binding)
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
@@ -251,6 +321,35 @@ pub fn build_add_members_commit_for_effective_scope(
     actor_id: &str,
     device_id: &str,
     member_key_packages: &[arkret_sdk::MlsKeyPackageRecord],
+) -> Result<
+    (
+        arkret_sdk::MlsAddMembersResult,
+        crate::mls::persistence::MlsSnapshotEnvelope,
+    ),
+    MlsRuntimeError,
+> {
+    build_add_members_commit_for_effective_scope_with_binding(
+        state_store,
+        secure_store,
+        realm_id,
+        circle_id,
+        actor_id,
+        device_id,
+        member_key_packages,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_add_members_commit_for_effective_scope_with_binding(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    actor_id: &str,
+    device_id: &str,
+    member_key_packages: &[arkret_sdk::MlsKeyPackageRecord],
+    sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<
     (
         arkret_sdk::MlsAddMembersResult,
@@ -288,6 +387,12 @@ pub fn build_add_members_commit_for_effective_scope(
     let governance_binding =
         crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
             .map_err(MlsRuntimeError::Commit)?;
+    let governance_binding = match sidecar_binding {
+        Some(binding) => governance_binding
+            .with_sidecar_binding(binding)
+            .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?,
+        None => governance_binding,
+    };
     let add = group
         .add_members_with_governance_binding(member_key_packages, &governance_binding)
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;

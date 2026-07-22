@@ -659,6 +659,10 @@ mod tests {
         let executor = CrossSigningExecutor::new(plan, principal, test_trust_domain());
         let out = executor.run().expect("local steps must succeed");
 
+        assert_eq!(
+            out.publish_content.issued_at.timestamp_subsec_nanos() % 1_000_000,
+            0
+        );
         let serialized = serde_json::to_value(&out.publish_content).unwrap();
         let issued_at = serialized["issued_at"]
             .as_str()

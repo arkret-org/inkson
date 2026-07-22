@@ -134,7 +134,7 @@ fn projection_creator_matches_actor(projection: &Value, actor_id: &str) -> bool 
     false
 }
 
-fn circle_effective_scope(
+pub(crate) fn circle_effective_scope(
     realm_id: &str,
     circle_id: &str,
 ) -> Result<arkret_sdk::models::EffectiveScope, String> {
@@ -215,6 +215,26 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
     device_id: &str,
     fresh_summary: Option<&crate::mls::runtime::InitialMlsSnapshotSummary>,
 ) -> Result<Option<arkret_sdk::Event>, String> {
+    build_creator_mls_genesis_event_for_effective_scope_with_binding(
+        state_store,
+        realm_id,
+        circle_id,
+        actor_id,
+        device_id,
+        fresh_summary,
+        None,
+    )
+}
+
+pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
+    state_store: &mut LocalStateStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    actor_id: &str,
+    device_id: &str,
+    fresh_summary: Option<&crate::mls::runtime::InitialMlsSnapshotSummary>,
+    sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
+) -> Result<Option<arkret_sdk::Event>, String> {
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
@@ -222,10 +242,9 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
         return Ok(None);
     }
     // Genesis describes the group at epoch 0. We can only build a
-    // contract-correct genesis from the just-created epoch-0 material; once the
-    // group has committed past epoch 0 the epoch-0 ratchet tree is gone. The
-    // server lazily defaults a never-seen group to epoch 0 anyway, so missing
-    // this window is non-fatal (commits still work).
+    // contract-correct genesis from durable epoch-0 material. Callers must
+    // restore that material after a crash; a group without an accepted genesis
+    // is not usable and must remain fail-closed.
     let Some(summary) = fresh_summary else {
         return Ok(None);
     };
@@ -246,6 +265,12 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
     )?;
     let governance_binding =
         crate::mls::governance_proof::cached_verified_binding(state_store, &request)?;
+    let governance_binding = match sidecar_binding {
+        Some(binding) => governance_binding
+            .with_sidecar_binding(binding)
+            .map_err(|error| format!("invalid Sidecar MLS governance binding: {error}"))?,
+        None => governance_binding,
+    };
     // Lock the genesis `policy_root` so every later `ak.mls.commit` reuses these
     // exact bytes instead of recomputing from the moving Seal `state_root`
     // (which drifts the moment the creator does any non-policy work before
@@ -334,6 +359,27 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_proposal_refs
         commit_envelope,
         proposal_refs,
         None,
+        None,
+    )
+}
+
+pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_sidecar_binding(
+    state_store: &LocalStateStore,
+    realm_id: &str,
+    circle_id: &str,
+    actor_id: &str,
+    commit_envelope: &arkret_sdk::MlsCommitEnvelope,
+    sidecar_binding: arkret_sdk::SidecarMlsBinding,
+) -> Result<arkret_sdk::Event, String> {
+    mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
+        state_store,
+        realm_id,
+        Some(circle_id),
+        actor_id,
+        commit_envelope,
+        Vec::new(),
+        None,
+        Some(sidecar_binding),
     )
 }
 
@@ -358,6 +404,33 @@ pub(crate) fn mls_remove_commit_event_from_store_for_effective_scope_with_propos
         commit_envelope,
         proposal_refs,
         Some(membership_frontier),
+        None,
+    )
+}
+
+pub(crate) fn mls_remove_commit_event_from_store_for_effective_scope_with_sidecar_binding(
+    state_store: &LocalStateStore,
+    realm_id: &str,
+    circle_id: &str,
+    actor_id: &str,
+    commit_envelope: &arkret_sdk::MlsCommitEnvelope,
+    proposal_refs: Vec<arkret_sdk::EventId>,
+    revocation_membership_frontier: &[arkret_sdk::EventId],
+    sidecar_binding: arkret_sdk::SidecarMlsBinding,
+) -> Result<arkret_sdk::Event, String> {
+    let membership_frontier = crate::mls::runtime::canonical_mls_remove_membership_frontier(
+        revocation_membership_frontier,
+    )
+    .map_err(|err| err.user_message())?;
+    mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
+        state_store,
+        realm_id,
+        Some(circle_id),
+        actor_id,
+        commit_envelope,
+        proposal_refs,
+        Some(membership_frontier),
+        Some(sidecar_binding),
     )
 }
 
@@ -369,6 +442,7 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
     commit_envelope: &arkret_sdk::MlsCommitEnvelope,
     proposal_refs: Vec<arkret_sdk::EventId>,
     explicit_membership_frontier: Option<Vec<arkret_sdk::EventId>>,
+    sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<arkret_sdk::Event, String> {
     let circle = circle_id
         .map(str::trim)
@@ -407,6 +481,12 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
     )?;
     let governance_binding =
         crate::mls::governance_proof::cached_verified_binding(state_store, &request)?;
+    let governance_binding = match sidecar_binding {
+        Some(binding) => governance_binding
+            .with_sidecar_binding(binding)
+            .map_err(|error| format!("invalid Sidecar MLS governance binding: {error}"))?,
+        None => governance_binding,
+    };
     if let Some(requested) = explicit_membership_frontier
         && requested
             .iter()

@@ -101,6 +101,52 @@ pub(crate) fn build_realm_mls_admission_events_from_claims(
     device_id: &str,
     claims: &[(arkret_sdk::KeyPackageClaimRecord, String)],
 ) -> Result<RealmMlsBatchAdmissionEvents, String> {
+    build_mls_admission_events_from_claims_for_effective_scope(
+        state_store,
+        secure_store,
+        realm_id,
+        None,
+        actor_id,
+        device_id,
+        claims,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_sidecar_mls_admission_events_from_claims(
+    state_store: &LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    claims: &[(arkret_sdk::KeyPackageClaimRecord, String)],
+    sidecar_binding: arkret_sdk::SidecarMlsBinding,
+) -> Result<RealmMlsBatchAdmissionEvents, String> {
+    build_mls_admission_events_from_claims_for_effective_scope(
+        state_store,
+        secure_store,
+        realm_id,
+        Some(circle_id),
+        actor_id,
+        device_id,
+        claims,
+        Some(sidecar_binding),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_mls_admission_events_from_claims_for_effective_scope(
+    state_store: &LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    actor_id: &str,
+    device_id: &str,
+    claims: &[(arkret_sdk::KeyPackageClaimRecord, String)],
+    sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
+) -> Result<RealmMlsBatchAdmissionEvents, String> {
     if claims.is_empty() {
         return Err("MLS admission batch requires at least one claim".to_owned());
     }
@@ -111,23 +157,37 @@ pub(crate) fn build_realm_mls_admission_events_from_claims(
                 .map_err(|err| format!("MLS KeyPackage claim decode failed: {err}"))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let (add, snapshot) = crate::mls::runtime::build_add_members_commit_for_effective_scope(
-        state_store,
-        secure_store,
-        realm_id,
-        None,
-        actor_id,
-        device_id,
-        &member_key_packages,
-    )
-    .map_err(|err| err.user_message())?;
-    let commit = crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
-        state_store,
-        realm_id,
-        None,
-        actor_id,
-        &add.commit,
-    )?;
+    let (add, snapshot) =
+        crate::mls::runtime::build_add_members_commit_for_effective_scope_with_binding(
+            state_store,
+            secure_store,
+            realm_id,
+            circle_id,
+            actor_id,
+            device_id,
+            &member_key_packages,
+            sidecar_binding.clone(),
+        )
+        .map_err(|err| err.user_message())?;
+    let commit = match (circle_id, sidecar_binding) {
+        (Some(circle_id), Some(binding)) => {
+            crate::mls::group_events::mls_commit_event_from_store_for_effective_scope_with_sidecar_binding(
+                state_store,
+                realm_id,
+                circle_id,
+                actor_id,
+                &add.commit,
+                binding,
+            )?
+        }
+        _ => crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
+            state_store,
+            realm_id,
+            circle_id,
+            actor_id,
+            &add.commit,
+        )?,
+    };
     let governance_binding = commit
         .payload
         .get("governance_binding")
@@ -166,6 +226,12 @@ pub(crate) fn build_realm_mls_admission_events_from_claims(
         )
         .build_sdk_event("inkson")
         .map_err(|err| format!("MLS Welcome SDK Event conversion failed: {err}"))?;
+        let mut welcome = welcome;
+        if let Some(circle_id) = circle_id {
+            welcome.effective_scope = Some(crate::mls::group_events::circle_effective_scope(
+                realm_id, circle_id,
+            )?);
+        }
         welcomes.push(welcome);
     }
     Ok(RealmMlsBatchAdmissionEvents {

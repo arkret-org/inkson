@@ -42,6 +42,34 @@ mod timeline_surface;
 
 const PRESENCE_HEARTBEAT_SECS: u64 = 25;
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct PendingSidecarMlsAdmission {
+    sidecar_id: arkret_sdk::SidecarId,
+    mls_group_id: arkret_sdk::MlsGroupId,
+    desired_access_digest: arkret_sdk::Hash,
+    commit: arkret_sdk::Event,
+    welcomes: Vec<arkret_sdk::Event>,
+    snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct PendingSidecarMlsRemoval {
+    sidecar_id: arkret_sdk::SidecarId,
+    target_agent_id: arkret_sdk::Did,
+    desired_access_digest: arkret_sdk::Hash,
+    events: Vec<arkret_sdk::Event>,
+    snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
+    idempotency_key: String,
+}
+
+fn pending_sidecar_mls_admission_key(sidecar_id: &arkret_sdk::SidecarId) -> String {
+    format!("ak.local.sidecar_mls_admission.v1:{sidecar_id}")
+}
+
+fn pending_sidecar_mls_removal_key(sidecar_id: &arkret_sdk::SidecarId) -> String {
+    format!("ak.local.sidecar_mls_removal.v1:{sidecar_id}")
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MentionInsertRequest {
     request_id: String,
@@ -316,10 +344,17 @@ async fn ensure_owned_agent_sidecar(
     api_token: String,
     trace_id: &str,
     controller_id: &str,
+    device_id: &str,
     realm_id: &str,
     strand_id: &str,
     addressed_agent_ids: &[String],
-) -> anyhow::Result<Option<(arkret_sdk::AgentSidecarEnsureOutcome, arkret_sdk::CircleId)>> {
+    state_store: SyncSignal<LocalStateStore>,
+) -> anyhow::Result<
+    Option<(
+        arkret_sdk::AgentSidecarEnsureOutcome,
+        arkret_sdk::AgentSidecarView,
+    )>,
+> {
     let addressed_agent_ids = addressed_agent_ids
         .iter()
         .cloned()
@@ -344,8 +379,10 @@ async fn ensure_owned_agent_sidecar(
         attempt = 1_u8,
         addressed_agent_count = request.addressed_agent_ids.len(),
     );
-    let outcome =
-        crate::transport::auth::with_authed_sdk_client(base_url, api_token, |http| async move {
+    let (outcome, view) = crate::transport::auth::with_authed_sdk_client(
+        base_url,
+        api_token.clone(),
+        |http| async move {
             let outcome = http
                 .agent_sidecar_ensure(&request)
                 .await
@@ -354,17 +391,580 @@ async fn ensure_owned_agent_sidecar(
                 .agent_sidecar_get(&outcome.sidecar_id)
                 .await
                 .map_err(anyhow::Error::from)?;
-            Ok::<_, anyhow::Error>((outcome, view.sidecar.backing_circle_id))
-        })
-        .await
-        .map_err(|error| anyhow::anyhow!(error.display()))?;
+            Ok::<_, anyhow::Error>((outcome, view))
+        },
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!(error.display()))?;
+    let view = ensure_sidecar_mls_bootstrap(
+        base_url,
+        api_token.clone(),
+        controller_id,
+        device_id,
+        state_store,
+        view,
+    )
+    .await?;
+    let view = reconcile_sidecar_mls_access(
+        base_url,
+        api_token,
+        controller_id,
+        device_id,
+        state_store,
+        view,
+    )
+    .await?;
     tracing::info!(
         target: "sidecar",
         event = "sidecar.ensure.completed",
         trace_id,
-        pending_reconciliation_count = outcome.0.pending_access_reconciliations.len(),
+        pending_reconciliation_count = outcome.pending_access_reconciliations.len(),
     );
-    Ok(Some(outcome))
+    Ok(Some((outcome, view)))
+}
+
+async fn reconcile_sidecar_mls_access(
+    base_url: &str,
+    api_token: String,
+    controller_id: &str,
+    device_id: &str,
+    mut state_store: SyncSignal<LocalStateStore>,
+    mut view: arkret_sdk::AgentSidecarView,
+) -> anyhow::Result<arkret_sdk::AgentSidecarView> {
+    if view.mls_context.current_controller_device_ready {
+        view = reconcile_sidecar_mls_removals(
+            base_url,
+            api_token.clone(),
+            controller_id,
+            device_id,
+            state_store,
+            view,
+        )
+        .await?;
+    }
+    let Some(group_id) = view.mls_context.mls_group_id.as_ref() else {
+        return Ok(view);
+    };
+    let missing = view
+        .pending_access_reconciliations
+        .iter()
+        .filter(|pending| {
+            pending.stage == arkret_sdk::PendingSidecarAccessReconciliationStage::MlsWelcome
+                && matches!(
+                    pending.reason.as_str(),
+                    "mls_welcome_or_epoch_commit_pending" | "mls_group_or_welcome_pending"
+                )
+        })
+        .map(|pending| pending.agent_id.clone())
+        .collect::<Vec<_>>();
+    let pending_key = pending_sidecar_mls_admission_key(&view.sidecar.id);
+    if missing.is_empty() {
+        if view.pending_access_reconciliations.iter().any(|pending| {
+            pending.stage == arkret_sdk::PendingSidecarAccessReconciliationStage::DeviceKeyMaterial
+        }) {
+            state_store.write().remove_private_data(&pending_key);
+        }
+        return Ok(view);
+    }
+    if !view.mls_context.current_controller_device_ready {
+        return Ok(view);
+    }
+    let realm_id = view.sidecar.realm_id.to_string();
+    let circle_id = view.sidecar.backing_circle_id.to_string();
+    let sidecar_id = view.sidecar.id.clone();
+    let sidecar_binding = sidecar_mls_binding(&view);
+    let group_id = group_id.to_string();
+    let controller_id = controller_id.to_owned();
+    let device_id = device_id.to_owned();
+    crate::transport::auth::with_authed_api(base_url, api_token, move |api| async move {
+        let mut pending = state_store
+            .read()
+            .load_private_data(&controller_id, &pending_key)
+            .map(|raw| serde_json::from_str::<PendingSidecarMlsAdmission>(&raw))
+            .transpose()?;
+        if pending.as_ref().is_some_and(|pending| {
+            pending.sidecar_id != sidecar_id
+                || pending.mls_group_id.as_str() != group_id
+                || pending.desired_access_digest != sidecar_binding.desired_access_digest
+        }) {
+            state_store.write().remove_private_data(&pending_key);
+            pending = None;
+        }
+        if pending.is_none() {
+            let snapshot = state_store
+                .read()
+                .mls_snapshot_for_effective_scope(&realm_id, Some(&circle_id))
+                .ok_or_else(|| anyhow::anyhow!("Sidecar MLS controller snapshot is unavailable"))?;
+            if snapshot.group_id != group_id {
+                anyhow::bail!("Sidecar MLS controller snapshot is not the accepted group");
+            }
+            let proof_request = crate::mls::governance_proof::proof_request(
+                &state_store.read(),
+                &realm_id,
+                Some(&circle_id),
+                group_id.clone(),
+                snapshot.epoch,
+                snapshot.epoch.saturating_add(1),
+            )
+            .map_err(anyhow::Error::msg)?;
+            crate::mls::governance_proof::fetch_verify_and_cache_proof_bundle(
+                &api,
+                state_store,
+                &proof_request,
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+            let mut claims = Vec::new();
+            for agent_id in missing {
+                let claim_nonce = crate::mls_api_helpers::generate_mls_claim_nonce()?;
+                let endpoints =
+                    crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
+                let outcome = endpoints
+                    .mls()
+                    .claim_key_package(
+                        agent_id.as_str(),
+                        &realm_id,
+                        &controller_id,
+                        &claim_nonce,
+                        None,
+                        Some(&group_id),
+                    )
+                    .await?;
+                if let Some(claim) = outcome.claims.into_iter().next() {
+                    claims.push((claim, claim_nonce));
+                }
+            }
+            if claims.is_empty() {
+                return api
+                    .sdk_http_client()?
+                    .agent_sidecar_get(&sidecar_id)
+                    .await
+                    .map_err(anyhow::Error::from);
+            }
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+            let admission = crate::mls::admission::build_sidecar_mls_admission_events_from_claims(
+                &state_store.read(),
+                secure_store.as_ref(),
+                &realm_id,
+                &circle_id,
+                &controller_id,
+                &device_id,
+                &claims,
+                sidecar_binding.clone(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            let submitter = api.event_submitter()?;
+            let commit = submitter
+                .prepare_sdk_events_batch(vec![admission.commit])
+                .await?
+                .into_iter()
+                .next()
+                .expect("single Sidecar Commit preparation preserves cardinality");
+            let prepared = PendingSidecarMlsAdmission {
+                sidecar_id: sidecar_id.clone(),
+                mls_group_id: arkret_sdk::MlsGroupId::new(group_id.clone())
+                    .map_err(anyhow::Error::msg)?,
+                desired_access_digest: sidecar_binding.desired_access_digest,
+                commit,
+                welcomes: admission.welcomes,
+                snapshot: admission.snapshot,
+            };
+            state_store.write().save_private_data(
+                &controller_id,
+                pending_key.clone(),
+                serde_json::to_string(&prepared)?,
+            );
+            pending = Some(prepared);
+        }
+        let mut pending = pending.expect("pending Sidecar MLS admission initialized");
+        let submitter = api.event_submitter()?;
+        submitter.submit_signed_sdk_event(&pending.commit).await?;
+        state_store.write().save_mls_snapshot_for_effective_scope(
+            realm_id.clone(),
+            Some(&circle_id),
+            pending.snapshot.clone(),
+        );
+        if pending
+            .welcomes
+            .iter()
+            .any(|welcome| welcome.proofs.is_empty())
+        {
+            pending.welcomes = submitter.prepare_sdk_events_batch(pending.welcomes).await?;
+            state_store.write().save_private_data(
+                &controller_id,
+                pending_key.clone(),
+                serde_json::to_string(&pending)?,
+            );
+        }
+        for welcome in &pending.welcomes {
+            submitter.submit_signed_sdk_event(welcome).await?;
+        }
+        state_store.write().remove_private_data(&pending_key);
+        api.sdk_http_client()?
+            .agent_sidecar_get(&sidecar_id)
+            .await
+            .map_err(anyhow::Error::from)
+    })
+    .await
+    .map_err(|error| anyhow::anyhow!(error.display()))
+}
+
+async fn reconcile_sidecar_mls_removals(
+    base_url: &str,
+    api_token: String,
+    controller_id: &str,
+    device_id: &str,
+    mut state_store: SyncSignal<LocalStateStore>,
+    view: arkret_sdk::AgentSidecarView,
+) -> anyhow::Result<arkret_sdk::AgentSidecarView> {
+    let sidecar_id = view.sidecar.id.clone();
+    let realm_id = view.sidecar.realm_id.to_string();
+    let circle_id = view.sidecar.backing_circle_id.to_string();
+    let pending_key = pending_sidecar_mls_removal_key(&sidecar_id);
+    let removals = view
+        .pending_access_reconciliations
+        .iter()
+        .filter(|pending| {
+            pending.stage == arkret_sdk::PendingSidecarAccessReconciliationStage::MlsRemove
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let has_persisted = state_store
+        .read()
+        .load_private_data(controller_id, &pending_key)
+        .is_some();
+    if removals.is_empty() && !has_persisted {
+        return Ok(view);
+    }
+    let controller_id = controller_id.to_owned();
+    let device_id = device_id.to_owned();
+    let sidecar_binding = sidecar_mls_binding(&view);
+    crate::transport::auth::with_authed_api(base_url, api_token, move |api| async move {
+        let submit_pending = |pending: &PendingSidecarMlsRemoval| async {
+            let body = arkret_sdk::CircleScopeRotateRequestBody {
+                events: pending.events.clone(),
+                idempotency_key: Some(pending.idempotency_key.clone()),
+            };
+            api.sdk_http_client()?
+                .circle_scope_rotate(&circle_id, &pending.idempotency_key, &body)
+                .await
+                .map_err(anyhow::Error::from)
+        };
+        if let Some(raw) = state_store
+            .read()
+            .load_private_data(&controller_id, &pending_key)
+        {
+            let pending = serde_json::from_str::<PendingSidecarMlsRemoval>(&raw)?;
+            submit_pending(&pending).await?;
+            state_store.write().save_mls_snapshot_for_effective_scope(
+                realm_id.clone(),
+                Some(&circle_id),
+                pending.snapshot,
+            );
+            state_store.write().remove_private_data(&pending_key);
+            return api
+                .sdk_http_client()?
+                .agent_sidecar_get(&sidecar_id)
+                .await
+                .map_err(anyhow::Error::from);
+        }
+        for removal in removals {
+            let membership_frontier = removal.membership_frontier.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("Sidecar MLS removal is missing its membership frontier")
+            })?;
+            let snapshot = state_store
+                .read()
+                .mls_snapshot_for_effective_scope(&realm_id, Some(&circle_id))
+                .ok_or_else(|| anyhow::anyhow!("Sidecar MLS controller snapshot is unavailable"))?;
+            let proof_request = crate::mls::governance_proof::proof_request(
+                &state_store.read(),
+                &realm_id,
+                Some(&circle_id),
+                snapshot.group_id.clone(),
+                snapshot.epoch,
+                snapshot.epoch.saturating_add(1),
+            )
+            .map_err(anyhow::Error::msg)?;
+            crate::mls::governance_proof::fetch_verify_and_cache_proof_bundle(
+                &api,
+                state_store,
+                &proof_request,
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+            let draft = crate::circle_mls::build_sidecar_remove_scope_rotate_draft(
+                &state_store.read(),
+                secure_store.as_ref(),
+                &realm_id,
+                &circle_id,
+                &controller_id,
+                &device_id,
+                removal.agent_id.as_str(),
+                membership_frontier,
+                sidecar_binding.clone(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            let events = api
+                .event_submitter()?
+                .prepare_sdk_events_batch(draft.events)
+                .await?;
+            let pending = PendingSidecarMlsRemoval {
+                sidecar_id: sidecar_id.clone(),
+                target_agent_id: removal.agent_id,
+                desired_access_digest: sidecar_binding.desired_access_digest.clone(),
+                events,
+                snapshot: draft.post_commit_snapshot,
+                idempotency_key: uuid_v7(),
+            };
+            state_store.write().save_private_data(
+                &controller_id,
+                pending_key.clone(),
+                serde_json::to_string(&pending)?,
+            );
+            submit_pending(&pending).await?;
+            state_store.write().save_mls_snapshot_for_effective_scope(
+                realm_id.clone(),
+                Some(&circle_id),
+                pending.snapshot,
+            );
+            state_store.write().remove_private_data(&pending_key);
+        }
+        api.sdk_http_client()?
+            .agent_sidecar_get(&sidecar_id)
+            .await
+            .map_err(anyhow::Error::from)
+    })
+    .await
+    .map_err(|error| anyhow::anyhow!(error.display()))
+}
+
+fn sidecar_mls_binding(view: &arkret_sdk::AgentSidecarView) -> arkret_sdk::SidecarMlsBinding {
+    arkret_sdk::SidecarMlsBinding {
+        sidecar_id: view.sidecar.id.clone(),
+        desired_access_digest: view.mls_context.desired_access_digest.clone(),
+        control_frontier: view.mls_context.control_frontier.clone(),
+    }
+}
+
+async fn ensure_sidecar_mls_bootstrap(
+    base_url: &str,
+    api_token: String,
+    controller_id: &str,
+    device_id: &str,
+    mut state_store: SyncSignal<LocalStateStore>,
+    view: arkret_sdk::AgentSidecarView,
+) -> anyhow::Result<arkret_sdk::AgentSidecarView> {
+    view.validate()?;
+    let realm_id = view.sidecar.realm_id.to_string();
+    let circle_id = view.sidecar.backing_circle_id.to_string();
+    let binding = sidecar_mls_binding(&view);
+
+    if let (Some(server_group_id), Some(genesis_event_ref)) = (
+        view.mls_context.mls_group_id.as_ref(),
+        view.mls_context.genesis_event_ref.as_ref(),
+    ) {
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        let local_summary = crate::mls::runtime::initial_mls_snapshot_summary_from_existing_for_effective_scope_with_binding(
+            &state_store.read(),
+            secure_store.as_ref(),
+            &realm_id,
+            Some(&circle_id),
+            controller_id,
+            device_id,
+            Some(binding),
+        );
+        match local_summary {
+            Ok(Some(summary)) if summary.group_id != server_group_id.as_str() => {
+                let mut store = state_store.write();
+                store.drop_mls_snapshot_for_effective_scope(&realm_id, Some(&circle_id));
+                store.clear_pending_mls_genesis_event_for_effective_scope(
+                    &realm_id,
+                    Some(&circle_id),
+                );
+            }
+            Ok(Some(_)) => state_store
+                .write()
+                .mark_mls_genesis_emitted_for_effective_scope_with_event(
+                    realm_id,
+                    Some(&circle_id),
+                    genesis_event_ref,
+                ),
+            Ok(None) => {}
+            Err(error) => {
+                let mut store = state_store.write();
+                store.drop_mls_snapshot_for_effective_scope(&realm_id, Some(&circle_id));
+                store.clear_pending_mls_genesis_event_for_effective_scope(
+                    &realm_id,
+                    Some(&circle_id),
+                );
+                tracing::warn!(target: "sidecar", "discarded unusable provisional Sidecar MLS snapshot: {}", error.user_message());
+            }
+        }
+        return Ok(view);
+    }
+
+    if view.pending_access_reconciliations.iter().any(|item| {
+        item.stage == arkret_sdk::PendingSidecarAccessReconciliationStage::BackingScopeMembership
+    }) {
+        return Ok(view);
+    }
+
+    let summary = {
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        let mut store = state_store.write();
+        let fresh =
+            crate::mls::runtime::ensure_creator_mls_snapshot_for_effective_scope_with_binding(
+                &mut store,
+                secure_store.as_ref(),
+                &realm_id,
+                Some(&circle_id),
+                controller_id,
+                device_id,
+                Some(binding.clone()),
+            )
+            .map_err(|error| anyhow::anyhow!(error.user_message()))?;
+        let restored = match fresh {
+            Some(summary) => Ok(Some(summary)),
+            None => crate::mls::runtime::initial_mls_snapshot_summary_from_existing_for_effective_scope_with_binding(
+                &store,
+                secure_store.as_ref(),
+                &realm_id,
+                Some(&circle_id),
+                controller_id,
+                device_id,
+                Some(binding.clone()),
+            ),
+        };
+        let restored = match restored {
+            Ok(summary) => summary,
+            Err(_) => {
+                store.drop_mls_snapshot_for_effective_scope(&realm_id, Some(&circle_id));
+                store.clear_pending_mls_genesis_event_for_effective_scope(
+                    &realm_id,
+                    Some(&circle_id),
+                );
+                crate::mls::runtime::ensure_creator_mls_snapshot_for_effective_scope_with_binding(
+                    &mut store,
+                    secure_store.as_ref(),
+                    &realm_id,
+                    Some(&circle_id),
+                    controller_id,
+                    device_id,
+                    Some(binding.clone()),
+                )
+                .map_err(|error| anyhow::anyhow!(error.user_message()))?
+            }
+        };
+        restored.ok_or_else(|| anyhow::anyhow!("Sidecar MLS epoch-0 snapshot is unavailable"))?
+    };
+    let pending = state_store
+        .read()
+        .pending_mls_genesis_event_for_effective_scope(&realm_id, Some(&circle_id));
+    let pending_matches = pending.as_ref().is_some_and(|event| {
+        event.payload.get("mls_group_id").and_then(Value::as_str) == Some(summary.group_id.as_str())
+            && event
+                .payload
+                .get("governance_binding")
+                .cloned()
+                .and_then(|value| {
+                    serde_json::from_value::<arkret_sdk::MlsGovernanceBindingPayload>(value).ok()
+                })
+                .and_then(|value| value.sidecar_binding().cloned())
+                .as_ref()
+                == Some(&binding)
+    });
+    let unsigned_or_pending = if pending_matches {
+        pending.expect("presence checked")
+    } else {
+        state_store
+            .write()
+            .clear_pending_mls_genesis_event_for_effective_scope(&realm_id, Some(&circle_id));
+        let event = crate::mls::group_events::build_creator_mls_genesis_event_for_effective_scope_with_binding(
+                &mut state_store.write(),
+                &realm_id,
+                Some(&circle_id),
+                controller_id,
+                device_id,
+                Some(&summary),
+                Some(binding),
+            )
+            .map_err(anyhow::Error::msg)?
+            .ok_or_else(|| {
+                anyhow::anyhow!("Sidecar MLS genesis is not accepted but local state marks it emitted")
+            })?;
+        event
+    };
+    let genesis = if unsigned_or_pending.proofs.is_empty() {
+        let event = crate::transport::auth::with_authed_api(
+            base_url,
+            api_token.clone(),
+            move |api| async move {
+                api.event_submitter()?
+                    .prepare_sdk_event_for_submit(&unsigned_or_pending)
+                    .await
+                    .map(|(event, _)| event)
+            },
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!(error.display()))?;
+        state_store
+            .write()
+            .save_pending_mls_genesis_event_for_effective_scope(
+                &realm_id,
+                Some(&circle_id),
+                event.clone(),
+            )?;
+        event
+    } else {
+        unsigned_or_pending
+    };
+
+    let submitted = crate::transport::auth::with_authed_api(base_url, api_token.clone(), |api| {
+        let genesis = genesis.clone();
+        async move {
+            api.event_submitter()?
+                .submit_signed_sdk_event(&genesis)
+                .await
+        }
+    })
+    .await;
+    let refreshed = crate::transport::auth::with_authed_sdk_client(base_url, api_token, |http| {
+        let sidecar_id = view.sidecar.id.clone();
+        async move {
+            http.agent_sidecar_get(&sidecar_id)
+                .await
+                .map_err(anyhow::Error::from)
+        }
+    })
+    .await
+    .map_err(|error| anyhow::anyhow!(error.display()))?;
+    let accepted_group_id = refreshed
+        .mls_context
+        .mls_group_id
+        .as_ref()
+        .map(ToString::to_string);
+    if accepted_group_id.as_deref() != Some(summary.group_id.as_str()) {
+        let mut store = state_store.write();
+        store.drop_mls_snapshot_for_effective_scope(&realm_id, Some(&circle_id));
+        store.clear_pending_mls_genesis_event_for_effective_scope(&realm_id, Some(&circle_id));
+        if accepted_group_id.is_some() {
+            return Ok(refreshed);
+        }
+        return Err(submitted
+            .err()
+            .map(|error| anyhow::anyhow!(error.display()))
+            .unwrap_or_else(|| anyhow::anyhow!("accepted Sidecar MLS genesis is not projected")));
+    }
+    submitted.map_err(|error| anyhow::anyhow!(error.display()))?;
+    state_store
+        .write()
+        .mark_mls_genesis_emitted_for_effective_scope_with_event(
+            realm_id,
+            Some(&circle_id),
+            &genesis.event_id,
+        );
+    Ok(refreshed)
 }
 
 fn sidecar_agent_label(agent_ids: &[String], participants: &[SpaceParticipant]) -> String {
