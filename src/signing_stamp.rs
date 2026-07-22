@@ -12,10 +12,7 @@ impl HostClock for InksonClock {
     }
 }
 
-pub(crate) async fn issue_event_stamp(
-    event: &arkret_sdk::Event,
-    observed_frontier: Option<u64>,
-) -> anyhow::Result<SigningStamp> {
+pub(crate) async fn issue_event_stamp(event: &arkret_sdk::Event) -> anyhow::Result<SigningStamp> {
     let signer = crate::event_signer::active_signer().context("no active event signer")?;
     let device_id = signer
         .device_id()
@@ -36,7 +33,7 @@ pub(crate) async fn issue_event_stamp(
     let store = memory_stamp_store();
 
     SigningStampAllocator::with_clock(store, scope, &material.seed, InksonClock)
-        .issue(observed_frontier)
+        .issue()
         .await
         .map_err(Into::into)
 }

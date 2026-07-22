@@ -1,8 +1,11 @@
 //! Product storage adapter for Garth's durable outbound queue.
 //!
-//! Queue state is scoped by actor DID. Native clients use Garth's atomic
-//! `FileStore`; web clients persist the same SDK `SendQueueSnapshot` shape in
-//! origin storage until the IndexedDB contract adapter replaces this fallback.
+//! Each queue item carries the authoritative `(realm_id, actor_id)` authoring
+//! partition. Actor-keyed files are storage containers used by account-level
+//! drain; they do not provide or derive authoring sequence state. Native
+//! clients use Garth's atomic `FileStore`; web clients persist the same SDK
+//! `SendQueueSnapshot` shape in origin storage until the IndexedDB contract
+//! adapter replaces this fallback.
 
 use garth::OutboundQueueStore;
 use garth::outbound::BoxOutboundFuture;

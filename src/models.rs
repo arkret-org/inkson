@@ -654,8 +654,8 @@ mod tests {
             "accepted": ["ak:event:0196419b-0000-7000-8000-000000000001"],
             "duplicate": [],
             "rejected": [],
-            "actor_frontier": {"seq": 1},
-            "realm_frontier": {},
+            "realm_actor_frontiers": [],
+            "realm_frontiers": [],
             "cursor": "sx:cursor-1",
         });
         let outcome: super::SubmitEventResult = serde_json::from_value(value).unwrap();
@@ -1155,8 +1155,8 @@ impl From<arkret_sdk::EventsSubmitOutcome> for SubmitEventResult {
                 .into_iter()
                 .map(|event_id| event_id.as_str().to_owned())
                 .collect::<Vec<_>>(),
-            "actor_frontier": outcome.actor_frontier,
-            "realm_frontier": outcome.realm_frontier,
+            "realm_actor_frontiers": outcome.realm_actor_frontiers,
+            "realm_frontiers": outcome.realm_frontiers,
         });
         Self {
             event_id,

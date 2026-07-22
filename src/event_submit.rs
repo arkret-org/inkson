@@ -33,7 +33,6 @@ use crate::models::{
     BackfillView, PresenceResult, ReceiptResult, ServiceDescribe, SubmitEventResult, TypingResult,
 };
 use crate::operation::uuid_v7;
-use crate::wire_helpers::query_component;
 
 /// Authenticated durable/ephemeral event submission engine extracted from the
 /// former `TransportClient` events surface. Constructed per authenticated call from
@@ -53,6 +52,11 @@ pub(crate) struct DurablyQueuedError {
 #[serde(deny_unknown_fields)]
 pub(crate) struct QueuedSdkEvent {
     pub(crate) event: arkret_sdk::Event,
+    pub(crate) local_operation_id: String,
+    pub(crate) transport_idempotency_key: String,
+    pub(crate) canonical_body_bytes: Vec<u8>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub(crate) supersedes_event_id: Option<arkret_sdk::EventId>,
     pub(crate) authoring_generation: crate::identity::authoring_generation::AuthoringGeneration,
     #[serde(deserialize_with = "deserialize_required_nullable")]
     pub(crate) post_accept: Option<PostAcceptAction>,
@@ -141,10 +145,39 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
         item: garth::SendQueueItem,
     ) -> BoxOutboundFuture<'a, OutboundSubmitOutcome> {
         Box::pin(async move {
-            let event = decode_queued_sdk_event(item.content)
-                .map_err(|error| garth::Error::Protocol(error.to_string()))?
-                .event;
-            match self.owner.submit_sdk_event_direct(&event).await {
+            let queued = decode_queued_sdk_event(item.content)
+                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+            if queued.canonical_body_bytes.is_empty() {
+                let (event, transport_idempotency_key) = self
+                    .owner
+                    .prepare_sdk_event_for_submit(&queued.event)
+                    .await
+                    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+                let canonical_body_bytes = arkret_sdk::canonical::canonical_json_bytes(&event)
+                    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+                return Ok(OutboundSubmitOutcome::Prepared {
+                    content: serde_json::to_value(QueuedSdkEvent {
+                        event,
+                        local_operation_id: queued.local_operation_id,
+                        transport_idempotency_key,
+                        canonical_body_bytes,
+                        supersedes_event_id: queued.supersedes_event_id,
+                        authoring_generation: queued.authoring_generation,
+                        post_accept: queued.post_accept,
+                    })
+                    .map_err(|error| garth::Error::Protocol(error.to_string()))?,
+                });
+            }
+            let event = &queued.event;
+            match self
+                .owner
+                .submit_sdk_event_direct(
+                    event,
+                    &queued.transport_idempotency_key,
+                    &queued.canonical_body_bytes,
+                )
+                .await
+            {
                 Ok(result) => {
                     let event_id =
                         arkret_sdk::EventId::new(result.event_id.clone()).map_err(|error| {
@@ -165,6 +198,32 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                     }
                 }
                 Err(error) => {
+                    if let Some(details) = crate::api_error::actor_seq_cas_conflict_details(&error)
+                    {
+                        if details.current_frontier.realm_id != event.realm_id
+                            || details.current_frontier.actor_id != event.actor_id
+                        {
+                            return Ok(OutboundSubmitOutcome::Terminal {
+                                reason: "CAS frontier scope does not match queued Event".to_owned(),
+                            });
+                        }
+                        let replacement = self
+                            .owner
+                            .reauthor_after_explicit_cas(&queued)
+                            .await
+                            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+                        return Ok(OutboundSubmitOutcome::Supersede {
+                            transaction_id: replacement.event.event_id.to_string(),
+                            realm_id: replacement.event.realm_id.clone(),
+                            kind: item.kind,
+                            content: serde_json::to_value(replacement).map_err(|error| {
+                                garth::Error::Protocol(format!(
+                                    "encode semantic Event replacement: {error}"
+                                ))
+                            })?,
+                            depends_on: item.depends_on,
+                        });
+                    }
                     let reason = format!("{error:#}");
                     if let Some(delay) = outbound_retry_delay(&error) {
                         return Ok(OutboundSubmitOutcome::RetryAfter { delay, reason });
@@ -430,6 +489,8 @@ impl EventSubmitter {
                 OutboundEngineOutcome::Accepted(_) | OutboundEngineOutcome::Duplicate(_) => {
                     completed = completed.saturating_add(1);
                 }
+                OutboundEngineOutcome::Superseded { .. } => continue,
+                OutboundEngineOutcome::Prepared(_) => continue,
                 OutboundEngineOutcome::Rejected { .. } | OutboundEngineOutcome::Terminal { .. } => {
                     completed = completed.saturating_add(1);
                 }
@@ -482,6 +543,8 @@ impl EventSubmitter {
                 | OutboundEngineOutcome::Terminal { .. } => {
                     completed = completed.saturating_add(1);
                 }
+                OutboundEngineOutcome::Superseded { .. } => continue,
+                OutboundEngineOutcome::Prepared(_) => continue,
                 OutboundEngineOutcome::Quarantined { item, reason } => {
                     tracing::warn!(
                         transaction_id = %item.transaction_id,
@@ -713,15 +776,15 @@ impl EventSubmitter {
         arkret_sdk::RealmSealFrontierView,
         Vec<arkret_sdk::ManagedAgentPcrSealHeadReceipt>,
     )> {
-        let realm_id_query = query_component(realm_id);
-        let state: arkret_sdk::EventsFrontierAccountClientState = self
+        let selector = arkret_sdk::EventsFrontierSelector::RealmSeal {
+            realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
+        };
+        let state = self
             .http
-            .get(&format!(
-                "/_arkret/self/events/frontier?realm_id={realm_id_query}"
-            ))
+            .events_frontier(&selector)
             .await
             .map_err(anyhow::Error::from)?;
-        let arkret_sdk::EventsFrontierView::RealmSealView(view) = state.frontier else {
+        let arkret_sdk::EventsFrontierView::RealmSeal(view) = state.frontier else {
             anyhow::bail!(
                 "events/frontier for realm_id={realm_id} did not return a Realm Seal view — \
                  cannot mint seal_basis / seal_ref"
@@ -775,23 +838,21 @@ impl EventSubmitter {
         &self,
         actor_id: &str,
         realm_id: &str,
-    ) -> anyhow::Result<arkret_sdk::ActorFrontierView> {
-        let actor_id_query = query_component(actor_id);
-        let realm_id_query = query_component(realm_id);
-        let state: arkret_sdk::EventsFrontierAccountClientState = self
+    ) -> anyhow::Result<arkret_sdk::RealmActorFrontierView> {
+        let selector = arkret_sdk::EventsFrontierSelector::RealmActor {
+            actor_id: arkret_sdk::Did::new(actor_id.to_owned())?,
+            realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
+        };
+        let state = self
             .http
-            .get(&format!(
-                "/_arkret/self/events/frontier?actor_id={actor_id_query}&realm_id={realm_id_query}"
-            ))
+            .events_frontier(&selector)
             .await
             .map_err(anyhow::Error::from)?;
-        let arkret_sdk::EventsFrontierView::Actor(view) = state.frontier else {
+        let arkret_sdk::EventsFrontierView::RealmActor(view) = state.frontier else {
             anyhow::bail!(
-                "events/frontier for actor_id={actor_id}, realm_id={realm_id} did not return an actor frontier"
+                "events/frontier for actor_id={actor_id}, realm_id={realm_id} did not return a realm_actor frontier"
             );
         };
-        view.validate()
-            .map_err(|error| anyhow::anyhow!("invalid actor frontier: {error}"))?;
         Ok(view)
     }
 
@@ -830,6 +891,31 @@ impl EventSubmitter {
                 signed,
                 &arkret_sdk::http_client::ClientRequestOptions::new()
                     .request_id(idempotency_key.clone())
+                    .idempotency_key(idempotency_key),
+            )
+            .await
+            .map_err(anyhow::Error::from)?;
+        ensure_events_submit_accepted(&response)?;
+        Ok(SubmitEventResult::from(response))
+    }
+
+    async fn post_persisted_signed_sdk_event(
+        &self,
+        signed: &arkret_sdk::Event,
+        idempotency_key: &str,
+        canonical_body_bytes: &[u8],
+    ) -> anyhow::Result<SubmitEventResult> {
+        validate_signed_sdk_event_for_submit(signed)?;
+        if arkret_sdk::canonical::canonical_json_bytes(signed)? != canonical_body_bytes {
+            anyhow::bail!("persisted signed Event bytes do not match the queued Event");
+        }
+        let response: arkret_sdk::EventsSubmitOutcome = self
+            .http
+            .post_canonical_bytes_with_options(
+                "/_arkret/self/events",
+                canonical_body_bytes,
+                &arkret_sdk::http_client::ClientRequestOptions::new()
+                    .request_id(idempotency_key)
                     .idempotency_key(idempotency_key),
             )
             .await
@@ -884,21 +970,38 @@ impl EventSubmitter {
     ) -> anyhow::Result<SubmitEventResult> {
         let _single_writer = outbound_submit_lock().lock().await;
         self.ensure_recovery_material_ready(event).await?;
-        let transaction_id = event.event_id.to_string();
+        let mut intent = event.clone();
+        intent.actor_seq = 0;
+        intent.prev_refs.clear();
+        intent.proofs.clear();
+        intent.seal_ref = None;
+        intent.seal_basis = None;
+        intent.auth_context = None;
+        let local_operation_id = intent
+            .unsigned
+            .get("local_operation_idempotency_alias")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| intent.event_id.to_string());
+        intent.unsigned.insert(
+            "local_operation_idempotency_alias".to_owned(),
+            Value::String(local_operation_id.clone()),
+        );
+        let mut transaction_id = local_operation_id;
         let durable_post_accept = post_accept.is_some();
         let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
             &outbound_store_scope(event, durable_post_accept),
         )?);
         let authoring_generation =
             match crate::identity::authoring_generation::resolve_event_authoring_generation(
-                &self.http, event,
+                &self.http, &intent,
             )
             .await
             {
                 Ok(generation) => generation,
                 Err(error) if outbound_retry_delay(&error).is_some() => {
                     match crate::identity::authoring_generation::cached_event_authoring_generation(
-                        event,
+                        &intent,
                     )? {
                         Some(generation) => generation,
                         None => {
@@ -911,14 +1014,19 @@ impl EventSubmitter {
                 Err(error) => return Err(error),
             };
         outbound
-            .enqueue(
+            .enqueue_scoped(
                 Some(transaction_id.clone()),
                 event.realm_id.clone(),
+                event.actor_id.clone(),
                 garth::SendQueueItemKind::Custom {
                     kind: event.kind.to_string(),
                 },
                 serde_json::to_value(QueuedSdkEvent {
-                    event: event.clone(),
+                    event: intent,
+                    local_operation_id: transaction_id.clone(),
+                    transport_idempotency_key: String::new(),
+                    canonical_body_bytes: Vec::new(),
+                    supersedes_event_id: None,
                     authoring_generation,
                     post_accept,
                 })?,
@@ -961,6 +1069,20 @@ impl EventSubmitter {
                     return Ok(completed_outbound_result(&item));
                 }
                 OutboundEngineOutcome::Accepted(_) | OutboundEngineOutcome::Duplicate(_) => {}
+                OutboundEngineOutcome::Prepared(_) => continue,
+                OutboundEngineOutcome::Superseded {
+                    previous,
+                    replacement,
+                } if previous.transaction_id == transaction_id => {
+                    tracing::info!(
+                        previous_event_id = %previous.transaction_id,
+                        replacement_event_id = %replacement.transaction_id,
+                        local_operation_id = %replacement.local_operation_id,
+                        "explicit actor CAS superseded an unaccepted immutable Event attempt"
+                    );
+                    transaction_id = replacement.transaction_id;
+                }
+                OutboundEngineOutcome::Superseded { .. } => {}
                 OutboundEngineOutcome::RetryAt { item, at }
                     if item.transaction_id == transaction_id =>
                 {
@@ -1019,29 +1141,41 @@ impl EventSubmitter {
     async fn submit_sdk_event_direct(
         &self,
         event: &arkret_sdk::Event,
+        idempotency_key: &str,
+        canonical_body_bytes: &[u8],
     ) -> anyhow::Result<SubmitEventResult> {
-        let retry_actor_seq_cas = event.proofs.is_empty();
-        let (signed, idempotency_key) = self.prepare_sdk_event_for_submit(event).await?;
-        match self
-            .post_signed_sdk_event(&signed, idempotency_key.clone())
+        self.post_persisted_signed_sdk_event(event, idempotency_key, canonical_body_bytes)
             .await
-        {
-            Ok(result) => Ok(result),
-            Err(error)
-                if retry_actor_seq_cas
-                    && crate::api_error::is_actor_seq_cas_conflict_error(&error) =>
-            {
-                tracing::warn!(
-                    event_id = %event.event_id,
-                    actor_id = %event.actor_id,
-                    kind = %event.kind,
-                    "actor frontier advanced during SDK Event submit; refreshing and retrying once"
-                );
-                let (signed, idempotency_key) = self.prepare_sdk_event_for_submit(event).await?;
-                self.post_signed_sdk_event(&signed, idempotency_key).await
-            }
-            Err(error) => Err(error),
-        }
+    }
+
+    async fn reauthor_after_explicit_cas(
+        &self,
+        previous: &QueuedSdkEvent,
+    ) -> anyhow::Result<QueuedSdkEvent> {
+        let mut replacement = previous.event.clone();
+        let previous_event_id = replacement.event_id.clone();
+        replacement.event_id = arkret_sdk::EventId::new(format!("ak:event:{}", uuid_v7()))?;
+        replacement.actor_seq = 0;
+        replacement.prev_refs.clear();
+        replacement.proofs.clear();
+        replacement.seal_ref = None;
+        replacement.seal_basis = None;
+        replacement.auth_context = None;
+        replacement
+            .unsigned
+            .remove("local_operation_idempotency_alias");
+        let (event, transport_idempotency_key) =
+            self.prepare_sdk_event_for_submit(&replacement).await?;
+        let canonical_body_bytes = arkret_sdk::canonical::canonical_json_bytes(&event)?;
+        Ok(QueuedSdkEvent {
+            event,
+            local_operation_id: previous.local_operation_id.clone(),
+            transport_idempotency_key,
+            canonical_body_bytes,
+            supersedes_event_id: Some(previous_event_id),
+            authoring_generation: previous.authoring_generation.clone(),
+            post_accept: previous.post_accept.clone(),
+        })
     }
 
     pub(crate) async fn prepare_sdk_event_for_submit(
@@ -1116,25 +1250,13 @@ impl EventSubmitter {
         }
         let actor_id = event.actor_id.as_str().to_owned();
         let realm_id = event.realm_id.as_str();
-        let observed_frontier = match self.events_frontier_actor(&actor_id, realm_id).await {
+        match self.events_frontier_actor(&actor_id, realm_id).await {
             Ok(frontier) => {
                 apply_actor_frontier_to_sdk_event(event, &frontier)?;
-                Some(frontier.actor_seq)
-            }
-            Err(error) if crate::api_error::is_actor_frontier_absent_error(&error) => {
-                event.actor_seq = 1;
-                event.prev_refs.clear();
-                tracing::debug!(
-                    actor_id = %actor_id,
-                    event_id = %event.event_id,
-                    "no actor frontier visible; submitting actor-chain genesis event"
-                );
-                None
             }
             Err(error) => return Err(actor_frontier_refresh_error(&actor_id, error)),
-        };
-        let stamp = crate::signing_stamp::issue_event_stamp(event, observed_frontier).await?;
-        event.actor_seq = stamp.actor_seq;
+        }
+        let stamp = crate::signing_stamp::issue_event_stamp(event).await?;
         event.hlc = stamp.hlc;
         Ok(())
     }
@@ -1239,22 +1361,24 @@ impl EventSubmitter {
         for event in &mut events {
             attach_capability_grant_payload_proof(event)?;
         }
-        let mut batch_frontiers = BTreeMap::<String, (u64, arkret_sdk::EventId)>::new();
+        let mut batch_frontiers =
+            BTreeMap::<(arkret_sdk::RealmId, arkret_sdk::Did), (u64, arkret_sdk::EventId)>::new();
         for event in &mut events {
-            let actor_id = event.actor_id.to_string();
+            let scope = (event.realm_id.clone(), event.actor_id.clone());
             if event.proofs.is_empty() {
-                if let Some((actor_seq, event_id)) = batch_frontiers.get(&actor_id) {
+                if let Some((actor_seq, event_id)) = batch_frontiers.get(&scope) {
                     event.prev_refs = vec![event_id.clone()];
-                    let stamp =
-                        crate::signing_stamp::issue_event_stamp(event, Some(*actor_seq)).await?;
-                    event.actor_seq = stamp.actor_seq;
+                    event.actor_seq = actor_seq.checked_add(1).ok_or_else(|| {
+                        anyhow::anyhow!("actor sequence exhausted for batch scope")
+                    })?;
+                    let stamp = crate::signing_stamp::issue_event_stamp(event).await?;
                     event.hlc = stamp.hlc;
                 } else {
                     self.refresh_unsigned_sdk_event_actor_frontier(event)
                         .await?;
                 }
             }
-            batch_frontiers.insert(actor_id, (event.actor_seq, event.event_id.clone()));
+            batch_frontiers.insert(scope, (event.actor_seq, event.event_id.clone()));
         }
         for event in &mut events {
             if !is_ordinary_realm_bootstrap
@@ -1427,19 +1551,20 @@ fn validate_signed_sdk_event_for_submit(event: &arkret_sdk::Event) -> anyhow::Re
 
 fn apply_actor_frontier_to_sdk_event(
     event: &mut arkret_sdk::Event,
-    frontier: &arkret_sdk::ActorFrontierView,
+    frontier: &arkret_sdk::RealmActorFrontierView,
 ) -> anyhow::Result<()> {
-    if frontier.actor_id.as_str() != event.actor_id.as_str() {
+    if frontier.actor_id != event.actor_id || frontier.realm_id != event.realm_id {
         anyhow::bail!(
-            "actor frontier mismatch: event actor {} but frontier actor {}",
+            "realm actor frontier mismatch: event scope ({}, {}) but frontier scope ({}, {})",
+            event.realm_id,
             event.actor_id,
+            frontier.realm_id,
             frontier.actor_id
         );
     }
-    event.actor_seq = frontier.actor_seq.checked_add(1).ok_or_else(|| {
-        anyhow::anyhow!("actor frontier sequence overflow for {}", event.actor_id)
-    })?;
-    event.prev_refs = frontier.event_id.iter().cloned().collect();
+    frontier.validate()?;
+    event.actor_seq = frontier.next_actor_seq;
+    event.prev_refs.clone_from(&frontier.frontier_event_ids);
     Ok(())
 }
 
@@ -1587,6 +1712,10 @@ mod tests {
         let event = sdk_event_without_proof("did:web:alice.example");
         let error = decode_queued_sdk_event(serde_json::json!({
             "event": event,
+            "local_operation_id": "local-operation-1",
+            "transport_idempotency_key": "attempt-1",
+            "canonical_body_bytes": [],
+            "supersedes_event_id": null,
             "post_accept": null
         }))
         .unwrap_err();
@@ -1640,6 +1769,10 @@ mod tests {
                 },
                 serde_json::to_value(QueuedSdkEvent {
                     event: pending,
+                    local_operation_id: "pending-operation".to_owned(),
+                    transport_idempotency_key: "pending-attempt".to_owned(),
+                    canonical_body_bytes: vec![],
+                    supersedes_event_id: None,
                     authoring_generation: test_authoring_generation(),
                     post_accept: None,
                 })
@@ -1664,6 +1797,10 @@ mod tests {
                 },
                 serde_json::to_value(QueuedSdkEvent {
                     event: sent,
+                    local_operation_id: "sent-operation".to_owned(),
+                    transport_idempotency_key: "sent-attempt".to_owned(),
+                    canonical_body_bytes: vec![],
+                    supersedes_event_id: None,
                     authoring_generation: test_authoring_generation(),
                     post_accept: None,
                 })
@@ -1772,6 +1909,10 @@ mod tests {
         };
         let content = serde_json::to_value(QueuedSdkEvent {
             event,
+            local_operation_id: "mls-operation".to_owned(),
+            transport_idempotency_key: "mls-attempt".to_owned(),
+            canonical_body_bytes: vec![],
+            supersedes_event_id: None,
             authoring_generation: test_authoring_generation(),
             post_accept: Some(PostAcceptAction::MlsSnapshot {
                 realm_id: realm_id.to_owned(),
@@ -1813,64 +1954,85 @@ mod tests {
     #[test]
     fn apply_actor_frontier_stamps_next_sequence_and_predecessor() {
         let mut event = sdk_event_without_proof("did:web:alice.example");
-        let frontier = arkret_sdk::ActorFrontierView {
-            actor_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
-            actor_seq: 7,
-            event_id: Some(
-                arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000002").unwrap(),
-            ),
-        };
+        let frontier_event_id =
+            arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000002").unwrap();
+        let frontier = arkret_sdk::RealmActorFrontierView::new(
+            event.realm_id.clone(),
+            arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+            8,
+            vec![frontier_event_id.clone()],
+            arkret_sdk::canonical::DigestSuite::Sha256,
+        )
+        .unwrap();
 
         apply_actor_frontier_to_sdk_event(&mut event, &frontier).unwrap();
 
         assert_eq!(event.actor_seq, 8);
-        assert_eq!(
-            event.prev_refs,
-            frontier.event_id.into_iter().collect::<Vec<_>>()
-        );
+        assert_eq!(event.prev_refs, vec![frontier_event_id]);
     }
 
     #[test]
     fn apply_empty_actor_frontier_stamps_genesis_sequence_without_predecessor() {
         let mut event = sdk_event_without_proof("did:web:alice.example");
-        let frontier = arkret_sdk::ActorFrontierView {
-            actor_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
-            actor_seq: 0,
-            event_id: None,
-        };
+        let frontier = arkret_sdk::RealmActorFrontierView::new(
+            event.realm_id.clone(),
+            arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+            0,
+            vec![],
+            arkret_sdk::canonical::DigestSuite::Sha256,
+        )
+        .unwrap();
 
         apply_actor_frontier_to_sdk_event(&mut event, &frontier).unwrap();
 
-        assert_eq!(event.actor_seq, 1);
+        assert_eq!(event.actor_seq, 0);
         assert!(event.prev_refs.is_empty());
     }
 
     #[test]
     fn apply_actor_frontier_rejects_wrong_actor() {
         let mut event = sdk_event_without_proof("did:web:alice.example");
-        let frontier = arkret_sdk::ActorFrontierView {
-            actor_id: arkret_sdk::Did::new("did:web:bob.example").unwrap(),
-            actor_seq: 7,
-            event_id: Some(
+        let frontier = arkret_sdk::RealmActorFrontierView::new(
+            event.realm_id.clone(),
+            arkret_sdk::Did::new("did:web:bob.example").unwrap(),
+            8,
+            vec![
                 arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000002").unwrap(),
-            ),
-        };
+            ],
+            arkret_sdk::canonical::DigestSuite::Sha256,
+        )
+        .unwrap();
 
         let error = apply_actor_frontier_to_sdk_event(&mut event, &frontier)
             .unwrap_err()
             .to_string();
 
-        assert!(error.contains("actor frontier mismatch"));
+        assert!(error.contains("realm actor frontier mismatch"));
     }
 
     #[test]
     fn actor_seq_cas_conflict_classifier_is_narrow() {
+        let current_frontier = arkret_sdk::RealmActorFrontierView::new(
+            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),
+            arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+            0,
+            vec![],
+            arkret_sdk::canonical::DigestSuite::Sha256,
+        )
+        .unwrap();
+        let details = arkret_sdk::EventsActorCasConflictDetails {
+            accepted: false,
+            current_frontier,
+        };
+        let details = serde_json::to_value(details).unwrap();
         let cas: anyhow::Error = TransportClientError {
             status: StatusCode::CONFLICT,
             error: ErrorEnvelope::new(
                 "cas_conflict",
                 "actor_seq is older than the accepted actor frontier",
-            ),
+            )
+            .with_detail("accepted", details["accepted"].clone())
+            .with_detail("current_frontier", details["current_frontier"].clone()),
         }
         .into();
         assert!(crate::api_error::is_actor_seq_cas_conflict_error(&cas));

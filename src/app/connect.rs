@@ -423,10 +423,8 @@ async fn enroll_current_session_device(
             .map_err(|error| anyhow::anyhow!("build device-enroll HTTP client: {error}"))?
     };
 
-    // Next control-stream sequence for this principal = highest accepted + 1.
-    // `actor_seq` is 1-indexed on the Principal Server (soland rejects 0 with
-    // `actor_seq must be greater than zero`), so an empty stream (no frontier
-    // yet) enrolls at seq 1, not 0.
+    // The typed Realm actor frontier directly carries the next sequence. An
+    // empty chain is 0; after the root-signed PCR bootstrap it is 1.
     let actor_did = arkret_sdk::Did::new(actor.to_owned())
         .map_err(|error| anyhow::anyhow!("invalid enrollment actor DID: {error}"))?;
     let actor_seq = match principal_api
@@ -434,13 +432,10 @@ async fn enroll_current_session_device(
         .events_frontier_actor(actor, &arkret_sdk::principal_control_realm_id(&actor_did))
         .await
     {
-        Ok(view) => view.actor_seq.saturating_add(1),
-        Err(error) => {
-            tracing::debug!(?error, "no actor frontier yet; enrolling at seq 1");
-            1
-        }
+        Ok(view) => view.next_actor_seq,
+        Err(error) => return Err(error.context("query principal-control actor frontier")),
     };
-    if actor_seq == 1 {
+    if actor_seq == 0 {
         anyhow::bail!(
             "first-device enrollment requires the cold-root PCR bootstrap unit; continue identity setup from Onboarding"
         );

@@ -1,9 +1,9 @@
 use reqwest::StatusCode;
 
 use crate::api_error::{
-    TransportClientError, decode_arkret_error, is_actor_frontier_absent_error,
-    is_actor_seq_cas_conflict_error, is_auth_expired_error, is_device_not_authorized_error,
-    is_invalid_cursor_error, is_plaintext_visibility_policy_error, is_snapshot_unavailable_error,
+    TransportClientError, decode_arkret_error, is_actor_seq_cas_conflict_error,
+    is_auth_expired_error, is_device_not_authorized_error, is_invalid_cursor_error,
+    is_plaintext_visibility_policy_error, is_snapshot_unavailable_error,
     is_space_membership_denied_error, is_terminal_session_grant_error,
     is_terminal_session_grant_refresh_error, rate_limited_retry_after, unsupported_endpoint_status,
 };
@@ -118,17 +118,11 @@ fn sdk_api_errors_use_same_classifiers() {
         Some(StatusCode::NOT_IMPLEMENTED)
     );
 
-    let actor_frontier_absent = sdk_api_error(
-        StatusCode::NOT_FOUND,
-        br#"{"ok":false,"error":{"code":"not_found","message":"actor frontier not found"},"request_id":"ak:request:test"}"#,
-    );
-    assert!(is_actor_frontier_absent_error(&actor_frontier_absent));
-
     let actor_seq_cas = sdk_api_error(
         StatusCode::CONFLICT,
         br#"{"ok":false,"error":{"code":"cas_conflict","message":"actor_seq is behind the accepted frontier"},"request_id":"ak:request:test"}"#,
     );
-    assert!(is_actor_seq_cas_conflict_error(&actor_seq_cas));
+    assert!(!is_actor_seq_cas_conflict_error(&actor_seq_cas));
 
     let consumed_refresh_grant = sdk_api_error(
         StatusCode::BAD_REQUEST,

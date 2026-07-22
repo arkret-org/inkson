@@ -305,8 +305,8 @@ fn inkson_accepts_server_contract_payloads() {
         "accepted": ["ak:event:019640ca-0000-7000-8000-000000000000"],
         "duplicate": [],
         "rejected": [],
-        "actor_frontier": {},
-        "realm_frontier": {},
+        "realm_actor_frontiers": [],
+        "realm_frontiers": [],
         "cursor": "sx:1760000000000"
     }))
     .unwrap();

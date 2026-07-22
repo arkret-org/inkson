@@ -4,10 +4,6 @@ pub(crate) fn canonical_blob_ref(blob_ref: &str) -> &str {
     blob_ref.split('#').next().unwrap_or(blob_ref).trim()
 }
 
-pub(crate) fn query_component(value: &str) -> String {
-    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
-}
-
 pub(crate) fn path_component(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for byte in value.bytes() {

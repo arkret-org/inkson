@@ -129,9 +129,14 @@ fn ordinary_event_submit_uses_garth_durable_outbound() {
     );
     assert!(
         submit.contains("async fn submit_sdk_event_direct")
-            && submit.contains("self.owner.submit_sdk_event_direct(&event)")
+            && submit.contains(".submit_sdk_event_direct(")
+            && submit.contains("&queued.transport_idempotency_key")
+            && submit.contains("&queued.canonical_body_bytes")
+            && submit.contains(
+                "self.post_persisted_signed_sdk_event(event, idempotency_key, canonical_body_bytes)"
+            )
             && submit.contains("mls-durable-post-accept"),
-        "the direct HTTP tail must remain private to the Garth queue submitter"
+        "the exact-byte direct HTTP tail must remain private to the Garth queue submitter"
     );
 
     let composer_path = manifest.join("src/views/chat/composer.rs");

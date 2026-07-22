@@ -133,16 +133,33 @@ pub fn unsupported_endpoint_status(error: &anyhow::Error) -> Option<StatusCode> 
     .then_some(status)
 }
 
-pub fn is_actor_frontier_absent_error(error: &anyhow::Error) -> bool {
-    api_error_status_and_envelope(error).is_some_and(|(status, _)| status == StatusCode::NOT_FOUND)
+pub fn is_actor_seq_cas_conflict_error(error: &anyhow::Error) -> bool {
+    actor_seq_cas_conflict_details(error).is_some()
 }
 
-pub fn is_actor_seq_cas_conflict_error(error: &anyhow::Error) -> bool {
-    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
-        status == StatusCode::CONFLICT
-            && envelope.code() == arkret_sdk::error::ErrorCode::CAS_CONFLICT
-            && envelope.message().contains("actor_seq")
-    })
+/// Return the closed actor-chain CAS details only when the service explicitly
+/// proves that the submitted immutable Event was not accepted.
+pub fn actor_seq_cas_conflict_details(
+    error: &anyhow::Error,
+) -> Option<arkret_sdk::EventsActorCasConflictDetails> {
+    api_error_status_and_envelope(error)
+        .is_some_and(|(status, envelope)| {
+            status == StatusCode::CONFLICT
+                && envelope.code() == arkret_sdk::error::ErrorCode::CAS_CONFLICT
+        })
+        .then(|| {
+            serde_json::to_value(
+                api_error_status_and_envelope(error)
+                    .expect("checked above")
+                    .1
+                    .details(),
+            )
+            .ok()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .filter(|details: &arkret_sdk::EventsActorCasConflictDetails| {
+                details.validate().is_ok()
+            })
+        })?
 }
 
 /// Recognise a `rate_limited` (HTTP 429) error envelope from the

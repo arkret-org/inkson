@@ -1,4 +1,4 @@
-use crate::wire_helpers::{path_component, query_component, safe_blob_filename_header};
+use crate::wire_helpers::{path_component, safe_blob_filename_header};
 
 #[test]
 fn endpoint_join_keeps_api_paths_under_base_url() {
@@ -51,28 +51,6 @@ fn blob_upload_filename_header_is_ascii_safe() {
         Some("dump".to_owned())
     );
     assert_eq!(safe_blob_filename_header("🧪").as_deref(), None);
-}
-
-#[test]
-fn event_frontier_selectors_preserve_did_percent_escapes() {
-    let actor = "did:webvh:zQmExampleScid:127.0.0.1%3A22375:webvh:01kvsk95qeev5t63b5njft1xzk";
-    let actor_selector = format!(
-        "_arkret/self/events/frontier?actor_id={}",
-        query_component(actor)
-    );
-    assert_eq!(
-        actor_selector,
-        "_arkret/self/events/frontier?actor_id=did%3Awebvh%3AzQmExampleScid%3A127.0.0.1%253A22375%3Awebvh%3A01kvsk95qeev5t63b5njft1xzk"
-    );
-
-    let realm_selector = format!(
-        "_arkret/self/events/frontier?realm_id={}",
-        query_component("ak:realm:0196419b-0000-7000-8000-000000000000")
-    );
-    assert_eq!(
-        realm_selector,
-        "_arkret/self/events/frontier?realm_id=ak%3Arealm%3A0196419b-0000-7000-8000-000000000000"
-    );
 }
 
 #[test]
