@@ -261,7 +261,6 @@ dependencies = [
  "arkret-auth",
  "arkret-canonical",
  "arkret-event-draft",
- "arkret-hlc",
  "arkret-identifiers",
  "arkret-identity",
  "arkret-models-collaboration",
