@@ -7,6 +7,19 @@ use reqwest::StatusCode;
 
 use super::api_error_status_and_envelope;
 
+pub fn is_mls_keypackage_not_found_error(error: &anyhow::Error) -> bool {
+    api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
+        envelope.code() == "mls_keypackage_not_found"
+            || envelope.message().contains("mls_keypackage_not_found")
+            || envelope
+                .details()
+                .get("reason")
+                .or_else(|| envelope.details().get("reason_code"))
+                .and_then(serde_json::Value::as_str)
+                == Some("mls_keypackage_not_found")
+    })
+}
+
 /// True when the server has *definitively* told us the session is dead.
 ///
 /// We require an explicit error envelope code that names session loss

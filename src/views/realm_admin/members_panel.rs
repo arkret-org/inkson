@@ -3365,6 +3365,9 @@ pub fn RealmMembersPanel(
                                                                             let suffix = if mls_encrypted { "; epoch_update_required" } else { "" };
                                                                             status_msg.set(format!("added agent {} to Realm{}", target_label, suffix));
                                                                         }
+                                                                        Err(err) if crate::api_error::is_mls_keypackage_not_found_error(err.inner()) => {
+                                                                            status_msg.set("agent add failed: Agent runtime has not completed E2EE KeyPackage publication".to_owned());
+                                                                        }
                                                                         Err(err) => status_msg.set(format!("agent add failed: {}", err.display())),
                                                                     }
                                                                 });

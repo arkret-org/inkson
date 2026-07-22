@@ -191,6 +191,33 @@ fn recognizes_device_not_authorized_errors() {
 }
 
 #[test]
+fn recognizes_agent_keypackage_readiness_error() {
+    let readiness_error: anyhow::Error = TransportClientError {
+        status: StatusCode::CONFLICT,
+        error: decode_arkret_error(
+            StatusCode::CONFLICT,
+            br#"{"ok":false,"error":{"code":"mls_keypackage_not_found","message":"no claimable KeyPackage"},"request_id":"ak:request:test"}"#,
+        ),
+    }
+    .into();
+    assert!(crate::api_error::is_mls_keypackage_not_found_error(
+        &readiness_error
+    ));
+
+    let unrelated: anyhow::Error = TransportClientError {
+        status: StatusCode::CONFLICT,
+        error: decode_arkret_error(
+            StatusCode::CONFLICT,
+            br#"{"ok":false,"error":{"code":"cas_conflict","message":"membership changed"},"request_id":"ak:request:test"}"#,
+        ),
+    }
+    .into();
+    assert!(!crate::api_error::is_mls_keypackage_not_found_error(
+        &unrelated
+    ));
+}
+
+#[test]
 fn recognizes_auth_expired_errors() {
     let error: anyhow::Error = TransportClientError {
         status: StatusCode::UNAUTHORIZED,

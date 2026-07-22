@@ -2,39 +2,11 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use serde_json::{Value, json};
-
-/// Canonical signing-input prefix for the MLS `keypackages/upload`
-/// `device_signature`. Distinct domain string from the prekey `keys/upload`
-/// (`ak-keys-upload-v1`, spec §8.1) so a signature over one batch can never be
-/// replayed as the other; binds the device + the published KeyPackage batch.
-const KEYPACKAGE_UPLOAD_SIGNATURE_PREFIX: &str = "ak.keypackage-upload-v1\n";
-const KEYPACKAGE_CONSUME_SIGNATURE_PREFIX: &str = "ak.keypackage-consume-v1\n";
-
-/// Sign the MLS KeyPackage upload batch with the local event-signer (device
-/// identity Ed25519 `did:key`), binding `device_id` + the published
-/// `key_packages`. Fail-closed (`bail!`) when no signer is installed.
-pub(crate) fn keypackage_upload_signing_input(
-    device_id: &str,
-    key_packages: &[Value],
-) -> anyhow::Result<Vec<u8>> {
-    let body = json!({
-        "device_id": device_id,
-        "key_packages": key_packages,
-    });
-    let canonical = crate::canonical::canonical_json_bytes(&body)?;
-    let mut input = Vec::with_capacity(KEYPACKAGE_UPLOAD_SIGNATURE_PREFIX.len() + canonical.len());
-    input.extend_from_slice(KEYPACKAGE_UPLOAD_SIGNATURE_PREFIX.as_bytes());
-    input.extend_from_slice(&canonical);
-    Ok(input)
-}
-
 pub(crate) fn sign_keypackage_upload_batch_with_signer(
     signer: &crate::event_signer::InksonEventSigner,
-    device_id: &str,
-    key_packages: &[Value],
+    unsigned: &arkret_sdk::KeyPackagesUploadUnsignedRequest,
 ) -> anyhow::Result<arkret_sdk::KeyOperationSignature> {
-    let input = keypackage_upload_signing_input(device_id, key_packages)?;
+    let input = arkret_sdk::keypackages_upload_signing_input(unsigned)?;
     let sig = signer
         .sign_raw(&input)
         .map_err(|err| anyhow::anyhow!("keypackages/upload device_signature sign failed: {err}"))?;
@@ -48,46 +20,25 @@ pub(crate) fn sign_keypackage_upload_batch_with_signer(
 }
 
 pub(crate) fn sign_keypackage_upload_batch(
-    device_id: &str,
-    key_packages: &[Value],
+    unsigned: &arkret_sdk::KeyPackagesUploadUnsignedRequest,
 ) -> anyhow::Result<arkret_sdk::KeyOperationSignature> {
     let signer = crate::event_signer::active_signer().ok_or_else(|| {
         anyhow::anyhow!(
             "keypackages/upload device_signature requires an active event-signer (fail-closed)"
         )
     })?;
-    sign_keypackage_upload_batch_with_signer(&signer, device_id, key_packages)
+    sign_keypackage_upload_batch_with_signer(&signer, unsigned)
 }
 
 pub(crate) fn sign_keypackage_consume(
-    key_package_refs: &[String],
-    consumer_device_id: &str,
-    claim_ids: &[String],
-    welcome_ref: Option<&str>,
-    realm_id: Option<&str>,
-    strand_id: Option<&str>,
-    mls_group_id: Option<&str>,
-    epoch: Option<u64>,
+    unsigned: &arkret_sdk::KeyPackagesConsumeUnsignedRequest,
 ) -> anyhow::Result<arkret_sdk::KeyOperationSignature> {
     let signer = crate::event_signer::active_signer().ok_or_else(|| {
         anyhow::anyhow!(
             "keypackages/consume signature requires an active event-signer (fail-closed)"
         )
     })?;
-    let value = json!({
-        "key_package_refs": key_package_refs,
-        "consumer_device_id": consumer_device_id,
-        "claim_ids": claim_ids,
-        "welcome_ref": welcome_ref,
-        "realm_id": realm_id,
-        "strand_id": strand_id,
-        "mls_group_id": mls_group_id,
-        "epoch": epoch,
-    });
-    let canonical = crate::canonical::canonical_json_bytes(&value)?;
-    let mut input = Vec::with_capacity(KEYPACKAGE_CONSUME_SIGNATURE_PREFIX.len() + canonical.len());
-    input.extend_from_slice(KEYPACKAGE_CONSUME_SIGNATURE_PREFIX.as_bytes());
-    input.extend_from_slice(&canonical);
+    let input = arkret_sdk::keypackages_consume_signing_input(unsigned)?;
     let signature = signer
         .sign_raw(&input)
         .map_err(|error| anyhow::anyhow!("keypackages/consume signature failed: {error}"))?;
