@@ -33,7 +33,7 @@ async fn publish_mls_key_package_fails_closed_without_active_signer() {
     let clients = crate::transport::EndpointClients::new(transport);
     let err = clients
         .mls()
-        .publish_key_package("ak:device:test-prod-guard", &record)
+        .publish_key_package("ak:device:01904100-0000-7000-8000-000000000001", &record)
         .await
         .expect_err("MUST refuse to publish without an active event-signer");
     let msg = format!("{err}");
