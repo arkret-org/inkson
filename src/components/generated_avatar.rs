@@ -84,7 +84,11 @@ pub fn GeneratedAvatar(props: GeneratedAvatarProps) -> Element {
             role: "img",
             "aria-label": "{alt_text}",
             svg {
-                view_box: "0 0 5 5",
+                // Keep the GitHub-style breathing room inside the SVG
+                // coordinate system. CSS percentage padding is relative to
+                // the containing block, which made this avatar balloon and
+                // squeezed the cells to zero in wide menu headers.
+                view_box: "-0.75 -0.75 6.5 6.5",
                 "aria-hidden": "true",
                 "focusable": "false",
                 for (x, y) in cells {

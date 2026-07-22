@@ -432,6 +432,44 @@ label.avatar-upload-button .ui-icon {
   opacity: 1;
 }
 
+.invite-locator-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.invite-locator-panel {
+  display: grid;
+  grid-template-columns: minmax(192px, 220px) minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.invite-locator-qr-pane,
+.invite-locator-url-pane {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.invite-locator-url-field {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  resize: none;
+}
+
+.invite-locator-url-pane {
+  align-self: center;
+}
+
 @media (max-width: 900px) {
   .settings-avatar-card {
     grid-template-columns: 1fr;
@@ -450,6 +488,14 @@ label.avatar-upload-button .ui-icon {
 }
 
 @media (max-width: 760px) {
+  .invite-locator-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .invite-locator-url-pane {
+    display: none;
+  }
+
   .workspace-manage-hero {
     align-items: flex-start;
     flex-direction: column;

@@ -1364,14 +1364,18 @@ pub fn SettingsPanel(
                                                 }
                                             }
                                         }
-                                        div { class: "invite-locator-url-pane",
+                                        div {
+                                            class: "invite-locator-url-pane",
+                                            "data-testid": "settings-invite-locator-url-pane",
                                             strong { class: "invite-locator-pane-label", "URL" }
                                             Textarea {
                                                 id: "settings-invite-locator-url-input",
                                                 class: "mono invite-locator-url-field",
                                                 "data-testid": "settings-invite-locator-url",
+                                                "aria-label": "Invite locator URL",
+                                                title: "{invite_locator_url}",
                                                 readonly: true,
-                                                rows: "7",
+                                                rows: "4",
                                                 value: "{invite_locator_url}",
                                             }
                                         }

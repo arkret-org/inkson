@@ -238,6 +238,22 @@ test("account settings split account/server info and surface personal agents", a
   await expect(page.getByTestId("settings-avatar-card")).toBeVisible();
   await expect(page.getByTestId("settings-account-did")).toHaveText("did:web:alice.example");
   await expect(page.getByTestId("settings-account-did")).not.toHaveText("@alice:local.host");
+  const inviteLocatorUrl = page.getByTestId("settings-invite-locator-url");
+  const inviteLocatorQr = page.getByTestId("settings-invite-locator-qr");
+  const inviteLocatorUrlPane = page.getByTestId("settings-invite-locator-url-pane");
+  await expect(inviteLocatorUrl).toHaveJSProperty("tagName", "TEXTAREA");
+  await expect(inviteLocatorUrl).toHaveCSS("white-space", "pre-wrap");
+  await expect(inviteLocatorUrl).not.toHaveValue("");
+  const qrBox = await inviteLocatorQr.boundingBox();
+  const urlPaneBox = await inviteLocatorUrlPane.boundingBox();
+  expect(qrBox).not.toBeNull();
+  expect(urlPaneBox).not.toBeNull();
+  expect(urlPaneBox!.x).toBeGreaterThan(qrBox!.x);
+  expect(Math.abs(qrBox!.y - urlPaneBox!.y)).toBeLessThan(qrBox!.height);
+  await page.setViewportSize({ width: 640, height: 900 });
+  await expect(inviteLocatorQr).toBeVisible();
+  await expect(inviteLocatorUrlPane).toBeHidden();
+  await page.setViewportSize({ width: 1280, height: 720 });
   await expect(page.getByTestId("settings-nav-item-recovery")).toBeVisible();
 
   // Server information is a separate section (transport context).

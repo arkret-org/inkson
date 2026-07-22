@@ -478,7 +478,6 @@ button[data-style="link"]:disabled:hover {
 .avatar-img.generated-avatar {
   display: block;
   background: #f0f3f6;
-  padding: 12%;
   box-shadow: var(--shadow-sm);
 }
 .avatar-img.generated-avatar svg {
