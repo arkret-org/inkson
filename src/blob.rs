@@ -11,7 +11,7 @@
 //! # Attachment AEAD is the SDK's canonical codec
 //!
 //! All client-side attachment encryption is delegated to
-//! [`arkret_sdk::blob_aead`], the canonical implementation of
+//! [`arkret_crypto::blob_aead`], the canonical implementation of
 //! `ak.blob.stream_aead.v1` (chunked streaming AEAD) and
 //! `ak.blob.whole_file_aead.v1` (whole-file AEAD). Inkson no longer ships a
 //! private XChaCha envelope or its own nonce derivation; the
@@ -20,10 +20,10 @@
 //! SDK's [`EncryptedAttachmentEnvelope`], whose serde shape is exactly
 //! `blob.schema.json#/$defs/encrypted_attachment`.
 
-pub use arkret_sdk::KeyRefObject;
-use arkret_sdk::blob_aead::{
+use arkret_crypto::blob_aead::{
     self, DEFAULT_SEGMENT_SIZE, EncryptedAttachmentEnvelope, StreamEncryptParams,
 };
+pub use arkret_sdk::KeyRefObject;
 use sha2::{Digest, Sha256};
 
 /// MLS exporter content-key length (XChaCha20-Poly1305 key).
@@ -229,7 +229,7 @@ pub fn encrypt_mls_asset(
 
 #[cfg(test)]
 mod tests {
-    use arkret_sdk::blob_aead::{
+    use arkret_crypto::blob_aead::{
         SCHEME_STREAM, SCHEME_WHOLE_FILE, decrypt_stream, decrypt_whole_file,
     };
 

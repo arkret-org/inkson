@@ -11,9 +11,9 @@
 //!    [`arkret_signatures::media::verify_ice_config_outcome`] (issuer anchoring, TURN credential
 //!    privacy, refresh-lead invariants).
 //! 3. **MEDIA-1** — the SFrame frame key is derived from the live MLS exporter via
-//!    [`arkret_sdk::derive_frame_key`]. Any non-MLS key source is unrepresentable: the helper only
-//!    accepts a [`arkret_sdk::MlsExporterSource`], so a backend KMS key can never be installed
-//!    (fail-closed → `e2ee_key_source_unauthorised`).
+//!    [`arkret_crypto::sframe::derive_frame_key`]. Any non-MLS key source is unrepresentable: the
+//!    helper only accepts an [`arkret_crypto::sframe::MlsExporterSource`], so a backend KMS key can
+//!    never be installed (fail-closed → `e2ee_key_source_unauthorised`).
 //!
 //! The platform RTC transport (`crate::rtc_transport`) consumes the
 //! verified [`JoinedMediaSession`] this module returns: connect URL,
@@ -22,13 +22,13 @@
 /// Stable label registered on the `ak.profile.media_service_binding.v1`
 /// profile for the SFrame frame key derivation (`media-service-binding.md
 /// §8.1`). Re-exported from the SDK so the renderer pins exactly one value.
-pub use arkret_sdk::FRAME_KEY_LABEL as SFRAME_FRAME_KEY_LABEL;
+pub use arkret_crypto::sframe::FRAME_KEY_LABEL as SFRAME_FRAME_KEY_LABEL;
+use arkret_crypto::sframe::{FrameKeyContext, MlsExporterSource, derive_frame_key};
 use arkret_sdk::{
     CallId, CallMediaDesiredMedia, CallMediaParticipantBinding, CallMediaTokenExchangeOutcome,
-    CallMediaTokenExchangeRequestBody, DeviceId, Did, DidDocument, FrameKeyContext,
-    MediaDecryptPolicyValue, MediaIceConfigRequestBody, MediaIceMode, MediaPlaintextService,
-    MlsExporterSource, MlsGovernanceBindingPayload, PlaintextDataClassKind,
-    PlaintextVisibleServicesPayload, RealmId, derive_frame_key,
+    CallMediaTokenExchangeRequestBody, DeviceId, Did, DidDocument, MediaDecryptPolicyValue,
+    MediaIceConfigRequestBody, MediaIceMode, MediaPlaintextService, MlsGovernanceBindingPayload,
+    PlaintextDataClassKind, PlaintextVisibleServicesPayload, RealmId,
     derive_media_decrypt_metadata_digest, resolve_verification_method_key_from_document,
     verify_media_decrypt_metadata,
 };
@@ -1190,7 +1190,7 @@ mod tests {
         };
         let key = derive_frame_key(&exporter, &ctx).expect("frame key derivation");
 
-        assert_eq!(key.len(), arkret_sdk::MEDIA_KEY_LEN);
+        assert_eq!(key.len(), arkret_crypto::sframe::MEDIA_KEY_LEN);
         assert_eq!(key.len(), 32);
         // Not a placeholder: a real exporter secret is not all-zero.
         assert!(key.iter().any(|&b| b != 0));
@@ -1339,7 +1339,7 @@ mod tests {
             device_id: DeviceId::new(ALICE_DEVICE.to_owned()).unwrap(),
         };
         let key_alice_self = derive_frame_key(&alice_exporter, &alice_self_ctx).unwrap();
-        assert_eq!(key_alice_self.len(), arkret_sdk::MEDIA_KEY_LEN);
+        assert_eq!(key_alice_self.len(), arkret_crypto::sframe::MEDIA_KEY_LEN);
         assert!(key_alice_self.iter().any(|&b| b != 0));
 
         // THE FIX: Bob (the RECEIVER, a different member) recomputes ALICE's

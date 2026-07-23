@@ -111,7 +111,7 @@ mobile-ios = []
 # arbitrary tags via `dangerous_inner_html`.
 anyhow = {workspace = true}
 arkret-bootstrap = {version = "0.3.0",path = "../arkret-rust-sdk/crates/bootstrap",default-features = false}
-arkret-crypto = {workspace = true,features = ["key-verification", "secret-share"]}
+arkret-crypto = {workspace = true,features = ["blob-aead", "key-verification", "secret-share", "sframe"]}
 arkret-event-draft = {version = "0.3.0",path = "../arkret-rust-sdk/crates/event-draft",default-features = false}
 arkret-identity = {version = "0.3.0",path = "../arkret-rust-sdk/crates/identity",default-features = false}
 arkret-identifiers = {version = "0.3.0",path = "../arkret-rust-sdk/crates/identifiers",default-features = false}
@@ -186,10 +186,10 @@ chrono = {workspace = true}
 # toggle is on AND a build-time `SENTRY_DSN` env var is set; an
 # empty DSN logs a debug message and skips init silently per
 # `src/telemetry.rs::sentry_init`. Wasm builds skip the dep entirely.
-# NOTE: arkret-sdk `default = []` (types-only) since the F-06 default-feature
-# narrowing; this client must opt into every runtime feature it uses
-# explicitly (mls/device-runtime/... previously arrived via the old default).
-arkret-sdk = {workspace = true,features = ["client", "mls", "full-surface", "device-runtime", "signer", "keystore-macos", "keystore-linux", "keystore-windows"]}
+# NOTE: arkret-sdk `default = []`; this client opts into only its transport,
+# MLS, signer and platform-keystore integrations. Crypto capabilities are
+# selected directly on `arkret-crypto`.
+arkret-sdk = {workspace = true,features = ["client", "mls", "signer", "keystore-macos", "keystore-linux", "keystore-windows"]}
 garth = {path = "../garth",default-features = false,features = ["native"]}
 dioxus = {workspace = true,features = ["desktop", "web"]}
 notify-rust = {workspace = true}
@@ -199,12 +199,8 @@ tokio = {workspace = true,features = ["macros", "rt-multi-thread", "sync", "time
 tracing-subscriber = {workspace = true,features = ["env-filter", "fmt"]}
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-# C36.1 (2026-05-10): wasm32 needs the same surface as native because the app
-# code references `KeyVerification*` (device-runtime), `EventsSubscribeFrame`
-# (`SyncLoop` is now owned by Garth), `KeyRefObject` (mls), etc. The previous
-# `default-features = false` stripped these and produced E0432/E0425.
-# The C36.0 parallel agent is closing the wasm32 SDK so `full-surface` builds
-# cleanly under `--target wasm32-unknown-unknown`.
+# wasm32 uses the same protocol/MLS surface as native while platform crypto
+# capabilities are selected on their owner crates.
 #
 # T5.2: same `signer` feature as native — the wasm32 build uses the same
 # Ed25519 detached-JWS pipeline; the signing seed comes from
@@ -222,9 +218,8 @@ tracing-subscriber = {workspace = true,features = ["env-filter", "fmt"]}
 # `std::time::Instant::now()` and panics with "time not implemented on this
 # platform". `gloo-timers` routes through `setTimeout` instead, which is what
 # `sleep_for` uses for HTTP retry backoff in the wasm build.
-# See the non-wasm note above: opt into every runtime feature explicitly since
-# arkret-sdk `default = []`.
-arkret-sdk = {workspace = true,features = ["client", "mls", "full-surface", "device-runtime", "signer"]}
+# See the non-wasm note above.
+arkret-sdk = {workspace = true,features = ["client", "mls", "signer"]}
 garth = {path = "../garth",default-features = false,features = ["wasm"]}
 dioxus = {workspace = true,features = ["web"]}
 gloo-timers = {workspace = true,features = ["futures"]}

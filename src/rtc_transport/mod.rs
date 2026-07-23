@@ -228,7 +228,7 @@ pub fn new_transport(session: &JoinedMediaSession) -> Box<dyn MediaTransport> {
 /// unused outside tests there.
 #[cfg_attr(all(not(target_arch = "wasm32"), not(test)), allow(dead_code))]
 pub(crate) fn ensure_valid_frame_key(key: &[u8]) -> Result<(), RtcClientError> {
-    if key.len() == arkret_sdk::MEDIA_KEY_LEN {
+    if key.len() == arkret_crypto::sframe::MEDIA_KEY_LEN {
         Ok(())
     } else {
         Err(RtcClientError::E2eeKeySourceUnauthorised)
