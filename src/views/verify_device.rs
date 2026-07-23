@@ -197,7 +197,7 @@ pub fn VerifyDevicePanel(
     // instead of the `target_device_did + sas_code` placeholder
     // info.
     let mut ephemeral_keypair = use_signal(|| {
-        Option::<std::sync::Arc<arkret_sdk::key_verification::EphemeralX25519Keypair>>::None
+        Option::<std::sync::Arc<arkret_crypto::key_verification::EphemeralX25519Keypair>>::None
     });
     let mut peer_public_b64 = use_signal(String::new);
     let mut sas_send_status = use_signal(String::new);
@@ -464,7 +464,7 @@ pub fn VerifyDevicePanel(
                                     variant: ButtonVariant::Secondary,
                                     "data-testid": "sas-generate-keypair-button",
                                     onclick: move |_| {
-                                        match arkret_sdk::key_verification::EphemeralX25519Keypair::generate() {
+                                        match arkret_crypto::key_verification::EphemeralX25519Keypair::generate() {
                                             Ok(keypair) => {
                                                 ephemeral_keypair.set(Some(std::sync::Arc::new(keypair)));
                                                 sas_send_status.set(
@@ -613,7 +613,7 @@ pub fn VerifyDevicePanel(
                                     (Some(pair), Some(peer_pub)) => {
                                         match pair.compute_shared_secret(&peer_pub) {
                                             Ok(shared) => (
-                                                arkret_sdk::key_verification::derive_sas_bytes(
+                                                arkret_crypto::key_verification::derive_sas_bytes(
                                                     shared.as_ref(),
                                                     info.as_bytes(),
                                                 ),
@@ -621,7 +621,7 @@ pub fn VerifyDevicePanel(
                                                 true,
                                             ),
                                             Err(_) => (
-                                                arkret_sdk::key_verification::derive_sas_bytes(
+                                                arkret_crypto::key_verification::derive_sas_bytes(
                                                     target.as_bytes(),
                                                     info.as_bytes(),
                                                 ),
@@ -631,7 +631,7 @@ pub fn VerifyDevicePanel(
                                         }
                                     }
                                     _ => (
-                                        arkret_sdk::key_verification::derive_sas_bytes(
+                                        arkret_crypto::key_verification::derive_sas_bytes(
                                             target.as_bytes(),
                                             info.as_bytes(),
                                         ),

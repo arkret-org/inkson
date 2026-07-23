@@ -156,7 +156,6 @@ dependencies = [
 name = "arkret"
 version = "0.3.0"
 dependencies = [
- "argon2",
  "arkret-auth",
  "arkret-bootstrap",
  "arkret-canonical",
@@ -185,9 +184,7 @@ dependencies = [
  "base64",
  "chrono",
  "ed25519-dalek",
- "hex",
  "hmac 0.13.0",
- "parking_lot",
  "reqwest 0.13.4",
  "serde",
  "serde_json",
