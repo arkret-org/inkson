@@ -2456,7 +2456,7 @@ fn treats_canonical_account_did_as_own_sender() {
             "",
             &participants
         ),
-        "alice.example"
+        crate::views::helpers::short_protocol_id("did:web:alice.example")
     );
     assert_eq!(
         sender_display_label(
@@ -2507,7 +2507,7 @@ fn participant_display_name_prefers_local_remark() {
             "Alice",
             &participants
         ),
-        "carol.example"
+        crate::views::helpers::short_protocol_id("did:web:carol.example")
     );
 }
 
@@ -3517,6 +3517,43 @@ fn mention_candidate_uses_cached_member_handle() {
     assert_eq!(candidate.display_name, "bob:local.host");
     assert_eq!(candidate.insert_label(), "bob:local.host");
     assert_eq!(candidate.subtitle, "");
+}
+
+#[test]
+fn late_join_discussion_sender_resolves_cached_member_handle() {
+    let sender = "did:webvh:zQmHistoricalAuthor";
+    let realm = "ak:realm:late-join";
+    let temp = std::env::temp_dir().join(format!("inkson-chat-late-join-{}", uuid_v7()));
+    let mut store = LocalStateStore::with_path(temp);
+    store.save_member_handle_lookup(
+        sender,
+        Some(realm.to_owned()),
+        None,
+        Some("alice:local.host".to_owned()),
+        1,
+        None,
+        None,
+    );
+    let projection = json!({"members": [{
+        "actor_id": sender,
+        "membership": "join"
+    }]});
+    let participants = space_participants(
+        Some(&projection),
+        &store,
+        realm,
+        "did:webvh:zQmLateJoiningReader",
+    );
+
+    assert_eq!(
+        sender_display_label(
+            sender,
+            "did:webvh:zQmLateJoiningReader",
+            "reader:local.host",
+            &participants,
+        ),
+        "alice:local.host"
+    );
 }
 
 #[test]
