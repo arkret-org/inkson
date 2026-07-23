@@ -442,7 +442,8 @@ mod personal_agent_tests {
         .to_string();
         let summary = summarize_runtime_key_approval_request(&raw).unwrap();
         let request = parse_runtime_key_approval_request(&raw).unwrap();
-        let expected = arkret_sdk::agent_runtime_public_key_digest(&request.public_key).unwrap();
+        let expected =
+            arkret_signatures::agent::agent_runtime_public_key_digest(&request.public_key).unwrap();
 
         assert_eq!(summary.public_key_fingerprint, expected.as_str());
         assert_eq!(summary.verification_method, verification_method);
@@ -536,18 +537,19 @@ mod personal_agent_tests {
         );
 
         let runtime_digest =
-            arkret_sdk::agent_runtime_public_key_digest(&request.public_key).unwrap();
-        let expected_pairing_digest = arkret_sdk::agent_key_pairing_request_binding_digest(
-            &arkret_sdk::Did::new(controller.to_owned()).unwrap(),
-            &request.agent_id,
-            verification_method,
-            &runtime_digest,
-            &request.pairing_request_id,
-            "12345678",
-            "2026-07-06T00:15:00.000Z",
-            service_id,
-        )
-        .unwrap();
+            arkret_signatures::agent::agent_runtime_public_key_digest(&request.public_key).unwrap();
+        let expected_pairing_digest =
+            arkret_signatures::agent::agent_key_pairing_request_binding_digest(
+                &arkret_sdk::Did::new(controller.to_owned()).unwrap(),
+                &request.agent_id,
+                verification_method,
+                &runtime_digest,
+                &request.pairing_request_id,
+                "12345678",
+                "2026-07-06T00:15:00.000Z",
+                service_id,
+            )
+            .unwrap();
 
         assert_eq!(
             event.kind.as_str(),

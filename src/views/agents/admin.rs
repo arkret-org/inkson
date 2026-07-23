@@ -259,8 +259,12 @@ mod directory_refresh_tests {
             &AgentServiceScopePreset::DEFAULTS,
         )
         .unwrap();
-        let scope_digest =
-            arkret_sdk::agent_requested_scope_digest(&agent_id, &controller_id, &scope).unwrap();
+        let scope_digest = arkret_signatures::agent::agent_requested_scope_digest(
+            &agent_id,
+            &controller_id,
+            &scope,
+        )
+        .unwrap();
         AgentView {
             agent: test_agent_projection(status),
             status,
@@ -631,7 +635,7 @@ fn spawn_set_agent_enabled(
             }
         };
         let draft = if enabled {
-            arkret_sdk::agent::build_agent_resume_event(
+            arkret_event_draft::build_agent_resume_event(
                 key_state.agent_id.clone(),
                 key_state.controller_id.clone(),
                 key_state.principal_control_realm_id.clone(),
@@ -642,7 +646,7 @@ fn spawn_set_agent_enabled(
                 status_changed_at,
             )
         } else {
-            arkret_sdk::agent::build_agent_pause_event(
+            arkret_event_draft::build_agent_pause_event(
                 key_state.agent_id.clone(),
                 key_state.controller_id.clone(),
                 key_state.principal_control_realm_id.clone(),
@@ -1317,7 +1321,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                         _controller_authorization_ref,
                                                         requested_scope_digest,
                                                     ) = preparation;
-                                                    let observed_digest = match arkret_sdk::agent_requested_scope_digest(
+                                                    let observed_digest = match arkret_signatures::agent::agent_requested_scope_digest(
                                                         &allocated_agent_id,
                                                         &controller_id,
                                                         &requested_scope,

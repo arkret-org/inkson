@@ -37,12 +37,12 @@ pub fn build_agent_provision_event_drafts(
         controller_realm_id.as_str(),
     )?;
     let move_signer = signer.move_signer_adapter_for_principal(controller_id)?;
-    Ok(arkret_sdk::agent::build_agent_provision_event_drafts(
+    Ok(arkret_bootstrap::build_agent_provision_event_drafts(
         controller_id,
         controller_realm_id,
         agent_id,
         agent_slug,
-        arkret_sdk::agent::AgentProvisionEventDraftOptions {
+        arkret_bootstrap::AgentProvisionEventDraftOptions {
             created_at,
             accountability_actor_seq: 0,
             accountability_hlc,
@@ -467,8 +467,11 @@ pub fn build_requested_scope_disclosure_for_pairing(
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("agent key_state.requested_scope is required"))?,
     )?;
-    let requested_scope_digest =
-        arkret_sdk::agent_requested_scope_digest(&agent_id, &controller_id, &requested_scope)?;
+    let requested_scope_digest = arkret_signatures::agent::agent_requested_scope_digest(
+        &agent_id,
+        &controller_id,
+        &requested_scope,
+    )?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("no active device signer is available"))?;
     let verification_method = signer
@@ -528,9 +531,10 @@ pub fn summarize_runtime_key_approval_request(
     raw: &str,
 ) -> anyhow::Result<RuntimeKeyApprovalSummary> {
     let request = parse_runtime_key_approval_request(raw)?;
-    let public_key_fingerprint = arkret_sdk::agent_runtime_public_key_digest(&request.public_key)?
-        .as_str()
-        .to_owned();
+    let public_key_fingerprint =
+        arkret_signatures::agent::agent_runtime_public_key_digest(&request.public_key)?
+            .as_str()
+            .to_owned();
     let proof_expires_at = request
         .proof_of_possession
         .as_map()
@@ -608,12 +612,12 @@ pub fn build_agent_key_authorize_event_for_pairing(
             .ok_or_else(|| anyhow::anyhow!("agent key_state.requested_scope is required"))?,
     )?;
     let runtime_public_key_digest =
-        arkret_sdk::agent_runtime_public_key_digest(&request.public_key)?;
+        arkret_signatures::agent::agent_runtime_public_key_digest(&request.public_key)?;
     let runtime_public_key = request.public_key.clone();
     if runtime_public_key.kid.as_str() != request.verification_method.as_str() {
         anyhow::bail!("runtime request public_key.kid does not match verification_method");
     }
-    let pairing_digest = arkret_sdk::agent_key_pairing_request_binding_digest(
+    let pairing_digest = arkret_signatures::agent::agent_key_pairing_request_binding_digest(
         &controller,
         &request.agent_id,
         &request.verification_method,
@@ -680,7 +684,7 @@ pub fn build_agent_key_authorize_event_for_pairing(
         controller.as_str(),
         realm_id.as_str(),
     )?;
-    let mut event = arkret_sdk::agent::build_agent_key_authorize_event(
+    let mut event = arkret_event_draft::build_agent_key_authorize_event(
         &payload,
         realm_id,
         request.agent_id.clone(),
