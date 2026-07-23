@@ -176,6 +176,7 @@ dependencies = [
  "arkret-models-identity",
  "arkret-models-integration",
  "arkret-policy",
+ "arkret-push-policy",
  "arkret-schema",
  "arkret-signatures",
  "arkret-state",
@@ -511,11 +512,20 @@ dependencies = [
  "arkret-canonical",
  "arkret-models-collaboration",
  "arkret-models-crypto",
- "arkret-models-integration",
  "arkret-schema",
  "arkret-wire",
  "chrono",
  "chrono-tz",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "arkret-push-policy"
+version = "0.3.0"
+dependencies = [
+ "arkret-models-integration",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -1322,9 +1332,12 @@ dependencies = [
 name = "chime"
 version = "0.3.0"
 dependencies = [
- "arkret",
+ "arkret-canonical",
+ "arkret-models-discovery",
  "arkret-models-integration",
+ "arkret-push-policy",
  "arkret-signatures",
+ "arkret-wire",
  "base64",
  "chrono",
  "gloo-timers 0.4.0",
