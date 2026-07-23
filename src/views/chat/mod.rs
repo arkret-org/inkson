@@ -924,6 +924,16 @@ async fn submit_source_routed_sidecar_message(
         body,
         &addressed_strings,
     );
+    // F-7 equivocation guard: one in-flight submit per intent. A concurrent
+    // double-click would otherwise author two request Events under the SAME
+    // exchange_id (the pending record is read before either submit lands).
+    let Some(_submission_guard) = crate::sidecar::try_begin_sidecar_submission(
+        controller_id,
+        private_strand_id,
+        &intent_digest,
+    ) else {
+        anyhow::bail!("This Private Sidecar request is already being submitted");
+    };
     let prior_intent = crate::sidecar::load_pending_sidecar_submission(
         &state_store.read(),
         controller_id,
@@ -993,6 +1003,7 @@ async fn submit_source_routed_sidecar_message(
         controller_id: controller_id.to_owned(),
         sidecar_id: view.sidecar.id.clone(),
         private_strand_id: private_strand_id.to_owned(),
+        backing_circle_id: view.sidecar.backing_circle_id.clone(),
         exchange_id,
         request_context,
         message_id: message_id.clone(),
@@ -1893,10 +1904,11 @@ pub fn ChatPanel(
         let session_scope_hints = sidecar_session
             .as_ref()
             .map(|session| {
-                vec![(
-                    session.private_strand_id.clone(),
-                    session.sidecar_id.clone(),
-                )]
+                vec![crate::sidecar::SidecarExchangeScopeHint {
+                    private_strand_id: session.private_strand_id.clone(),
+                    sidecar_id: session.sidecar_id.clone(),
+                    backing_circle_id: session.backing_scope_circle_id.clone(),
+                }]
             })
             .unwrap_or_default();
         use_effect(move || {

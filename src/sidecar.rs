@@ -240,12 +240,56 @@ pub(crate) struct PendingSidecarSubmission {
     pub controller_id: String,
     pub sidecar_id: arkret_sdk::SidecarId,
     pub private_strand_id: String,
+    /// Backing Circle of this Sidecar context: the ONLY effective scope under
+    /// which exchange Events of this private Strand are valid (§7.2.1).
+    pub backing_circle_id: arkret_sdk::CircleId,
     pub exchange_id: arkret_sdk::AgentSidecarExchangeId,
     pub request_context: arkret_sdk::AgentSidecarExchangeRequestContext,
     /// Message id of the latest submit attempt (used to recognise the
     /// accepted request Event in the synced timeline after a crash).
     pub message_id: String,
     pub local_operation_id: String,
+}
+
+/// In-flight submission registry (F-7): one live submit per
+/// `(controller, private Strand, intent)` so a double-click cannot author two
+/// request Events under the same `exchange_id` (controller equivocation).
+/// Process-local on purpose — a crash releases it, and the durable pending
+/// record still guarantees exchange-id reuse on the next attempt.
+static SIDECAR_SUBMISSIONS_IN_FLIGHT: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::BTreeSet<String>>,
+> = std::sync::OnceLock::new();
+
+fn sidecar_submissions_in_flight() -> &'static std::sync::Mutex<std::collections::BTreeSet<String>>
+{
+    SIDECAR_SUBMISSIONS_IN_FLIGHT.get_or_init(|| std::sync::Mutex::new(Default::default()))
+}
+
+/// RAII in-flight marker returned by [`try_begin_sidecar_submission`].
+pub(crate) struct SidecarSubmissionGuard {
+    key: String,
+}
+
+impl Drop for SidecarSubmissionGuard {
+    fn drop(&mut self) {
+        if let Ok(mut in_flight) = sidecar_submissions_in_flight().lock() {
+            in_flight.remove(&self.key);
+        }
+    }
+}
+
+/// Reserve the submission slot for one intent. Returns `None` while an
+/// earlier submit of the SAME intent is still in flight.
+pub(crate) fn try_begin_sidecar_submission(
+    controller_id: &str,
+    private_strand_id: &str,
+    intent_digest: &str,
+) -> Option<SidecarSubmissionGuard> {
+    let key = format!("{controller_id}\u{1f}{private_strand_id}\u{1f}{intent_digest}");
+    let mut in_flight = sidecar_submissions_in_flight().lock().ok()?;
+    in_flight
+        .insert(key.clone())
+        .then_some(SidecarSubmissionGuard { key })
 }
 
 /// Deterministic identity of one composer intent. Retrying the same body to
@@ -350,9 +394,21 @@ pub(crate) struct StoredSidecarExchangeRequestFact {
     pub request_event_hlc: arkret_sdk::Hlc,
     /// Accepted controller actor-chain sequence. `0` when the authoring
     /// device could not observe the accepted value; it only participates in
-    /// canonical-request selection under controller equivocation.
+    /// canonical-request selection under controller equivocation. The refold
+    /// upgrades it from the accepted Event envelope once that syncs back.
     pub request_event_actor_seq: u64,
+    /// Backing Circle the request Event was authored under (§7.2.1 scope).
+    pub backing_circle_id: arkret_sdk::CircleId,
     pub request_context: arkret_sdk::AgentSidecarExchangeRequestContext,
+}
+
+/// Fold-scope identity of one Sidecar private Strand: which Sidecar it
+/// belongs to AND which backing Circle its exchange Events must be scoped to.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SidecarExchangeScopeHint {
+    pub private_strand_id: String,
+    pub sidecar_id: arkret_sdk::SidecarId,
+    pub backing_circle_id: arkret_sdk::CircleId,
 }
 
 fn sidecar_exchange_request_fact_key(
@@ -363,6 +419,19 @@ fn sidecar_exchange_request_fact_key(
     format!(
         "{SIDECAR_EXCHANGE_REQUEST_FACT_PREFIX}:{controller_id}:{private_strand_id}:{exchange_id}"
     )
+}
+
+fn save_stored_sidecar_exchange_request_fact(
+    store: &mut crate::state::LocalStateStore,
+    stored: &StoredSidecarExchangeRequestFact,
+) -> anyhow::Result<()> {
+    let key = sidecar_exchange_request_fact_key(
+        &stored.controller_id,
+        &stored.private_strand_id,
+        stored.exchange_id.as_str(),
+    );
+    store.save_private_data(&stored.controller_id, key, serde_json::to_string(stored)?);
+    Ok(())
 }
 
 fn stored_sidecar_exchange_request_facts(
@@ -412,14 +481,10 @@ pub(crate) fn record_accepted_sidecar_exchange_request(
         request_event_id: accepted_event_id.to_owned(),
         request_event_hlc: pending.request_context.source_hlc.clone(),
         request_event_actor_seq: 0,
+        backing_circle_id: pending.backing_circle_id.clone(),
         request_context: pending.request_context.clone(),
     };
-    let key = sidecar_exchange_request_fact_key(
-        &stored.controller_id,
-        &stored.private_strand_id,
-        stored.exchange_id.as_str(),
-    );
-    store.save_private_data(&stored.controller_id, key, serde_json::to_string(&stored)?);
+    save_stored_sidecar_exchange_request_fact(store, &stored)?;
     let scope = garth::projection::SidecarExchangeFoldScope {
         controller_id: arkret_sdk::Did::new(stored.controller_id.clone())?,
         sidecar_id: stored.sidecar_id.clone(),
@@ -514,15 +579,15 @@ fn event_refs_after(event: &arkret_sdk::Event) -> Vec<arkret_sdk::EventId> {
 /// fails scope resolution, decryption, or closed-schema validation is
 /// silently non-echo (fail closed).
 ///
-/// `extra_scope_hints` maps private Strand ids to their Sidecar ids for
-/// Strands not yet present in any local record (e.g. the active hosted
-/// session); without a Sidecar id an exchange cannot be folded.
+/// `extra_scope_hints` names private Strands not yet present in any local
+/// record (e.g. the active hosted session); without a Sidecar id AND its
+/// backing Circle id an exchange cannot be folded.
 pub(crate) fn refold_sidecar_exchanges_from_history(
     store: &mut crate::state::LocalStateStore,
     controller_id: &str,
     device_id: &str,
     realm_id: &str,
-    extra_scope_hints: &[(String, arkret_sdk::SidecarId)],
+    extra_scope_hints: &[SidecarExchangeScopeHint],
 ) -> usize {
     let realm = realm_id.to_owned();
     let controller = controller_id.to_owned();
@@ -556,38 +621,41 @@ fn refold_sidecar_exchanges_with_decrypt(
     store: &mut crate::state::LocalStateStore,
     controller_id: &str,
     realm_id: &str,
-    extra_scope_hints: &[(String, arkret_sdk::SidecarId)],
+    extra_scope_hints: &[SidecarExchangeScopeHint],
     decrypt: SidecarEnvelopeDecrypt<'_>,
 ) -> usize {
     let mut folded = Vec::new();
+    let mut fact_upgrades = Vec::<StoredSidecarExchangeRequestFact>::new();
     {
         let store_ref: &crate::state::LocalStateStore = store;
         let state = store_ref.load();
-        let stored_facts = stored_sidecar_exchange_request_facts(store_ref, controller_id);
-        // private Strand id → Sidecar id (fold scope identity).
-        let mut scope_hints = std::collections::BTreeMap::<String, arkret_sdk::SidecarId>::new();
-        for (strand_id, sidecar_id) in extra_scope_hints {
-            scope_hints.insert(strand_id.clone(), sidecar_id.clone());
+        let mut stored_facts = stored_sidecar_exchange_request_facts(store_ref, controller_id);
+        // private Strand id → (Sidecar id, backing Circle id). BOTH halves are
+        // required: the Sidecar id names the fold scope, the backing Circle id
+        // is the ONLY effective scope under which this context's exchange
+        // Events are valid (§7.2.1 / §7.2.2 check 1). Cached projections are
+        // deliberately NOT a hint source — the projection DTO does not carry
+        // the backing Circle, so it cannot authorize the scope comparison.
+        let mut scope_hints = std::collections::BTreeMap::<
+            String,
+            (arkret_sdk::SidecarId, arkret_sdk::CircleId),
+        >::new();
+        for hint in extra_scope_hints {
+            scope_hints.insert(
+                hint.private_strand_id.clone(),
+                (hint.sidecar_id.clone(), hint.backing_circle_id.clone()),
+            );
         }
         for fact in &stored_facts {
-            scope_hints.insert(fact.private_strand_id.clone(), fact.sidecar_id.clone());
+            scope_hints.insert(
+                fact.private_strand_id.clone(),
+                (fact.sidecar_id.clone(), fact.backing_circle_id.clone()),
+            );
         }
         for (_, pending) in pending_sidecar_submissions(store_ref, controller_id) {
-            scope_hints.insert(pending.private_strand_id.clone(), pending.sidecar_id.clone());
-        }
-        let fold_cache_prefix = format!("{SIDECAR_EXCHANGE_FOLD_CACHE_PREFIX}:{controller_id}:");
-        for key in store_ref.private_data_keys() {
-            if !key.starts_with(&fold_cache_prefix) {
-                continue;
-            }
-            let Some(projection) = store_ref.load_private_data(controller_id, &key).and_then(
-                |raw| serde_json::from_str::<arkret_sdk::AgentSidecarExchangeProjection>(&raw).ok(),
-            ) else {
-                continue;
-            };
             scope_hints.insert(
-                projection.private_strand_id.to_string(),
-                projection.sidecar_id.clone(),
+                pending.private_strand_id.clone(),
+                (pending.sidecar_id.clone(), pending.backing_circle_id.clone()),
             );
         }
         // No known Sidecar private Strand for this controller: nothing can
@@ -595,6 +663,11 @@ fn refold_sidecar_exchanges_with_decrypt(
         if scope_hints.is_empty() {
             return 0;
         }
+        let stored_index_by_request_event_id = stored_facts
+            .iter()
+            .enumerate()
+            .map(|(index, fact)| (fact.request_event_id.clone(), index))
+            .collect::<std::collections::BTreeMap<_, _>>();
 
         type ExchangeKey = (String, String);
         let mut requests =
@@ -604,11 +677,15 @@ fn refold_sidecar_exchanges_with_decrypt(
         let mut controls =
             std::collections::BTreeMap::<ExchangeKey, Vec<garth::projection::SidecarExchangeControlFact>>::new();
         let mut request_event_ids = std::collections::BTreeSet::<String>::new();
+        let mut upgraded_exchange_keys = std::collections::BTreeSet::<ExchangeKey>::new();
 
         for event in sidecar_history_events_for_realm(&state, realm_id) {
-            // §7.2.1: exchange bindings are legal only under the Sidecar
-            // backing Circle scope. Decryption below additionally fails
-            // closed unless this device holds that Circle's MLS group.
+            // §7.2.1 / §7.2.2 check 1: exchange bindings are valid ONLY under
+            // THIS context's backing Circle scope. Any other Circle the
+            // controller can decrypt (with a forged payload strand_id) MUST
+            // fail closed to non-echo, so the event's effective-scope Circle
+            // is compared against the hint's backing Circle, never just
+            // "some Circle scope".
             let Some(arkret_wire::EffectiveScope::Circle { circle_id, .. }) =
                 event.effective_scope.as_ref()
             else {
@@ -623,10 +700,38 @@ fn refold_sidecar_exchanges_with_decrypt(
             else {
                 continue;
             };
-            if !scope_hints.contains_key(&strand_id) {
+            let Some((_, backing_circle_id)) = scope_hints.get(&strand_id) else {
+                continue;
+            };
+            if circle_id.as_str() != backing_circle_id.as_str() {
                 continue;
             }
             if kind == arkret_sdk::events::EventKind::MESSAGE_CREATE {
+                // F-3: the accepted request Event's envelope carries the real
+                // `actor_seq` / top-level `hlc` in the clear. The authoring
+                // device cannot decrypt its own metadata, so when the
+                // envelope syncs back, upgrade the placeholder values in the
+                // durable local request fact (the Event-id `event_digest`
+                // stand-in stays — the canonical digest is still untracked).
+                if event.actor_id.as_str() == controller_id
+                    && let Some(index) = stored_index_by_request_event_id
+                        .get(event.event_id.as_str())
+                        .copied()
+                    && let Some(envelope_hlc) = event.hlc.clone()
+                {
+                    let stored = &mut stored_facts[index];
+                    if stored.request_event_actor_seq != event.actor_seq
+                        || stored.request_event_hlc != envelope_hlc
+                    {
+                        stored.request_event_actor_seq = event.actor_seq;
+                        stored.request_event_hlc = envelope_hlc;
+                        fact_upgrades.push(stored.clone());
+                        upgraded_exchange_keys.insert((
+                            stored.private_strand_id.clone(),
+                            stored.exchange_id.as_str().to_owned(),
+                        ));
+                    }
+                }
                 let Some(encrypted_metadata) = event.payload.get("encrypted_metadata") else {
                     continue;
                 };
@@ -644,6 +749,11 @@ fn refold_sidecar_exchanges_with_decrypt(
                 let Some(binding) = metadata.sidecar_exchange_binding() else {
                     continue;
                 };
+                // §7.2 all exchange Events MUST carry a top-level HLC; fail
+                // closed when absent (request, response and internal alike).
+                let Some(hlc) = event.hlc.clone() else {
+                    continue;
+                };
                 let exchange_key = (strand_id.clone(), binding.exchange_id.as_str().to_owned());
                 match binding.role {
                     arkret_sdk::AgentSidecarExchangeBindingRole::Request => {
@@ -653,7 +763,6 @@ fn refold_sidecar_exchanges_with_decrypt(
                         let Some(context) = binding.request_context.clone() else {
                             continue;
                         };
-                        let hlc = event.hlc.clone().unwrap_or_else(|| context.source_hlc.clone());
                         request_event_ids.insert(event.event_id.to_string());
                         requests.entry(exchange_key).or_default().push(
                             garth::projection::SidecarExchangeRequestFact {
@@ -672,11 +781,6 @@ fn refold_sidecar_exchanges_with_decrypt(
                     }
                     arkret_sdk::AgentSidecarExchangeBindingRole::UserFacingResponse
                     | arkret_sdk::AgentSidecarExchangeBindingRole::Internal => {
-                        // §7.2 all exchange Events MUST carry a top-level HLC;
-                        // fail closed when absent.
-                        let Some(hlc) = event.hlc.clone() else {
-                            continue;
-                        };
                         agent_facts.entry(exchange_key).or_default().push(
                             garth::projection::SidecarExchangeAgentFact {
                                 event_id: event.event_id.clone(),
@@ -714,6 +818,9 @@ fn refold_sidecar_exchanges_with_decrypt(
                         actor_id: event.actor_id.clone(),
                         actor_seq: event.actor_seq,
                         event_digest: event.event_id.to_string(),
+                        // §7.2.3: the outer refs MUST cover the plaintext
+                        // basis; the fold validates this coverage.
+                        refs_after: event_refs_after(&event),
                         control,
                     },
                 );
@@ -750,7 +857,7 @@ fn refold_sidecar_exchanges_with_decrypt(
         let empty_controls = Vec::new();
         for exchange_key in exchange_keys {
             let (strand_id, exchange_id_raw) = &exchange_key;
-            let Some(sidecar_id) = scope_hints.get(strand_id) else {
+            let Some((sidecar_id, _)) = scope_hints.get(strand_id) else {
                 continue;
             };
             let (Ok(controller_did), Ok(private_strand_id), Ok(exchange_id)) = (
@@ -760,6 +867,71 @@ fn refold_sidecar_exchanges_with_decrypt(
             ) else {
                 continue;
             };
+            let exchange_requests = requests.get(&exchange_key).unwrap_or(&empty_requests);
+            let exchange_agent_facts =
+                agent_facts.get(&exchange_key).unwrap_or(&empty_agent_facts);
+            let exchange_controls = controls.get(&exchange_key).unwrap_or(&empty_controls);
+            // Controller-local equivocation diagnostic (§7.2.1): several
+            // distinct accepted request Events sharing one exchange_id. The
+            // deterministic canonical-request selection still applies; this
+            // only surfaces the anomaly.
+            let distinct_request_events = exchange_requests
+                .iter()
+                .map(|fact| fact.event_id.as_str())
+                .collect::<std::collections::BTreeSet<_>>();
+            if distinct_request_events.len() > 1 {
+                tracing::warn!(
+                    exchange_id = %exchange_id_raw,
+                    request_event_count = distinct_request_events.len(),
+                    "controller-local diagnostic: multiple accepted request Events share one Sidecar exchange_id (equivocation); canonical selection applies"
+                );
+            }
+            // F-5 cache gate (§7.2.4): compare the persisted frontier against
+            // the locally verified fact set before refolding.
+            let cache_key = sidecar_exchange_fold_cache_key(
+                controller_id,
+                strand_id,
+                exchange_id_raw,
+            );
+            let cached_projection = store_ref
+                .load_private_data(controller_id, &cache_key)
+                .and_then(|raw| {
+                    serde_json::from_str::<arkret_sdk::AgentSidecarExchangeProjection>(&raw).ok()
+                });
+            if let Some(cached) = cached_projection.as_ref()
+                && !upgraded_exchange_keys.contains(&exchange_key)
+            {
+                let local_ids = exchange_requests
+                    .iter()
+                    .map(|fact| fact.event_id.clone())
+                    .chain(exchange_agent_facts.iter().map(|fact| fact.event_id.clone()))
+                    .chain(exchange_controls.iter().map(|fact| fact.event_id.clone()))
+                    .collect::<std::collections::BTreeSet<_>>();
+                match garth::projection::evaluate_sidecar_exchange_cache(
+                    &cached.folded_frontier,
+                    &local_ids,
+                ) {
+                    // The cache commits to exactly the local fact set: reuse
+                    // it as-is, no refold needed.
+                    Ok(garth::projection::SidecarExchangeCacheDecision::Fresh) => continue,
+                    Ok(garth::projection::SidecarExchangeCacheDecision::Refold) => {}
+                    Ok(garth::projection::SidecarExchangeCacheDecision::BackfillRequired) => {
+                        // The cache references Events this device has not
+                        // verified locally: incomparable frontiers. Keep the
+                        // cache (never refold-over or LWW-pick) and mark the
+                        // exchange as pending backfill; the actual union-
+                        // history fetch is deferred to the sync engine.
+                        tracing::debug!(
+                            exchange_id = %exchange_id_raw,
+                            "Sidecar exchange cache retained: frontier not covered by local history (backfill pending)"
+                        );
+                        continue;
+                    }
+                    // An unreadable/invalid cached frontier never blocks the
+                    // deterministic refold from local facts.
+                    Err(_) => {}
+                }
+            }
             let scope = garth::projection::SidecarExchangeFoldScope {
                 controller_id: controller_did,
                 sidecar_id: sidecar_id.clone(),
@@ -768,9 +940,9 @@ fn refold_sidecar_exchanges_with_decrypt(
             let fold = garth::projection::fold_sidecar_exchange(
                 &scope,
                 &exchange_id,
-                requests.get(&exchange_key).unwrap_or(&empty_requests),
-                agent_facts.get(&exchange_key).unwrap_or(&empty_agent_facts),
-                controls.get(&exchange_key).unwrap_or(&empty_controls),
+                exchange_requests,
+                exchange_agent_facts,
+                exchange_controls,
             );
             match fold {
                 Ok(Some(projection)) => folded.push(projection),
@@ -781,6 +953,11 @@ fn refold_sidecar_exchanges_with_decrypt(
                     tracing::debug!(%error, "Sidecar exchange fold deferred pending backfill");
                 }
             }
+        }
+    }
+    for upgraded in fact_upgrades {
+        if let Err(error) = save_stored_sidecar_exchange_request_fact(store, &upgraded) {
+            tracing::warn!(%error, "Sidecar request fact upgrade persistence failed");
         }
     }
     let mut changed = 0;
@@ -1177,6 +1354,7 @@ mod tests {
             controller_id: EXCHANGE_ACCOUNT.to_owned(),
             sidecar_id: session.sidecar_id.clone(),
             private_strand_id: session.private_strand_id.clone(),
+            backing_circle_id: session.backing_scope_circle_id.clone(),
             exchange_id: arkret_sdk::AgentSidecarExchangeId::new("exchange-01964137000000000008")
                 .unwrap(),
             request_context: exchange_request_context(session),
@@ -1386,5 +1564,173 @@ mod tests {
             &passthrough,
         );
         assert_eq!(unchanged, 0);
+    }
+
+    /// F-1 (§7.2.1 / §7.2.2 check 1): a decryptable binding arriving under a
+    /// DIFFERENT Circle scope than this context's backing Circle — even with
+    /// a forged matching `payload.strand_id` — fails closed to non-echo.
+    #[test]
+    fn foreign_circle_scoped_binding_stays_non_echo() {
+        let mut store = exchange_test_store("foreign-circle");
+        let session = session(Vec::new());
+        let pending = exchange_pending_submission(&session);
+        record_accepted_sidecar_exchange_request(&mut store, &pending, EXCHANGE_REQUEST_EVENT)
+            .unwrap();
+
+        let binding = arkret_sdk::AgentSidecarEventExchangeBinding::user_facing_response(
+            pending.exchange_id.clone(),
+            arkret_sdk::EventId::new(EXCHANGE_REQUEST_EVENT).unwrap(),
+        )
+        .unwrap();
+        let mut metadata = arkret_sdk::MessageMetadata::default();
+        metadata.set_sidecar_exchange_binding(&binding).unwrap();
+        let mut event = arkret_sdk::Event::new(
+            arkret_sdk::events::EventKind::MESSAGE_CREATE,
+            arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+            arkret_sdk::Did::new(EXCHANGE_AGENT).unwrap(),
+            1,
+            arkret_sdk::Hlc::new("01970e589d21-0002-a13f9c2e").unwrap(),
+            serde_json::json!({
+                // Forged strand_id pointing at the Sidecar private Strand …
+                "strand_id": session.private_strand_id.clone(),
+                "track_name": "discussion",
+                "encrypted_metadata": serde_json::to_value(&metadata).unwrap(),
+            }),
+        )
+        .unwrap();
+        event.event_id = arkret_sdk::EventId::new(EXCHANGE_RESPONSE_EVENT).unwrap();
+        // … but scoped to an unrelated Circle the controller can also read.
+        event.effective_scope = Some(arkret_wire::EffectiveScope::Circle {
+            realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+            circle_id: arkret_sdk::CircleId::new(
+                "ak:circle:019f0000-0000-7000-8000-0000000000ff",
+            )
+            .unwrap(),
+        });
+        event.refs = vec![arkret_sdk::EventRef::new(EXCHANGE_REQUEST_EVENT, "after")];
+        store.append_raw_operation(
+            EXCHANGE_RESPONSE_EVENT.to_owned(),
+            Some(session.source_realm_id.clone()),
+            serde_json::to_value(&event).unwrap(),
+        );
+
+        let passthrough = |_: &crate::state::LocalStateStore,
+                           _: &str,
+                           value: &serde_json::Value|
+         -> Option<Vec<u8>> { serde_json::to_vec(value).ok() };
+        let changed = refold_sidecar_exchanges_with_decrypt(
+            &mut store,
+            EXCHANGE_ACCOUNT,
+            &session.source_realm_id,
+            &[],
+            &passthrough,
+        );
+        assert_eq!(changed, 0, "foreign-Circle events never enter the fold");
+        let cached = cached_sidecar_exchange_projections(
+            &store,
+            EXCHANGE_ACCOUNT,
+            session.source_realm_id.as_str(),
+        );
+        assert_eq!(
+            cached[0].status,
+            arkret_sdk::AgentSidecarExchangeStatus::Delivered,
+            "the exchange stays delivered; no responses, no participation"
+        );
+        assert!(cached[0].user_facing_response_event_ids.is_empty());
+        assert!(cached[0].participating_agent_ids.is_empty());
+    }
+
+    /// F-3: once the accepted request Event's envelope syncs back, its clear
+    /// `actor_seq` / top-level `hlc` upgrade the authoring device's
+    /// placeholder request fact — even though the metadata stays
+    /// undecryptable for the author (MLS forward secrecy).
+    #[test]
+    fn request_envelope_syncback_upgrades_placeholder_fact_values() {
+        let mut store = exchange_test_store("fact-upgrade");
+        let session = session(Vec::new());
+        let pending = exchange_pending_submission(&session);
+        record_accepted_sidecar_exchange_request(&mut store, &pending, EXCHANGE_REQUEST_EVENT)
+            .unwrap();
+
+        let mut event = arkret_sdk::Event::new(
+            arkret_sdk::events::EventKind::MESSAGE_CREATE,
+            arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+            arkret_sdk::Did::new(EXCHANGE_ACCOUNT).unwrap(),
+            7,
+            arkret_sdk::Hlc::new("01970e589d21-0005-a13f9c2e").unwrap(),
+            serde_json::json!({
+                "strand_id": session.private_strand_id.clone(),
+                "track_name": "discussion",
+                "encrypted_metadata": {"opaque": "ciphertext"},
+            }),
+        )
+        .unwrap();
+        event.event_id = arkret_sdk::EventId::new(EXCHANGE_REQUEST_EVENT).unwrap();
+        event.effective_scope = Some(arkret_wire::EffectiveScope::Circle {
+            realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+            circle_id: session.backing_scope_circle_id.clone(),
+        });
+        store.append_raw_operation(
+            EXCHANGE_REQUEST_EVENT.to_owned(),
+            Some(session.source_realm_id.clone()),
+            serde_json::to_value(&event).unwrap(),
+        );
+
+        // The author device cannot decrypt its own metadata: decrypt always
+        // fails, so ONLY the envelope-upgrade path can improve the fact.
+        let author_device_decrypt = |_: &crate::state::LocalStateStore,
+                                     _: &str,
+                                     _: &serde_json::Value|
+         -> Option<Vec<u8>> { None };
+        let changed = refold_sidecar_exchanges_with_decrypt(
+            &mut store,
+            EXCHANGE_ACCOUNT,
+            &session.source_realm_id,
+            &[],
+            &author_device_decrypt,
+        );
+        assert_eq!(changed, 1);
+        let cached = cached_sidecar_exchange_projections(
+            &store,
+            EXCHANGE_ACCOUNT,
+            session.source_realm_id.as_str(),
+        );
+        assert_eq!(
+            cached[0].folded_frontier.max_hlc,
+            arkret_sdk::Hlc::new("01970e589d21-0005-a13f9c2e").unwrap(),
+            "the fold now rides the accepted envelope's real top-level HLC"
+        );
+        // The upgrade persisted: a second refold is a no-op (Fresh cache).
+        let unchanged = refold_sidecar_exchanges_with_decrypt(
+            &mut store,
+            EXCHANGE_ACCOUNT,
+            &session.source_realm_id,
+            &[],
+            &author_device_decrypt,
+        );
+        assert_eq!(unchanged, 0);
+    }
+
+    /// F-7: only one in-flight submit per `(controller, strand, intent)`;
+    /// releasing the guard frees the slot for a retry.
+    #[test]
+    fn sidecar_submission_guard_blocks_concurrent_same_intent() {
+        let strand = "ak:strand:019f0000-0000-7000-8000-0000000000e1";
+        let intent = "guard-test-intent-digest";
+        let first = try_begin_sidecar_submission(EXCHANGE_ACCOUNT, strand, intent);
+        assert!(first.is_some());
+        assert!(
+            try_begin_sidecar_submission(EXCHANGE_ACCOUNT, strand, intent).is_none(),
+            "the same intent cannot start a second concurrent submit"
+        );
+        assert!(
+            try_begin_sidecar_submission(EXCHANGE_ACCOUNT, strand, "other-intent").is_some(),
+            "different intents are independent"
+        );
+        drop(first);
+        assert!(
+            try_begin_sidecar_submission(EXCHANGE_ACCOUNT, strand, intent).is_some(),
+            "dropping the guard releases the slot"
+        );
     }
 }
