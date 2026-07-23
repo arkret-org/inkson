@@ -26,11 +26,9 @@ pub struct DeviceEnrollmentRequest {
     pub device_id: String,
     /// Multibase Ed25519 `device_public_key` (`z6Mk…`) of this session device.
     pub device_public_key: String,
-    /// Next `actor_seq` on the principal control stream (highest accepted + 1).
-    pub actor_seq: u64,
     /// Root-signed `ak.realm.create` Event id for the atomic first-device
-    /// bootstrap unit. Required exactly when `actor_seq == 1`.
-    pub bootstrap_create_event_id: Option<String>,
+    /// bootstrap unit.
+    pub bootstrap_create_event_id: String,
     /// Optional `not_before` RFC 3339 timestamp; coauth defaults to now when absent.
     pub not_before: Option<String>,
     /// This device's HPKE sealing public key (multibase, §5.4).
@@ -59,15 +57,11 @@ impl DeviceEnrollmentRequest {
             device_public_key: self.device_public_key.clone(),
             hpke_key: self.hpke_key.clone(),
             algorithms: self.algorithms.clone(),
-            actor_seq: self.actor_seq,
-            bootstrap_create_event_id: self
-                .bootstrap_create_event_id
-                .as_deref()
-                .map(|value| {
-                    arkret_sdk::EventId::new(value.trim().to_owned())
-                        .context("device-enroll `bootstrap_create_event_id`")
-                })
-                .transpose()?,
+            actor_seq: 1,
+            bootstrap_create_event_id: arkret_sdk::EventId::new(
+                self.bootstrap_create_event_id.trim().to_owned(),
+            )
+            .context("device-enroll `bootstrap_create_event_id`")?,
             not_before,
         })
     }
@@ -98,15 +92,21 @@ pub fn inkson_device_algorithms() -> Vec<String> {
 pub fn parse_signed_device_authorize(
     signed_event: &serde_json::Value,
     expected_device_id: &str,
+    expected_bootstrap_create_event_id: &str,
 ) -> anyhow::Result<arkret_sdk::Event> {
     let event: arkret_sdk::Event = serde_json::from_value(signed_event.clone())
         .map_err(|err| anyhow::anyhow!("decode signed device.authorize SDK Event: {err}"))?;
-    validate_signed_device_authorize(event, expected_device_id)
+    validate_signed_device_authorize(
+        event,
+        expected_device_id,
+        expected_bootstrap_create_event_id,
+    )
 }
 
 fn validate_signed_device_authorize(
     event: arkret_sdk::Event,
     expected_device_id: &str,
+    expected_bootstrap_create_event_id: &str,
 ) -> anyhow::Result<arkret_sdk::Event> {
     if event.kind.as_str() != "ak.device.authorize" {
         anyhow::bail!(
@@ -116,6 +116,25 @@ fn validate_signed_device_authorize(
     }
     if event.proofs.is_empty() {
         anyhow::bail!("enrollment authority returned an unsigned device.authorize");
+    }
+    if event.actor_seq != 1 {
+        anyhow::bail!(
+            "enrollment authority returned founding device.authorize with actor_seq {}, expected 1",
+            event.actor_seq
+        );
+    }
+    if event.prev_refs.len() != 1
+        || event.prev_refs[0].as_str() != expected_bootstrap_create_event_id
+    {
+        anyhow::bail!(
+            "enrollment authority returned device.authorize with predecessor {:?}, expected sole bootstrap create {:?}",
+            event
+                .prev_refs
+                .iter()
+                .map(|event_id| event_id.as_str())
+                .collect::<Vec<_>>(),
+            expected_bootstrap_create_event_id
+        );
     }
     let payload_device_id = event
         .payload
@@ -150,7 +169,11 @@ pub async fn request_signed_device_authorize(
             expected_device_id
         );
     }
-    validate_signed_device_authorize(outcome.authorized_event, expected_device_id)
+    validate_signed_device_authorize(
+        outcome.authorized_event,
+        expected_device_id,
+        request.bootstrap_create_event_id.trim(),
+    )
 }
 
 #[cfg(test)]
@@ -167,10 +190,10 @@ mod tests {
             "actor_id": "did:webvh:example:users:alice",
             "executed_by": "did:webvh:example:auth-server",
             "authorization_ref": "did:webvh:example:users:alice#device-enrollment",
-            "actor_seq": 3,
+            "actor_seq": 1,
             "created_at": "2026-06-17T00:00:00.000Z",
             "hlc": "019641370000-0000-12345678",
-            "prev_refs": [],
+            "prev_refs": ["ak:event:01964137-0000-7000-8000-000000000099"],
             "payload": {
                 "principal_id": "did:webvh:example:users:alice",
                 "device_id": device_id,
@@ -200,9 +223,14 @@ mod tests {
     fn accepts_matching_signed_device_authorize() {
         let device_id = "ak:device:01964137-0000-7000-8000-000000000002";
         let event = signed_device_authorize(device_id);
-        let parsed = parse_signed_device_authorize(&event, device_id).expect("parse");
+        let parsed = parse_signed_device_authorize(
+            &event,
+            device_id,
+            "ak:event:01964137-0000-7000-8000-000000000099",
+        )
+        .expect("parse");
         assert_eq!(parsed.kind.as_str(), "ak.device.authorize");
-        assert_eq!(parsed.actor_seq, 3);
+        assert_eq!(parsed.actor_seq, 1);
     }
 
     #[test]
@@ -218,7 +246,7 @@ mod tests {
             "actor_seq": 1,
             "created_at": "2026-06-22T00:00:00.000Z",
             "hlc": "019641370000-0000-12345678",
-            "prev_refs": [],
+            "prev_refs": ["ak:event:01964137-0000-7000-8000-00000000beef"],
             "refs": [],
             "payload": {
                 "principal_id": "did:web:first.example",
@@ -243,7 +271,12 @@ mod tests {
                 "jws": "ey.ey.sig"
             }]
         });
-        let parsed = parse_signed_device_authorize(&event, device_id).expect("parse");
+        let parsed = parse_signed_device_authorize(
+            &event,
+            device_id,
+            "ak:event:01964137-0000-7000-8000-00000000beef",
+        )
+        .expect("parse");
         assert_eq!(parsed.kind.as_str(), "ak.device.authorize");
         assert_eq!(parsed.actor_seq, 1);
     }
@@ -251,9 +284,12 @@ mod tests {
     #[test]
     fn rejects_device_id_mismatch() {
         let event = signed_device_authorize("ak:device:01964137-0000-7000-8000-000000000002");
-        let err =
-            parse_signed_device_authorize(&event, "ak:device:01964137-0000-7000-8000-0000000000ff")
-                .expect_err("mismatch must fail closed");
+        let err = parse_signed_device_authorize(
+            &event,
+            "ak:device:01964137-0000-7000-8000-0000000000ff",
+            "ak:event:01964137-0000-7000-8000-000000000099",
+        )
+        .expect_err("mismatch must fail closed");
         assert!(
             err.to_string()
                 .contains("does not match this session device")
@@ -265,8 +301,12 @@ mod tests {
         let device_id = "ak:device:01964137-0000-7000-8000-000000000002";
         let mut event = signed_device_authorize(device_id);
         event["proofs"] = json!([]);
-        let err = parse_signed_device_authorize(&event, device_id)
-            .expect_err("unsigned must fail closed");
+        let err = parse_signed_device_authorize(
+            &event,
+            device_id,
+            "ak:event:01964137-0000-7000-8000-000000000099",
+        )
+        .expect_err("unsigned must fail closed");
         assert!(err.to_string().contains("unsigned"));
     }
 
@@ -275,8 +315,39 @@ mod tests {
         let device_id = "ak:device:01964137-0000-7000-8000-000000000002";
         let mut event = signed_device_authorize(device_id);
         event["kind"] = json!("ak.device.revoke");
-        let err = parse_signed_device_authorize(&event, device_id)
-            .expect_err("wrong kind must fail closed");
+        let err = parse_signed_device_authorize(
+            &event,
+            device_id,
+            "ak:event:01964137-0000-7000-8000-000000000099",
+        )
+        .expect_err("wrong kind must fail closed");
         assert!(err.to_string().contains("unexpected event kind"));
+    }
+
+    #[test]
+    fn rejects_non_founding_actor_sequence() {
+        let device_id = "ak:device:01964137-0000-7000-8000-000000000002";
+        let mut event = signed_device_authorize(device_id);
+        event["actor_seq"] = json!(2);
+        let err = parse_signed_device_authorize(
+            &event,
+            device_id,
+            "ak:event:01964137-0000-7000-8000-000000000099",
+        )
+        .expect_err("post-bootstrap sequence must fail closed");
+        assert!(err.to_string().contains("expected 1"));
+    }
+
+    #[test]
+    fn rejects_wrong_bootstrap_predecessor() {
+        let device_id = "ak:device:01964137-0000-7000-8000-000000000002";
+        let event = signed_device_authorize(device_id);
+        let err = parse_signed_device_authorize(
+            &event,
+            device_id,
+            "ak:event:01964137-0000-7000-8000-0000000000ff",
+        )
+        .expect_err("wrong bootstrap predecessor must fail closed");
+        assert!(err.to_string().contains("expected sole bootstrap create"));
     }
 }

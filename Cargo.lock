@@ -4273,6 +4273,7 @@ dependencies = [
  "arkret-models-identity",
  "arkret-models-integration",
  "arkret-policy",
+ "arkret-schema",
  "arkret-signatures",
  "arkret-wire",
  "base64",

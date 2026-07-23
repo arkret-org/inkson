@@ -304,8 +304,7 @@ pub async fn bootstrap_principal(
     let request = crate::identity::device_enrollment::DeviceEnrollmentRequest {
         device_id: checkpoint.device_id.clone(),
         device_public_key,
-        actor_seq: 1,
-        bootstrap_create_event_id: Some(create.event_id.to_string()),
+        bootstrap_create_event_id: create.event_id.to_string(),
         not_before: None,
         hpke_key,
         algorithms: crate::identity::device_enrollment::inkson_device_algorithms(),

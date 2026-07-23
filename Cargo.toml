@@ -121,6 +121,7 @@ arkret-models-discovery = {version = "0.3.0",path = "../arkret-rust-sdk/crates/m
 arkret-models-identity = {version = "0.3.0",path = "../arkret-rust-sdk/crates/models-identity",default-features = false}
 arkret-models-integration = {version = "0.3.0",path = "../arkret-rust-sdk/crates/models-integration",default-features = false}
 arkret-policy = {version = "0.3.0",path = "../arkret-rust-sdk/crates/policy",default-features = false}
+arkret-schema = {version = "0.3.0",path = "../arkret-rust-sdk/crates/schema",default-features = false,features = ["embedded-artifacts"]}
 arkret-signatures = {workspace = true}
 arkret-wire = {version = "0.3.0",path = "../arkret-rust-sdk/crates/wire",default-features = false}
 hex = "0.4.3"

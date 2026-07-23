@@ -24,6 +24,23 @@ fn seed_complete_rfc9420_projection(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn seed_history_share_policy_projection(state: &mut crate::state::LocalStateStore, realm: &str) {
+    state.save_realm_tree_projection(
+        realm,
+        json!({
+            "state": {"events": [{
+                "event_id": "ak:event:01904100-0000-7000-8000-0000000000e7",
+                "kind": "ak.realm.history_sharing_policy",
+                "payload": {
+                    "allowed_key_sources": ["verified_member_device"],
+                    "allowed_receiver_states": ["active_member"]
+                }
+            }]}
+        }),
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 async fn commit_pending_history(
     state: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -1085,6 +1102,7 @@ async fn ingest_realm_key_share_installs_history_secrets() {
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000e2";
     let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
+    seed_history_share_policy_projection(&mut state, realm);
 
     let (_priv, bob_pub) =
         load_or_create_device_hpke_keypair(&secure, bob_actor, bob_device).unwrap();
@@ -1136,6 +1154,7 @@ async fn ingest_realm_key_share_accepts_projected_payload_envelope() {
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000e9";
     let alice_actor = "did:web:alice.example";
     let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
+    seed_history_share_policy_projection(&mut state, realm);
 
     let (_priv, bob_pub) =
         load_or_create_device_hpke_keypair(&secure, bob_actor, bob_device).unwrap();
@@ -1212,6 +1231,7 @@ async fn ingest_realm_key_share_accepts_soland_content_payload_envelope() {
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000f1";
     let alice_actor = "did:web:alice.example";
     let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a2";
+    seed_history_share_policy_projection(&mut state, realm);
 
     let (_priv, bob_pub) =
         load_or_create_device_hpke_keypair(&secure, bob_actor, bob_device).unwrap();
@@ -1334,6 +1354,7 @@ async fn tier3_history_decrypt_reads_provider_exporter_aead_content() {
     // instantiate a group), but cannot ratchet to alice's exporter-aead content.
     let mut alice_group =
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
+    seed_history_share_policy_projection(&mut state, realm);
     let epoch = alice_group.epoch();
 
     // Provider encrypts content via exporter-aead, binding the shared
