@@ -461,7 +461,7 @@ async fn fetch_did_webvh_document(
 /// and `keyAgreement`, which the SDK [`DidDocument`] projection drops).
 ///
 /// The Realm Recovery Key (RRK) verification path
-/// (`arkret_sdk::history_recovery::resolve_realm_history_recovery_key`,
+/// (`arkret_identity::history_recovery::resolve_realm_history_recovery_key`,
 /// encryption-and-audit.md §2.10.8 / identity-did.md §8.3) needs the original
 /// document to confirm an active `ArkretRealmHistoryRecoveryKey` service entry
 /// designates the declared verification method. This reuses the same

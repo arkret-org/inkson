@@ -340,7 +340,7 @@ pub(crate) fn build_realm_key_share_event(
 
 /// Wrap an already-constructed [`arkret_sdk::RealmKeySharePayload`] (e.g. the
 /// provider-initiated RRK seal produced by
-/// `arkret_sdk::history_recovery::seal_history_secrets_to_recovery_recipient`)
+/// `arkret_crypto::secret_share::seal_history_secret_to_device_pubkey`)
 /// into a durable `ak.realm_key.share` Event, filling the
 /// `sender_device_signature` with this device's active Ed25519 signer. The
 /// registered payload schema requires this signature, so this fails closed when

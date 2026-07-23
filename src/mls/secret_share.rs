@@ -110,7 +110,7 @@ pub fn build_request_content(
     req: &SecretShareRequester,
     requesting_device_id: &str,
 ) -> Result<Value> {
-    let content = arkret_sdk::SecretShareRequestContent {
+    let content = arkret_crypto::secret_share::SecretShareRequestContent {
         request_id: req.request_id.clone(),
         secret_id: SECRET_SHARE_SECRET_ID.to_owned(),
         from_device: arkret_sdk::DeviceId::new(requesting_device_id.to_owned())
@@ -123,8 +123,9 @@ pub fn build_request_content(
 
 /// Parse and validate an inbound `ak.secret.request.content`.
 pub fn parse_request_content(content: &Value) -> Result<ParsedSecretRequest> {
-    let content: arkret_sdk::SecretShareRequestContent = serde_json::from_value(content.clone())
-        .map_err(|err| anyhow!("decode ak.secret.request.content: {err}"))?;
+    let content: arkret_crypto::secret_share::SecretShareRequestContent =
+        serde_json::from_value(content.clone())
+            .map_err(|err| anyhow!("decode ak.secret.request.content: {err}"))?;
     let request_id = content.request_id;
     let secret_id = content.secret_id;
     if secret_id != SECRET_SHARE_SECRET_ID {
@@ -171,7 +172,7 @@ pub fn build_send_content(
         expires_at,
     )?;
     let sealed = hpke_backup::hpke_seal(&recipient_pk, SECRET_SHARE_HPKE_INFO, &aad, &plaintext)?;
-    let content = arkret_sdk::SecretShareSendContent {
+    let content = arkret_crypto::secret_share::SecretShareSendContent {
         request_id: request.request_id.clone(),
         secret_id: SECRET_SHARE_SECRET_ID.to_owned(),
         from_device: arkret_sdk::DeviceId::new(self_device_id.to_owned())
@@ -198,7 +199,7 @@ pub fn open_send_content(
     our_device_id: &str,
     expires_at: &str,
 ) -> Result<OpenedSecret> {
-    let send_content: arkret_sdk::SecretShareSendContent =
+    let send_content: arkret_crypto::secret_share::SecretShareSendContent =
         serde_json::from_value(send_content.clone())
             .map_err(|err| anyhow!("decode ak.secret.send.content: {err}"))?;
     let outer_request_id = send_content.request_id;

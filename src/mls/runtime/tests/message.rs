@@ -1002,7 +1002,7 @@ fn realm_key_share_envelope(
     let _signer_guard =
         ActiveSignerGuard::install([17u8; 32], "did:key:zRealmKeyShareRuntimeTestSigner");
     let sealed =
-        arkret_sdk::secret_share::seal_history_secret_to_device_pubkey(recipient_pub, secrets)
+        arkret_crypto::secret_share::seal_history_secret_to_device_pubkey(recipient_pub, secrets)
             .unwrap();
     let (lo, hi) = secrets.iter().fold((u64::MAX, 0_u64), |(lo, hi), (e, _)| {
         (lo.min(*e), hi.max(*e))

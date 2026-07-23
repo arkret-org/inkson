@@ -642,14 +642,15 @@ pub(crate) fn ingest_realm_key_share(
             return Ok(Vec::new());
         }
     };
-    let secrets =
-        match arkret_sdk::secret_share::open_history_secret_with_device_privkey(&privkey, sealed) {
-            Ok(secrets) => secrets,
-            Err(err) => {
-                tracing::debug!(%realm_id, error = %err, "open ak.realm_key.share failed");
-                return Ok(Vec::new());
-            }
-        };
+    let secrets = match arkret_crypto::secret_share::open_history_secret_with_device_privkey(
+        &privkey, sealed,
+    ) {
+        Ok(secrets) => secrets,
+        Err(err) => {
+            tracing::debug!(%realm_id, error = %err, "open ak.realm_key.share failed");
+            return Ok(Vec::new());
+        }
+    };
     let pending = state_store
         .prepare_history_secrets(secure_store, realm_id.to_owned(), secrets)
         .map_err(MlsRuntimeError::DeviceSecret)?;

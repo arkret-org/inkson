@@ -6,29 +6,25 @@
 //! - `models/realm-and-space.md` §2.3.1 (`durability_policy`).
 //! - `identity/identity-did.md` §8.3 (`ArkretRealmHistoryRecoveryKey`).
 //!
-//! ## SDK contract boundary
+//! ## Owner contract boundary
 //!
-//! The authoritative recovery-recipient resolution + seal are owned by the SDK
-//! (`arkret_sdk::history_recovery`): [`resolve_realm_history_recovery_key`] and
-//! [`seal_history_secrets_to_recovery_recipient`]. This module is the **thin
-//! inkson adapter** both the eager seal hook (§2.10.8) and the disclosure banner
-//! route through — it never re-implements the RRK crypto or the
-//! service-entry verification. It only:
+//! Recovery-recipient DID service resolution is owned by `arkret-identity`;
+//! HPKE seal/open is owned by `arkret-crypto`. This module is the **thin Inkson
+//! adapter** both the eager seal hook (§2.10.8) and the disclosure banner route
+//! through. It only:
 //!
 //! - fetches / ingests the recipient principal's raw DID Document (the SDK `DidDocument` projection
 //!   drops `service` / `keyAgreement`, so the resolver's original document value is threaded
 //!   through unmodified), and
-//! - wraps the two SDK calls behind [`resolve_recovery_recipient`] / [`seal_history_secrets`] so
-//!   the call sites stay stable.
-//!
-//! If the SDK signatures move, only this file changes.
+//! - assembles the application-owned durable payload around those owner calls so the call sites
+//!   stay stable.
 
+use arkret_identity::history_recovery::{
+    RealmHistoryRecoveryKeyError, ResolvedRealmHistoryRecoveryKey,
+    resolve_realm_history_recovery_key,
+};
 use arkret_models_collaboration::objects::realm::{
     DurabilityMode, DurabilityPolicy, RealmRecoveryRecipient,
-};
-use arkret_sdk::history_recovery::{
-    RealmHistoryRecoveryKeyError, ResolvedRealmHistoryRecoveryKey,
-    resolve_realm_history_recovery_key, rrk_key_scope, seal_history_secrets_to_recovery_recipient,
 };
 use serde_json::Value;
 
@@ -51,7 +47,7 @@ pub fn durability_is_effective(policy: &DurabilityPolicy) -> bool {
 }
 
 /// Resolve + verify one recovery recipient against its principal's raw DID
-/// Document JSON. Pure delegation to the SDK authority
+/// Document JSON. Pure delegation to the Identity owner
 /// [`resolve_realm_history_recovery_key`] — fail-closed
 /// (`durability_recovery_recipient_unverified`) on any resolution / designation
 /// gap; never falls back to an arbitrary key.
@@ -64,7 +60,12 @@ pub fn resolve_recovery_recipient(
     recipient: &RealmRecoveryRecipient,
     did_document_json: &Value,
 ) -> Result<ResolvedRealmHistoryRecoveryKey, RealmHistoryRecoveryKeyError> {
-    resolve_realm_history_recovery_key(recipient, did_document_json)
+    resolve_realm_history_recovery_key(
+        &recipient.recipient_id,
+        &recipient.principal_id,
+        &recipient.verification_method,
+        did_document_json,
+    )
 }
 
 /// Outcome of verifying one recovery recipient against its published DID
@@ -113,14 +114,13 @@ pub async fn verify_recovery_recipients(
 }
 
 /// HPKE-seal the retained `(epoch, history_secret)` rows to a resolved RRK and
-/// return the durable `ak.realm_key.share` payload. Pure delegation to the SDK
-/// authority [`seal_history_secrets_to_recovery_recipient`].
+/// return the durable `ak.realm_key.share` payload using the Crypto owner.
 ///
 /// `policy_digest` binds the effective history-sharing policy at seal time;
 /// `sender_device_id` / `sender_device_signature` author the share (the caller's
 /// signing layer fills the detached signature). `source_authorization_ref` is
 /// the durable policy/grant Control Move event ref covering this delivery
-/// (encryption-and-audit.md §2.3.5(c)); the SDK rejects a non-event-ref value.
+/// (encryption-and-audit.md §2.3.5(c)).
 #[allow(clippy::too_many_arguments)]
 pub fn seal_history_secrets(
     recovery_key: &ResolvedRealmHistoryRecoveryKey,
@@ -144,19 +144,49 @@ pub fn seal_history_secrets(
     let sender_device_signature: arkret_sdk::SignatureMaterial =
         serde_json::from_value(sender_device_signature)
             .map_err(|err| format!("invalid RRK sender device signature: {err}"))?;
-    let scope = rrk_key_scope(realm_id.clone(), from_epoch, to_epoch, policy_digest, None);
-    seal_history_secrets_to_recovery_recipient(
-        recovery_key,
+    if history_secrets.is_empty() {
+        return Err("RRK seal refusing an empty history_secret set".to_owned());
+    }
+    let ciphertext = arkret_crypto::secret_share::seal_history_secret_to_device_pubkey(
+        &recovery_key.hpke_public_key,
         history_secrets,
-        &realm_id,
-        scope,
+    )
+    .map_err(|err| format!("seal history secrets to RRK: {err}"))?;
+    let scope = arkret_sdk::RealmKeyScope {
+        effective_scope: arkret_sdk::EffectiveScope::Realm {
+            realm_id: realm_id.clone(),
+        },
+        policy_digest,
+        membership_frontier_digest: None,
+        from_epoch: Some(from_epoch),
+        to_epoch: Some(to_epoch),
+        history_visibility: None,
+    };
+    Ok(arkret_sdk::RealmKeySharePayload {
+        share_class: arkret_sdk::RealmKeyShareClass::RealmRecoveryKey,
+        recipient_principal_id: recovery_key.principal_id.clone(),
+        recipient_device_id: None,
+        recipient_verification_method: Some(
+            arkret_sdk::DidUrl::new(recovery_key.verification_method.clone())
+                .map_err(|reason| format!("invalid RRK verification method: {reason}"))?,
+        ),
+        recovery_recipient_id: Some(
+            arkret_sdk::NonEmptyString::new(recovery_key.recipient_id.clone())
+                .map_err(|reason| format!("invalid RRK recipient id: {reason}"))?,
+        ),
         sender_device_id,
         source_authorization_ref,
         sender_device_signature,
-        crate::clock::now_utc_canonical(),
-        None,
-    )
-    .map_err(|err| format!("seal history secrets to RRK: {err:?}"))
+        key_scope: scope,
+        ciphertext: Some(
+            arkret_sdk::NonEmptyString::new(ciphertext)
+                .map_err(|reason| format!("invalid RRK ciphertext: {reason}"))?,
+        ),
+        encrypted_key_ref: None,
+        aad_digest: None,
+        expires_at: None,
+        created_at: crate::clock::now_utc_canonical(),
+    })
 }
 
 /// HKDF `info` deriving the offline RRK X25519 private key from the 24-word
@@ -201,7 +231,7 @@ pub fn open_rrk_share(
     rrk_private_key: &[u8; 32],
     sealed_ciphertext: &str,
 ) -> Result<Vec<(u64, Vec<u8>)>, String> {
-    arkret_sdk::secret_share::open_history_secret_with_device_privkey(
+    arkret_crypto::secret_share::open_history_secret_with_device_privkey(
         rrk_private_key,
         sealed_ciphertext,
     )
@@ -469,7 +499,7 @@ mod tests {
         )
         .unwrap();
 
-        let opened = arkret_sdk::secret_share::open_history_secret_with_device_privkey(
+        let opened = arkret_crypto::secret_share::open_history_secret_with_device_privkey(
             &sk,
             payload.ciphertext.as_ref().unwrap(),
         )
@@ -510,7 +540,8 @@ mod tests {
         let (rrk_sk, rrk_pk) = derive_rrk_keypair_from_recovery_key(RRK_MNEMONIC).unwrap();
         let rows = vec![(11u64, vec![0xau8; 32]), (12u64, vec![0xbu8; 32])];
         let sealed =
-            arkret_sdk::secret_share::seal_history_secret_to_device_pubkey(&rrk_pk, &rows).unwrap();
+            arkret_crypto::secret_share::seal_history_secret_to_device_pubkey(&rrk_pk, &rows)
+                .unwrap();
         let share = json!({
             "kind": "ak.realm_key.share",
             "content": { "ciphertext": sealed }
@@ -527,7 +558,7 @@ mod tests {
         // A share sealed to a DIFFERENT key cannot be opened.
         let (_other_sk, other_pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
         let other_pk32: [u8; 32] = other_pk.as_slice().try_into().unwrap();
-        let sealed = arkret_sdk::secret_share::seal_history_secret_to_device_pubkey(
+        let sealed = arkret_crypto::secret_share::seal_history_secret_to_device_pubkey(
             &other_pk32,
             &[(9u64, vec![9u8; 32])],
         )

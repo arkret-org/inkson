@@ -1891,9 +1891,11 @@ pub(crate) async fn share_history_to_requester(
     let recipient_pubkey =
         arkret_sdk::base64url_decode(request.recipient_hpke_public_key.trim().as_bytes())
             .map_err(|err| anyhow::anyhow!("decode requester HPKE public key: {err}"))?;
-    let sealed =
-        arkret_sdk::secret_share::seal_history_secret_to_device_pubkey(&recipient_pubkey, &range)
-            .map_err(|err| anyhow::anyhow!("seal history secrets: {err}"))?;
+    let sealed = arkret_crypto::secret_share::seal_history_secret_to_device_pubkey(
+        &recipient_pubkey,
+        &range,
+    )
+    .map_err(|err| anyhow::anyhow!("seal history secrets: {err}"))?;
     let (min_epoch, max_epoch) = range
         .iter()
         .fold((u64::MAX, 0_u64), |(lo, hi), (epoch, _)| {

@@ -190,7 +190,6 @@ dependencies = [
  "tokio",
  "url",
  "uuid",
- "x25519-dalek",
 ]
 
 [[package]]

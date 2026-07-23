@@ -97,7 +97,7 @@ mobile-ios = []
 # `ak.hpke_x25519_aead_chacha20poly1305.v1` (DHKEM(X25519,HKDF-SHA256) +
 # HKDF-SHA256 + ChaCha20-Poly1305, 96-bit nonce) — standard RFC 9180 SetupBase.
 # `hpke_backup.rs` delegates the seal/open to the SDK's RFC 9180 single-shot API
-# (`arkret_sdk::secret_share`, KAT-validated) and keeps only the recovery-keypair
+# (`arkret_crypto::secret_share`, KAT-validated) and keeps only the recovery-keypair
 # derivation over x25519-dalek / chacha20poly1305 / hkdf.
 # Phase A.6 #1: zero plaintext-secret bytes on drop / overwrite for the
 # in-memory secure key store. The crate is already in the dependency graph
@@ -111,7 +111,7 @@ mobile-ios = []
 # arbitrary tags via `dangerous_inner_html`.
 anyhow = {workspace = true}
 arkret-bootstrap = {version = "0.3.0",path = "../arkret-rust-sdk/crates/bootstrap",default-features = false}
-arkret-crypto = {workspace = true,features = ["key-verification"]}
+arkret-crypto = {workspace = true,features = ["key-verification", "secret-share"]}
 arkret-identity = {version = "0.3.0",path = "../arkret-rust-sdk/crates/identity",default-features = false}
 arkret-models-collaboration = {version = "0.3.0",path = "../arkret-rust-sdk/crates/models-collaboration",default-features = false}
 arkret-models-crypto = {version = "0.3.0",path = "../arkret-rust-sdk/crates/models-crypto",default-features = false}
