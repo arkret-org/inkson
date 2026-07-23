@@ -405,7 +405,7 @@ impl InksonEventSigner {
             did: create.actor_id.clone(),
             verification_method: format!("{}#{device_id}", create.actor_id),
         };
-        arkret_sdk::identity::build_self_principal_bootstrap_seal(create, authorize, hlc, &signer)
+        arkret_bootstrap::build_self_principal_bootstrap_seal(create, authorize, hlc, &signer)
             .map_err(|error| EventSignerError::Backend(error.to_string()))
     }
 
@@ -429,7 +429,7 @@ impl InksonEventSigner {
             did: controller_id.clone(),
             verification_method: format!("{controller_id}#{device_id}"),
         };
-        arkret_sdk::identity::build_managed_agent_pcr_event_seal(events, predecessor, hlc, &signer)
+        arkret_bootstrap::build_managed_agent_pcr_event_seal(events, predecessor, hlc, &signer)
             .map_err(|error| EventSignerError::Backend(error.to_string()))
     }
 

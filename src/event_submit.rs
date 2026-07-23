@@ -1585,11 +1585,11 @@ impl EventSubmitter {
             && events.get(1).is_some_and(|event| {
                 event.kind.as_str() == arkret_sdk::events::EventKind::DEVICE_AUTHORIZE
             })
-            && arkret_sdk::identity::validate_self_principal_bootstrap_unit(&events[0], &events[1])
+            && arkret_bootstrap::validate_self_principal_bootstrap_unit(&events[0], &events[1])
                 .is_ok();
         let is_managed_agent_pcr_create = first_is_realm_create
             && events.len() == 1
-            && arkret_sdk::identity::materialize_managed_agent_pcr_control(&events).is_ok();
+            && arkret_bootstrap::materialize_managed_agent_pcr_control(&events).is_ok();
         let is_ordinary_realm_bootstrap =
             if first_is_realm_create && !is_identity_anchor_unit && !is_managed_agent_pcr_create {
                 arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(&events)
@@ -2404,7 +2404,7 @@ mod tests {
     fn apply_actor_frontier_rebinds_ordered_log_effect_to_next_sequence() {
         let mut event = sdk_event_without_proof("did:web:alice.example");
         event.effects = vec![
-            arkret_sdk::identity::managed_agent_principal_control_create_effect(
+            arkret_bootstrap::managed_agent_principal_control_create_effect(
                 &event.realm_id,
                 event.actor_seq,
             )

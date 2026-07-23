@@ -110,7 +110,9 @@ mobile-ios = []
 # left disabled (default) so untrusted message bodies cannot inject
 # arbitrary tags via `dangerous_inner_html`.
 anyhow = {workspace = true}
+arkret-bootstrap = {version = "0.3.0",path = "../arkret-rust-sdk/crates/bootstrap",default-features = false}
 arkret-crypto = {workspace = true}
+arkret-identity = {version = "0.3.0",path = "../arkret-rust-sdk/crates/identity",default-features = false}
 arkret-models-collaboration = {version = "0.3.0",path = "../arkret-rust-sdk/crates/models-collaboration",default-features = false}
 arkret-models-crypto = {version = "0.3.0",path = "../arkret-rust-sdk/crates/models-crypto",default-features = false}
 arkret-models-discovery = {version = "0.3.0",path = "../arkret-rust-sdk/crates/models-discovery",default-features = false}

@@ -887,7 +887,7 @@ fn has_managed_agent_pcr_create(events: &[arkret_sdk::Event]) -> bool {
         event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE
             && event.effects.iter().any(|effect| {
                 effect.cell.as_str()
-                    == arkret_sdk::identity::MANAGED_AGENT_PRINCIPAL_CONTROL_CREATE_CELL
+                    == arkret_bootstrap::MANAGED_AGENT_PRINCIPAL_CONTROL_CREATE_CELL
             })
     })
 }
@@ -938,7 +938,7 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current(
         return Err(current.expect_err("checked managed PCR signed-head receipt error"));
     }
     let accepted_events = submitter.backfill(realm_id).await?.events;
-    let material = arkret_sdk::identity::materialize_managed_agent_pcr_control(&accepted_events)
+    let material = arkret_bootstrap::materialize_managed_agent_pcr_control(&accepted_events)
         .map_err(|error| anyhow::anyhow!("managed Agent PCR materialization failed: {error}"))?;
 
     let submitted = match current {

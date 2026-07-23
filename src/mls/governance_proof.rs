@@ -1203,7 +1203,7 @@ fn managed_agent_pcr_delegated_controller(
     notary: &arkret_sdk::NotaryValue,
 ) -> Result<Option<arkret_sdk::Did>, String> {
     let managed_cell =
-        arkret_sdk::CellRef::new(arkret_sdk::identity::MANAGED_AGENT_PRINCIPAL_CONTROL_CREATE_CELL)
+        arkret_sdk::CellRef::new(arkret_bootstrap::MANAGED_AGENT_PRINCIPAL_CONTROL_CREATE_CELL)
             .map_err(|error| format!("invalid managed Agent PCR marker cell: {error}"))?;
     let managed = bundle
         .frontier_events
@@ -1225,7 +1225,7 @@ fn managed_agent_pcr_delegated_controller(
         );
     }
     let create = managed[0];
-    let expected_effect = arkret_sdk::identity::managed_agent_principal_control_create_effect(
+    let expected_effect = arkret_bootstrap::managed_agent_principal_control_create_effect(
         &create.realm_id,
         create.actor_seq,
     )
@@ -1328,7 +1328,7 @@ where
                 ))
             });
     }
-    arkret_sdk::jws::verify_jws_ed25519(
+    arkret_identity::jws::verify_jws_ed25519(
         &canonical_bytes,
         &signature.jws,
         &signature.verification_method,

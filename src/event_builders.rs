@@ -477,7 +477,7 @@ pub fn build_managed_agent_pcr_create_event(
         .ok_or_else(|| anyhow::anyhow!("managed Agent PCR create payload omits object"))?;
     patch_object(payload_object);
     event.effects = vec![
-        arkret_sdk::identity::managed_agent_principal_control_create_effect(
+        arkret_bootstrap::managed_agent_principal_control_create_effect(
             &event.realm_id,
             event.actor_seq,
         )?,
@@ -505,7 +505,7 @@ pub fn build_managed_agent_pcr_bootstrap_events(
         trust_domain,
     )?;
     let events = vec![create];
-    arkret_sdk::identity::materialize_managed_agent_pcr_control(&events)
+    arkret_bootstrap::materialize_managed_agent_pcr_control(&events)
         .map_err(|error| anyhow::anyhow!("managed Agent PCR bootstrap is invalid: {error}"))?;
     Ok(events)
 }
@@ -1324,7 +1324,7 @@ mod notary_derivation_tests {
             event
                 .refs
                 .iter()
-                .all(|reference| reference.role != arkret_sdk::identity::DID_INCEPTION_REF_ROLE)
+                .all(|reference| reference.role != arkret_bootstrap::DID_INCEPTION_REF_ROLE)
         );
         assert_eq!(
             event.payload["object"]["fields"]["purpose"],
@@ -1352,7 +1352,7 @@ mod notary_derivation_tests {
         );
         assert_eq!(
             event.effects[0].cell.as_str(),
-            arkret_sdk::identity::MANAGED_AGENT_PRINCIPAL_CONTROL_CREATE_CELL
+            arkret_bootstrap::MANAGED_AGENT_PRINCIPAL_CONTROL_CREATE_CELL
         );
         assert_eq!(
             event.effects[0].op.op_type,
@@ -1386,7 +1386,7 @@ mod notary_derivation_tests {
             events[0].authorization_ref.as_deref(),
             Some("did:web:agent.example#managed-controller")
         );
-        assert!(arkret_sdk::identity::materialize_managed_agent_pcr_control(&events).is_ok());
+        assert!(arkret_bootstrap::materialize_managed_agent_pcr_control(&events).is_ok());
     }
 
     #[test]

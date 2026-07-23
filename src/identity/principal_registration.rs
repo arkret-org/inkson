@@ -273,14 +273,14 @@ pub async fn bootstrap_principal(
     let created_at = chrono::DateTime::parse_from_rfc3339(&checkpoint.bootstrap_created_at)
         .context("persisted bootstrap_created_at is invalid")?
         .with_timezone(&Utc);
-    let mut create = arkret_sdk::identity::build_self_principal_pcr_create(
-        arkret_sdk::identity::SelfPrincipalPcrCreateInput {
+    let mut create = arkret_bootstrap::build_self_principal_pcr_create(
+        arkret_bootstrap::SelfPrincipalPcrCreateInput {
             principal_id: principal_id.clone(),
             realm_id: realm_id.clone(),
             trust_domain: arkret_sdk::TypedTrustDomainId::new(checkpoint.trust_domain.clone())?,
             did_inception_ref: arkret_sdk::EventRef::new(
                 checkpoint.version_id.clone(),
-                arkret_sdk::identity::DID_INCEPTION_REF_ROLE,
+                arkret_bootstrap::DID_INCEPTION_REF_ROLE,
             ),
             event_id: arkret_sdk::EventId::new(checkpoint.bootstrap_create_event_id.clone())?,
             created_at,
@@ -326,7 +326,7 @@ pub async fn bootstrap_principal(
         .sign_self_principal_bootstrap_seal(&create, &authorize, seal_hlc)
         .map_err(|error| anyhow!(error.to_string()))?;
     let expected_digests = seal.delta.clone();
-    let batch = arkret_sdk::identity::self_principal_bootstrap_submit_request(create, authorize)?;
+    let batch = arkret_bootstrap::self_principal_bootstrap_submit_request(create, authorize)?;
     let response = principal_client.events_submit_batch(&batch.events).await?;
     crate::ephemeral::ensure_events_submit_accepted(&response)?;
     let seal_outcome = principal_client.events_submit_seal(&seal).await?;
