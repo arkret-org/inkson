@@ -204,7 +204,11 @@ pub(crate) async fn fetch_and_cache_member_handle(
         move |clients| async move {
             clients
                 .directory()
-                .list_handles_for_subject(&subject_id, Some(&realm_id), Some("display"))
+                .list_handles_for_subject(
+                    &subject_id,
+                    Some(&realm_id),
+                    Some(arkret_models_discovery::DirectoryIntent::Lookup),
+                )
                 .await
         }
     })

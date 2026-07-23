@@ -333,7 +333,11 @@ pub fn WhyThisHandlePanel(
                 match with_endpoint_clients(&base_url, token, None, move |clients| async move {
                     clients
                         .directory()
-                        .list_handles_for_subject(&subject_id, realm_id.as_deref(), Some("display"))
+                        .list_handles_for_subject(
+                            &subject_id,
+                            realm_id.as_deref(),
+                            Some(arkret_models_discovery::DirectoryIntent::Lookup),
+                        )
                         .await
                 })
                 .await
