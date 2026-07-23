@@ -5,11 +5,11 @@
 //!
 //! 1. **CALL-1** — `media_token_exchange` POSTs `ak.self.call.media.exchange.issue_token` to
 //!    soland's `/_arkret/self/rtc/token`, then anchors + verifies the response via
-//!    [`arkret_sdk::verify_call_media_token_outcome`] (issuer anchoring, ≤600s TTL, six-tuple
-//!    binding).
+//!    [`arkret_signatures::media::verify_call_media_token_outcome`] (issuer anchoring, ≤600s TTL,
+//!    six-tuple binding).
 //! 2. **ICE** — `ice_config` POSTs to `/_arkret/self/rtc/ice-config` and runs
-//!    [`arkret_sdk::verify_ice_config_outcome`] (issuer anchoring, TURN credential privacy,
-//!    refresh-lead invariants).
+//!    [`arkret_signatures::media::verify_ice_config_outcome`] (issuer anchoring, TURN credential
+//!    privacy, refresh-lead invariants).
 //! 3. **MEDIA-1** — the SFrame frame key is derived from the live MLS exporter via
 //!    [`arkret_sdk::derive_frame_key`]. Any non-MLS key source is unrepresentable: the helper only
 //!    accepts a [`arkret_sdk::MlsExporterSource`], so a backend KMS key can never be installed
@@ -25,12 +25,16 @@
 pub use arkret_sdk::FRAME_KEY_LABEL as SFRAME_FRAME_KEY_LABEL;
 use arkret_sdk::{
     CallId, CallMediaDesiredMedia, CallMediaParticipantBinding, CallMediaTokenExchangeOutcome,
-    CallMediaTokenExchangeRequestBody, DeviceId, Did, DidDocument, FrameKeyContext, IceConfig,
+    CallMediaTokenExchangeRequestBody, DeviceId, Did, DidDocument, FrameKeyContext,
     MediaDecryptPolicyValue, MediaIceConfigRequestBody, MediaIceMode, MediaPlaintextService,
-    MediaServiceAnchors, MlsExporterSource, MlsGovernanceBindingPayload, PlaintextDataClassKind,
-    PlaintextVisibleServicesPayload, RealmId, call_media_token_exchange, derive_frame_key,
+    MlsExporterSource, MlsGovernanceBindingPayload, PlaintextDataClassKind,
+    PlaintextVisibleServicesPayload, RealmId, derive_frame_key,
     derive_media_decrypt_metadata_digest, resolve_verification_method_key_from_document,
-    verify_call_media_token_outcome, verify_ice_config_outcome, verify_media_decrypt_metadata,
+    verify_media_decrypt_metadata,
+};
+use arkret_signatures::media::{
+    IceConfig, MediaServiceAnchors, call_media_token_exchange, verify_call_media_token_outcome,
+    verify_ice_config_outcome,
 };
 use ed25519_dalek::VerifyingKey;
 use serde_json::Value;
@@ -839,12 +843,12 @@ impl MlsExporterSource for RealmMlsExporter {
     }
 }
 
-/// Map an SDK [`arkret_sdk::Error`]'s protocol message into the typed
-/// reason. The SDK helpers stamp the wire code into the message
+/// Map a Signatures owner [`arkret_signatures::Error`]'s protocol message into
+/// the typed reason. The verification helpers stamp the wire code into the message
 /// (`participant_binding_invalid: …` / `token_issuer_unauthorised: …` /
 /// `ice_config_denied: …`); scan for the first known code substring so a
 /// `Display` prefix from the `Error` enum does not shadow it.
-fn classify_protocol_error(err: &arkret_sdk::Error) -> RtcClientError {
+fn classify_protocol_error(err: &arkret_signatures::Error) -> RtcClientError {
     let message = err.to_string();
     const CODES: &[RtcClientError] = &[
         RtcClientError::TokenIssuerUnauthorised,
@@ -1095,14 +1099,14 @@ mod tests {
 
     #[test]
     fn classify_protocol_error_reads_wire_prefix() {
-        let err = arkret_sdk::Error::Protocol(
+        let err = arkret_signatures::Error::Protocol(
             "token_issuer_unauthorised: issuer not anchored".to_owned(),
         );
         assert_eq!(
             classify_protocol_error(&err),
             RtcClientError::TokenIssuerUnauthorised
         );
-        let err = arkret_sdk::Error::Protocol(
+        let err = arkret_signatures::Error::Protocol(
             "e2ee_key_source_unauthorised: frame key context missing".to_owned(),
         );
         assert_eq!(

@@ -4289,6 +4289,7 @@ dependencies = [
  "arkret-models-identity",
  "arkret-models-integration",
  "arkret-policy",
+ "arkret-signatures",
  "arkret-wire",
  "base64",
  "bip39",

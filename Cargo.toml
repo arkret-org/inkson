@@ -119,6 +119,7 @@ arkret-models-discovery = {version = "0.3.0",path = "../arkret-rust-sdk/crates/m
 arkret-models-identity = {version = "0.3.0",path = "../arkret-rust-sdk/crates/models-identity",default-features = false}
 arkret-models-integration = {version = "0.3.0",path = "../arkret-rust-sdk/crates/models-integration",default-features = false}
 arkret-policy = {version = "0.3.0",path = "../arkret-rust-sdk/crates/policy",default-features = false}
+arkret-signatures = {workspace = true}
 arkret-wire = {version = "0.3.0",path = "../arkret-rust-sdk/crates/wire",default-features = false}
 hex = "0.4.3"
 argon2 = {workspace = true}
@@ -350,6 +351,7 @@ chacha20poly1305 = {version = "0.10",default-features = false}
 chime = {version = "0.3.0",path = "../chime"}
 chrono = "0.4.45"
 arkret-sdk = {package = "arkret",version = "0.3.0",path = "../arkret-rust-sdk/crates/sdk"}
+arkret-signatures = {version = "0.3.0",path = "../arkret-rust-sdk/crates/signatures"}
 # Needed only to name arkret_crypto::Result in the MlsExporterSource impl:
 # the SFrame exporter trait moved to arkret-crypto (SDK phase 2-d), so its
 # method signature returns arkret_crypto::Error at the crypto boundary.
