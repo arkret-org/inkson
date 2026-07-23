@@ -232,6 +232,9 @@ fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
     assert!(is_wasm_indexeddb_required_secret_key(
         "auth.session_grant.v1.did:example:alice"
     ));
+    assert!(is_wasm_indexeddb_required_secret_key(
+        "inkson.device_hpke_x25519.private.ak:device:01964137-0000-7000-8000-000000000001"
+    ));
     // The hard-logout journal embeds a grant-binding seed and is IndexedDB-only.
     assert!(is_wasm_indexeddb_required_secret_key(
         PENDING_LOGOUT_SECRET_KEY

@@ -603,6 +603,19 @@ pub(crate) fn ingest_realm_key_share(
             return Ok(Vec::new());
         }
     };
+    let Some(expected_authorization_ref) =
+        crate::views::realm_admin::realm_history_share_source_authorization_ref(
+            state_store,
+            realm_id,
+        )
+    else {
+        tracing::debug!(%realm_id, "defer ak.realm_key.share: history policy unavailable");
+        return Ok(Vec::new());
+    };
+    if payload.source_authorization_ref.as_str() != expected_authorization_ref {
+        tracing::debug!(%realm_id, "reject ak.realm_key.share: source authorization mismatch");
+        return Ok(Vec::new());
+    }
     // Only consume member_device shares addressed to THIS device (the seal opens
     // only with this device's HPKE private key anyway, but check the routing
     // first). RRK shares (share_class=realm_recovery_key) carry no

@@ -1819,6 +1819,26 @@ pub(crate) async fn share_history_to_requester(
     {
         return Ok(false);
     }
+    let recipient_principal = request.recipient_principal_id.as_str().trim();
+    let recipient_device = request.recipient_device_id.as_str().trim();
+    {
+        let store = state_store.read();
+        let Some(joined) = store.complete_joined_member_hint_for_realm(&realm_id) else {
+            return Ok(false);
+        };
+        if !joined.contains(recipient_principal) {
+            return Ok(false);
+        }
+    }
+    if !matches!(
+        crate::identity::device_directory::cached_device_signing_key(
+            recipient_principal,
+            recipient_device,
+        ),
+        crate::identity::device_directory::CacheLookup::Hit(_)
+    ) {
+        return Ok(false);
+    }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     // Ensure the current epoch's key is retained, then gather every retained
     // (epoch, secret) the requester is asking for.

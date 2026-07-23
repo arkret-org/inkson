@@ -642,6 +642,15 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         &base,
                         session.clone(),
                         |api| async move {
+                            crate::sync_engine::prefetch_device_key_pairs(
+                                &api,
+                                vec![(
+                                    request.recipient_principal_id.as_str().to_owned(),
+                                    request.recipient_device_id.as_str().to_owned(),
+                                )],
+                                runtime_adapter::value_cell(share_did_cache),
+                            )
+                            .await;
                             crate::views::realm_admin::share_history_to_requester(
                                 &api,
                                 share_state_store,

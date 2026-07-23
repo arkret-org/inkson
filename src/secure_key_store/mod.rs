@@ -194,6 +194,7 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         || key.starts_with("coauth.session_credential.")
         || key.starts_with("auth.dpop.device_key.v1")
         || key.starts_with("auth.session_grant.v1")
+        || key.starts_with("inkson.device_hpke_x25519.private.")
         || key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX)
         || key.starts_with(E2EE_PLAINTEXT_CACHE_KEY_PREFIX)
         || key.starts_with(ACCOUNT_LOCAL_STATE_KEY_PREFIX)
