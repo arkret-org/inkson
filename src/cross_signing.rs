@@ -12,8 +12,8 @@
 //! - `CrossSigningPublish` / `SubordinateSignedKey`: spec §5.1 wire envelope.
 //! - `DeviceTrustBinding`: spec §5.2 `ak.device.authorize.cross_signing_binding` field.
 //! - `CrossSigningResetPayload`: spec §14.1 reset envelope.
-//! - `DeviceManager::record_cross_signing_publish` / `record_cross_signing_reset` /
-//!   `evaluate_trust_chain`: local state machine.
+//! - Cross-signing publication and reset state is owned by the local device directory; trust-chain
+//!   verification is owned by `arkret-crypto`.
 //!
 //! The UI renders [`CrossSigningSetupPlan`] and shows the canonical event kind
 //! for each step, mirroring the device-revoke design.

@@ -13,10 +13,9 @@
 //!   `ak.mls.proposal` (Remove) → `ak.mls.commit` (epoch++) → `ak.mls.welcome` (to bring
 //!   still-present members up to the new epoch).
 //!
-//! Current SDK surface:
-//! - `DeviceManager::revoke_device(user_id, device_id)` — flag revoked.
-//! - `E2eeManager::revoke_device(principal_id, device_id)` — flag revoked and fail closed on
-//!   subsequent encrypted writes from the device.
+//! Current runtime surface:
+//! - Local device-directory state marks the device revoked and fails closed on subsequent encrypted
+//!   writes from it.
 //! - `ArkretMlsGroup::add_member(...)` — performs add + Welcome via OpenMLS.
 //! - `ArkretMlsGroup::remove_member_by_principal(target)` — leaf-level removal that produces an
 //!   [`MlsRemoveMemberResult`] (commit envelope + removed leaf indices + per-leaf principal DIDs).
@@ -33,8 +32,8 @@ use serde::{Deserialize, Serialize};
 /// `canonical_event_kind`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DeviceRevokeStep {
-    /// Mark revoked in the local DeviceManager / E2eeManager. Local state
-    /// change only, no outbound event.
+    /// Mark revoked in local device-directory state. Local state change only,
+    /// no outbound event.
     LocalRevoke,
     /// Write the revocation proof into the actor event chain.
     /// canonical event = `ak.device.revoke`.
@@ -85,7 +84,7 @@ impl DeviceRevokeStep {
     /// preview.
     pub fn description(&self) -> String {
         match self {
-            Self::LocalRevoke => "Mark revoked in local DeviceManager + E2eeManager".to_owned(),
+            Self::LocalRevoke => "Mark revoked in local device-directory state".to_owned(),
             Self::DeviceRevoked => "Write ak.device.revoke to the actor event chain".to_owned(),
             Self::RotateAccountMlsSecret => {
                 "Rotate the account MLS history secret and rewrap latest backups".to_owned()

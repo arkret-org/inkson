@@ -44,8 +44,8 @@
 //!      `cross_signing[principal] .principal_signing_key` (`kid` + `public_key`) equals the
 //!      DID-resolved verification method key byte-for-byte. Mismatch / unresolvable → fail.
 //!   2. **PSK→SSK→device chain**: hand the DID-anchored PSK plus the publish payload, the device's
-//!      `cross_signing_binding`, and the directory key to the SDK primitive
-//!      [`arkret_sdk::verify_device_cross_signing_chain`].
+//!      `cross_signing_binding`, and the directory key to the Crypto owner
+//!      [`arkret_crypto::verify_device_cross_signing_chain`].
 //!   3. **Accept only on `CrossSigned`**. Missing `cross_signing` / missing `cross_signing_binding`
 //!      / `Unverified` / `NeedsReverification` all map to a negative cache entry for this regime.
 //! - **Service-attested enrollment** (`device-lifecycle.md` §5.4): managed-DID principals have no
@@ -58,10 +58,14 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
 
+use arkret_crypto::{
+    DeviceCrossSigningChainVerification, DeviceTrustBinding, DeviceTrustState,
+    verify_device_cross_signing_chain,
+};
 use arkret_sdk::signatures::PublicKeyMaterial;
 use arkret_sdk::{
-    CrossSigningPublish, DeviceId, DeviceTrustBinding, DeviceTrustState, Did, DidDocument,
-    QueryDeviceCrossSigningBinding, resolve_verification_method_key_from_document,
+    CrossSigningPublish, DeviceId, Did, DidDocument, QueryDeviceCrossSigningBinding,
+    resolve_verification_method_key_from_document,
 };
 
 use crate::transport::TransportClient;
@@ -361,7 +365,7 @@ pub fn verify_tier2_chain(
         return DeviceTrustState::Unverified;
     };
     let trust_binding = trust_binding_from_directory(binding);
-    arkret_sdk::verify_device_cross_signing_chain(arkret_sdk::DeviceCrossSigningChainVerification {
+    verify_device_cross_signing_chain(DeviceCrossSigningChainVerification {
         publish: &publish_content,
         binding: &trust_binding,
         principal_id: actor,
