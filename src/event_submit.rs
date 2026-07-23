@@ -1495,7 +1495,7 @@ impl EventSubmitter {
             Err(error) => return Err(actor_frontier_refresh_error(&actor_id, error)),
         }
         let stamp = crate::signing_stamp::issue_event_stamp(event).await?;
-        event.hlc = stamp.hlc;
+        event.hlc = Some(stamp.hlc);
         Ok(())
     }
 
@@ -1618,7 +1618,7 @@ impl EventSubmitter {
                         std::slice::from_ref(event_id),
                     );
                     let stamp = crate::signing_stamp::issue_event_stamp(event).await?;
-                    event.hlc = stamp.hlc;
+                    event.hlc = Some(stamp.hlc);
                 } else if index == 0 && is_genesis_unit {
                     // A registered Realm/identity genesis unit creates its own
                     // `(realm_id, actor_id)` chain. The Realm does not exist yet,
@@ -1626,7 +1626,7 @@ impl EventSubmitter {
                     // an invisible Realm and MUST NOT be used to author this unit.
                     apply_actor_chain_basis_to_sdk_event(event, 0, &[]);
                     let stamp = crate::signing_stamp::issue_event_stamp(event).await?;
-                    event.hlc = stamp.hlc;
+                    event.hlc = Some(stamp.hlc);
                 } else {
                     self.refresh_unsigned_sdk_event_actor_frontier(event)
                         .await?;

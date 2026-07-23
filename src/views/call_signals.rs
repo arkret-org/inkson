@@ -910,6 +910,7 @@ mod tests {
             created_at,
             domain: None,
             audience: None,
+            proof_purpose: None,
             jws: String::new(),
         };
         let binding_bytes = proof.canonical_ephemeral_binding_bytes(&did).unwrap();

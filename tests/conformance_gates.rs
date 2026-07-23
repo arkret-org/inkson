@@ -239,7 +239,10 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
 /// diff on any schema violation.
 fn assert_envelope_matches_schema(label: &str, envelope: &Event) {
     assert!(
-        !envelope.hlc.as_str().is_empty(),
+        envelope
+            .hlc
+            .as_ref()
+            .is_some_and(|hlc| !hlc.as_str().is_empty()),
         "{label}: builder produced empty hlc — should be `<12>-<4>-<8>` hex"
     );
     let value = serde_json::to_value(envelope)

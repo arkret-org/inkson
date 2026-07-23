@@ -880,6 +880,7 @@ mod tests {
             created_at: chrono::Utc::now(),
             domain: None,
             audience: None,
+            proof_purpose: None,
             jws: "test".to_owned(),
         }
     }

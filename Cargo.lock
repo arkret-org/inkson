@@ -4261,6 +4261,7 @@ dependencies = [
  "arkret",
  "arkret-bootstrap",
  "arkret-crypto",
+ "arkret-identifiers",
  "arkret-identity",
  "arkret-models-collaboration",
  "arkret-models-crypto",

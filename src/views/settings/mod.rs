@@ -607,7 +607,7 @@ pub fn SettingsPanel(
                 .await
                 {
                     Ok(outcome) => {
-                        invite_locator_id.set(outcome.locator_id);
+                        invite_locator_id.set(outcome.locator_id.as_str().to_owned());
                         invite_locator_token.set(outcome.locator_token);
                         invite_locator_status.set(String::new());
                     }
@@ -1324,7 +1324,7 @@ pub fn SettingsPanel(
                                                         }).await;
                                                         match result {
                                                             Ok(outcome) => {
-                                                                invite_locator_id.set(outcome.locator_id);
+                                                                invite_locator_id.set(outcome.locator_id.as_str().to_owned());
                                                                 invite_locator_token.set(outcome.locator_token);
                                                                 invite_locator_status.set(String::new());
                                                                 crate::components::feedback::toast_success("feedback.invite_locator_refreshed", vec![]);

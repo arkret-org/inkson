@@ -107,6 +107,7 @@ fn pending_ephemeral_proof(
         created_at: crate::clock::now_utc(),
         domain: None,
         audience: None,
+        proof_purpose: None,
         jws: "pending-signature".to_owned(),
     })
 }
@@ -380,6 +381,7 @@ pub(crate) fn attach_broadcast_ephemeral_proof(
             .unwrap_or_else(crate::clock::now_utc),
         domain: None,
         audience: None,
+        proof_purpose: None,
         jws: String::new(),
     };
     let binding_bytes = proof

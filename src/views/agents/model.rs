@@ -498,6 +498,7 @@ pub fn build_requested_scope_disclosure_for_pairing(
             created_at: issued_at,
             domain: None,
             audience: None,
+            proof_purpose: None,
             jws: String::new(),
         }],
     };

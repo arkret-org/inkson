@@ -56,6 +56,7 @@ mod device_identity_proof_tests {
             created_at: proof_created_at,
             domain: None,
             audience: None,
+            proof_purpose: None,
             jws: String::new(),
         };
         let binding_bytes = proof.canonical_binding_bytes(&did).unwrap();

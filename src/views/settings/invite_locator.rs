@@ -29,7 +29,7 @@ pub(super) async fn rotate_invite_locator(
         .post(
             arkret_sdk::INVITE_LOCATOR_ROTATE_PATH,
             &arkret_sdk::InviteLocatorRotateRequestBody {
-                locator_id,
+                locator_id: arkret_identifiers::InviteLocatorId::new(locator_id)?,
                 ttl_seconds: Some(arkret_sdk::INVITE_LOCATOR_DEFAULT_TTL_SECONDS),
                 one_time_use: Some(false),
                 display_hint: None,

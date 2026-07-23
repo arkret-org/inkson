@@ -256,6 +256,7 @@ fn sign_chat_fixture(value: &mut Value) {
                     .with_timezone(&chrono::Utc),
                 domain: None,
                 audience: None,
+                proof_purpose: None,
                 jws: String::new(),
             };
             let actor = arkret_sdk::Did::new(actor_id.clone()).unwrap();

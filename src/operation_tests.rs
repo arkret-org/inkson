@@ -86,7 +86,13 @@ fn operation_builder_generates_valid_envelope() {
     );
     assert_eq!(op.actor_id.as_str(), "did:web:alice");
     assert_eq!(op.kind.as_str(), "ak.message.create");
-    assert!(!op.hlc.as_str().is_empty());
+    assert!(
+        !op.hlc
+            .as_ref()
+            .expect("durable message event must carry HLC")
+            .as_str()
+            .is_empty()
+    );
     assert!(op.actor_seq > 0);
     // Spec compliance: build() never attaches a placeholder proof —
     // the submit path requires an installed signer.
@@ -659,7 +665,7 @@ fn canonical_digest_is_stable_across_key_order() {
     .build("node");
     op_a.event_id =
         arkret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-0000000000ff").unwrap();
-    op_a.hlc = arkret_sdk::Hlc::new("000000000000-0000-00000000".to_owned()).unwrap();
+    op_a.hlc = Some(arkret_sdk::Hlc::new("000000000000-0000-00000000".to_owned()).unwrap());
     op_a.actor_seq = 1;
 
     let mut op_b = op_a.clone();
