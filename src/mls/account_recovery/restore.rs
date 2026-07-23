@@ -183,7 +183,8 @@ fn mls_history_backup_needs_restore(
     state_store: &crate::state::LocalStateStore,
     local_secret: &str,
 ) -> bool {
-    let Ok(envelope) = crate::mls::runtime::decode_mls_history_backup_envelope(body) else {
+    let Ok(envelope) = crate::mls::runtime::decode_mls_history_backup_envelope(body, local_secret)
+    else {
         return false;
     };
     // P0 fork guard: verify the local secret can actually open the SERVER's

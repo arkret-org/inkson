@@ -183,7 +183,6 @@ dependencies = [
  "arkret-wire",
  "chrono",
  "reqwest 0.13.4",
- "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
@@ -196,13 +195,11 @@ version = "0.3.0"
 dependencies = [
  "argon2",
  "arkret-canonical",
- "arkret-identifiers",
  "arkret-keystore",
  "arkret-models-collaboration",
  "arkret-models-identity",
  "arkret-signatures",
  "arkret-wire",
- "base64",
  "chrono",
  "getrandom 0.4.3",
  "serde",
@@ -247,6 +244,7 @@ dependencies = [
 name = "arkret-crypto"
 version = "0.3.0"
 dependencies = [
+ "argon2",
  "arkret-canonical",
  "arkret-models-crypto",
  "arkret-models-identity",
@@ -303,9 +301,6 @@ dependencies = [
  "arkret-canonical",
  "arkret-identifiers",
  "arkret-wire",
- "chrono",
- "getrandom 0.4.3",
- "serde",
  "thiserror 2.0.18",
 ]
 
@@ -358,7 +353,6 @@ dependencies = [
  "arkret-models-identity",
  "arkret-signatures",
  "arkret-wire",
- "base64",
  "chrono",
  "ed25519-dalek",
  "serde",
@@ -397,7 +391,6 @@ dependencies = [
  "arkret-crypto",
  "arkret-identifiers",
  "arkret-models-crypto",
- "arkret-models-identity",
  "arkret-policy",
  "arkret-signatures",
  "arkret-wire",
@@ -4268,7 +4261,6 @@ name = "inkson"
 version = "0.3.0"
 dependencies = [
  "anyhow",
- "argon2",
  "arkret",
  "arkret-bootstrap",
  "arkret-crypto",

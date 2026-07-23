@@ -1,6 +1,8 @@
 //! Account-data key helpers for canonical SDK remark payloads.
 
-pub use garth::{ContactRemark, ContactRemarkSubject, RealmRemark, RealmRemarkSubject};
+pub use arkret_models_collaboration::objects::productivity::{
+    ContactRemark, ContactRemarkSubject, RealmRemark, RealmRemarkSubject,
+};
 
 pub fn realm_remark_account_data_key(realm_id: &str) -> String {
     format!("ak.contacts.realm.{realm_id}")

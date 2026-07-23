@@ -58,8 +58,6 @@
 //!   ([`decrypt_with_epoch_check`]) still relies on the epoch ordering provided by the Seal view,
 //!   but the AAD binding guarantees the timestamp the caller sees has not been swapped out.
 
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chacha20poly1305::aead::{Aead, OsRng, Payload};
 use chacha20poly1305::{AeadCore, ChaCha20Poly1305, KeyInit, Nonce};
 use chrono::{DateTime, Utc};
@@ -67,7 +65,7 @@ use garth::MlsGroupStateRecord;
 use hkdf::Hkdf;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
 /// Magic-bytes prefix burned into every v1 envelope.
 pub const MLS_ENVELOPE_MAGIC: &[u8] = b"inkson-mls-snap-v1";
@@ -327,16 +325,14 @@ impl MlsSnapshotEnvelope {
     /// Build the typed key_backup PUT body for this envelope. The
     /// `backup_id` is the protocol backup object id; `actor_id` and
     /// `device_id` identify the device that minted the snapshot.
-    pub fn to_key_backup_body(&self, backup_id: &str, actor_id: &str, device_id: &str) -> Value {
+    pub fn to_key_backup_body(
+        &self,
+        backup_id: &str,
+        actor_id: &str,
+        device_id: &str,
+        secret_storage_key: &[u8; 32],
+    ) -> anyhow::Result<Value> {
         let envelope_bytes = serde_json::to_vec(self).unwrap_or_default();
-        let ciphertext = URL_SAFE_NO_PAD.encode(&envelope_bytes);
-        let ciphertext_digest = arkret_sdk::canonical::sha256_digest(&envelope_bytes);
-        let nonce_material = format!(
-            "{backup_id}|{actor_id}|{device_id}|mls_history|kb_mls_snapshot_v1|{}|xchacha20_poly1305",
-            arkret_sdk::canonical::format_timestamp_canonical(self.recorded_at)
-        );
-        let nonce_digest = Sha256::digest(nonce_material.as_bytes());
-        let nonce = URL_SAFE_NO_PAD.encode(&nonce_digest[..24]);
         let mut body = json!({
             "backup_id": backup_id,
             "actor_id": actor_id,
@@ -353,7 +349,7 @@ impl MlsSnapshotEnvelope {
                 "aead": {
                     "name": "xchacha20_poly1305",
                     "aead_profile": "ak.aead.xchacha20_poly1305.v1",
-                    "nonce": nonce
+                    "nonce": ""
                 }
             },
             "contents": [{
@@ -363,8 +359,8 @@ impl MlsSnapshotEnvelope {
                 "secret_id": "inkson_mls_snapshot",
                 "realm_id": self.realm_id
             }],
-            "ciphertext": ciphertext,
-            "ciphertext_digest": ciphertext_digest
+            "ciphertext": "",
+            "ciphertext_digest": ""
         });
         if is_protocol_device_id(device_id)
             && let Some(object) = body.as_object_mut()
@@ -377,16 +373,33 @@ impl MlsSnapshotEnvelope {
             crate::key_backup::BackupClass::MlsHistory,
             "mls_snapshot",
         );
-        // Phase 2: sign with the active device signer. `to_key_backup_body`
-        // returns a `Value` (no Result), so a signer-present-but-failed error is
-        // surfaced via a warning rather than silently dropped — `Ok(false)` (no
-        // signer installed, e.g. tests) leaves it unsigned without noise.
-        if let Err(error) =
-            crate::key_backup::sign_key_backup_with_active_device(&mut body, device_id)
-        {
-            tracing::warn!(?error, "mls_history backup auth_data signing failed");
-        }
-        body
+        let aead_aad = serde_json::from_value(
+            body.pointer("/domain_separation/aead_aad")
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("domain_separation.aead_aad missing"))?,
+        )
+        .map_err(|error| anyhow::anyhow!("key-backup AAD: {error}"))?;
+        let binding = arkret_crypto::backup::VaultBinding {
+            backup_id: arkret_sdk::BackupId::new(backup_id.to_owned())
+                .map_err(|error| anyhow::anyhow!("backup_id: {error}"))?,
+            subdomain: body
+                .pointer("/domain_separation/subdomain")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("domain_separation.subdomain missing"))?
+                .to_owned(),
+            aead_aad,
+        };
+        let sealed = arkret_crypto::backup::encrypt_with_secret_storage_key(
+            secret_storage_key,
+            &binding,
+            &envelope_bytes,
+        )
+        .map_err(|error| anyhow::anyhow!("encrypt mls_history backup: {error}"))?;
+        body["encryption"]["aead"]["nonce"] = Value::String(sealed.nonce_b64);
+        body["ciphertext"] = Value::String(sealed.ciphertext_b64);
+        body["ciphertext_digest"] = Value::String(sealed.digest_sha256);
+        crate::key_backup::sign_key_backup_with_active_device(&mut body, device_id)?;
+        Ok(body)
     }
 
     /// SEC-08 — carry the epoch-start clock forward from a prior snapshot when
@@ -605,11 +618,14 @@ mod tests {
             "passw",
             &fixed_salt(),
         );
-        let body = envelope.to_key_backup_body(
-            "ak:backup:01964137-0000-7000-8000-000000000000",
-            "did:web:alice.example",
-            "ak:device:01964137-0000-7000-8000-000000000001",
-        );
+        let body = envelope
+            .to_key_backup_body(
+                "ak:backup:01964137-0000-7000-8000-000000000000",
+                "did:web:alice.example",
+                "ak:device:01964137-0000-7000-8000-000000000001",
+                &crate::mls::runtime::derive_mls_history_backup_key("passw").unwrap(),
+            )
+            .unwrap();
         assert_eq!(
             body["backup_id"],
             "ak:backup:01964137-0000-7000-8000-000000000000"
@@ -646,12 +662,10 @@ mod tests {
         )
         .expect("MLS history backup envelope should validate");
         assert!(body.get("envelope_meta").is_none());
-        // The ciphertext is a base64url-encoded JSON envelope — it
-        // round-trips back to the same struct without exposing plaintext
-        // MLS provider state to soland.
-        let blob = body["ciphertext"].as_str().unwrap();
-        let bytes = URL_SAFE_NO_PAD.decode(blob).unwrap();
-        let parsed: MlsSnapshotEnvelope = serde_json::from_slice(&bytes).unwrap();
+        // The outer key-backup ciphertext is authenticated encryption, and the
+        // runtime owner can open it back to the original snapshot envelope.
+        let parsed = crate::mls::runtime::decode_mls_history_backup_envelope(&body, "passw")
+            .expect("MLS history backup should decrypt");
         assert_eq!(parsed.realm_id, "ak:realm:demo");
         assert_eq!(parsed.epoch, 42);
     }

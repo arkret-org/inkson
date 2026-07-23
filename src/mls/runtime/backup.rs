@@ -1,7 +1,5 @@
 //! MLS-history backup body construction, decode, and restore.
 
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::Value;
 
 use super::{MlsRuntimeError, load_device_snapshot_secret};
@@ -16,14 +14,39 @@ pub struct MlsHistoryRestoreSummary {
     pub epoch_floor: u64,
 }
 
+pub(crate) fn derive_mls_history_backup_key(
+    account_secret: &str,
+) -> Result<[u8; 32], MlsRuntimeError> {
+    arkret_crypto::backup::derive_secret_storage_key(
+        account_secret.as_bytes(),
+        "mls_group_secrets_backup_key",
+    )
+    .map_err(|error| MlsRuntimeError::Backup(error.to_string()))
+}
+
 pub fn build_mls_history_backup_body(
     snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,
     actor_id: &str,
     device_id: &str,
-) -> (String, Value) {
+) -> Result<(String, Value), MlsRuntimeError> {
+    let store = crate::secure_key_store::default_secure_key_store("inkson");
+    let account_secret = load_device_snapshot_secret(store.as_ref(), actor_id, device_id)
+        .map_err(MlsRuntimeError::DeviceSecret)?;
+    build_mls_history_backup_body_with_secret(snapshot, actor_id, device_id, &account_secret)
+}
+
+pub fn build_mls_history_backup_body_with_secret(
+    snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,
+    actor_id: &str,
+    device_id: &str,
+    account_secret: &str,
+) -> Result<(String, Value), MlsRuntimeError> {
     let backup_id = format!("ak:backup:{}", crate::operation::uuid_v7());
-    let body = snapshot.to_key_backup_body(&backup_id, actor_id, device_id);
-    (backup_id, body)
+    let wrap_key = derive_mls_history_backup_key(account_secret)?;
+    let body = snapshot
+        .to_key_backup_body(&backup_id, actor_id, device_id, &wrap_key)
+        .map_err(|error| MlsRuntimeError::Backup(error.to_string()))?;
+    Ok((backup_id, body))
 }
 
 pub async fn upload_mls_snapshot_backup(
@@ -32,7 +55,7 @@ pub async fn upload_mls_snapshot_backup(
     actor_id: &str,
     device_id: &str,
 ) -> Result<String, MlsRuntimeError> {
-    let (backup_id, body) = build_mls_history_backup_body(snapshot, actor_id, device_id);
+    let (backup_id, body) = build_mls_history_backup_body(snapshot, actor_id, device_id)?;
     api.put_key_backup(&backup_id, body)
         .await
         .map_err(|err| MlsRuntimeError::Backup(err.to_string()))?;
@@ -41,19 +64,60 @@ pub async fn upload_mls_snapshot_backup(
 
 pub fn decode_mls_history_backup_envelope(
     body: &Value,
+    account_secret: &str,
 ) -> Result<crate::mls::persistence::MlsSnapshotEnvelope, MlsRuntimeError> {
     crate::key_backup::validate_key_backup_envelope(
         body,
         Some(crate::key_backup::BackupClass::MlsHistory),
     )
     .map_err(MlsRuntimeError::BackupDecode)?;
+    let wrap_key = derive_mls_history_backup_key(account_secret)
+        .map_err(|error| MlsRuntimeError::BackupDecode(error.user_message()))?;
+    let aead_aad = serde_json::from_value(
+        body.pointer("/domain_separation/aead_aad")
+            .cloned()
+            .ok_or_else(|| {
+                MlsRuntimeError::BackupDecode("domain_separation.aead_aad is required".to_owned())
+            })?,
+    )
+    .map_err(|error| MlsRuntimeError::BackupDecode(format!("key-backup AAD: {error}")))?;
+    let binding = arkret_crypto::backup::VaultBinding {
+        backup_id: arkret_sdk::BackupId::new(
+            body.get("backup_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+        )
+        .map_err(|error| MlsRuntimeError::BackupDecode(format!("backup_id: {error}")))?,
+        subdomain: body
+            .pointer("/domain_separation/subdomain")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                MlsRuntimeError::BackupDecode("domain_separation.subdomain is required".to_owned())
+            })?
+            .to_owned(),
+        aead_aad,
+    };
+    let nonce = body
+        .pointer("/encryption/aead/nonce")
+        .and_then(Value::as_str)
+        .ok_or_else(|| MlsRuntimeError::BackupDecode("nonce is required".to_owned()))?;
     let ciphertext = body
         .get("ciphertext")
         .and_then(Value::as_str)
         .ok_or_else(|| MlsRuntimeError::BackupDecode("ciphertext is required".to_owned()))?;
-    let bytes = URL_SAFE_NO_PAD
-        .decode(ciphertext.as_bytes())
-        .map_err(|err| MlsRuntimeError::BackupDecode(format!("ciphertext base64url: {err}")))?;
+    let ciphertext_digest = body
+        .get("ciphertext_digest")
+        .and_then(Value::as_str)
+        .ok_or_else(|| MlsRuntimeError::BackupDecode("ciphertext_digest is required".to_owned()))?;
+    let bytes = arkret_crypto::backup::decrypt_with_secret_storage_key(
+        &wrap_key,
+        &binding,
+        nonce,
+        ciphertext,
+        ciphertext_digest,
+    )
+    .map_err(|error| MlsRuntimeError::BackupDecode(error.to_string()))?;
     let envelope: crate::mls::persistence::MlsSnapshotEnvelope = serde_json::from_slice(&bytes)
         .map_err(|err| MlsRuntimeError::BackupDecode(format!("snapshot envelope json: {err}")))?;
 
@@ -112,9 +176,9 @@ pub fn restore_mls_history_backup_with_device_snapshot(
     device_id: &str,
     body: &Value,
 ) -> Result<MlsHistoryRestoreSummary, MlsRuntimeError> {
-    let envelope = decode_mls_history_backup_envelope(body)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
+    let envelope = decode_mls_history_backup_envelope(body, &secret)?;
     let epoch_floor = mls_restore_epoch_floor(state_store, &envelope.realm_id);
     crate::mls::persistence::restore_envelope(&envelope, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;

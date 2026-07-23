@@ -17,12 +17,11 @@
 //! private XChaCha envelope or its own nonce derivation; the
 //! `mls_exported_secret` (32 bytes from the MLS exporter) is passed straight
 //! through as the SDK `content_key`. The envelope carried on the wire is the
-//! SDK's [`EncryptedAttachmentEnvelope`], whose serde shape is exactly
+//! SDK's [`arkret_models_crypto::EncryptedAttachment`], whose serde shape is exactly
 //! `blob.schema.json#/$defs/encrypted_attachment`.
 
-use arkret_crypto::blob_aead::{
-    self, DEFAULT_SEGMENT_SIZE, EncryptedAttachmentEnvelope, StreamEncryptParams,
-};
+use arkret_crypto::blob_aead::{self, DEFAULT_SEGMENT_SIZE, StreamEncryptParams};
+use arkret_models_crypto::EncryptedAttachment;
 pub use arkret_sdk::KeyRefObject;
 use sha2::{Digest, Sha256};
 
@@ -42,23 +41,61 @@ pub const CIPHERTEXT_MEDIA_TYPE: &str = "application/octet-stream";
 pub const STREAM_ATTACHMENT_THRESHOLD: usize = DEFAULT_SEGMENT_SIZE as usize;
 
 /// A single encrypted asset ready for upload: the ciphertext bytes plus the
-/// canonical [`EncryptedAttachmentEnvelope`] (SDK / spec wire shape) with its
+/// canonical [`EncryptedAttachment`] (SDK / spec wire shape) with its
 /// `blob_ref` already content-addressed over the ciphertext.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EncryptedClientAsset {
     pub ciphertext: Vec<u8>,
-    pub envelope: EncryptedAttachmentEnvelope,
+    pub envelope: EncryptedAttachment,
 }
 
 impl EncryptedClientAsset {
     /// `<algo>:<hex>` digest the SDK already recorded over the ciphertext.
     pub fn ciphertext_digest(&self) -> &str {
-        &self.envelope.ciphertext_digest
+        match &self.envelope {
+            EncryptedAttachment::WholeFile(envelope) => envelope.ciphertext_digest.as_str(),
+            EncryptedAttachment::Stream(envelope) => envelope.ciphertext_digest.as_str(),
+        }
     }
 
     /// Content-addressed blob reference (`ak:blob:sha256:<hex>`).
     pub fn blob_ref(&self) -> &str {
-        &self.envelope.blob_ref
+        match &self.envelope {
+            EncryptedAttachment::WholeFile(envelope) => envelope.blob_ref.as_str(),
+            EncryptedAttachment::Stream(envelope) => envelope.blob_ref.as_str(),
+        }
+    }
+
+    #[cfg(test)]
+    fn scheme(&self) -> &'static str {
+        match self.envelope {
+            EncryptedAttachment::WholeFile(_) => blob_aead::SCHEME_WHOLE_FILE,
+            EncryptedAttachment::Stream(_) => blob_aead::SCHEME_STREAM,
+        }
+    }
+
+    #[cfg(test)]
+    fn segment_size(&self) -> Option<u64> {
+        match &self.envelope {
+            EncryptedAttachment::WholeFile(_) => None,
+            EncryptedAttachment::Stream(envelope) => Some(envelope.segment_size),
+        }
+    }
+
+    #[cfg(test)]
+    fn segment_count(&self) -> Option<u64> {
+        match &self.envelope {
+            EncryptedAttachment::WholeFile(_) => None,
+            EncryptedAttachment::Stream(envelope) => Some(envelope.segment_count),
+        }
+    }
+
+    #[cfg(test)]
+    fn media_type(&self) -> &str {
+        match &self.envelope {
+            EncryptedAttachment::WholeFile(envelope) => &envelope.media_type,
+            EncryptedAttachment::Stream(envelope) => &envelope.media_type,
+        }
     }
 }
 
@@ -78,11 +115,14 @@ pub fn blob_typed_id(bytes: &[u8]) -> String {
 
 /// Finish an SDK encrypt: content-address the ciphertext and stamp the
 /// resulting `ak:blob:sha256:<hex>` into the envelope's `blob_ref`.
-fn finish_asset(
-    ciphertext: Vec<u8>,
-    mut envelope: EncryptedAttachmentEnvelope,
-) -> EncryptedClientAsset {
-    envelope.blob_ref = blob_typed_id(&ciphertext);
+fn finish_asset(ciphertext: Vec<u8>, envelope: EncryptedAttachment) -> EncryptedClientAsset {
+    debug_assert_eq!(
+        match &envelope {
+            EncryptedAttachment::WholeFile(value) => value.blob_ref.as_str(),
+            EncryptedAttachment::Stream(value) => value.blob_ref.as_str(),
+        },
+        blob_typed_id(&ciphertext)
+    );
     EncryptedClientAsset {
         ciphertext,
         envelope,
@@ -261,7 +301,7 @@ mod tests {
         let asset = encrypt_mls_asset(plaintext, &key, 42, test_key_ref(), "image/png").unwrap();
 
         assert_ne!(asset.ciphertext.as_slice(), plaintext.as_slice());
-        assert_eq!(asset.envelope.scheme, SCHEME_WHOLE_FILE);
+        assert_eq!(asset.scheme(), SCHEME_WHOLE_FILE);
         assert_eq!(asset.blob_ref(), blob_typed_id(&asset.ciphertext));
         assert_eq!(
             asset.ciphertext_digest(),
@@ -285,9 +325,9 @@ mod tests {
             .collect();
         let asset = encrypt_mls_asset(&plaintext, &key, 9, test_key_ref(), "video/mp4").unwrap();
 
-        assert_eq!(asset.envelope.scheme, SCHEME_STREAM);
-        assert_eq!(asset.envelope.segment_size, Some(DEFAULT_SEGMENT_SIZE));
-        assert!(asset.envelope.segment_count.unwrap() >= 2);
+        assert_eq!(asset.scheme(), SCHEME_STREAM);
+        assert_eq!(asset.segment_size(), Some(u64::from(DEFAULT_SEGMENT_SIZE)));
+        assert!(asset.segment_count().unwrap() >= 2);
         assert_eq!(asset.blob_ref(), blob_typed_id(&asset.ciphertext));
 
         let recovered = decrypt_stream(&asset.ciphertext, &asset.envelope, &key).unwrap();
@@ -313,9 +353,9 @@ mod tests {
         .unwrap();
         let thumbnail = bundle.thumbnail.as_ref().expect("thumbnail encrypted");
 
-        assert_eq!(bundle.attachment.envelope.scheme, SCHEME_STREAM);
+        assert_eq!(bundle.attachment.scheme(), SCHEME_STREAM);
         // §3.3.4: thumbnail always whole-file regardless of size.
-        assert_eq!(thumbnail.envelope.scheme, SCHEME_WHOLE_FILE);
+        assert_eq!(thumbnail.scheme(), SCHEME_WHOLE_FILE);
         // Independent ciphertexts / blob refs.
         assert_ne!(bundle.attachment.ciphertext, thumbnail.ciphertext);
         assert_ne!(bundle.attachment.blob_ref(), thumbnail.blob_ref());
@@ -326,7 +366,7 @@ mod tests {
 
         // ciphertext-only metadata: the wire transport media type is opaque,
         // but the envelope records the plaintext media type for the receiver.
-        assert_eq!(thumbnail.envelope.media_type, "image/jpeg");
+        assert_eq!(thumbnail.media_type(), "image/jpeg");
         assert!(decrypt_whole_file(&thumbnail.ciphertext, &thumbnail.envelope, &key).is_err());
         let thumbnail_key =
             derive_thumbnail_content_key(&key, bundle.attachment.blob_ref(), 7, "image/jpeg");
@@ -350,7 +390,14 @@ mod tests {
         )
         .unwrap();
         assert!(bundle.thumbnail.is_none());
-        assert_eq!(bundle.attachment.envelope.scheme, SCHEME_WHOLE_FILE);
-        assert_eq!(bundle.attachment.envelope.key_ref, test_key_ref());
+        assert_eq!(bundle.attachment.scheme(), SCHEME_WHOLE_FILE);
+        let key_ref = match bundle.attachment.envelope {
+            EncryptedAttachment::WholeFile(envelope) => envelope.key_ref,
+            EncryptedAttachment::Stream(envelope) => envelope.key_ref,
+        };
+        assert_eq!(
+            serde_json::to_value(key_ref).unwrap(),
+            serde_json::to_value(test_key_ref()).unwrap()
+        );
     }
 }

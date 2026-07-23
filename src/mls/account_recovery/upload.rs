@@ -485,7 +485,8 @@ pub async fn upload_mls_history_backup_with_previous(
     previous: Option<&Value>,
 ) -> Result<(String, Value)> {
     let (backup_id, mut body) =
-        crate::mls::runtime::build_mls_history_backup_body(snapshot, actor_id, device_id);
+        crate::mls::runtime::build_mls_history_backup_body(snapshot, actor_id, device_id)
+            .map_err(|error| anyhow!(error.user_message()))?;
     if previous.is_some() {
         apply_next_series(previous, &mut body)?;
         crate::key_backup::sign_key_backup_with_active_device(&mut body, device_id)

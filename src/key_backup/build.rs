@@ -7,9 +7,7 @@ use super::{
     BackupClass, attach_key_backup_domain_separation, attach_key_backup_genesis_series,
     is_protocol_device_id, sign_key_backup_with_active_device,
 };
-use crate::recovery_crypto::{
-    VAULT_AEAD_NAME, VAULT_AEAD_PROFILE, VaultKek, VaultSealContext, open_vault, seal_vault,
-};
+use crate::recovery_crypto::VaultKek;
 
 /// Serialize a SDK `KeyBackupContentItem` into the on-wire `contents[]` object.
 /// The content item is the spec-defined type (`ak.schema.key_backup.v1`); the
@@ -38,84 +36,29 @@ pub fn build_passphrase_kdf_backup_body(
     subdomain: &str,
     item: &KeyBackupContentItem,
 ) -> anyhow::Result<Value> {
-    let content = backup_content_object(item)?;
-    let mut body = json!({
-        "backup_id": backup_id,
-        "actor_id": actor_id,
-        "backup_class": class.as_str(),
-        "backup_version": "kb_1",
-        "created_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
-        "encryption": {
-            "recipient_method": "passphrase_kdf",
-            "recipient_key_ref": device_id,
-            "kdf": {
-                "name": "argon2id",
-                "salt": "",
-                "params": {
-                    "memory_kib": root.m_kib,
-                    "iterations": root.t,
-                    "parallelism": root.p
-                }
-            },
-            "aead": {
-                "name": VAULT_AEAD_NAME,
-                "aead_profile": VAULT_AEAD_PROFILE,
-                "nonce": "",
-                "nonce_salt": "",
-            }
-        },
-        "contents": [content],
-        "ciphertext": "",
-        "ciphertext_digest": "",
-    });
-    if is_protocol_device_id(device_id)
-        && let Some(object) = body.as_object_mut()
-    {
-        object.insert("device_id".to_owned(), Value::String(device_id.to_owned()));
-    }
-    attach_key_backup_genesis_series(&mut body);
-    attach_key_backup_domain_separation(&mut body, class, subdomain);
-
-    // AEAD AAD = canonical bytes of the envelope's `domain_separation.aead_aad`
-    // (single source of truth, so encrypt and decrypt bind identical bytes).
-    let aad_aad = body
-        .get("domain_separation")
-        .and_then(|d| d.get("aead_aad"))
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("domain_separation.aead_aad missing"))?;
-    let aad_canonical = crate::canonical::canonical_json_bytes(&aad_aad)?;
-    let created_at = body
-        .get("created_at")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    let backup_version = body
-        .get("backup_version")
-        .and_then(Value::as_str)
-        .unwrap_or("kb_1")
-        .to_owned();
-
-    let ctx = VaultSealContext {
+    let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
+        .map_err(|error| anyhow::anyhow!("backup_id: {error}"))?;
+    let actor_id = arkret_sdk::Did::new(actor_id.to_owned())
+        .map_err(|error| anyhow::anyhow!("actor_id: {error}"))?;
+    let device_id_typed = is_protocol_device_id(device_id)
+        .then(|| arkret_sdk::DeviceId::new(device_id.to_owned()))
+        .transpose()
+        .map_err(|error| anyhow::anyhow!("device_id: {error}"))?;
+    let mut envelope = arkret_crypto::backup::build_key_backup_envelope(
         backup_id,
         actor_id,
-        device_id,
-        backup_class: class.as_str(),
+        device_id_typed,
+        class,
+        "kb_1",
         subdomain,
-        backup_version: &backup_version,
-        created_at: &created_at,
-        aad_canonical: &aad_canonical,
-    };
-    let sealed = seal_vault(root, &ctx, plaintext)?;
-
-    body["encryption"]["kdf"]["salt"] = Value::String(sealed.salt_b64);
-    body["encryption"]["aead"]["nonce"] = Value::String(sealed.nonce_b64);
-    body["encryption"]["aead"]["nonce_salt"] = Value::String(sealed.nonce_salt_b64);
-    body["encryption"]["key_commitment"] = Value::String(sealed.key_commitment);
-    body["ciphertext"] = Value::String(sealed.ciphertext_b64);
-    body["ciphertext_digest"] = Value::String(sealed.ciphertext_digest);
-    // Phase 2: sign the completed envelope with the active device signer. Errors
-    // propagate (a present signer that fails MUST NOT ship an unsigned backup);
-    // unsigned is only allowed when NO signer is installed (Ok(false), e.g. tests).
+        root,
+        plaintext,
+        &[(item.item_type.as_str(), item.secret_id.as_deref())],
+    )
+    .map_err(|error| anyhow::anyhow!("build key backup: {error}"))?;
+    envelope.contents = vec![item.clone()];
+    let mut body = serde_json::to_value(envelope)
+        .map_err(|error| anyhow::anyhow!("serialize key backup: {error}"))?;
     sign_key_backup_with_active_device(&mut body, device_id)?;
     Ok(body)
 }
@@ -124,85 +67,11 @@ pub fn build_passphrase_kdf_backup_body(
 /// `passphrase_kdf` envelope and `open_vault` it with `passphrase`. Verifies the
 /// `key_commitment` and recomputes the deterministic nonce.
 pub fn open_passphrase_kdf_backup_body(passphrase: &[u8], body: &Value) -> anyhow::Result<Vec<u8>> {
-    let str_at = |path: &[&str]| -> anyhow::Result<String> {
-        let mut cur = body;
-        for key in path {
-            cur = cur
-                .get(*key)
-                .ok_or_else(|| anyhow::anyhow!("backup body missing {}", path.join(".")))?;
-        }
-        cur.as_str()
-            .map(ToOwned::to_owned)
-            .ok_or_else(|| anyhow::anyhow!("backup body field {} is not a string", path.join(".")))
-    };
-    let backup_id = str_at(&["backup_id"])?;
-    let actor_id = str_at(&["actor_id"])?;
-    let backup_class = str_at(&["backup_class"])?;
-    let backup_version = str_at(&["backup_version"])?;
-    let created_at = str_at(&["created_at"])?;
-    let subdomain = str_at(&["domain_separation", "subdomain"])?;
-    let device_id = body
-        .get("device_id")
-        .and_then(Value::as_str)
-        .or_else(|| {
-            body.get("encryption")
-                .and_then(|e| e.get("recipient_key_ref"))
-                .and_then(Value::as_str)
-        })
-        .unwrap_or_default()
-        .to_owned();
-    let salt_b64 = str_at(&["encryption", "kdf", "salt"])?;
-    let nonce_b64 = str_at(&["encryption", "aead", "nonce"])?;
-    let nonce_salt_b64 = str_at(&["encryption", "aead", "nonce_salt"])?;
-    let key_commitment = str_at(&["encryption", "key_commitment"])?;
-    let ciphertext_b64 = str_at(&["ciphertext"])?;
-    // key-management.md §7.2: `ciphertext_digest` covers the ciphertext bytes
-    // and is a local integrity check. When present, recompute SHA-256 over the
-    // decoded ciphertext and refuse to decrypt on mismatch — this catches a
-    // tampered / substituted ciphertext before any KDF/AEAD work, without
-    // contacting the server (no decryption oracle).
-    if let Some(expected_digest) = body
-        .get("ciphertext_digest")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        let ciphertext_bytes = B64
-            .decode(ciphertext_b64.trim_end_matches('='))
-            .map_err(|err| anyhow::anyhow!("ciphertext base64: {err}"))?;
-        let actual_digest = crate::canonical::sha256_digest(&ciphertext_bytes);
-        if actual_digest != expected_digest {
-            anyhow::bail!(
-                "backup decrypt refused: ciphertext_digest mismatch (tampered ciphertext)"
-            );
-        }
-    }
-    let aad_aad = body
-        .get("domain_separation")
-        .and_then(|d| d.get("aead_aad"))
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("domain_separation.aead_aad missing"))?;
-    let aad_canonical = crate::canonical::canonical_json_bytes(&aad_aad)?;
-
-    let ctx = VaultSealContext {
-        backup_id: &backup_id,
-        actor_id: &actor_id,
-        device_id: &device_id,
-        backup_class: &backup_class,
-        subdomain: &subdomain,
-        backup_version: &backup_version,
-        created_at: &created_at,
-        aad_canonical: &aad_canonical,
-    };
-    open_vault(
-        passphrase,
-        &ctx,
-        &salt_b64,
-        &nonce_b64,
-        &nonce_salt_b64,
-        &key_commitment,
-        &ciphertext_b64,
-    )
+    let envelope: arkret_models_crypto::KeyBackup = serde_json::from_value(body.clone())
+        .map_err(|error| anyhow::anyhow!("parse key backup: {error}"))?;
+    arkret_crypto::backup::decrypt_key_backup_envelope(passphrase, &envelope)
+        .map(|plaintext| plaintext.to_vec())
+        .map_err(|error| anyhow::anyhow!("decrypt key backup: {error}"))
 }
 
 /// Build a `did_recovery` backup, HPKE-sealed to the actor's recovery public

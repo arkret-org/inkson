@@ -111,7 +111,7 @@ mobile-ios = []
 # arbitrary tags via `dangerous_inner_html`.
 anyhow = {workspace = true}
 arkret-bootstrap = {version = "0.3.0",path = "../arkret-rust-sdk/crates/bootstrap",default-features = false}
-arkret-crypto = {workspace = true,features = ["blob-aead", "key-verification", "secret-share", "sframe"]}
+arkret-crypto = {workspace = true,features = ["backup", "blob-aead", "key-verification", "secret-share", "sframe"]}
 arkret-event-draft = {version = "0.3.0",path = "../arkret-rust-sdk/crates/event-draft",default-features = false}
 arkret-identity = {version = "0.3.0",path = "../arkret-rust-sdk/crates/identity",default-features = false}
 arkret-identifiers = {version = "0.3.0",path = "../arkret-rust-sdk/crates/identifiers",default-features = false}
@@ -124,7 +124,6 @@ arkret-policy = {version = "0.3.0",path = "../arkret-rust-sdk/crates/policy",def
 arkret-signatures = {workspace = true}
 arkret-wire = {version = "0.3.0",path = "../arkret-rust-sdk/crates/wire",default-features = false}
 hex = "0.4.3"
-argon2 = {workspace = true}
 base64 = {workspace = true}
 bip39 = {workspace = true}
 chacha20poly1305 = {workspace = true,default-features = false,features = ["alloc"]}
@@ -341,7 +340,6 @@ resolver = "3"
 
 [workspace.dependencies]
 anyhow = "1.0.102"
-argon2 = "0.5"
 base64 = "0.22"
 bip39 = "2.2.2"
 chacha20poly1305 = {version = "0.10",default-features = false}

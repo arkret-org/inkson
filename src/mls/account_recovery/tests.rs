@@ -116,11 +116,14 @@ fn history_envelope(
 }
 
 fn history_body(envelope: &crate::mls::persistence::MlsSnapshotEnvelope) -> Value {
-    envelope.to_key_backup_body(
-        "ak:backup:01964137-0000-7000-8000-00000000feed",
-        ACTOR,
-        DEVICE,
-    )
+    envelope
+        .to_key_backup_body(
+            "ak:backup:01964137-0000-7000-8000-00000000feed",
+            ACTOR,
+            DEVICE,
+            &crate::mls::runtime::derive_mls_history_backup_key(ACCOUNT_SECRET).unwrap(),
+        )
+        .unwrap()
 }
 
 #[test]
@@ -768,11 +771,14 @@ fn mls_history_successor_chains_onto_previous_tail() {
     assert!(genesis.get("supersedes_digest").is_none());
 
     let env_v2 = history_envelope("ak:realm:a", "g-a", 2, ACCOUNT_SECRET);
-    let mut successor = env_v2.to_key_backup_body(
-        "ak:backup:01964137-0000-7000-8000-000000000123",
-        ACTOR,
-        DEVICE,
-    );
+    let mut successor = env_v2
+        .to_key_backup_body(
+            "ak:backup:01964137-0000-7000-8000-000000000123",
+            ACTOR,
+            DEVICE,
+            &crate::mls::runtime::derive_mls_history_backup_key(ACCOUNT_SECRET).unwrap(),
+        )
+        .unwrap();
     apply_next_series(Some(&genesis), &mut successor).unwrap();
 
     assert_eq!(successor["series_id"], genesis["series_id"]);

@@ -4,6 +4,19 @@ use serde_json::json;
 
 use super::*;
 
+fn test_realm_id(value: &str) -> arkret_sdk::RealmId {
+    arkret_sdk::RealmId::new(value.to_owned()).unwrap()
+}
+
+fn test_realm_remark(value: &str, local_name: &str) -> RealmRemark {
+    let mut remark = RealmRemark::new(
+        test_realm_id(value),
+        "2026-06-01T00:00:00.000Z".parse().unwrap(),
+    );
+    remark.local_name = local_name.to_owned();
+    remark
+}
+
 // ── F-ACCT-SNAP-1 ────────────────────────────────────────────────
 
 #[test]
@@ -149,7 +162,7 @@ fn contact_remark_key_round_trip() {
 fn realm_remark_serialises_minimal_payload() {
     // Empty fields MUST NOT appear on the wire — keeps the payload
     // tombstone-friendly and avoids leaking placeholder data.
-    let remark = RealmRemark::new(
+    let remark = test_realm_remark(
         "ak:realm:0196419b-0000-7000-8000-000000000000",
         "Acme · Eng",
     );
@@ -171,27 +184,19 @@ fn realm_remark_serialises_minimal_payload() {
 
 #[test]
 fn realm_remark_display_name_prefers_local_name() {
-    let r = RealmRemark::new("ak:realm:abc", "Acme · Eng");
+    let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000001";
+    let r = test_realm_remark(realm_id, "Acme · Eng");
     assert_eq!(r.display_name("Engineering"), "Acme · Eng");
-    let empty = RealmRemark {
-        local_name: "   ".into(),
-        ..RealmRemark::default()
-    };
+    let empty = test_realm_remark(realm_id, "   ");
     assert_eq!(empty.display_name("Engineering"), "Engineering");
 }
 
 #[test]
 fn realm_remark_is_empty_treats_whitespace_as_tombstone() {
-    let r = RealmRemark {
-        local_name: "   ".into(),
-        note: String::new(),
-        ..RealmRemark::default()
-    };
+    let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000002";
+    let r = test_realm_remark(realm_id, "   ");
     assert!(r.is_empty());
-    let r2 = RealmRemark {
-        local_name: "x".into(),
-        ..RealmRemark::default()
-    };
+    let r2 = test_realm_remark(realm_id, "x");
     assert!(!r2.is_empty());
 }
 
@@ -202,23 +207,25 @@ fn realm_remark_pinned_builder_preserves_private_fields() {
         version: 1,
         subject: RealmRemarkSubject {
             kind: "realm".to_owned(),
-            id: realm_id.to_owned(),
+            id: test_realm_id(realm_id),
         },
         local_name: "Acme Eng".to_owned(),
         note: "Private note".to_owned(),
         tags: vec!["work".to_owned()],
         pinned: false,
         verified_title_at_save: Some("Engineering".to_owned()),
-        verified_owning_organizations_at_save: vec!["did:web:acme.example".to_owned()],
+        verified_owning_organizations_at_save: vec![
+            arkret_sdk::Did::new("did:web:acme.example".to_owned()).unwrap(),
+        ],
         saved_at: "2026-06-01T00:00:00.000Z".parse().unwrap(),
         updated_at: Some("2026-06-01T00:00:00.000Z".parse().unwrap()),
     };
 
     let next = RealmRemark::with_pinned_preserving_fields(
-        realm_id,
+        test_realm_id(realm_id),
         Some(&existing),
         true,
-        Some("2026-06-06T00:00:00.000Z".parse().unwrap()),
+        "2026-06-06T00:00:00.000Z".parse().unwrap(),
     );
 
     assert!(next.pinned);
@@ -241,28 +248,30 @@ fn realm_remark_pinned_builder_preserves_private_fields() {
 fn realm_remark_unpin_builder_can_tombstone_empty_remark() {
     let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000000";
     let existing = RealmRemark::with_pinned_preserving_fields(
-        realm_id,
+        test_realm_id(realm_id),
         None,
         true,
-        Some("2026-06-06T00:00:00.000Z".parse().unwrap()),
+        "2026-06-06T00:00:00.000Z".parse().unwrap(),
     );
     assert!(!existing.is_empty());
 
     let next = RealmRemark::with_pinned_preserving_fields(
-        realm_id,
+        test_realm_id(realm_id),
         Some(&existing),
         false,
-        Some("2026-06-06T00:01:00.000Z".parse().unwrap()),
+        "2026-06-06T00:01:00.000Z".parse().unwrap(),
     );
 
     assert!(!next.pinned);
-    assert_eq!(next.subject.id, realm_id);
+    assert_eq!(next.subject.id.as_str(), realm_id);
     assert!(next.is_empty());
 }
 
 #[test]
 fn contact_remark_serialises_minimal_private_payload() {
-    let remark = ContactRemark::new("did:web:alice.example", "Alice from Ops");
+    let saved_at = "2026-06-05T00:00:00.000Z".parse().unwrap();
+    let actor_did = arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap();
+    let remark = ContactRemark::new(actor_did.clone(), "Alice from Ops", saved_at);
     let wire = serde_json::to_value(&remark).unwrap();
     assert_eq!(wire["version"], 1);
     assert_eq!(wire["subject"]["kind"], "actor");
@@ -273,12 +282,18 @@ fn contact_remark_serialises_minimal_private_payload() {
     assert_eq!(remark.display_name("Alice"), "Alice from Ops");
 
     let empty = ContactRemark {
+        version: 1,
         subject: ContactRemarkSubject {
             kind: "actor".to_owned(),
-            did: "did:web:alice.example".to_owned(),
+            did: actor_did,
         },
         local_name: " ".to_owned(),
-        ..ContactRemark::default()
+        note: String::new(),
+        tags: Vec::new(),
+        pinned: false,
+        verified_handle_at_save: None,
+        saved_at,
+        updated_at: None,
     };
     assert!(empty.is_empty());
 }
@@ -286,26 +301,27 @@ fn contact_remark_serialises_minimal_private_payload() {
 #[test]
 fn contact_remark_pinned_builder_preserves_private_fields() {
     let actor_id = "did:web:alice.example";
+    let actor_did = arkret_sdk::Did::new(actor_id.to_owned()).unwrap();
     let existing = ContactRemark {
         version: 1,
         subject: ContactRemarkSubject {
             kind: "actor".to_owned(),
-            did: actor_id.to_owned(),
+            did: actor_did.clone(),
         },
         local_name: "Alice from Ops".to_owned(),
         note: "met at launch".to_owned(),
         tags: vec!["ops".to_owned()],
         pinned: false,
         verified_handle_at_save: Some("alice:example.com".to_owned()),
-        saved_at: Some("2026-06-05T00:00:00.000Z".to_owned()),
-        updated_at: Some("2026-06-05T00:00:00.000Z".to_owned()),
+        saved_at: "2026-06-05T00:00:00.000Z".parse().unwrap(),
+        updated_at: Some("2026-06-05T00:00:00.000Z".parse().unwrap()),
     };
 
     let next = ContactRemark::with_pinned_preserving_fields(
-        actor_id,
+        actor_did,
         Some(&existing),
         true,
-        Some("2026-06-06T00:00:00.000Z".to_owned()),
+        "2026-06-06T00:00:00.000Z".parse().unwrap(),
     );
 
     assert!(next.pinned);
@@ -317,7 +333,10 @@ fn contact_remark_pinned_builder_preserves_private_fields() {
         existing.verified_handle_at_save
     );
     assert_eq!(next.saved_at, existing.saved_at);
-    assert_eq!(next.updated_at.as_deref(), Some("2026-06-06T00:00:00.000Z"));
+    assert_eq!(
+        next.updated_at,
+        Some("2026-06-06T00:00:00.000Z".parse().unwrap())
+    );
 }
 
 #[test]
@@ -553,11 +572,6 @@ fn blocklist_entries_parse_canonical_account_data_body() {
                 "created_at": "2026-05-29T00:00:00.000Z"
             },
             {
-                "target": {"kind": "actor", "did": "did:web:carol.example"},
-                "mode": "unblock",
-                "created_at": "2026-05-29T00:00:00.000Z"
-            },
-            {
                 "target": {"kind": "domain", "value": "Example.com"},
                 "mode": "block",
                 "applies_to": ["dm", "calls"],
@@ -567,7 +581,7 @@ fn blocklist_entries_parse_canonical_account_data_body() {
         ]
     });
     let entries = blocklist_entries_from_account_data(&body).unwrap();
-    // The `unblock` mode entry is dropped; the actor + domain blocks parse.
+    // The canonical actor + domain blocks parse through the SDK wire model.
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].did, "did:web:mallory.example");
     assert_eq!(entries[0].kind, "actor");

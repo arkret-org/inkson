@@ -219,13 +219,16 @@ fn mls_history_backup_body_decodes_to_snapshot_envelope() {
         "device-secret",
         b"deterministic-salt",
     );
-    let body = envelope.to_key_backup_body(
-        "ak:backup:01904100-0000-7000-8000-000000000002",
-        "did:web:alice.example",
-        "ak:device:01904100-0000-7000-8000-000000000001",
-    );
+    let body = envelope
+        .to_key_backup_body(
+            "ak:backup:01904100-0000-7000-8000-000000000002",
+            "did:web:alice.example",
+            "ak:device:01904100-0000-7000-8000-000000000001",
+            &derive_mls_history_backup_key("device-secret").unwrap(),
+        )
+        .unwrap();
 
-    let decoded = decode_mls_history_backup_envelope(&body).unwrap();
+    let decoded = decode_mls_history_backup_envelope(&body, "device-secret").unwrap();
 
     assert_eq!(decoded.realm_id, envelope.realm_id);
     assert_eq!(decoded.group_id, envelope.group_id);
@@ -247,14 +250,17 @@ fn mls_history_backup_decode_rejects_metadata_mismatch() {
         "device-secret",
         b"deterministic-salt",
     );
-    let mut body = envelope.to_key_backup_body(
-        "ak:backup:01904100-0000-7000-8000-000000000002",
-        "did:web:alice.example",
-        "ak:device:01904100-0000-7000-8000-000000000001",
-    );
+    let mut body = envelope
+        .to_key_backup_body(
+            "ak:backup:01904100-0000-7000-8000-000000000002",
+            "did:web:alice.example",
+            "ak:device:01904100-0000-7000-8000-000000000001",
+            &derive_mls_history_backup_key("device-secret").unwrap(),
+        )
+        .unwrap();
     body["contents"][0]["epoch"] = json!(7);
 
-    let error = decode_mls_history_backup_envelope(&body).unwrap_err();
+    let error = decode_mls_history_backup_envelope(&body, "device-secret").unwrap_err();
 
     assert!(matches!(error, MlsRuntimeError::BackupDecode(_)));
     assert!(error.user_message().contains("epoch mismatch"));
@@ -285,11 +291,14 @@ fn restore_mls_history_backup_saves_snapshot_when_fresh() {
         &secret,
         b"deterministic-salt",
     );
-    let body = envelope.to_key_backup_body(
-        "ak:backup:01904100-0000-7000-8000-000000000002",
-        actor,
-        device,
-    );
+    let body = envelope
+        .to_key_backup_body(
+            "ak:backup:01904100-0000-7000-8000-000000000002",
+            actor,
+            device,
+            &derive_mls_history_backup_key(&secret).unwrap(),
+        )
+        .unwrap();
     let mut state = temp_state_store("restore-fresh");
 
     let restored =
@@ -327,11 +336,14 @@ fn restore_mls_history_backup_rejects_epoch_rollback() {
         &secret,
         b"deterministic-salt",
     );
-    let body = envelope.to_key_backup_body(
-        "ak:backup:01904100-0000-7000-8000-000000000002",
-        actor,
-        device,
-    );
+    let body = envelope
+        .to_key_backup_body(
+            "ak:backup:01904100-0000-7000-8000-000000000002",
+            actor,
+            device,
+            &derive_mls_history_backup_key(&secret).unwrap(),
+        )
+        .unwrap();
     let mut state = temp_state_store("restore-rollback");
     state.set_realm_seal_view(
         realm,
@@ -389,7 +401,7 @@ fn cross_device_recovery_restores_history_without_local_secret() {
         b"deterministic-salt",
     );
     let (_history_backup_id, history_body) =
-        build_mls_history_backup_body(&envelope, actor, device_a);
+        build_mls_history_backup_body_with_secret(&envelope, actor, device_a, &secret_a).unwrap();
 
     // Device A wraps the account secret behind the recovery PASSPHRASE
     // (KEK derived from the passphrase, exactly like the recovery setup
