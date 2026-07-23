@@ -187,7 +187,7 @@ chrono = {workspace = true}
 # NOTE: arkret-sdk `default = []` (types-only) since the F-06 default-feature
 # narrowing; this client must opt into every runtime feature it uses
 # explicitly (mls/device-runtime/... previously arrived via the old default).
-arkret-sdk = {workspace = true,features = ["client", "mls", "full-surface", "applet-runtime", "device-runtime", "signer", "keystore-macos", "keystore-linux", "keystore-windows"]}
+arkret-sdk = {workspace = true,features = ["client", "mls", "full-surface", "device-runtime", "signer", "keystore-macos", "keystore-linux", "keystore-windows"]}
 garth = {path = "../garth",default-features = false,features = ["native"]}
 dioxus = {workspace = true,features = ["desktop", "web"]}
 notify-rust = {workspace = true}
@@ -222,7 +222,7 @@ tracing-subscriber = {workspace = true,features = ["env-filter", "fmt"]}
 # `sleep_for` uses for HTTP retry backoff in the wasm build.
 # See the non-wasm note above: opt into every runtime feature explicitly since
 # arkret-sdk `default = []`.
-arkret-sdk = {workspace = true,features = ["client", "mls", "full-surface", "applet-runtime", "device-runtime", "signer"]}
+arkret-sdk = {workspace = true,features = ["client", "mls", "full-surface", "device-runtime", "signer"]}
 garth = {path = "../garth",default-features = false,features = ["wasm"]}
 dioxus = {workspace = true,features = ["web"]}
 gloo-timers = {workspace = true,features = ["futures"]}

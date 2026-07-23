@@ -177,7 +177,6 @@ dependencies = [
  "arkret-models-integration",
  "arkret-policy",
  "arkret-schema",
- "arkret-server",
  "arkret-signatures",
  "arkret-state",
  "arkret-wire",
@@ -189,7 +188,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "url",
- "uuid",
 ]
 
 [[package]]
@@ -538,25 +536,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tracing",
-]
-
-[[package]]
-name = "arkret-server"
-version = "0.3.0"
-dependencies = [
- "arkret-canonical",
- "arkret-event-draft",
- "arkret-models-collaboration",
- "arkret-models-crypto",
- "arkret-models-discovery",
- "arkret-models-identity",
- "arkret-models-integration",
- "arkret-signatures",
- "arkret-state",
- "arkret-wire",
- "chrono",
- "serde",
- "serde_json",
 ]
 
 [[package]]
