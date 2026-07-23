@@ -1,5 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
+use dioxus::prelude::{SyncSignal, WritableExt};
 use serde_json::Value;
 
 use super::helpers::short_protocol_id;
@@ -24,6 +25,14 @@ pub(crate) struct ResolvedMemberDisplay {
     pub display_name: Option<String>,
     pub avatar_blob_ref: Option<arkret_sdk::BlobRef>,
     pub subject_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MemberHandleLookupRequest {
+    pub request_key: String,
+    pub subject_id: String,
+    pub realm_id: String,
+    pub member_display_state_digest: Option<String>,
 }
 
 pub(crate) fn realm_member_roster(projection: Option<&Value>) -> Vec<RealmMemberRow> {
@@ -116,6 +125,140 @@ pub(crate) fn member_lookup_subject(
         .or_else(|| identity.map(|identity| identity.subject_id.as_str().to_owned()))
 }
 
+fn member_handle_lookup_subject(
+    row: &RealmMemberRow,
+    identity: Option<&arkret_sdk::MemberIdentity>,
+) -> Option<String> {
+    member_lookup_subject(row, identity)
+        // The roster actor is already disclosed to this Realm member. It may
+        // also be the account's principal DID (the common non-pairwise case),
+        // so it is a valid candidate for the subject -> handle query. The
+        // Directory still has to return a verified claim for this exact DID
+        // under the Realm context; a pairwise actor simply yields no claim.
+        .or_else(|| {
+            let actor_id = row.actor_id.trim();
+            actor_id.starts_with("did:").then(|| actor_id.to_owned())
+        })
+}
+
+pub(crate) fn member_handle_fetch_key(
+    realm_id: &str,
+    subject_id: &str,
+    digest: Option<&str>,
+) -> String {
+    format!(
+        "{}\u{1f}{}\u{1f}{}",
+        realm_id.trim(),
+        subject_id.trim(),
+        digest.unwrap_or_default().trim()
+    )
+}
+
+pub(crate) fn missing_member_handle_lookups(
+    store: &LocalStateStore,
+    realm_id: &str,
+    rows: &[RealmMemberRow],
+    in_flight: &BTreeSet<String>,
+) -> Vec<MemberHandleLookupRequest> {
+    let mut requests = Vec::new();
+    for row in rows {
+        if verified_inline_handle(row).is_some() {
+            continue;
+        }
+        let identity = store.resolved_member_identity(realm_id, &row.actor_id);
+        let Some(subject_id) = member_handle_lookup_subject(row, identity.as_ref()) else {
+            continue;
+        };
+        let digest = row.member_display_state_digest.clone();
+        if store
+            .cached_member_handle_lookup(&subject_id, Some(realm_id), digest.as_deref())
+            .is_some()
+        {
+            continue;
+        }
+        let request_key = member_handle_fetch_key(realm_id, &subject_id, digest.as_deref());
+        if in_flight.contains(&request_key) {
+            continue;
+        }
+        requests.push(MemberHandleLookupRequest {
+            request_key,
+            subject_id,
+            realm_id: realm_id.to_owned(),
+            member_display_state_digest: digest,
+        });
+    }
+    requests
+}
+
+pub(crate) async fn fetch_and_cache_member_handle(
+    base_url: String,
+    api_token: String,
+    mut state_store: SyncSignal<LocalStateStore>,
+    request: MemberHandleLookupRequest,
+) {
+    let subject_id = request.subject_id.clone();
+    let realm_id = request.realm_id.clone();
+    let result = crate::transport::auth::with_endpoint_clients(&base_url, api_token, None, {
+        let subject_id = subject_id.clone();
+        let realm_id = realm_id.clone();
+        move |clients| async move {
+            clients
+                .directory()
+                .list_handles_for_subject(&subject_id, Some(&realm_id), Some("display"))
+                .await
+        }
+    })
+    .await;
+    match result {
+        Ok(response) if response.subject.as_str() == request.subject_id => {
+            let primary = response
+                .primary_handle
+                .as_ref()
+                .map(|handle| handle.canonical().to_owned());
+            let claims_count = response.claims.len();
+            let earliest_expiry = response
+                .claims
+                .iter()
+                .filter_map(|claim| claim.expires_at.as_ref().cloned())
+                .min();
+            state_store.write().save_member_handle_lookup(
+                response.subject.as_str().to_owned(),
+                Some(request.realm_id),
+                request.member_display_state_digest,
+                primary,
+                claims_count,
+                Some(response.as_of),
+                earliest_expiry,
+            );
+        }
+        Ok(_) => {
+            // A reverse lookup is useful only for the exact already-known
+            // subject. Never cache a server response under a different DID.
+            state_store.write().save_member_handle_lookup(
+                request.subject_id,
+                Some(request.realm_id),
+                request.member_display_state_digest,
+                None,
+                0,
+                None,
+                None,
+            );
+        }
+        Err(error) if !error.is_auth_expired() => {
+            state_store.write().save_member_handle_lookup(
+                request.subject_id,
+                Some(request.realm_id),
+                request.member_display_state_digest,
+                None,
+                0,
+                None,
+                None,
+            );
+        }
+        Err(_) => {}
+    }
+}
+
 pub(crate) fn resolve_member_display(
     store: &LocalStateStore,
     realm_id: &str,
@@ -123,7 +266,8 @@ pub(crate) fn resolve_member_display(
 ) -> ResolvedMemberDisplay {
     let identity = store.resolved_member_identity(realm_id, &row.actor_id);
     let subject_id = member_lookup_subject(row, identity.as_ref());
-    let cached_handle = subject_id.as_deref().and_then(|subject| {
+    let handle_lookup_subject = member_handle_lookup_subject(row, identity.as_ref());
+    let cached_handle = handle_lookup_subject.as_deref().and_then(|subject| {
         store
             .cached_member_handle_lookup(
                 subject,

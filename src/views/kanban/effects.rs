@@ -764,7 +764,14 @@ pub(super) fn KanbanEffects(
             if !should_fetch_member_handles {
                 return;
             }
-            if selected_card().is_none() {
+            let Some(card) = selected_card() else {
+                return;
+            };
+            if card_detail_discussion_mounted_for().as_deref()
+                == Some(card.primary_strand_id.as_str())
+            {
+                // The mounted ChatPanel owns the same shared resolver. Avoid
+                // issuing a duplicate request from the parent card surface.
                 return;
             }
             let store_snapshot = state_store.read().load();
@@ -778,95 +785,28 @@ pub(super) fn KanbanEffects(
                 &handle_projection_realm_id,
                 projection,
             );
-            let mut fetches: Vec<(String, String, String, Option<String>)> = Vec::new();
-            for row in rows {
-                if member_inline_handle_label(&row).is_some() {
-                    continue;
-                }
-                let identity = state_store
-                    .read()
-                    .resolved_member_identity(&realm_context, &row.actor_id);
-                let Some(subject_id) = member_handle_lookup_subject(&row, identity.as_ref()) else {
-                    continue;
-                };
-                let digest = row.member_display_state_digest.clone();
-                if state_store
-                    .read()
-                    .cached_member_handle_lookup(
-                        &subject_id,
-                        Some(&realm_context),
-                        digest.as_deref(),
-                    )
-                    .is_some()
-                {
-                    continue;
-                }
-                let request_key =
-                    member_handle_fetch_key(&realm_context, &subject_id, digest.as_deref());
-                if member_handle_fetching.read().contains(&request_key) {
-                    continue;
-                }
+            let fetches = {
+                let store = state_store.read();
+                let in_flight = member_handle_fetching.read();
+                crate::views::member_display::missing_member_handle_lookups(
+                    &store,
+                    &realm_context,
+                    &rows,
+                    &in_flight,
+                )
+            };
+            for request in fetches {
+                let request_key = request.request_key.clone();
                 member_handle_fetching.write().insert(request_key.clone());
-                fetches.push((request_key, subject_id, realm_context.clone(), digest));
-            }
-
-            for (request_key, subject_id, realm_id, digest) in fetches {
                 let base = handle_base_url.clone();
                 let api_token = handle_token();
                 let mut fetching = member_handle_fetching;
-                let mut store = state_store;
+                let store = state_store;
                 spawn(async move {
-                    let result =
-                        crate::transport::auth::with_endpoint_clients(&base, api_token, None, {
-                            let subject_id = subject_id.clone();
-                            let realm_id = realm_id.clone();
-                            move |clients| async move {
-                                clients
-                                    .directory()
-                                    .list_handles_for_subject(
-                                        &subject_id,
-                                        Some(&realm_id),
-                                        Some("display"),
-                                    )
-                                    .await
-                            }
-                        })
-                        .await;
-                    match result {
-                        Ok(res) => {
-                            let primary = res
-                                .primary_handle
-                                .as_ref()
-                                .map(|handle| handle.canonical().to_owned());
-                            let claims_count = res.claims.len();
-                            let earliest_expiry = res
-                                .claims
-                                .iter()
-                                .filter_map(|claim| claim.expires_at.as_ref().cloned())
-                                .min();
-                            store.write().save_member_handle_lookup(
-                                res.subject.as_str().to_owned(),
-                                Some(realm_id),
-                                digest,
-                                primary,
-                                claims_count,
-                                Some(res.as_of),
-                                earliest_expiry,
-                            );
-                        }
-                        Err(err) if !err.is_auth_expired() => {
-                            store.write().save_member_handle_lookup(
-                                subject_id,
-                                Some(realm_id),
-                                digest,
-                                None,
-                                0,
-                                None,
-                                None,
-                            );
-                        }
-                        Err(_) => {}
-                    }
+                    crate::views::member_display::fetch_and_cache_member_handle(
+                        base, api_token, store, request,
+                    )
+                    .await;
                     fetching.write().remove(&request_key);
                 });
             }

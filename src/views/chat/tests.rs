@@ -2927,7 +2927,7 @@ fn embedded_sidecar_activation_keeps_the_source_strand_shell() {
 
 #[test]
 fn participation_visibility_uses_most_specific_effective_scope() {
-    use arkret_sdk::models::{
+    use arkret_models_collaboration::governance::agent_participation::{
         AgentParticipation, AgentParticipationEntry, AgentParticipationScope,
     };
 
@@ -2967,7 +2967,7 @@ fn participation_visibility_uses_most_specific_effective_scope() {
 
 #[test]
 fn participation_visibility_can_target_the_synthesized_default_discussion_strand() {
-    use arkret_sdk::models::{
+    use arkret_models_collaboration::governance::agent_participation::{
         AgentParticipation, AgentParticipationEntry, AgentParticipationScope,
     };
 
@@ -2993,7 +2993,7 @@ fn participation_visibility_can_target_the_synthesized_default_discussion_strand
 
 #[test]
 fn mention_only_participation_does_not_expose_agent_in_roster() {
-    use arkret_sdk::models::{
+    use arkret_models_collaboration::governance::agent_participation::{
         AgentParticipation, AgentParticipationEntry, AgentParticipationScope,
     };
 
@@ -3498,8 +3498,7 @@ fn mention_candidate_uses_cached_member_handle() {
         None,
     );
     let projection = json!({"members": [{
-        "actor_id": "did:web:bob.example",
-        "subject_id": "did:web:bob.example"
+        "actor_id": "did:web:bob.example"
     }]});
     let participants = space_participants(
         Some(&projection),
@@ -3517,6 +3516,15 @@ fn mention_candidate_uses_cached_member_handle() {
     assert_eq!(candidate.display_name, "bob:local.host");
     assert_eq!(candidate.insert_label(), "bob:local.host");
     assert_eq!(candidate.subtitle, "");
+}
+
+#[test]
+fn unresolved_historical_sender_uses_the_shared_protocol_id_fallback() {
+    let sender = "did:webvh:zQmHistoricalAuthor0123456789abcdefghijk";
+    assert_eq!(
+        sender_display_label(sender, "did:web:alice.example", "Alice", &[]),
+        crate::views::helpers::short_protocol_id(sender)
+    );
 }
 
 #[test]

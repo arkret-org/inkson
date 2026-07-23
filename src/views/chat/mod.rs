@@ -1445,6 +1445,57 @@ pub fn ChatPanel(
     let controller = use_chat_controller(&selected_realm_id, &initial_strand_id, &account_did);
     let mut migrated_draft_applied_for = use_signal(String::new);
     let mut sidecar_projection_retry_basis_seen = use_signal(String::new);
+    let mut member_handle_fetching = use_signal(std::collections::BTreeSet::<String>::new);
+    {
+        let handle_base_url = base_url.clone();
+        let handle_realm_id = selected_realm_id.clone();
+        use_effect(move || {
+            let _account_cursor = sync_cursor();
+            let _realm_epoch = realm_live_epoch();
+            let api_token = token();
+            if handle_base_url.trim().is_empty()
+                || handle_realm_id.trim().is_empty()
+                || api_token.trim().is_empty()
+            {
+                return;
+            }
+            let projection = state_store
+                .read()
+                .load()
+                .realm_tree_projections
+                .get(&handle_realm_id)
+                .cloned();
+            let rows = crate::views::member_display::realm_member_roster(projection.as_ref());
+            if rows.is_empty() {
+                return;
+            }
+            let fetches = {
+                let store = state_store.read();
+                let in_flight = member_handle_fetching.read();
+                crate::views::member_display::missing_member_handle_lookups(
+                    &store,
+                    &handle_realm_id,
+                    &rows,
+                    &in_flight,
+                )
+            };
+            for request in fetches {
+                let request_key = request.request_key.clone();
+                member_handle_fetching.write().insert(request_key.clone());
+                let base = handle_base_url.clone();
+                let credential = api_token.clone();
+                let store = state_store;
+                let mut fetching = member_handle_fetching;
+                spawn(async move {
+                    crate::views::member_display::fetch_and_cache_member_handle(
+                        base, credential, store, request,
+                    )
+                    .await;
+                    fetching.write().remove(&request_key);
+                });
+            }
+        });
+    }
     {
         let actor = account_did.clone();
         let state_store = state_store;

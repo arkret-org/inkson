@@ -476,7 +476,7 @@ pub(crate) fn owned_agent_mention_candidate(
 ) -> Option<crate::messaging::mentions::MentionCandidate> {
     let agent_slug = requested_agent_slug
         .map(str::trim)
-        .filter(|slug| arkret_sdk::models::validate_agent_slug(slug).is_ok())?;
+        .filter(|slug| arkret_models_identity::validate_agent_slug(slug).is_ok())?;
     let agent_id = agent_id.trim();
     let account_did = account_did.trim();
     if agent_id.is_empty() || account_did.is_empty() {
@@ -557,7 +557,7 @@ pub(crate) fn sender_display_label(
                 if account_did.is_empty() {
                     "inkson".to_owned()
                 } else {
-                    short_principal_label(account_did)
+                    crate::views::helpers::short_protocol_id(account_did)
                 }
             });
     }
@@ -565,7 +565,7 @@ pub(crate) fn sender_display_label(
         .iter()
         .find(|participant| participant.did == sender.trim())
         .and_then(participant_sender_label)
-        .unwrap_or_else(|| short_principal_label(sender))
+        .unwrap_or_else(|| crate::views::helpers::short_protocol_id(sender))
 }
 
 /// AKP-0008 §4.10 — resolve the agent label for an act-on-behalf

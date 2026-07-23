@@ -290,7 +290,7 @@ fn resolved_member_display_uses_persisted_current_account_handle() {
 }
 
 #[test]
-fn member_handle_lookup_requires_disclosed_or_verified_subject() {
+fn member_handle_lookup_keeps_authoritative_subject_separate_from_actor_candidate() {
     let row = RealmMemberRow {
         actor_id: "did:webvh:zQmPrincipal".to_owned(),
         membership: Some("join".to_owned()),
@@ -301,7 +301,18 @@ fn member_handle_lookup_requires_disclosed_or_verified_subject() {
         handle_claims_limited: false,
     };
 
-    assert!(member_handle_lookup_subject(&row, None).is_none());
+    assert!(crate::views::member_display::member_lookup_subject(&row, None).is_none());
+
+    let store = temp_state_store("actor-subject-handle-candidate");
+    let requests = crate::views::member_display::missing_member_handle_lookups(
+        &store,
+        TEST_REALM_ID,
+        std::slice::from_ref(&row),
+        &std::collections::BTreeSet::new(),
+    );
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].subject_id, row.actor_id);
+    assert_eq!(requests[0].realm_id, TEST_REALM_ID);
 }
 
 #[test]

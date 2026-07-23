@@ -9,10 +9,10 @@ use crate::state::{LocalStateStore, RawOperationRecord};
 use crate::views::helpers::actor_display_label;
 #[cfg(test)]
 pub(super) use crate::views::member_display::member_label as member_display_label;
+#[cfg(test)]
+pub(super) use crate::views::member_display::verified_inline_handle as member_inline_handle_label;
 pub(super) use crate::views::member_display::{
-    RealmMemberRow, member_lookup_subject as member_handle_lookup_subject,
-    owned_agent_slug as owned_agent_slug_for_row, realm_member_roster,
-    verified_inline_handle as member_inline_handle_label,
+    RealmMemberRow, owned_agent_slug as owned_agent_slug_for_row, realm_member_roster,
 };
 
 pub(super) fn card_member_is_current_account(row: &RealmMemberRow, account_did: &str) -> bool {
@@ -39,19 +39,6 @@ pub(super) fn member_roster_realm_context(
         })
         .unwrap_or_else(|| selected_realm_id.to_owned());
     trim_realm_id(&raw)
-}
-
-pub(super) fn member_handle_fetch_key(
-    realm_id: &str,
-    subject_id: &str,
-    digest: Option<&str>,
-) -> String {
-    format!(
-        "{}\u{1f}{}\u{1f}{}",
-        realm_id.trim(),
-        subject_id.trim(),
-        digest.unwrap_or("")
-    )
 }
 
 #[derive(Clone, Copy)]
