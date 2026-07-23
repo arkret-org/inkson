@@ -716,9 +716,17 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     }
 
     let secret = "Alice from Ops Private";
-    let contact_remark = ContactRemark::new("did:web:alice.example", secret);
+    let contact_remark = ContactRemark::new(
+        arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+        secret,
+        chrono::Utc::now(),
+    );
     let realm_id = "ak:realm:01904100-0000-7000-8000-0000000000cd";
-    let _realm_remark = RealmRemark::new(realm_id, secret);
+    let mut realm_remark = RealmRemark::new(
+        arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
+        chrono::Utc::now(),
+    );
+    realm_remark.local_name = secret.to_owned();
 
     let event = OperationBuilder::new(
         realm_id,

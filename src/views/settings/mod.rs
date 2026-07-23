@@ -2593,11 +2593,14 @@ pub fn SettingsPanel(
                                                         let next_pinned = !remark.pinned;
                                                         move |_| {
                                                             let id = id.clone();
+                                                            let Ok(typed_realm_id) = arkret_sdk::RealmId::new(id.clone()) else {
+                                                                return;
+                                                            };
                                                             let next = crate::account_data::RealmRemark::with_pinned_preserving_fields(
-                                                                id.clone(),
+                                                                typed_realm_id,
                                                                 Some(&existing),
                                                                 next_pinned,
-                                                                Some(chrono::Utc::now()),
+                                                                chrono::Utc::now(),
                                                             );
                                                             state_store
                                                                 .write()
@@ -2686,8 +2689,12 @@ pub fn SettingsPanel(
                                                             push_realm_remark_account_data(
                                                                 base_url(),
                                                                 token(),
-                                                                id,
-                                                                crate::account_data::RealmRemark::default(),
+                                                                id.clone(),
+                                                                crate::account_data::RealmRemark::new(
+                                                                    arkret_sdk::RealmId::new(id)
+                                                                        .expect("stored Realm ID is valid"),
+                                                                    chrono::Utc::now(),
+                                                                ),
                                                             );
                                                         }
                                                     },
@@ -2725,16 +2732,18 @@ pub fn SettingsPanel(
                                     crate::components::feedback::toast_info("feedback.enter_realm_and_name", vec![]);
                                     return;
                                 }
-                                if !realm_id.starts_with("ak:realm:") {
+                                let Ok(typed_realm_id) =
+                                    arkret_sdk::RealmId::new(realm_id.clone())
+                                else {
                                     crate::components::feedback::toast_error("feedback.invalid_realm_id", vec![], None);
                                     return;
-                                }
+                                };
                                 let now = chrono::Utc::now();
                                 let mut remark = crate::account_data::RealmRemark::new(
-                                    realm_id.clone(),
-                                    local_name.clone(),
+                                    typed_realm_id,
+                                    now,
                                 );
-                                remark.saved_at = now;
+                                remark.local_name = local_name.clone();
                                 remark.updated_at = Some(now);
                                 state_store
                                     .write()
@@ -2816,11 +2825,7 @@ pub fn SettingsPanel(
                                                                 .unwrap_or_default();
                                                             let mut next = existing.clone();
                                                             next.local_name = next_name.trim().to_owned();
-                                                            next.updated_at = Some(
-                                                                arkret_sdk::canonical::format_timestamp_canonical(
-                                                                    chrono::Utc::now(),
-                                                                ),
-                                                            );
+                                                            next.updated_at = Some(chrono::Utc::now());
                                                             state_store
                                                                 .write()
                                                                 .set_contact_remark(did.clone(), next.clone());
@@ -2876,8 +2881,13 @@ pub fn SettingsPanel(
                                                             push_contact_remark_account_data(
                                                                 base_url(),
                                                                 token(),
-                                                                did,
-                                                                crate::account_data::ContactRemark::default(),
+                                                                did.clone(),
+                                                                crate::account_data::ContactRemark::new(
+                                                                    arkret_sdk::Did::new(did)
+                                                                        .expect("stored contact DID is valid"),
+                                                                    "",
+                                                                    chrono::Utc::now(),
+                                                                ),
                                                             );
                                                         }
                                                     },
@@ -2921,15 +2931,13 @@ pub fn SettingsPanel(
                                     crate::components::feedback::toast_info("feedback.enter_actor_and_name", vec![]);
                                     return;
                                 }
-                                let now_rfc3339 = arkret_sdk::canonical::format_timestamp_canonical(
+                                let mut remark = crate::account_data::ContactRemark::new(
+                                    arkret_sdk::Did::new(actor_id.clone())
+                                        .expect("normalized actor DID is valid"),
+                                    local_name.clone(),
                                     chrono::Utc::now(),
                                 );
-                                let mut remark = crate::account_data::ContactRemark::new(
-                                    actor_id.clone(),
-                                    local_name.clone(),
-                                );
-                                remark.saved_at = Some(now_rfc3339.clone());
-                                remark.updated_at = Some(now_rfc3339);
+                                remark.updated_at = Some(remark.saved_at);
                                 state_store
                                     .write()
                                     .set_contact_remark(actor_id.clone(), remark.clone());

@@ -42,7 +42,6 @@ pub mod crypto;
 pub mod crypto_boundary;
 pub(crate) mod directory_helpers;
 pub mod disappearing;
-pub mod discovery;
 pub(crate) mod ephemeral;
 pub mod event_builders;
 pub mod event_signer;

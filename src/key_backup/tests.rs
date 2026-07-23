@@ -484,11 +484,14 @@ fn mls_history_accepts_secret_storage_key() {
         "device-secret",
         b"salt",
     );
-    let body = envelope.to_key_backup_body(
-        "ak:backup:01964137-0000-7000-8000-00000000feed",
-        ACTOR,
-        DEVICE,
-    );
+    let body = envelope
+        .to_key_backup_body(
+            "ak:backup:01964137-0000-7000-8000-00000000feed",
+            ACTOR,
+            DEVICE,
+            &crate::mls::runtime::derive_mls_history_backup_key("device-secret").unwrap(),
+        )
+        .unwrap();
     assert_eq!(body["encryption"]["recipient_method"], "secret_storage_key");
     assert_eq!(
         body["encryption"]["recipient_key_ref"],
@@ -552,11 +555,14 @@ fn mls_history_rejects_obvious_plaintext_fields() {
         "device-secret",
         b"salt",
     );
-    let mut body = envelope.to_key_backup_body(
-        "ak:backup:01964137-0000-7000-8000-00000000beef",
-        "did:web:alice.example",
-        "ak:device:01964137-0000-7000-8000-000000000001",
-    );
+    let mut body = envelope
+        .to_key_backup_body(
+            "ak:backup:01964137-0000-7000-8000-00000000beef",
+            "did:web:alice.example",
+            "ak:device:01964137-0000-7000-8000-000000000001",
+            &crate::mls::runtime::derive_mls_history_backup_key("device-secret").unwrap(),
+        )
+        .unwrap();
     body["serialized_state"] = json!("plaintext sdk bytes");
 
     let err = validate_key_backup_envelope(&body, Some(BackupClass::MlsHistory))

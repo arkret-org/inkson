@@ -170,11 +170,14 @@ pub(super) fn toggle_sidebar_realm_pin(
     base_url: String,
     api_token: String,
 ) {
+    let Ok(typed_realm_id) = arkret_sdk::RealmId::new(realm_id.clone()) else {
+        return;
+    };
     let next = crate::account_data::RealmRemark::with_pinned_preserving_fields(
-        realm_id.clone(),
+        typed_realm_id,
         existing.as_ref(),
         next_pinned,
-        Some(chrono::Utc::now()),
+        chrono::Utc::now(),
     );
     state_store
         .write()
@@ -200,12 +203,14 @@ pub(super) fn toggle_sidebar_contact_pin(
     base_url: String,
     api_token: String,
 ) {
-    let now_rfc3339 = arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now());
+    let Ok(actor_did) = arkret_sdk::Did::new(actor_id.clone()) else {
+        return;
+    };
     let next = crate::account_data::ContactRemark::with_pinned_preserving_fields(
-        actor_id.clone(),
+        actor_did,
         existing.as_ref(),
         next_pinned,
-        Some(now_rfc3339),
+        chrono::Utc::now(),
     );
     state_store
         .write()
