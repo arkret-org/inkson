@@ -348,7 +348,7 @@ chacha20poly1305 = {version = "0.10",default-features = false}
 chime = {version = "0.3.0",path = "../chime"}
 chrono = "0.4.45"
 arkret-sdk = {package = "arkret",version = "0.3.0",path = "../arkret-rust-sdk/crates/sdk"}
-arkret-signatures = {version = "0.3.0",path = "../arkret-rust-sdk/crates/signatures"}
+arkret-signatures = {version = "0.3.0",path = "../arkret-rust-sdk/crates/signatures",default-features = false,features = ["collaboration"]}
 # Needed only to name arkret_crypto::Result in the MlsExporterSource impl:
 # the SFrame exporter trait moved to arkret-crypto (SDK phase 2-d), so its
 # method signature returns arkret_crypto::Error at the crypto boundary.
