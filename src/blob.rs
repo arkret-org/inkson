@@ -25,8 +25,8 @@ use arkret_sdk::blob_aead::{
     self, DEFAULT_SEGMENT_SIZE, EncryptedAttachmentEnvelope, StreamEncryptParams,
 };
 pub use arkret_sdk::{
-    Attachment, AuthenticatedDownloadGrant, DownloadGrantScope, EncryptedAttachment, KeyRefObject,
-    MediaMetadata, Thumbnail, safe_content_disposition, safe_content_type,
+    Attachment, AuthenticatedDownloadGrant, DownloadGrantScope, KeyRefObject, MediaMetadata,
+    Thumbnail, safe_content_disposition, safe_content_type,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};

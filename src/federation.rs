@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use arkret_sdk::WellKnownArkretServer;
+use arkret_models_collaboration::federation::frames::WellKnownArkretServer;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
