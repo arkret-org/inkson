@@ -196,7 +196,7 @@ pub async fn list_handles_for_subject(
     http: &arkret_sdk::http_client::Client,
     subject: &str,
     realm_id: Option<&str>,
-    intent: Option<&str>,
+    intent: Option<arkret_models_discovery::DirectoryIntent>,
 ) -> anyhow::Result<arkret_models_discovery::DirectorySubjectHandleList> {
     use arkret_models_discovery::DirectoryListHandlesForSubjectRequestBody;
 
@@ -212,10 +212,7 @@ pub async fn list_handles_for_subject(
     let body = DirectoryListHandlesForSubjectRequestBody {
         subject: subject_did,
         realm_id: realm,
-        intent: intent
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(ToOwned::to_owned),
+        intent: intent.map(|value| value.as_str().to_owned()),
         requester: None,
         proof_challenge: None,
         proofs: Vec::new(),

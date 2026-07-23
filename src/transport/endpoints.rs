@@ -231,7 +231,7 @@ impl DirectoryEndpoints<'_> {
         &self,
         subject: &str,
         realm_id: Option<&str>,
-        intent: Option<&str>,
+        intent: Option<arkret_models_discovery::DirectoryIntent>,
     ) -> anyhow::Result<arkret_models_discovery::DirectorySubjectHandleList> {
         super::directory::list_handles_for_subject(self.transport.http(), subject, realm_id, intent)
             .await

@@ -259,7 +259,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                             &http,
                             &actor,
                             None,
-                            Some("display"),
+                            Some(arkret_models_discovery::DirectoryIntent::Lookup),
                         )
                         .await
                     },
@@ -370,7 +370,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                                     &http,
                                     &subject_id,
                                     None,
-                                    Some("display"),
+                                    Some(arkret_models_discovery::DirectoryIntent::Lookup),
                                 )
                                 .await
                             }
