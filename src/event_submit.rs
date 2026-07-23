@@ -1712,8 +1712,7 @@ impl EventSubmitter {
                 .await?;
         let gate_account_base = url::Url::parse(&authority.gate_account_base)?;
         let authority_origin = gate_account_base.origin().ascii_serialization();
-        let authority_http =
-            arkret_sdk::http_client::Client::new(url::Url::parse(&authority_origin)?)?;
+        let authority_http = account_authority_http_client(&authority_origin)?;
         authority_http
             .agent_key_pair(body)
             .await
@@ -1729,6 +1728,20 @@ impl EventSubmitter {
         body.authorize_event = signed;
         self.agent_key_pair(&body).await
     }
+}
+
+fn account_authority_http_client(
+    authority_origin: &str,
+) -> anyhow::Result<arkret_sdk::http_client::Client> {
+    let base_url = url::Url::parse(authority_origin)?;
+    arkret_sdk::http_client::ClientBuilder::new(base_url)
+        // Account enrollment and refresh already use the same exception. It
+        // is restricted by the SDK to loopback hosts, so production HTTP
+        // origins remain rejected while the joint local stack can complete
+        // the controller-approved Agent runtime pairing flow.
+        .allow_insecure_localhost()
+        .build()
+        .map_err(anyhow::Error::from)
 }
 
 /// Finalize the inner capability artifact before the outer Event is signed.
@@ -1981,6 +1994,13 @@ mod tests {
             authority_principal_id: "did:web:alice.example".to_owned(),
             generation_ref: "1-QmCurrent".to_owned(),
         }
+    }
+
+    #[test]
+    fn account_authority_client_allows_only_insecure_loopback() {
+        assert!(account_authority_http_client("http://localhost:8787").is_ok());
+        assert!(account_authority_http_client("http://127.0.0.1:8787").is_ok());
+        assert!(account_authority_http_client("http://accounts.example").is_err());
     }
 
     #[test]
