@@ -759,7 +759,7 @@ async fn sign_peer_keypackage_claim_authorization(
 pub async fn consent_cells(
     http: &arkret_sdk::http_client::Client,
 ) -> anyhow::Result<arkret_sdk::ConsentCellList> {
-    http.get(arkret_sdk::http::PATH_SELF_CONSENT_CELLS)
+    http.get(arkret_wire::PATH_SELF_CONSENT_CELLS)
         .await
         .map_err(anyhow::Error::from)
 }
@@ -871,7 +871,7 @@ pub async fn grant_consent(
     };
     let path = format!(
         "{}/{}/grant",
-        arkret_sdk::http::PATH_SELF_CONSENT_CELLS,
+        arkret_wire::PATH_SELF_CONSENT_CELLS,
         crate::wire_helpers::path_component(holder.trim()),
     );
     http.post(&path, &body).await.map_err(anyhow::Error::from)
@@ -892,7 +892,7 @@ pub async fn revoke_consent(
     };
     let path = format!(
         "{}/{}/revoke",
-        arkret_sdk::http::PATH_SELF_CONSENT_CELLS,
+        arkret_wire::PATH_SELF_CONSENT_CELLS,
         crate::wire_helpers::path_component(holder.trim()),
     );
     http.post(&path, &body).await.map_err(anyhow::Error::from)
@@ -912,7 +912,7 @@ pub async fn request_consent(
         peer_did: Some(did_for_request_field("peer", peer)?),
         consent_scope: Some(scope.trim().to_owned()),
     };
-    http.post(arkret_sdk::http::PATH_SELF_CONSENT_REQUEST, &body)
+    http.post(arkret_wire::PATH_SELF_CONSENT_REQUEST, &body)
         .await
         .map_err(anyhow::Error::from)
 }
