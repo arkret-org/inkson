@@ -4,10 +4,9 @@
 //! protocol-level send paths so blob references survive in event payloads
 //! with the spec's content-hash typed-id (`ak:blob:sha256:<hex>`).
 //!
-//! Re-exports the SDK's [`Attachment`] / [`MediaMetadata`] / [`Thumbnail`]
-//! structures and provides operation builders for blob register / revoke
-//! events. The actual upload bytes go to the Principal Server's
-//! `ak.self.blob.upload.create` endpoint; this module covers the durable event side.
+//! The actual upload bytes go to the Principal Server's
+//! `ak.self.blob.upload.create` endpoint; this module covers client-side
+//! encryption and content addressing.
 //!
 //! # Attachment AEAD is the SDK's canonical codec
 //!
@@ -21,14 +20,10 @@
 //! SDK's [`EncryptedAttachmentEnvelope`], whose serde shape is exactly
 //! `blob.schema.json#/$defs/encrypted_attachment`.
 
+pub use arkret_sdk::KeyRefObject;
 use arkret_sdk::blob_aead::{
     self, DEFAULT_SEGMENT_SIZE, EncryptedAttachmentEnvelope, StreamEncryptParams,
 };
-pub use arkret_sdk::{
-    Attachment, AuthenticatedDownloadGrant, DownloadGrantScope, KeyRefObject, MediaMetadata,
-    Thumbnail, safe_content_disposition, safe_content_type,
-};
-use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 /// MLS exporter content-key length (XChaCha20-Poly1305 key).
@@ -231,16 +226,6 @@ pub fn encrypt_mls_asset(
 // `ak.blob.grant` event builders were removed — none of those kinds is in
 // the spec event-kind-registry, and unregistered wire kinds must not be
 // mintable from client code. Re-add once the kinds are registered via AKP.
-
-/// Wrap a [`MediaMetadata`] reference in the canonical event payload shape
-/// used by `ak.message.create` attachments. Useful for building chat /
-/// message event bodies that carry a single attached blob.
-pub fn attachment_payload(metadata: &MediaMetadata) -> anyhow::Result<Value> {
-    Ok(json!({
-        "kind": "ak.content.attachment",
-        "metadata": serde_json::to_value(metadata)?,
-    }))
-}
 
 #[cfg(test)]
 mod tests {
