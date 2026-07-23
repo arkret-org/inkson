@@ -110,8 +110,8 @@ pub(crate) fn run_local_mls_encrypt(
 fn circle_effective_scope(
     realm_id: &str,
     circle_id: &str,
-) -> Result<arkret_sdk::models::EffectiveScope, String> {
-    Ok(arkret_sdk::models::EffectiveScope::Circle {
+) -> Result<arkret_wire::EffectiveScope, String> {
+    Ok(arkret_wire::EffectiveScope::Circle {
         realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())
             .map_err(|error| format!("invalid MLS scope Realm id: {error:?}"))?,
         circle_id: arkret_sdk::CircleId::new(circle_id.to_owned())

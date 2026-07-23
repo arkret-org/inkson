@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod personal_agent_tests {
-    use arkret_sdk::models::AgentParticipation;
+    use arkret_models_collaboration::governance::agent_participation::AgentParticipation;
 
     use super::super::*;
     use crate::views::agents::model::{

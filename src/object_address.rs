@@ -3,7 +3,7 @@
 //!
 //! A user can share a Realm / Strand / Message as a link. This module is the
 //! inkson-side glue on top of the SDK's client-agnostic addressing grammar
-//! ([`arkret_sdk::models::parse_address`] / [`build_address`] /
+//! ([`arkret_wire::parse_address`] / [`build_address`] /
 //! [`build_https_landing`]) plus the [`target_digest`] invite / preview token binding:
 //!
 //! * [`ShareTarget`] — a typed "thing I want to share" (realm / strand / message) plus routing
@@ -21,7 +21,7 @@
 //!   collapses to a single friendly `object_link.error.unavailable` message (anti-enumeration).
 //! * Reference links carry no authorization. Invite and preview links bind the [`TargetDescriptor`]
 //!   digest so a token minted for object A cannot be replayed onto object B (scope-confusion
-//!   defence lives in the SDK's [`arkret_sdk::models::verify_token_target`]).
+//!   defence lives in the SDK's [`arkret_wire::verify_token_target`]).
 //!
 //! ## Web protocol-handler registration — design choice
 //! inkson deliberately ships the **HTTPS-fragment-only** landing path and does
@@ -40,8 +40,9 @@
 //! Windows `HKCR\web+arkret` registry) is out of scope here.
 // TODO(R3.3.1): native OS deep-link registration for the `web+arkret:` scheme.
 
-use arkret_sdk::models::{
-    AddressAction, LinkType, ParsedAddress, RealmRef, TargetDescriptor, TargetKind, build_address,
+use arkret_models_discovery::TargetKind;
+use arkret_wire::{
+    AddressAction, LinkType, ParsedAddress, RealmRef, TargetDescriptor, build_address,
     build_https_landing, parse_address, target_digest,
 };
 

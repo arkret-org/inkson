@@ -261,7 +261,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                         async move {
                                             http.agent_renew_pairing(
                                                 &agent_id,
-                                                &arkret_sdk::models::AgentRenewPairingRequestBody::default(),
+                                                &arkret_models_collaboration::agent_operations::AgentRenewPairingRequestBody::default(),
                                             )
                                             .await
                                             .map_err(anyhow::Error::from)
@@ -342,7 +342,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                     let key_state = key_state.clone();
                                     let controller = controller.clone();
                                     async move {
-                                        let bootstrap_key_state: arkret_sdk::models::KeyState =
+                                        let bootstrap_key_state: arkret_models_collaboration::agent_operations::KeyState =
                                             serde_json::from_value(key_state.clone()).map_err(
                                                 |error| {
                                                     anyhow::anyhow!(
@@ -353,15 +353,15 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                         let previous_seal_id = match &bootstrap_key_state
                                             .pcr_recovery
                                         {
-                                            arkret_sdk::models::AgentPcrRecoveryState::Ready {
+                                            arkret_models_collaboration::agent_operations::AgentPcrRecoveryState::Ready {
                                                 managed_frontier_ref,
                                                 ..
                                             }
-                                            | arkret_sdk::models::AgentPcrRecoveryState::Stale {
+                                            | arkret_models_collaboration::agent_operations::AgentPcrRecoveryState::Stale {
                                                 managed_frontier_ref,
                                                 ..
                                             } => Some(managed_frontier_ref.seal_ref.clone()),
-                                            arkret_sdk::models::AgentPcrRecoveryState::Pending => {
+                                            arkret_models_collaboration::agent_operations::AgentPcrRecoveryState::Pending => {
                                                 None
                                             }
                                         };

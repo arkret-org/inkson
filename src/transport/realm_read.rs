@@ -26,7 +26,7 @@ pub async fn authz_check_resource(
     action: &str,
     resource: Option<Value>,
 ) -> anyhow::Result<AuthzCheckOutcome> {
-    let body = arkret_sdk::models::AuthzCheckRequestBody {
+    let body = arkret_models_collaboration::governance::authorization::AuthzCheckRequestBody {
         actor_id: arkret_sdk::Did::new(actor.trim().to_owned())?,
         action: action.trim().to_owned(),
         resource: resource.map(serde_json::from_value).transpose()?,
@@ -75,7 +75,9 @@ pub async fn collection_projection(
     http: &arkret_sdk::http_client::Client,
     view_id: &str,
 ) -> anyhow::Result<CollectionProjectionView> {
-    let body = arkret_sdk::models::ViewProjectionRequestBody::default();
+    let body =
+        arkret_models_collaboration::objects::query_projection::ViewProjectionRequestBody::default(
+        );
     let view: arkret_sdk::CollectionProjectionView = http
         .collection_projection(view_id, &body)
         .await
@@ -94,7 +96,9 @@ pub async fn collection_projection(
 pub async fn list_realm_organizations(
     http: &arkret_sdk::http_client::Client,
     realm_id: &str,
-) -> anyhow::Result<arkret_sdk::models::RealmOrganizationRelationshipList> {
+) -> anyhow::Result<
+    arkret_models_collaboration::governance::realm_governance::RealmOrganizationRelationshipList,
+> {
     let realm_id = trim_realm_id(realm_id);
     http.realm_organizations(&realm_id)
         .await

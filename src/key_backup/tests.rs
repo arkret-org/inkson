@@ -1,4 +1,4 @@
-use arkret_sdk::models::{KeyBackupContentItem, ManagedFrontierRef, ManagedPrincipalBinding};
+use arkret_models_crypto::{KeyBackupContentItem, ManagedFrontierRef, ManagedPrincipalBinding};
 use ed25519_dalek::SigningKey;
 use serde_json::{Value, json};
 

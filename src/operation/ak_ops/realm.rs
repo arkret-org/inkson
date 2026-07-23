@@ -1,6 +1,6 @@
 //! Realm lifecycle / update / organization / message-revise builders.
 
-use arkret_sdk::models::{
+use arkret_models_collaboration::events_payloads::preview_realm_reaction::{
     RealmOrganizationAuthorization, RealmOrganizationControlScope, RealmOrganizationIssuerRole,
     RealmOrganizationPayload, RealmOrganizationRelationship, RealmOrganizationStatus,
     SignatureMaterial,

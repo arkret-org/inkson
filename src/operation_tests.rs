@@ -184,7 +184,7 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
     let parsed: Event = serde_json::from_value(value).unwrap();
     assert_eq!(
         parsed.effective_scope,
-        Some(arkret_sdk::models::EffectiveScope::Realm {
+        Some(arkret_wire::EffectiveScope::Realm {
             realm_id: arkret_sdk::RealmId::new(
                 "ak:realm:0196419b-0000-7000-8000-0000000000ab".to_owned()
             )
@@ -967,7 +967,7 @@ fn message_revise_builder_uses_content_payload_schema() {
 // client-side counterparts of the SDK statement verifier tests; the helper
 // produces real `ak.realm.organization` events that cotest can reuse.
 mod realm_organization_builder_tests {
-    use arkret_sdk::models::{
+    use arkret_models_collaboration::events_payloads::preview_realm_reaction::{
         RealmOrganizationControlScope, RealmOrganizationIssuerRole, RealmOrganizationRelationship,
         RealmOrganizationStatus, SignatureMaterial,
     };

@@ -33,7 +33,7 @@ pub async fn query_keys(
         .map_err(|err| anyhow::anyhow!("invalid device_id `{device_id}`: {err}"))?;
     let mut device_keys = BTreeMap::new();
     device_keys.insert(actor, vec![device_id]);
-    let body = arkret_sdk::models::KeysQueryRequestBody {
+    let body = arkret_models_crypto::KeysQueryRequestBody {
         device_keys,
         timeout_ms: None,
     };
@@ -101,7 +101,7 @@ pub async fn submit_realm_key_request(
     let device_id = arkret_sdk::DeviceId::new(device_id.trim().to_owned())?;
     let payload = arkret_sdk::RealmKeyRequestPayload {
         key_scope: arkret_sdk::RealmKeyRequestScope {
-            effective_scope: arkret_sdk::models::EffectiveScope::Realm {
+            effective_scope: arkret_wire::EffectiveScope::Realm {
                 realm_id: realm_id.clone(),
             },
             policy_digest: None,

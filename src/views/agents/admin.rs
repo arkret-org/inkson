@@ -7,12 +7,12 @@
 
 use std::time::Duration;
 
-use arkret_sdk::models::{
-    AgentDeactivateRequestBody, AgentKeyScope, AgentLifecycleState, AgentPairingMode,
-    AgentPauseRequestBody, AgentPcrRecoveryState, AgentProjection, AgentProvisionOutcome,
-    AgentProvisionRequestBody, AgentRenewPairingOutcome, AgentResumeRequestBody, AgentStatus,
-    AgentView, KeyState,
+use arkret_models_collaboration::agent_operations::{
+    AgentDeactivateRequestBody, AgentLifecycleState, AgentPairingMode, AgentPauseRequestBody,
+    AgentPcrRecoveryState, AgentProjection, AgentProvisionOutcome, AgentProvisionRequestBody,
+    AgentRenewPairingOutcome, AgentResumeRequestBody, AgentStatus, AgentView, KeyState,
 };
+use arkret_models_collaboration::events_payloads::agent::AgentKeyScope;
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::{use_navigator, use_route};
@@ -470,7 +470,7 @@ async fn renew_agent_pairing(
         async move {
             http.agent_renew_pairing(
                 &agent_id,
-                &arkret_sdk::models::AgentRenewPairingRequestBody::default(),
+                &arkret_models_collaboration::agent_operations::AgentRenewPairingRequestBody::default(),
             )
             .await
             .map_err(anyhow::Error::from)
@@ -1226,7 +1226,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                     return;
                                                 }
                                                 if let Err(error) =
-                                                    arkret_sdk::models::validate_agent_slug(&slug_value)
+                                                    arkret_models_identity::validate_agent_slug(&slug_value)
                                                 {
                                                     last_op_status.set(format!("Slug is invalid: {error}"));
                                                     return;
@@ -2075,7 +2075,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                                 async move {
                                                                     http.agent_renew_pairing(
                                                                         &renew_id,
-                                                                        &arkret_sdk::models::AgentRenewPairingRequestBody::default(),
+                                                                        &arkret_models_collaboration::agent_operations::AgentRenewPairingRequestBody::default(),
                                                                     )
                                                                     .await
                                                                     .map_err(anyhow::Error::from)

@@ -348,7 +348,7 @@ fn inkson_accepts_server_contract_payloads() {
         "obligations": []
     }))
     .unwrap();
-    assert_eq!(authz.decision, arkret_sdk::models::AuthzDecision::Allow);
+    assert_eq!(authz.decision, arkret_wire::AuthzDecision::Allow);
 
     // `GrantList` is the SDK authoritative wire type (soland serialises it
     // verbatim), so rows must be full `ak.schema.capability_grant.v1`
@@ -771,8 +771,8 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     );
     assert_no_secret("log", &log_entry, secret);
 
-    let directory = arkret_sdk::models::DirectoryRealmSearchOutcome {
-        realms: vec![arkret_sdk::models::RealmPreview {
+    let directory = arkret_models_discovery::DirectoryRealmSearchOutcome {
+        realms: vec![arkret_models_discovery::RealmPreview {
             realm_id: arkret_sdk::RealmId::new(
                 "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
             )
@@ -782,8 +782,8 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
             avatar_blob_ref: None,
             organization_did: None,
             join_rule: Some("public".to_owned()),
-            member_count_bucket: Some(arkret_sdk::models::RealmMemberCountBucket::Bucket(
-                arkret_sdk::models::RealmMemberCountBucketLabel::OneToTen,
+            member_count_bucket: Some(arkret_models_discovery::RealmMemberCountBucket::Bucket(
+                arkret_models_discovery::RealmMemberCountBucketLabel::OneToTen,
             )),
             summary: Some("Public description".to_owned()),
             owning_organizations: Vec::new(),

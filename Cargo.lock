@@ -171,6 +171,7 @@ dependencies = [
  "arkret-keystore",
  "arkret-lattice-registry",
  "arkret-mls",
+ "arkret-models",
  "arkret-models-collaboration",
  "arkret-models-crypto",
  "arkret-models-discovery",
@@ -451,6 +452,17 @@ dependencies = [
  "tls_codec",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "arkret-models"
+version = "0.3.0"
+dependencies = [
+ "arkret-models-collaboration",
+ "arkret-models-crypto",
+ "arkret-models-discovery",
+ "arkret-models-identity",
+ "arkret-models-integration",
 ]
 
 [[package]]
@@ -4302,6 +4314,10 @@ dependencies = [
  "argon2",
  "arkret",
  "arkret-crypto",
+ "arkret-models-collaboration",
+ "arkret-models-crypto",
+ "arkret-models-discovery",
+ "arkret-models-identity",
  "arkret-models-integration",
  "arkret-policy",
  "arkret-wire",

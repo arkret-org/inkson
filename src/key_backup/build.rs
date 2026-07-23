@@ -1,4 +1,4 @@
-use arkret_sdk::models::KeyBackupContentItem;
+use arkret_models_crypto::KeyBackupContentItem;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde_json::{Value, json};
@@ -13,7 +13,7 @@ use crate::recovery_crypto::{
 
 /// Serialize a SDK `KeyBackupContentItem` into the on-wire `contents[]` object.
 /// The content item is the spec-defined type (`ak.schema.key_backup.v1`); the
-/// authoritative shape lives in `arkret_sdk::models::KeyBackupContentItem`, so
+/// authoritative shape lives in `arkret_models_crypto::KeyBackupContentItem`, so
 /// neither inkson nor soland redefines it. `skip_serializing_if` keeps absent
 /// optionals (e.g. `secret_version` on share items) out of the canonical bytes.
 fn backup_content_object(item: &KeyBackupContentItem) -> anyhow::Result<Value> {

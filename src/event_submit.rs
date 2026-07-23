@@ -1704,8 +1704,8 @@ impl EventSubmitter {
     /// method submits the pairing request.
     async fn agent_key_pair(
         &self,
-        body: &arkret_sdk::models::AgentKeyPairRequestBody,
-    ) -> anyhow::Result<arkret_sdk::models::AgentKeyPairOutcome> {
+        body: &arkret_models_collaboration::agent_operations::AgentKeyPairRequestBody,
+    ) -> anyhow::Result<arkret_models_collaboration::agent_operations::AgentKeyPairOutcome> {
         let principal_server_url = self.http.base_url().as_str();
         let authority =
             crate::identity::account_auth::AuthorityResolver::discover(principal_server_url)
@@ -1722,9 +1722,9 @@ impl EventSubmitter {
 
     pub(crate) async fn agent_key_pair_with_authorize_event(
         &self,
-        mut body: arkret_sdk::models::AgentKeyPairRequestBody,
+        mut body: arkret_models_collaboration::agent_operations::AgentKeyPairRequestBody,
         authorize_event: &arkret_sdk::Event,
-    ) -> anyhow::Result<arkret_sdk::models::AgentKeyPairOutcome> {
+    ) -> anyhow::Result<arkret_models_collaboration::agent_operations::AgentKeyPairOutcome> {
         let (signed, _) = self.prepare_sdk_event_for_submit(authorize_event).await?;
         body.authorize_event = signed;
         self.agent_key_pair(&body).await

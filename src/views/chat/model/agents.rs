@@ -19,7 +19,7 @@ pub(crate) fn merge_agent_metadata(
 }
 
 pub(crate) fn participation_allows_public_reply(
-    entries: &[arkret_sdk::models::AgentParticipationEntry],
+    entries: &[arkret_models_collaboration::governance::agent_participation::AgentParticipationEntry],
     realm_id: &str,
     circle_id: Option<&str>,
     strand_id: &str,
@@ -27,7 +27,7 @@ pub(crate) fn participation_allows_public_reply(
     let strand_match = entries.iter().find(|entry| {
         matches!(
             &entry.scope,
-            arkret_sdk::models::AgentParticipationScope::Strand {
+            arkret_models_collaboration::governance::agent_participation::AgentParticipationScope::Strand {
                 realm_id: entry_realm,
                 strand_id: entry_strand,
             } if entry_realm.as_str() == realm_id && entry_strand.as_str() == strand_id
@@ -36,7 +36,7 @@ pub(crate) fn participation_allows_public_reply(
     let realm_match = entries.iter().find(|entry| {
         matches!(
             &entry.scope,
-            arkret_sdk::models::AgentParticipationScope::Realm {
+            arkret_models_collaboration::governance::agent_participation::AgentParticipationScope::Realm {
                 realm_id: entry_realm,
             } if entry_realm.as_str() == realm_id
         )
@@ -45,7 +45,7 @@ pub(crate) fn participation_allows_public_reply(
         entries.iter().find(|entry| {
             matches!(
                 &entry.scope,
-                arkret_sdk::models::AgentParticipationScope::Circle {
+                arkret_models_collaboration::governance::agent_participation::AgentParticipationScope::Circle {
                     realm_id: entry_realm,
                     circle_id: entry_circle,
                 } if entry_realm.as_str() == realm_id && entry_circle.as_str() == circle_id
@@ -73,7 +73,7 @@ pub(crate) fn agent_metadata_from_mentions(
         };
         if agent_slug.is_empty()
             || controller_subject_id.as_str().trim().is_empty()
-            || arkret_sdk::models::validate_agent_slug(agent_slug).is_err()
+            || arkret_models_identity::validate_agent_slug(agent_slug).is_err()
         {
             continue;
         }
@@ -173,7 +173,7 @@ pub(crate) fn owned_agent_metadata(
             let slug = slug.trim();
             if agent_id.is_empty()
                 || slug.is_empty()
-                || arkret_sdk::models::validate_agent_slug(slug).is_err()
+                || arkret_models_identity::validate_agent_slug(slug).is_err()
             {
                 return None;
             }

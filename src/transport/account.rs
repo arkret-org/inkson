@@ -57,7 +57,7 @@ fn optional_did_for_request_field(
 
 pub async fn account_viewer(
     http: &arkret_sdk::http_client::Client,
-) -> anyhow::Result<arkret_sdk::models::AccountView> {
+) -> anyhow::Result<arkret_models_collaboration::account_lifecycle::AccountView> {
     http.account_viewer()
         .await
         .map_err(|error| anyhow::anyhow!("account viewer: {error}"))
@@ -79,7 +79,7 @@ pub async fn update_profile(
     display_name: Option<&str>,
     bio: Option<&str>,
     avatar_blob_ref: Option<&str>,
-) -> anyhow::Result<arkret_sdk::models::AccountUpdateProfileOutcome> {
+) -> anyhow::Result<arkret_models_identity::AccountUpdateProfileOutcome> {
     let mut patch = arkret_sdk::Patch::new();
     if let Some(display_name) = display_name {
         let display_name = display_name.trim();
@@ -114,7 +114,8 @@ pub async fn update_profile(
     patch
         .validate()
         .map_err(|err| anyhow::anyhow!("invalid profile patch: {err}"))?;
-    let body = arkret_sdk::models::AccountUpdateProfileRequestBody { patch };
+    let body =
+        arkret_models_collaboration::account_lifecycle::AccountUpdateProfileRequestBody { patch };
     http.account_update_profile(&body)
         .await
         .map_err(anyhow::Error::from)
@@ -695,7 +696,7 @@ async fn sign_peer_keypackage_claim_authorization(
         .get(&requester)
         .and_then(|devices| devices.get(&device_id))
         .ok_or_else(|| anyhow::anyhow!("active signing device is absent from the key directory"))?;
-    if device.device_status != Some(arkret_sdk::models::DeviceStatus::Active) {
+    if device.device_status != Some(arkret_models_crypto::DeviceStatus::Active) {
         anyhow::bail!("active signing device is not accepted by the key directory");
     }
     let device_authorize_event_id = device
@@ -778,7 +779,7 @@ pub async fn identity_resolve(
 ) -> anyhow::Result<IdentityResolveOutcome> {
     let subject = arkret_sdk::Did::new(did.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid did `{did}`: {err}"))?;
-    let body = arkret_sdk::models::IdentityResolveRequestBody {
+    let body = arkret_models_identity::IdentityResolveRequestBody {
         did: subject,
         requested_evidence_kinds: Vec::new(),
     };
@@ -789,7 +790,7 @@ pub async fn identity_resolve(
 
 pub async fn sync_describe(
     http: &arkret_sdk::http_client::Client,
-) -> anyhow::Result<arkret_sdk::models::ServiceDescribe> {
+) -> anyhow::Result<arkret_models_discovery::ServiceDescribe> {
     http.account_describe().await.map_err(anyhow::Error::from)
 }
 
@@ -802,7 +803,9 @@ pub async fn invites(
         .map_err(anyhow::Error::from)
 }
 
-fn current_account_from_viewer(viewer: arkret_sdk::models::AccountView) -> CurrentAccount {
+fn current_account_from_viewer(
+    viewer: arkret_models_collaboration::account_lifecycle::AccountView,
+) -> CurrentAccount {
     let display_name = viewer.profile.as_ref().and_then(|profile| {
         let value = profile.display_name.trim();
         (!value.is_empty()).then(|| value.to_owned())
@@ -820,7 +823,9 @@ fn current_account_from_viewer(viewer: arkret_sdk::models::AccountView) -> Curre
     }
 }
 
-fn primary_handle_from_viewer(viewer: &arkret_sdk::models::AccountView) -> String {
+fn primary_handle_from_viewer(
+    viewer: &arkret_models_collaboration::account_lifecycle::AccountView,
+) -> String {
     viewer
         .primary_handle_claim
         .as_ref()
@@ -924,8 +929,8 @@ pub async fn request_consent(
 /// SDK-built `submit_body` from `arkret_sdk::webvh::prepare_inception`.
 pub async fn submit_did_operation(
     http: &arkret_sdk::http_client::Client,
-    body: &arkret_sdk::models::DidOperationSubmitRequestBody,
-) -> anyhow::Result<arkret_sdk::models::DidOperationSubmitOutcome> {
+    body: &arkret_models_identity::DidOperationSubmitRequestBody,
+) -> anyhow::Result<arkret_models_identity::DidOperationSubmitOutcome> {
     http.identity_submit_did_operation(body)
         .await
         .map_err(anyhow::Error::from)
@@ -1078,25 +1083,26 @@ mod tests {
 
     #[test]
     fn account_viewer_projection_uses_signed_handle_claim() {
-        let viewer: arkret_sdk::models::AccountView = serde_json::from_value(json!({
-            "principal_id": "did:web:alice.example",
-            "state": "active",
-            "devices": [],
-            "primary_handle_claim": {
-                "schema": "ak.schema.handle_claim.v1",
-                "handle": "alice:local.host",
-                "subject": "did:web:alice.example"
-            },
-            "profile": {
-                "id": "ak:actor_profile:01970000-0000-7000-8000-000000000001",
-                "schema": "ak.schema.actor_profile.v1",
+        let viewer: arkret_models_collaboration::account_lifecycle::AccountView =
+            serde_json::from_value(json!({
                 "principal_id": "did:web:alice.example",
-                "actor_kind": "user",
-                "display_name": "Alice",
-                "created_at": "2026-06-12T08:00:00.000Z"
-            }
-        }))
-        .expect("account viewer shape");
+                "state": "active",
+                "devices": [],
+                "primary_handle_claim": {
+                    "schema": "ak.schema.handle_claim.v1",
+                    "handle": "alice:local.host",
+                    "subject": "did:web:alice.example"
+                },
+                "profile": {
+                    "id": "ak:actor_profile:01970000-0000-7000-8000-000000000001",
+                    "schema": "ak.schema.actor_profile.v1",
+                    "principal_id": "did:web:alice.example",
+                    "actor_kind": "user",
+                    "display_name": "Alice",
+                    "created_at": "2026-06-12T08:00:00.000Z"
+                }
+            }))
+            .expect("account viewer shape");
 
         let account = current_account_from_viewer(viewer);
 
@@ -1108,12 +1114,13 @@ mod tests {
 
     #[test]
     fn account_viewer_projection_does_not_invent_handle() {
-        let viewer: arkret_sdk::models::AccountView = serde_json::from_value(json!({
-            "principal_id": "did:web:alice.example",
-            "state": "active",
-            "devices": []
-        }))
-        .expect("minimal account viewer shape");
+        let viewer: arkret_models_collaboration::account_lifecycle::AccountView =
+            serde_json::from_value(json!({
+                "principal_id": "did:web:alice.example",
+                "state": "active",
+                "devices": []
+            }))
+            .expect("minimal account viewer shape");
 
         let account = current_account_from_viewer(viewer);
 

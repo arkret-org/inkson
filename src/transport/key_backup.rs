@@ -235,7 +235,7 @@ impl crate::transport::TransportClient {
     /// authoritative generation snapshot; the client cannot self-report them.
     pub async fn create_recovery_session(
         &self,
-        body: &arkret_sdk::models::RecoverySessionCreateRequestBody,
+        body: &arkret_models_crypto::RecoverySessionCreateRequestBody,
     ) -> anyhow::Result<arkret_sdk::RecoverySessionState> {
         self.sdk_http_client()?
             .post("/_arkret/root/identity/recovery-sessions", body)
@@ -249,7 +249,7 @@ impl crate::transport::TransportClient {
     pub async fn submit_recovery_proof(
         &self,
         recovery_session_id: &str,
-        body: &arkret_sdk::models::RecoverySessionProofSubmitRequestBody,
+        body: &arkret_models_crypto::RecoverySessionProofSubmitRequestBody,
     ) -> anyhow::Result<arkret_sdk::RecoverySessionProofSubmitOutcome> {
         self.sdk_http_client()?
             .post(
@@ -266,7 +266,7 @@ impl crate::transport::TransportClient {
     pub async fn complete_recovery_session(
         &self,
         recovery_session_id: &str,
-        body: &arkret_sdk::models::RecoverySessionCompleteRequestBody,
+        body: &arkret_models_crypto::RecoverySessionCompleteRequestBody,
     ) -> anyhow::Result<arkret_sdk::RecoverySessionCompleteOutcome> {
         self.sdk_http_client()?
             .post(

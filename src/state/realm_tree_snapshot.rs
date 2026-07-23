@@ -241,7 +241,7 @@ impl LocalStateStore {
     pub fn realm_durability_policy(
         &self,
         realm_id: &str,
-    ) -> Option<arkret_sdk::models::DurabilityPolicy> {
+    ) -> Option<arkret_models_collaboration::objects::realm::DurabilityPolicy> {
         self.load()
             .realm_tree_projections
             .get(realm_id.trim())

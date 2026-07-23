@@ -10,10 +10,10 @@
 //! the membership frontier, which also triggers re-disclosure. The editor
 //! surfaces that two-step nature to the operator.
 
-use arkret_sdk::Did;
-use arkret_sdk::models::{
+use arkret_models_collaboration::objects::realm::{
     DurabilityMode, DurabilityPolicy, DurabilityThreshold, RealmRecoveryRecipient,
 };
+use arkret_sdk::Did;
 use dioxus::prelude::*;
 use serde_json::Value;
 

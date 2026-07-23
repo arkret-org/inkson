@@ -6,7 +6,9 @@ use crate::api_error::{is_auth_expired_error, is_terminal_session_grant_error};
 /// Project the SDK `AuthzInviteList.invites` (typed `Invite` rows) into the
 /// `Vec<serde_json::Value>` shape the bootstrap invite-notification pipeline
 /// folds through lenient JSON accessors.
-fn invite_rows_to_values(invites: Vec<arkret_sdk::models::Invite>) -> Vec<serde_json::Value> {
+fn invite_rows_to_values(
+    invites: Vec<arkret_models_collaboration::governance::operation_wire::Invite>,
+) -> Vec<serde_json::Value> {
     invites
         .into_iter()
         .filter_map(|invite| serde_json::to_value(invite).ok())

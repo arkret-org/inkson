@@ -3,10 +3,11 @@
 //! These items carry no RSX; they are the unit-testable core behind the
 //! personal-agent administration surfaces.
 
-use arkret_sdk::models::{
-    AgentKeyScope, AgentKeyScopeResource, AgentKeyScopeResourceKind, AgentParticipation,
-    AgentProjection, AgentStatus, AgentView,
+use arkret_models_collaboration::agent_operations::{AgentProjection, AgentStatus, AgentView};
+use arkret_models_collaboration::events_payloads::agent::{
+    AgentKeyScope, AgentKeyScopeResource, AgentKeyScopeResourceKind,
 };
+use arkret_models_collaboration::governance::agent_participation::AgentParticipation;
 use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
     AgentKeyAuthorizePayloadRuntimeAttestation, AgentKeyPairRequestBody, AgentKeySupersession,
@@ -924,7 +925,7 @@ pub(crate) fn mentionable_owned_agent_slugs(
             let slug = agent.slug.trim();
             if agent_id.is_empty()
                 || slug.is_empty()
-                || arkret_sdk::models::validate_agent_slug(slug).is_err()
+                || arkret_models_identity::validate_agent_slug(slug).is_err()
             {
                 return None;
             }

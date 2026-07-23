@@ -363,7 +363,7 @@ pub async fn set_realm_policy_events(
 /// `ak.realm.policy_components` event (realm-and-space.md §2.3.1 write path —
 /// no new event kind; durability is a policy component).
 ///
-/// `policy` is the SDK-typed [`arkret_sdk::models::DurabilityPolicy`]
+/// `policy` is the SDK-typed [`arkret_models_collaboration::objects::realm::DurabilityPolicy`]
 /// so the client never re-defines the spec shape. `policy_revision` MUST be a
 /// monotonic increment of the Realm's current policy revision (the reducer
 /// rejects a stale revision). After this lands, a subsequent `ak.mls.commit`
@@ -379,7 +379,7 @@ pub async fn set_realm_durability_policy(
     submitter: &EventSubmitter,
     realm_id: &str,
     actor_id: &str,
-    policy: &arkret_sdk::models::DurabilityPolicy,
+    policy: &arkret_models_collaboration::objects::realm::DurabilityPolicy,
     policy_revision: u64,
 ) -> anyhow::Result<()> {
     let actor_id = actor_id.trim();

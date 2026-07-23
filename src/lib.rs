@@ -28,7 +28,7 @@ pub mod card_comments;
 /// `Circle` is the intra-Realm cryptographic sub-boundary (strict
 /// subset of Realm membership + independent MLS group). This module is
 /// the client-side surface; the canonical struct lives in
-/// `arkret_sdk::models::circle`.
+/// `arkret_models_collaboration::governance::circle`.
 pub mod circle;
 pub mod circle_mls;
 pub mod client_core;

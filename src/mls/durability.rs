@@ -23,11 +23,13 @@
 //!
 //! If the SDK signatures move, only this file changes.
 
+use arkret_models_collaboration::objects::realm::{
+    DurabilityMode, DurabilityPolicy, RealmRecoveryRecipient,
+};
 use arkret_sdk::history_recovery::{
     RealmHistoryRecoveryKeyError, ResolvedRealmHistoryRecoveryKey,
     resolve_realm_history_recovery_key, rrk_key_scope, seal_history_secrets_to_recovery_recipient,
 };
-use arkret_sdk::models::{DurabilityMode, DurabilityPolicy, RealmRecoveryRecipient};
 use serde_json::Value;
 
 /// Effective disclosure mode label (encryption-and-audit.md §2.10.8): the banner
@@ -364,8 +366,8 @@ pub fn build_eager_seal_events(
 
 #[cfg(test)]
 mod tests {
+    use arkret_models_collaboration::objects::realm::DurabilityThreshold;
     use arkret_sdk::Did;
-    use arkret_sdk::models::DurabilityThreshold;
     use serde_json::json;
 
     use super::*;

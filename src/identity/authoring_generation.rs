@@ -195,7 +195,7 @@ async fn resolve_principal_authoring_generation(
 /// the device, so offline submission can never fall back to an unverified
 /// generation after a full-page WASM reload.
 pub(crate) fn cache_principal_authoring_generation_from_keys(
-    outcome: &arkret_sdk::models::KeysQueryOutcome,
+    outcome: &arkret_models_crypto::KeysQueryOutcome,
     principal_id: &str,
     device_id: &str,
 ) -> anyhow::Result<bool> {
@@ -209,7 +209,7 @@ pub(crate) fn cache_principal_authoring_generation_from_keys(
 }
 
 fn resolve_principal_authoring_generation_from_keys(
-    outcome: &arkret_sdk::models::KeysQueryOutcome,
+    outcome: &arkret_models_crypto::KeysQueryOutcome,
     principal_id: &str,
     device_id: &str,
 ) -> anyhow::Result<PrincipalGenerationResolution> {
@@ -228,7 +228,7 @@ fn resolve_principal_authoring_generation_from_keys(
         )),
         (None, Some(generation)) => {
             if generation.device_generation_status
-                != arkret_sdk::models::DeviceGenerationStatus::Active
+                != arkret_models_crypto::DeviceGenerationStatus::Active
             {
                 return Ok(PrincipalGenerationResolution::Quarantine(
                     "device_generation_conflicted".to_owned(),
@@ -239,7 +239,7 @@ fn resolve_principal_authoring_generation_from_keys(
                     "authoring_device_not_active".to_owned(),
                 ));
             };
-            if record.device_status != Some(arkret_sdk::models::DeviceStatus::Active) {
+            if record.device_status != Some(arkret_models_crypto::DeviceStatus::Active) {
                 return Ok(PrincipalGenerationResolution::Quarantine(
                     "authoring_device_not_active".to_owned(),
                 ));
@@ -276,7 +276,7 @@ fn resolve_principal_authoring_generation_from_keys(
                     "authoring_device_not_active".to_owned(),
                 ));
             };
-            if record.device_status != Some(arkret_sdk::models::DeviceStatus::Active) {
+            if record.device_status != Some(arkret_models_crypto::DeviceStatus::Active) {
                 return Ok(PrincipalGenerationResolution::Quarantine(
                     "authoring_device_not_active".to_owned(),
                 ));

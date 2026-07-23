@@ -27,11 +27,12 @@
 
 use std::collections::BTreeSet;
 
-use arkret_sdk::models::{
+use arkret_models_collaboration::account_lifecycle::AppletRevokeRequestBody;
+use arkret_models_integration::{
     AppletActorPolicy, AppletApprovalRequest, AppletBotMembership, AppletGhostActorMode,
-    AppletInstallPreviewRequestBody, AppletInstallRequestBody, AppletRevokeMode,
-    AppletRevokeRequestBody, EffectiveScope, ScopeGrant,
+    AppletInstallPreviewRequestBody, AppletInstallRequestBody, ScopeGrant,
 };
+use arkret_wire::{AppletRevokeMode, EffectiveScope};
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::Value;
@@ -599,7 +600,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                     // distinctly: a Rejected outcome is an orphan
                                                     // registration (registration landed, no active
                                                     // grant) and grants the applet nothing.
-                                                    use arkret_sdk::models::AppletInstallEffectiveStatus as Status;
+                                                    use arkret_models_integration::AppletInstallEffectiveStatus as Status;
                                                     let aid = short_protocol_id(&outcome.applet_id);
                                                     let line = match outcome.effective_status {
                                                         Status::Installed => {
@@ -869,7 +870,7 @@ mod tests {
             applet_effective_scope("ak:realm:01904100-0000-7000-8000-000000000010", None).unwrap();
         assert!(matches!(
             scope,
-            arkret_sdk::models::EffectiveScope::Realm { ref realm_id }
+            arkret_wire::EffectiveScope::Realm { ref realm_id }
                 if realm_id.as_str() == "ak:realm:01904100-0000-7000-8000-000000000010"
         ));
     }
@@ -883,7 +884,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             scope,
-            arkret_sdk::models::EffectiveScope::Circle { ref realm_id, ref circle_id }
+            arkret_wire::EffectiveScope::Circle { ref realm_id, ref circle_id }
                 if realm_id.as_str() == "ak:realm:01904100-0000-7000-8000-000000000010"
                     && circle_id.as_str() == "ak:circle:01904100-0000-7000-8000-0000000000c1"
         ));
@@ -891,7 +892,7 @@ mod tests {
         assert!(matches!(
             applet_effective_scope("ak:realm:01904100-0000-7000-8000-000000000010", Some("  "))
                 .unwrap(),
-            arkret_sdk::models::EffectiveScope::Realm { .. }
+            arkret_wire::EffectiveScope::Realm { .. }
         ));
     }
 

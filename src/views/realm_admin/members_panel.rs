@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use arkret_sdk::models::{AgentParticipation, AgentParticipationEntry, AgentParticipationScope};
+use arkret_models_collaboration::governance::agent_participation::{
+    AgentParticipation, AgentParticipationEntry, AgentParticipationScope,
+};
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::{Value, json};
@@ -188,7 +190,7 @@ struct MemberGroup {
 }
 
 fn member_agent_row_from_value(
-    row: arkret_sdk::models::AgentProjection,
+    row: arkret_models_collaboration::agent_operations::AgentProjection,
     fallback_controller_id: &str,
 ) -> Option<MemberAgentRow> {
     let agent_id = row.agent_id.as_str().trim();
@@ -270,7 +272,7 @@ fn spawn_set_agent_realm_behavior(
                 return;
             }
         };
-        let body = arkret_sdk::models::AgentParticipationReplaceRequestBody {
+        let body = arkret_models_collaboration::governance::agent_participation::AgentParticipationReplaceRequestBody {
             scope: AgentParticipationScope::Realm { realm_id },
             selection,
         };
@@ -5521,7 +5523,7 @@ mod tests {
         let realm = TEST_REALM;
         let request = arkret_sdk::RealmKeyRequestPayload {
             key_scope: arkret_sdk::RealmKeyRequestScope {
-                effective_scope: arkret_sdk::models::EffectiveScope::Realm {
+                effective_scope: arkret_wire::EffectiveScope::Realm {
                     realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
                 },
                 policy_digest: None,
@@ -5571,7 +5573,7 @@ mod tests {
         let realm = TEST_REALM;
         let request = arkret_sdk::RealmKeyRequestPayload {
             key_scope: arkret_sdk::RealmKeyRequestScope {
-                effective_scope: arkret_sdk::models::EffectiveScope::Realm {
+                effective_scope: arkret_wire::EffectiveScope::Realm {
                     realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
                 },
                 policy_digest: None,
@@ -5616,7 +5618,7 @@ mod tests {
         let realm = TEST_REALM;
         let request = arkret_sdk::RealmKeyRequestPayload {
             key_scope: arkret_sdk::RealmKeyRequestScope {
-                effective_scope: arkret_sdk::models::EffectiveScope::Realm {
+                effective_scope: arkret_wire::EffectiveScope::Realm {
                     realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
                 },
                 policy_digest: None,
@@ -5659,7 +5661,7 @@ mod tests {
         let realm = TEST_REALM;
         let request = arkret_sdk::RealmKeyRequestPayload {
             key_scope: arkret_sdk::RealmKeyRequestScope {
-                effective_scope: arkret_sdk::models::EffectiveScope::Realm {
+                effective_scope: arkret_wire::EffectiveScope::Realm {
                     realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
                 },
                 policy_digest: None,
@@ -5702,7 +5704,7 @@ mod tests {
     fn rejects_realm_key_request_when_envelope_realm_mismatches_payload() {
         let request = arkret_sdk::RealmKeyRequestPayload {
             key_scope: arkret_sdk::RealmKeyRequestScope {
-                effective_scope: arkret_sdk::models::EffectiveScope::Realm {
+                effective_scope: arkret_wire::EffectiveScope::Realm {
                     realm_id: arkret_sdk::RealmId::new(TEST_REALM).unwrap(),
                 },
                 policy_digest: None,

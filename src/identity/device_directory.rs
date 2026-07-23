@@ -239,7 +239,7 @@ pub fn public_key_from_directory_value(value: &str) -> Option<PublicKeyMaterial>
 /// `Some(None)` = present-but-unusable (revoked / no key),
 /// `None` = the device was absent from the response.
 fn directory_verdict(
-    outcome: &arkret_sdk::models::KeysQueryOutcome,
+    outcome: &arkret_models_crypto::KeysQueryOutcome,
     actor: &str,
     device: &str,
 ) -> Option<Option<PublicKeyMaterial>> {
@@ -248,7 +248,7 @@ fn directory_verdict(
     // Spec §8.2: a non-active status, or an omitted key, both mean unusable.
     let active = matches!(
         record.device_status,
-        None | Some(arkret_sdk::models::DeviceStatus::Active)
+        None | Some(arkret_models_crypto::DeviceStatus::Active)
     );
     if !active {
         return Some(None);
@@ -261,10 +261,10 @@ fn directory_verdict(
 }
 
 fn directory_record<'a>(
-    outcome: &'a arkret_sdk::models::KeysQueryOutcome,
+    outcome: &'a arkret_models_crypto::KeysQueryOutcome,
     actor: &str,
     device: &str,
-) -> Option<&'a arkret_sdk::models::QueryDeviceRecord> {
+) -> Option<&'a arkret_models_crypto::QueryDeviceRecord> {
     outcome
         .device_keys
         .iter()
@@ -384,7 +384,7 @@ pub fn verify_tier2_chain(
 /// `Unverified` / `NeedsReverification`, or an undecodable directory key. There
 /// is no Tier-1 fallback: a present-but-unverifiable key is rejected.
 fn tier2_accepted_key(
-    outcome: &arkret_sdk::models::KeysQueryOutcome,
+    outcome: &arkret_models_crypto::KeysQueryOutcome,
     did_document: &DidDocument,
     actor: &Did,
     device: &DeviceId,
@@ -436,7 +436,7 @@ fn tier2_accepted_key(
 /// anchors: the accepted `ak.device.authorize` id and the enrollment authority
 /// binding that caused the projection.
 fn service_attested_accepted_key(
-    outcome: &arkret_sdk::models::KeysQueryOutcome,
+    outcome: &arkret_models_crypto::KeysQueryOutcome,
     actor: &Did,
     device: &DeviceId,
 ) -> Option<PublicKeyMaterial> {
@@ -832,7 +832,7 @@ mod tests {
     #[test]
     fn directory_verdict_revoked_is_negative_even_with_key() {
         let did = test_did_key(33);
-        let outcome: arkret_sdk::models::KeysQueryOutcome =
+        let outcome: arkret_models_crypto::KeysQueryOutcome =
             serde_json::from_value(serde_json::json!({
                 "device_keys": {
                     "did:web:carol": {
@@ -853,7 +853,7 @@ mod tests {
     #[test]
     fn directory_verdict_active_with_key_resolves() {
         let did = test_did_key(44);
-        let outcome: arkret_sdk::models::KeysQueryOutcome =
+        let outcome: arkret_models_crypto::KeysQueryOutcome =
             serde_json::from_value(serde_json::json!({
                 "device_keys": {
                     "did:web:dave": {
@@ -881,7 +881,7 @@ mod tests {
 
     #[test]
     fn directory_verdict_absent_device_is_none() {
-        let outcome: arkret_sdk::models::KeysQueryOutcome =
+        let outcome: arkret_models_crypto::KeysQueryOutcome =
             serde_json::from_value(serde_json::json!({
                 "device_keys": {}
             }))
@@ -894,7 +894,7 @@ mod tests {
         let did = test_did_key(55);
         let actor = Did::new("did:web:managed-alice.example".to_owned()).unwrap();
         let device = DeviceId::new(TEST_DEVICE_ID.to_owned()).unwrap();
-        let outcome: arkret_sdk::models::KeysQueryOutcome =
+        let outcome: arkret_models_crypto::KeysQueryOutcome =
             serde_json::from_value(serde_json::json!({
                 "device_keys": {
                     actor.as_str(): {
@@ -935,7 +935,7 @@ mod tests {
     fn service_attested_missing_authorize_event_id_fails_closed() {
         let actor = Did::new("did:web:managed-bob.example".to_owned()).unwrap();
         let device = DeviceId::new(TEST_DEVICE_ID.to_owned()).unwrap();
-        let outcome: arkret_sdk::models::KeysQueryOutcome =
+        let outcome: arkret_models_crypto::KeysQueryOutcome =
             serde_json::from_value(serde_json::json!({
                 "device_keys": {
                     actor.as_str(): {
@@ -960,7 +960,7 @@ mod tests {
     fn service_attested_superseded_generation_fails_closed() {
         let actor = Did::new("did:web:managed-carol.example".to_owned()).unwrap();
         let device = DeviceId::new(TEST_DEVICE_ID.to_owned()).unwrap();
-        let outcome: arkret_sdk::models::KeysQueryOutcome =
+        let outcome: arkret_models_crypto::KeysQueryOutcome =
             serde_json::from_value(serde_json::json!({
                 "device_keys": {
                     actor.as_str(): {
@@ -1144,7 +1144,7 @@ mod tests {
 
         /// Build a `keys/query` outcome carrying this fixture's directory facet
         /// + Tier-2 material for the `(actor, device)`.
-        fn outcome(&self) -> arkret_sdk::models::KeysQueryOutcome {
+        fn outcome(&self) -> arkret_models_crypto::KeysQueryOutcome {
             serde_json::from_value(serde_json::json!({
                 "device_keys": {
                     self.actor.as_str(): {
@@ -1305,7 +1305,7 @@ mod tests {
         // `cross_signing_binding`. Tier-2 treats missing binding as Unverified
         // (do NOT relax for bootstrap on this line).
         let fx = build_tier2_fixture(TIER2_ACTOR, TIER2_DEVICE, 11, 22, 33, 1, 1);
-        let outcome: arkret_sdk::models::KeysQueryOutcome =
+        let outcome: arkret_models_crypto::KeysQueryOutcome =
             serde_json::from_value(serde_json::json!({
                 "device_keys": {
                     fx.actor.as_str(): {
@@ -1330,7 +1330,7 @@ mod tests {
         // Revoked status → Tier-1 facet already negative; Tier-2 never even
         // reaches the chain. No key regardless of valid Tier-2 material.
         let fx = build_tier2_fixture(TIER2_ACTOR, TIER2_DEVICE, 11, 22, 33, 1, 1);
-        let outcome: arkret_sdk::models::KeysQueryOutcome =
+        let outcome: arkret_models_crypto::KeysQueryOutcome =
             serde_json::from_value(serde_json::json!({
                 "device_keys": {
                     fx.actor.as_str(): {

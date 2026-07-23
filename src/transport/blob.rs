@@ -19,7 +19,7 @@ impl<'a> BlobEndpoints<'a> {
         content_digest: Option<&str>,
         filename: Option<&str>,
         purpose: Option<&str>,
-    ) -> anyhow::Result<arkret_sdk::models::BlobUploadMetadata> {
+    ) -> anyhow::Result<arkret_models_collaboration::objects::blob::BlobUploadMetadata> {
         let realm_id = realm_id
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -39,14 +39,16 @@ impl<'a> BlobEndpoints<'a> {
             })
             .transpose()?;
         let media_type = (!media_type.trim().is_empty()).then(|| media_type.trim().to_owned());
-        Ok(arkret_sdk::models::BlobUploadMetadata {
-            realm_id,
-            content_digest,
-            size_bytes: size_bytes as u64,
-            media_type,
-            filename: filename.map(ToOwned::to_owned),
-            purpose: purpose.map(ToOwned::to_owned),
-        })
+        Ok(
+            arkret_models_collaboration::objects::blob::BlobUploadMetadata {
+                realm_id,
+                content_digest,
+                size_bytes: size_bytes as u64,
+                media_type,
+                filename: filename.map(ToOwned::to_owned),
+                purpose: purpose.map(ToOwned::to_owned),
+            },
+        )
     }
 
     pub async fn upload_bytes(

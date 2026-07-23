@@ -187,7 +187,9 @@ pub struct AccountEndpoints<'a> {
 }
 
 impl AccountEndpoints<'_> {
-    pub async fn viewer(&self) -> anyhow::Result<arkret_sdk::models::AccountView> {
+    pub async fn viewer(
+        &self,
+    ) -> anyhow::Result<arkret_models_collaboration::account_lifecycle::AccountView> {
         crate::transport::account::account_viewer(self.transport.http()).await
     }
 
@@ -230,7 +232,7 @@ impl DirectoryEndpoints<'_> {
         subject: &str,
         realm_id: Option<&str>,
         intent: Option<&str>,
-    ) -> anyhow::Result<arkret_sdk::models::DirectorySubjectHandleList> {
+    ) -> anyhow::Result<arkret_models_discovery::DirectorySubjectHandleList> {
         super::directory::list_handles_for_subject(self.transport.http(), subject, realm_id, intent)
             .await
     }

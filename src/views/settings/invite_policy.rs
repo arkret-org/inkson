@@ -116,7 +116,7 @@ fn parse_list(value: &str) -> Vec<String> {
     list
 }
 
-fn constraints_lines(constraints: &arkret_sdk::models::ReceivePolicyConstraints) -> Vec<String> {
+fn constraints_lines(constraints: &arkret_wire::ReceivePolicyConstraints) -> Vec<String> {
     let mut lines = Vec::new();
     if let Some(kinds) = constraints.permitted_introduction_kinds.as_ref() {
         lines.push(format!("permitted: {}", kinds.join(", ")));
@@ -161,7 +161,7 @@ pub fn InvitePolicySettingsCard(token: Signal<String>, account_did: Signal<Strin
     let mut loading = use_signal(|| true);
     let mut status = use_signal(String::new);
     let mut saving = use_signal(|| false);
-    let mut constraints = use_signal(|| None::<arkret_sdk::models::ReceivePolicyConstraints>);
+    let mut constraints = use_signal(|| None::<arkret_wire::ReceivePolicyConstraints>);
 
     // Hydrate from the server once. 404/501/405 → keep defaults (the endpoint
     // isn't wired on this deployment yet); any other error surfaces inline but

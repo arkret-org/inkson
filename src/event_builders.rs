@@ -1083,7 +1083,10 @@ fn build_member_state_transition_event_with_binding(
     reason: &str,
     delivery_binding: Option<arkret_sdk::MemberDeliveryBinding>,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    use arkret_sdk::models::{DeliveryStatus, MembershipPayload, MembershipPayloadState};
+    use arkret_models_collaboration::governance::membership_invite::{
+        MembershipPayload, MembershipPayloadState,
+    };
+    use arkret_models_identity::DeliveryStatus;
     let realm_id_wire = trim_realm_id(realm_id);
     let membership = match to_state {
         "join" => MembershipPayloadState::Join,
@@ -1184,7 +1187,9 @@ pub fn build_device_message_envelope(
     kind: &str,
     expires_at: &str,
     content: serde_json::Value,
-) -> anyhow::Result<arkret_sdk::models::DeviceMessagesSendRequestBody> {
+) -> anyhow::Result<
+    arkret_models_collaboration::sync_frames::account_sync::DeviceMessagesSendRequestBody,
+> {
     let message_id = arkret_sdk::DeviceMessageId::new(message_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid device-message message_id: {err}"))?;
     let target_actor = arkret_sdk::Did::new(target_actor.to_owned())
@@ -1195,7 +1200,7 @@ pub fn build_device_message_envelope(
         .map_err(|err| anyhow::anyhow!("invalid device-message expires_at: {err}"))?
         .with_timezone(&chrono::Utc);
 
-    let target = arkret_sdk::models::DeviceMessageTarget {
+    let target = arkret_models_collaboration::sync_frames::account_sync::DeviceMessageTarget {
         message_id,
         kind: arkret_sdk::ProtocolKind::new(kind)
             .map_err(|err| anyhow::anyhow!("invalid device-message kind: {err}"))?,
@@ -1211,7 +1216,11 @@ pub fn build_device_message_envelope(
     by_device.insert(target_device_id, target);
     let mut messages = BTreeMap::new();
     messages.insert(target_actor, by_device);
-    Ok(arkret_sdk::models::DeviceMessagesSendRequestBody { messages })
+    Ok(
+        arkret_models_collaboration::sync_frames::account_sync::DeviceMessagesSendRequestBody {
+            messages,
+        },
+    )
 }
 
 pub fn build_signed_device_verification_proof(

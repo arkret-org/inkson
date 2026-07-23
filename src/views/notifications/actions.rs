@@ -24,7 +24,9 @@ use crate::views::helpers::short_protocol_id;
 /// Project the SDK `AuthzInviteList.invites` (typed `Invite` rows) into the
 /// `Vec<Value>` shape the local notification pipeline folds through lenient
 /// JSON accessors.
-fn invites_to_values(invites: Vec<arkret_sdk::models::Invite>) -> Vec<Value> {
+fn invites_to_values(
+    invites: Vec<arkret_models_collaboration::governance::operation_wire::Invite>,
+) -> Vec<Value> {
     invites
         .into_iter()
         .filter_map(|invite| serde_json::to_value(invite).ok())

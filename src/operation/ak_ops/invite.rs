@@ -23,13 +23,14 @@ pub fn invite_create_structured(
         .map_err(|err| anyhow::anyhow!("invitee not a DID {invitee:?}: {err}"))?;
     let digest = arkret_sdk::Hash::new(introduction_evidence_digest.to_owned())
         .map_err(|err| anyhow::anyhow!("introduction_evidence_digest invalid: {err}"))?;
-    let mut payload = arkret_sdk::models::InviteCreatePayload::new(
-        invite_id_typed,
-        invitee_did,
-        invite_delivery_target,
-        digest,
-        chrono::Utc::now() + chrono::Duration::days(7),
-    );
+    let mut payload =
+        arkret_models_collaboration::governance::membership_invite::InviteCreatePayload::new(
+            invite_id_typed,
+            invitee_did,
+            invite_delivery_target,
+            digest,
+            chrono::Utc::now() + chrono::Duration::days(7),
+        );
     if let Some(role) = role {
         payload = payload
             .with_extension("role", json!(role))

@@ -230,10 +230,10 @@ fn direct_conversation_binding_state_wire(
 /// every round-trip. We now use the SDK authoritative type, which carries
 /// the required `schema`/`subject_id`, typed enums, and the trust lists, so
 /// a GET→edit→SET cycle preserves fields the U4 form does not touch.
-pub use arkret_sdk::models::{
-    DisclosureLevel, DisclosurePolicy as InviteDisclosurePolicy, INVITE_RECEIVE_POLICY_SCHEMA,
-    InviteReceiveAction, InviteReceivePolicy, UnknownInviteAction,
+pub use arkret_models_collaboration::governance::invite_addressing::{
+    DisclosureLevel, DisclosurePolicy as InviteDisclosurePolicy, InviteReceivePolicy,
 };
+pub use arkret_wire::{INVITE_RECEIVE_POLICY_SCHEMA, InviteReceiveAction, UnknownInviteAction};
 
 /// Build the recommended default `invite_receive_policy` for `subject_id`,
 /// used as the form seed and the graceful-degrade fallback when the server
@@ -459,9 +459,11 @@ pub(crate) fn realm_ephemeral_events(body: &Value) -> &[Value] {
 // `public`/`title` on the preview node, a non-optional `join_rule`) and broke
 // invite-accept with "error decoding response body" whenever the server omitted
 // those fields. The SDK type is the single source of truth.
-pub use arkret_sdk::models::{
-    DirectoryRealmResolutionOutcome as ResolveRealmOutcome,
-    IdentityDescription as IdentityDescribeOutcome, IdentityResolveOutcome, RealmJoinCandidate,
+pub use arkret_models_discovery::{
+    DirectoryRealmResolutionOutcome as ResolveRealmOutcome, RealmJoinCandidate,
+};
+pub use arkret_models_identity::{
+    IdentityDescription as IdentityDescribeOutcome, IdentityResolveOutcome,
 };
 
 /// Sidebar tag distinguishing a security-boundary Realm from a product
@@ -915,17 +917,17 @@ impl From<arkret_sdk::EventsQueryOutcome> for BackfillView {
 // `ak.self.snapshot.query.manifest_head` returns the full signed
 // `ak.schema.snapshot.v1` manifest. See `api::TransportClient::snapshot_head`.
 
-pub use arkret_sdk::models::AuthzCheckOutcome;
+pub use arkret_models_collaboration::governance::authorization::AuthzCheckOutcome;
 /// `ak.self.authz.invites` decodes into the SDK's authoritative
 /// `AuthzInviteList` (`invites: Vec<Invite>`, `next_cursor`, `has_more`); the
 /// former inkson-local `InvitesView` mirror was removed in favor of the wire
 /// type.
-pub use arkret_sdk::models::AuthzInviteList;
+pub use arkret_models_collaboration::governance::authorization::AuthzInviteList;
 /// `ak.self.authz.grants.query.effective` response. soland serialises the SDK
 /// `GrantList` (`grants: Vec<CapabilityGrant>`) verbatim, so the client
 /// decodes the same authoritative wire contract instead of a weakly-typed
 /// local mirror.
-pub use arkret_sdk::models::GrantList;
+pub use arkret_models_collaboration::governance::authorization::GrantList;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PushRegisterView {
@@ -939,17 +941,19 @@ pub struct PushRegisterView {
 /// `ModerationReportOutcome` wire shape verbatim (`status: "submitted"`,
 /// `routed_to: Vec<Did>` — scalar DIDs only, no fragments, per
 /// `service-operation-dtos.schema.json#/$defs/ModerationReportOutcome`).
-pub use arkret_sdk::models::ModerationReportOutcome;
-pub use arkret_sdk::models::{
-    BlobUploadOutcome, DeviceMessageEnvelope, DeviceMessagesAckOutcome,
-    DeviceMessagesAckRequestBody, DeviceMessagesGetOutcome, DeviceMessagesSendOutcome,
-    KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, OkOutcome,
+pub use arkret_models_collaboration::governance::moderation::ModerationReportOutcome;
+pub use arkret_models_collaboration::objects::blob::BlobUploadOutcome;
+pub use arkret_models_collaboration::sync_frames::account_sync::{
+    DeviceMessageEnvelope, DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody,
+    DeviceMessagesGetOutcome, DeviceMessagesSendOutcome,
 };
+pub use arkret_models_crypto::{KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome};
+pub use arkret_models_integration::OkOutcome;
 
 // ── Directory ───────────────────────────────────────────────────
 
-pub type SearchOrganizationsView = arkret_sdk::models::DirectoryOrganizationSearchOutcome;
-pub type SearchActorsView = arkret_sdk::models::DirectoryActorSearchOutcome;
+pub type SearchOrganizationsView = arkret_models_discovery::DirectoryOrganizationSearchOutcome;
+pub type SearchActorsView = arkret_models_discovery::DirectoryActorSearchOutcome;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -970,7 +974,7 @@ pub struct ResolveHandleView {
     #[serde(default)]
     pub verified: bool,
     #[serde(default)]
-    pub claims: Option<Vec<arkret_sdk::models::HandleClaim>>,
+    pub claims: Option<Vec<arkret_models_identity::HandleClaim>>,
     /// Audience the directory bound the response claim to. Spec 0a5ab85:
     /// the client MUST reject claims whose audience doesn't match the
     /// invocation context (e.g. the Space the user is about to join).
@@ -980,10 +984,10 @@ pub struct ResolveHandleView {
     /// Some directory implementations expose this top-level; others carry
     /// the same object inside `handle_claim.member_delivery_binding`.
     #[serde(default)]
-    pub member_delivery_binding: Option<arkret_sdk::models::DeliveryBindingHint>,
+    pub member_delivery_binding: Option<arkret_models_identity::DeliveryBindingHint>,
     /// Typed handle claim envelope when the directory issued one.
     #[serde(default)]
-    pub handle_claim: Option<arkret_sdk::models::HandleClaim>,
+    pub handle_claim: Option<arkret_models_identity::HandleClaim>,
     /// §9.1 common resolve metadata.
     #[serde(default)]
     pub as_of: Option<String>,
@@ -1023,7 +1027,9 @@ impl ResolveHandleView {
         self.member_delivery_binding_ref().is_some()
     }
 
-    pub fn member_delivery_binding_ref(&self) -> Option<&arkret_sdk::models::DeliveryBindingHint> {
+    pub fn member_delivery_binding_ref(
+        &self,
+    ) -> Option<&arkret_models_identity::DeliveryBindingHint> {
         self.member_delivery_binding.as_ref().or_else(|| {
             self.handle_claim
                 .as_ref()
@@ -1032,8 +1038,8 @@ impl ResolveHandleView {
     }
 }
 
-impl From<arkret_sdk::models::DirectoryHandleResolutionOutcome> for ResolveHandleView {
-    fn from(outcome: arkret_sdk::models::DirectoryHandleResolutionOutcome) -> Self {
+impl From<arkret_models_discovery::DirectoryHandleResolutionOutcome> for ResolveHandleView {
+    fn from(outcome: arkret_models_discovery::DirectoryHandleResolutionOutcome) -> Self {
         // The server-side `DirectoryHandleResolutionOutcome` has no
         // `did_document` field (this resolve endpoint never emits one), so it
         // is always `None` here — behavior-equivalent to the prior wire decode.
@@ -1067,7 +1073,7 @@ impl From<arkret_sdk::models::DirectoryHandleResolutionOutcome> for ResolveHandl
 /// declaration order. Re-export the SDK type; `subject_id` (principal
 /// DID) remains the ONLY authoritative field — the `*_at_time` fields
 /// are compose-time audit metadata only.
-pub use arkret_sdk::models::Mention;
+pub use arkret_models_collaboration::events_payloads::mention::Mention;
 
 // ── Realm / Space Management ────────────────────────────────────
 
@@ -1205,7 +1211,9 @@ impl<'de> Deserialize<'de> for SubmitEventResult {
 // each `ice_servers` entry MUST be parsed through `arkret_sdk::IceServer`
 // and pass `IceServer::validate_credential_privacy()` (rejects TURN
 // usernames embedding cross-Realm stable DIDs, B-14).
-pub use arkret_sdk::models::{MediaIceConfigOutcome, MediaIceConfigRequestBody};
+pub use arkret_models_collaboration::objects::media::{
+    MediaIceConfigOutcome, MediaIceConfigRequestBody,
+};
 
 // WebRTC call signaling/recording no longer round-trips through bespoke
 // `/_arkret/self/webrtc/*` outcomes: signaling is a `ak.call.signal`

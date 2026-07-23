@@ -137,8 +137,8 @@ fn projection_creator_matches_actor(projection: &Value, actor_id: &str) -> bool 
 pub(crate) fn circle_effective_scope(
     realm_id: &str,
     circle_id: &str,
-) -> Result<arkret_sdk::models::EffectiveScope, String> {
-    Ok(arkret_sdk::models::EffectiveScope::Circle {
+) -> Result<arkret_wire::EffectiveScope, String> {
+    Ok(arkret_wire::EffectiveScope::Circle {
         realm_id: arkret_sdk::RealmId::new(trim_realm_id(realm_id))
             .map_err(|err| format!("invalid Circle scope Realm id: {err:?}"))?,
         circle_id: arkret_sdk::CircleId::new(circle_id.to_owned())

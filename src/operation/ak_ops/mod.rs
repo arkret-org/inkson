@@ -62,7 +62,10 @@ pub(super) fn invite_ref_payload_value(
 ) -> anyhow::Result<Value> {
     let invite_id_typed = arkret_sdk::InviteId::new(invite_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invite_id not canonical {invite_id:?}: {err}"))?;
-    let mut payload = arkret_sdk::models::InviteRefPayload::new(invite_id_typed);
+    let mut payload =
+        arkret_models_collaboration::governance::membership_invite::InviteRefPayload::new(
+            invite_id_typed,
+        );
     if let Some(reason) = reason {
         payload = payload.with_reason(reason);
     }

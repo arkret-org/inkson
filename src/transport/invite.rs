@@ -222,7 +222,7 @@ fn parse_explicit_invite_target(target: &str) -> anyhow::Result<Option<InviteeRe
 
 fn resolved_handle_claim(
     resolved: &ResolveHandleView,
-) -> anyhow::Result<Option<arkret_sdk::models::HandleClaim>> {
+) -> anyhow::Result<Option<arkret_models_identity::HandleClaim>> {
     let Some(claim) = resolved.handle_claim.clone() else {
         return Ok(None);
     };
@@ -234,7 +234,7 @@ fn resolved_handle_claim(
 
 fn resolved_member_delivery_binding(
     resolved: &ResolveHandleView,
-) -> anyhow::Result<Option<arkret_sdk::models::DeliveryBindingHint>> {
+) -> anyhow::Result<Option<arkret_models_identity::DeliveryBindingHint>> {
     Ok(resolved.member_delivery_binding_ref().cloned())
 }
 
@@ -276,28 +276,28 @@ impl crate::transport::TransportClient {
         agent_slug: &str,
         realm_id: &str,
         requester: &str,
-    ) -> anyhow::Result<arkret_sdk::models::DirectoryAgentSelectorResolutionOutcome> {
+    ) -> anyhow::Result<arkret_models_discovery::DirectoryAgentSelectorResolutionOutcome> {
         let controller_handle =
-            arkret_sdk::models::Handle::parse(controller_handle).map_err(|err| {
+            arkret_models_identity::Handle::parse(controller_handle).map_err(|err| {
                 anyhow::anyhow!("invalid controller handle `{controller_handle}`: {err}")
             })?;
-        arkret_sdk::models::validate_agent_slug(agent_slug)
+        arkret_models_identity::validate_agent_slug(agent_slug)
             .map_err(|err| anyhow::anyhow!("invalid agent_slug `{agent_slug}`: {err}"))?;
         let requester = arkret_sdk::Did::new(requester.trim().to_owned())
             .map_err(|err| anyhow::anyhow!("invalid requester DID `{requester}`: {err}"))?;
         let realm_id = arkret_sdk::RealmId::new(realm_id.trim().to_owned())
             .map_err(|err| anyhow::anyhow!("invalid realm_id `{realm_id}`: {err}"))?;
-        let body = arkret_sdk::models::DirectoryResolveAgentSelectorRequestBody {
+        let body = arkret_models_discovery::DirectoryResolveAgentSelectorRequestBody {
             controller_handle,
             agent_slug: agent_slug.to_owned(),
             expected_agent_did: None,
             proof_challenge: None,
-            intent: arkret_sdk::models::DirectoryIntent::Mention,
+            intent: arkret_models_discovery::DirectoryIntent::Mention,
             realm_id: Some(realm_id),
             requester,
             proofs: Vec::new(),
         };
-        let outcome: arkret_sdk::models::DirectoryAgentSelectorResolutionOutcome = self
+        let outcome: arkret_models_discovery::DirectoryAgentSelectorResolutionOutcome = self
             .sdk_http_client()?
             .directory_resolve_agent_selector(&body)
             .await
@@ -337,7 +337,7 @@ impl crate::transport::TransportClient {
                 )
             })?;
         let address = invite_address(subject, recipient_service.as_str())?;
-        let handle = arkret_sdk::models::Handle::parse(&resolved.handle)
+        let handle = arkret_models_identity::Handle::parse(&resolved.handle)
             .map_err(|err| anyhow::anyhow!("directory returned invalid handle: {err}"))?;
         let fallback_resolved_by = self
             .describe_cached()
@@ -400,7 +400,7 @@ impl crate::transport::TransportClient {
                 })
                 .transpose()?;
             let recipient_service_id = explicit_service.or(resolved_service);
-            let handle = arkret_sdk::models::Handle::parse(&resolved.handle)
+            let handle = arkret_models_identity::Handle::parse(&resolved.handle)
                 .map_err(|err| anyhow::anyhow!("directory returned invalid handle: {err}"))?;
             let fallback_resolved_by = self
                 .describe_cached()

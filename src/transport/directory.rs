@@ -18,12 +18,12 @@ pub async fn search_realms(
     http: &arkret_sdk::http_client::Client,
     query: &str,
     next_cursor: Option<&str>,
-) -> anyhow::Result<arkret_sdk::models::DirectoryRealmSearchOutcome> {
+) -> anyhow::Result<arkret_models_discovery::DirectoryRealmSearchOutcome> {
     let cursor = next_cursor
         .map(validate_cursor)
         .transpose()?
         .map(|cursor| cursor.into_string());
-    let body = arkret_sdk::models::DirectorySearchRealmsRequestBody {
+    let body = arkret_models_discovery::DirectorySearchRealmsRequestBody {
         query: Some(query.to_owned()),
         organization_did: None,
         source_realm_id: None,
@@ -70,7 +70,7 @@ pub async fn resolve_realm_with_invite_token(
             (None, Some(alias.to_owned()))
         }
     };
-    let body = arkret_sdk::models::DirectoryResolveRealmRequestBody {
+    let body = arkret_models_discovery::DirectoryResolveRealmRequestBody {
         realm_id,
         alias,
         invite_token: invite_token.map(str::to_owned),
@@ -89,10 +89,10 @@ pub async fn resolve_realm_with_invite_token(
 /// (`POST /_arkret/find/directory/resolve-target`).
 ///
 /// `address` is the canonical `web+arkret:` (or HTTPS-fragment) string
-/// derived from [`arkret_sdk::models::parse_address`]; `token` is present
+/// derived from [`arkret_wire::parse_address`]; `token` is present
 /// iff the address carried `lt=invite` or `lt=preview`. The server binds
 /// an invite or preview token to the resolved object via the SDK's
-/// [`arkret_sdk::models::verify_token_target`]; the client only forwards
+/// [`arkret_wire::verify_token_target`]; the client only forwards
 /// the opaque token here.
 ///
 /// Wraps the SDK's typed request/response bodies so the wire shape stays
@@ -104,8 +104,8 @@ pub async fn directory_resolve_target(
     http: &arkret_sdk::http_client::Client,
     address: &str,
     token: Option<&str>,
-) -> anyhow::Result<arkret_sdk::models::DirectoryTargetResolutionOutcome> {
-    let body = arkret_sdk::models::DirectoryResolveTargetRequestBody {
+) -> anyhow::Result<arkret_models_discovery::DirectoryTargetResolutionOutcome> {
+    let body = arkret_models_discovery::DirectoryResolveTargetRequestBody {
         address: address.to_owned(),
         requester: None,
         proof_challenge: None,
@@ -127,7 +127,7 @@ pub async fn search_organizations(
         .map(validate_cursor)
         .transpose()?
         .map(|cursor| cursor.into_string());
-    let body = arkret_sdk::models::DirectorySearchOrganizationsRequestBody {
+    let body = arkret_models_discovery::DirectorySearchOrganizationsRequestBody {
         query: Some(query.to_owned()),
         claims: None,
         cursor,
@@ -147,7 +147,7 @@ pub async fn search_actors(
         .map(validate_cursor)
         .transpose()?
         .map(|cursor| cursor.into_string());
-    let body = arkret_sdk::models::DirectorySearchActorsRequestBody {
+    let body = arkret_models_discovery::DirectorySearchActorsRequestBody {
         query: Some(query.to_owned()),
         realm_id: None,
         organization_did: None,
@@ -170,7 +170,7 @@ pub async fn resolve_handle(
             ..ResolveHandleContext::default()
         },
     )?;
-    let outcome: arkret_sdk::models::DirectoryHandleResolutionOutcome = http
+    let outcome: arkret_models_discovery::DirectoryHandleResolutionOutcome = http
         .directory_resolve_handle(&body)
         .await
         .map_err(anyhow::Error::from)?;
@@ -185,7 +185,7 @@ pub async fn resolve_handle(
 /// handle?" panel (YG-DIR-1/2) and the own-handles list (YG-HC-2).
 ///
 /// The response is validated with
-/// [`arkret_sdk::models::DirectorySubjectHandleList::validate`]
+/// [`arkret_models_discovery::DirectorySubjectHandleList::validate`]
 /// which fails closed unless every `claims[].subject` byte-equals the
 /// response `subject`.
 ///
@@ -197,8 +197,8 @@ pub async fn list_handles_for_subject(
     subject: &str,
     realm_id: Option<&str>,
     intent: Option<&str>,
-) -> anyhow::Result<arkret_sdk::models::DirectorySubjectHandleList> {
-    use arkret_sdk::models::DirectoryListHandlesForSubjectRequestBody;
+) -> anyhow::Result<arkret_models_discovery::DirectorySubjectHandleList> {
+    use arkret_models_discovery::DirectoryListHandlesForSubjectRequestBody;
 
     let subject_did = arkret_sdk::Did::new(subject.trim().to_owned())
         .map_err(|err| anyhow::anyhow!("invalid subject DID `{subject}`: {err}"))?;
@@ -223,7 +223,7 @@ pub async fn list_handles_for_subject(
         cursor: None,
         limit: None,
     };
-    let res: arkret_sdk::models::DirectorySubjectHandleList = http
+    let res: arkret_models_discovery::DirectorySubjectHandleList = http
         .directory_list_handles_for_subject(&body)
         .await
         .map_err(anyhow::Error::from)?;

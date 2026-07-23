@@ -3,9 +3,8 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use arkret_sdk::models::{
-    AgentPcrRecoveryState, KeyBackupContentItem, ManagedFrontierRef, ManagedPrincipalBinding,
-};
+use arkret_models_collaboration::agent_operations::AgentPcrRecoveryState;
+use arkret_models_crypto::{KeyBackupContentItem, ManagedFrontierRef, ManagedPrincipalBinding};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
@@ -594,13 +593,13 @@ fn current_controller_backup_hpke_key_ref(
         .unwrap_or_default()
         .iter()
         .filter(|entry| {
-            entry.usage == arkret_sdk::models::RecoveryKeyAgreementUse::BackupHpke
+            entry.usage == arkret_models_crypto::RecoveryKeyAgreementUse::BackupHpke
                 && entry.revoked_at.is_none()
                 && entry.not_before <= evaluated_at
                 && entry.expires_at > evaluated_at
                 && entry
                     .hpke_suites
-                    .contains(&arkret_sdk::models::RecoveryHpkeSuite::X25519ChaCha20Poly1305)
+                    .contains(&arkret_models_crypto::RecoveryHpkeSuite::X25519ChaCha20Poly1305)
         })
         .filter_map(|entry| {
             let encoded =
@@ -772,7 +771,9 @@ async fn collect_current_managed_pcr_backup_items(
         }
         let view = http.agent_get(agent.agent_id.as_str()).await?;
         let Some(key_state) = view.key_state else {
-            if agent.status == arkret_sdk::models::AgentStatus::Deactivated {
+            if agent.status
+                == arkret_models_collaboration::agent_operations::AgentStatus::Deactivated
+            {
                 continue;
             }
             return Err(anyhow::anyhow!(
@@ -781,7 +782,7 @@ async fn collect_current_managed_pcr_backup_items(
             ));
         };
         agent_realm_ids.insert(key_state.principal_control_realm_id.as_str().to_owned());
-        if agent.status == arkret_sdk::models::AgentStatus::Deactivated {
+        if agent.status == arkret_models_collaboration::agent_operations::AgentStatus::Deactivated {
             continue;
         }
         if key_state.controller_id.as_str() != controller_id {
@@ -1377,7 +1378,7 @@ mod tests {
     fn api_error(status: u16, code: &str) -> anyhow::Error {
         anyhow::Error::new(arkret_sdk::http_client::Error::Api {
             status,
-            error: Box::new(arkret_sdk::models::ErrorEnvelope::new(code, "test error")),
+            error: Box::new(arkret_wire::ErrorEnvelope::new(code, "test error")),
         })
     }
 

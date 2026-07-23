@@ -12,7 +12,9 @@
 //! - `authz/capabilities.md` §3.3 — revoke + cascade.
 //! - `authz/capabilities.md` §3.4 — audit trail.
 
-use arkret_sdk::models::{CapabilityGrant, CapabilitySubject};
+use arkret_models_collaboration::governance::grant_constraint::{
+    CapabilityGrant, CapabilitySubject,
+};
 use dioxus::prelude::*;
 
 use crate::components::{EmptyState, EmptyStateKind};

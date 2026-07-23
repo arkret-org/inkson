@@ -68,12 +68,12 @@ pub(crate) fn proof_request(
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty())
     {
-        Some(circle_id) => arkret_sdk::models::EffectiveScope::Circle {
+        Some(circle_id) => arkret_wire::EffectiveScope::Circle {
             realm_id: realm_id.clone(),
             circle_id: arkret_sdk::CircleId::new(circle_id.to_owned())
                 .map_err(|error| format!("invalid MLS governance proof Circle id: {error}"))?,
         },
-        None => arkret_sdk::models::EffectiveScope::Realm {
+        None => arkret_wire::EffectiveScope::Realm {
             realm_id: realm_id.clone(),
         },
     };
@@ -763,7 +763,7 @@ pub(crate) fn seed_test_governance_proof(
     )
     .unwrap();
     let binding = match &request.effective_scope {
-        arkret_sdk::models::EffectiveScope::Realm { realm_id } => {
+        arkret_wire::EffectiveScope::Realm { realm_id } => {
             arkret_sdk::MlsGovernanceBindingPayload::realm(
                 realm_id.clone(),
                 request.mls_group_id.clone(),
@@ -777,7 +777,7 @@ pub(crate) fn seed_test_governance_proof(
                 request.reducer_profile.clone(),
             )
         }
-        arkret_sdk::models::EffectiveScope::Circle {
+        arkret_wire::EffectiveScope::Circle {
             realm_id,
             circle_id,
         } => arkret_sdk::MlsGovernanceBindingPayload::circle(
@@ -1191,7 +1191,7 @@ fn target_notary_value(
         }
     } else if matches!(
         bundle.effective_scope,
-        arkret_sdk::models::EffectiveScope::Realm { .. }
+        arkret_wire::EffectiveScope::Realm { .. }
     ) {
         return Err("Realm-scoped MLS governance proof omits its genesis Event".to_owned());
     }

@@ -19,8 +19,10 @@ impl crate::transport::TransportClient {
             invite_token,
         )
         .await?;
-        let candidate =
-            select_join_candidate(&resolved, arkret_sdk::models::RealmJoinMethod::InviteAccept)?;
+        let candidate = select_join_candidate(
+            &resolved,
+            arkret_models_discovery::RealmJoinMethod::InviteAccept,
+        )?;
         stamp_invite_join_seal_basis(&mut event, candidate)?;
         self.submit_built_event_via_join_candidate(candidate, &event)
             .await

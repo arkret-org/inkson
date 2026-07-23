@@ -44,20 +44,20 @@ pub fn parse_user_handle(input: &str) -> Option<ParsedUserHandle> {
     Some(parsed_from_sdk_handle(handle))
 }
 
-fn parse_sdk_handle(input: &str) -> arkret_sdk::Result<arkret_sdk::models::Handle> {
+fn parse_sdk_handle(input: &str) -> arkret_sdk::Result<arkret_models_identity::Handle> {
     let trimmed = input.trim();
     let body = trimmed.strip_prefix('@').unwrap_or(trimmed);
     if body.starts_with("acct:") {
-        return arkret_sdk::models::Handle::from_acct(body).map_err(Into::into);
+        return arkret_models_identity::Handle::from_acct(body).map_err(Into::into);
     }
     if body.contains('@') {
         let acct = format!("acct:{body}");
-        return arkret_sdk::models::Handle::from_acct(&acct).map_err(Into::into);
+        return arkret_models_identity::Handle::from_acct(&acct).map_err(Into::into);
     }
-    arkret_sdk::models::Handle::prepare(body).map_err(Into::into)
+    arkret_models_identity::Handle::prepare(body).map_err(Into::into)
 }
 
-fn parsed_from_sdk_handle(handle: arkret_sdk::models::Handle) -> ParsedUserHandle {
+fn parsed_from_sdk_handle(handle: arkret_models_identity::Handle) -> ParsedUserHandle {
     ParsedUserHandle {
         localpart: handle.localpart().to_owned(),
         domain: handle.domain().to_owned(),

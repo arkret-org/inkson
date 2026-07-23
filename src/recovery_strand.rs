@@ -10,7 +10,7 @@
 //! The wire shapes match `arkret-spec` `recovery-session.schema.json`
 //! (`create_request` / `proof_submit_request` / `complete_request`).
 
-use arkret_sdk::models::{
+use arkret_models_crypto::{
     RecoveryHpkeSuite, RecoveryKeyAgreementAlgorithm, RecoveryKeyAgreementEntry,
     RecoveryKeyAgreementUse, RecoveryKeyEntry, RecoveryKeySignatureAlgorithm, RecoveryPolicy,
     RecoveryPolicyActiveOutcome, RecoveryPolicyAuthData, RecoveryPolicyRef, RecoveryPolicySummary,
@@ -773,7 +773,7 @@ pub async fn run_principal_signing_recovery(
 
 #[cfg(test)]
 mod tests {
-    use arkret_sdk::models::RecoveryProofKind;
+    use arkret_models_crypto::RecoveryProofKind;
     use serde_json::json;
 
     use super::*;

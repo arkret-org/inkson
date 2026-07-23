@@ -279,7 +279,7 @@ pub(crate) fn build_realm_key_share_event(
     let policy_digest = arkret_sdk::Hash::new(policy_digest.trim().to_owned())
         .map_err(|err| format!("invalid realm_key.share policy_digest: {err:?}"))?;
     let key_scope = arkret_sdk::RealmKeyScope {
-        effective_scope: arkret_sdk::models::EffectiveScope::Realm {
+        effective_scope: arkret_wire::EffectiveScope::Realm {
             realm_id: arkret_sdk::RealmId::new(trim_realm_id(realm_id))
                 .map_err(|err| format!("invalid realm_key.share Realm id: {err:?}"))?,
         },

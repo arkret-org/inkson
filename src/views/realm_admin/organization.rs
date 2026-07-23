@@ -18,9 +18,12 @@
 //! organization-side signatures and does NOT call coauth admin endpoints; this
 //! panel only reads and links operators to where the binding flow lives.
 
-use arkret_sdk::models::{
-    RealmOrganizationControlScope, RealmOrganizationLifecyclePhase, RealmOrganizationRelationship,
-    RealmOrganizationRelationshipList, RealmOrganizationRelationshipRow, RealmOrganizationStatus,
+use arkret_models_collaboration::events_payloads::preview_realm_reaction::{
+    RealmOrganizationControlScope, RealmOrganizationRelationship, RealmOrganizationStatus,
+};
+use arkret_models_collaboration::governance::realm_governance::{
+    RealmOrganizationLifecyclePhase, RealmOrganizationRelationshipList,
+    RealmOrganizationRelationshipRow,
 };
 use dioxus::prelude::*;
 
@@ -823,7 +826,7 @@ fn OrganizationBindPanel(token: Signal<String>, realm_id: String, account_did: S
                                     crate::operation::ak_ops::RealmOrganizationAuthorizationInput {
                                         issuer: org_did.clone(),
                                         issuer_role:
-                                            arkret_sdk::models::RealmOrganizationIssuerRole::OrganizationDid,
+                                            arkret_models_collaboration::events_payloads::preview_realm_reaction::RealmOrganizationIssuerRole::OrganizationDid,
                                         verification_method: did_key_id.clone(),
                                         delegation_ref: None,
                                         executed_by: None,

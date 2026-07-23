@@ -22,7 +22,7 @@ pub(crate) struct ResolveHandleContext<'a> {
 pub(crate) fn resolve_handle_request_body(
     handle: &str,
     context: ResolveHandleContext<'_>,
-) -> anyhow::Result<arkret_sdk::models::DirectoryResolveHandleRequestBody> {
+) -> anyhow::Result<arkret_models_discovery::DirectoryResolveHandleRequestBody> {
     let non_empty = |value: Option<&str>| {
         value
             .map(str::trim)
@@ -53,12 +53,12 @@ pub(crate) fn resolve_handle_request_body(
     let intent = match non_empty(context.intent) {
         Some(intent) => Some(
             intent
-                .parse::<arkret_sdk::models::DirectoryIntent>()
+                .parse::<arkret_models_discovery::DirectoryIntent>()
                 .map_err(|err| anyhow::anyhow!("invalid directory intent `{intent}`: {err}"))?,
         ),
         None => None,
     };
-    Ok(arkret_sdk::models::DirectoryResolveHandleRequestBody {
+    Ok(arkret_models_discovery::DirectoryResolveHandleRequestBody {
         handle: handle.to_owned(),
         expected_did,
         proof_challenge: non_empty(context.proof_challenge),
