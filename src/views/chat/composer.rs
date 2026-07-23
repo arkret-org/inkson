@@ -1825,6 +1825,10 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     &message_id,
                                     reply_to.as_deref(),
                                     &secure_content_bytes,
+                                    // sidecar_native writes carry NO exchange
+                                    // binding (spec §7.2 sidecar_native rule),
+                                    // so no encrypted_metadata plaintext here.
+                                    None,
                                     None,
                                     sidecar_circle_id.as_deref(),
                                     sidecar_binding,

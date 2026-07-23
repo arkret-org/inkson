@@ -910,12 +910,67 @@ async fn submit_source_routed_sidecar_message(
         sdk_payload_value(content.to_value(), "Sidecar routed content block serialize")?;
     let content_bytes = serde_json::to_vec(&content_value)?;
     let message_id = new_chat_message_id();
-    let exchange_id = arkret_sdk::AgentSidecarExchangeId::new(uuid_v7())?;
-    let source_hlc =
-        crate::signing_stamp::issue_protocol_hlc(controller_id, device_id, source_realm_id)?;
-    let client_order_key =
-        arkret_sdk::NonEmptyString::new(uuid_v7()).map_err(anyhow::Error::msg)?;
     let circle_id = view.sidecar.backing_circle_id.to_string();
+    // Client-local pending intent (§7.2.4): a rejected submit leaves NO
+    // durable exchange state, and retrying the same composer intent MUST
+    // reuse the same `exchange_id`, so the exchange identity lives in a
+    // pending record keyed by the intent digest until the server accepts.
+    let addressed_strings = addressed
+        .iter()
+        .map(|agent_id| agent_id.as_str().to_owned())
+        .collect::<Vec<_>>();
+    let intent_digest = crate::sidecar::sidecar_submission_intent_digest(
+        source_strand_id,
+        body,
+        &addressed_strings,
+    );
+    let prior_intent = crate::sidecar::load_pending_sidecar_submission(
+        &state_store.read(),
+        controller_id,
+        private_strand_id,
+        &intent_digest,
+    );
+    let request_context = match &prior_intent {
+        // Retry of the same intent: reuse the full stored request context so
+        // exchange identity and ordering keys stay stable across attempts.
+        Some(pending) => pending.request_context.clone(),
+        None => arkret_sdk::AgentSidecarExchangeRequestContext {
+            source_track_ref: arkret_sdk::AgentSidecarSourceTrackRef {
+                realm_id: arkret_sdk::RealmId::new(source_realm_id.to_owned())?,
+                strand_id: arkret_sdk::StrandId::new(source_strand_id.to_owned())?,
+                track_name: "discussion".to_owned(),
+            },
+            source_hlc: crate::signing_stamp::issue_protocol_hlc(
+                controller_id,
+                device_id,
+                source_realm_id,
+            )?,
+            client_order_key: arkret_sdk::NonEmptyString::new(uuid_v7())
+                .map_err(anyhow::Error::msg)?,
+            addressed_agent_ids: addressed.clone(),
+            completion_policy: arkret_sdk::AgentSidecarExchangeCompletionPolicy::Coordinator,
+            // §7.2.1: with a single addressed Agent the coordinator MAY be
+            // omitted (implied). With several, the field is REQUIRED; the UI
+            // has no dedicated coordinator picker yet, so the first entry of
+            // the (sorted, deduped) addressed set is used deterministically.
+            coordinator_agent_id: (addressed.len() > 1).then(|| addressed[0].clone()),
+            source_frontier_anchor: source_frontier_anchor
+                .filter(|anchor| !anchor.trim().is_empty())
+                .and_then(|anchor| arkret_sdk::EventId::new(anchor.to_owned()).ok()),
+        },
+    };
+    let exchange_id = match &prior_intent {
+        Some(pending) => pending.exchange_id.clone(),
+        None => arkret_sdk::AgentSidecarExchangeId::new(uuid_v7())?,
+    };
+    // Typed producer binding. It travels ONLY in the encrypted_metadata
+    // plaintext (`message_metadata.sidecar_exchange_binding`); plaintext
+    // `metadata` and the content block never carry it (§7.2.1).
+    let binding =
+        arkret_sdk::AgentSidecarEventExchangeBinding::request(exchange_id.clone(), request_context.clone())?;
+    let mut message_metadata = arkret_sdk::MessageMetadata::default();
+    message_metadata.set_sidecar_exchange_binding(&binding)?;
+    let metadata_bytes = serde_json::to_vec(&message_metadata)?;
     let seal_view = state_store.read().seal_view_for_realm(source_realm_id);
     let build = crate::views::secure_send::build_secure_send(
         state_store,
@@ -927,39 +982,27 @@ async fn submit_source_routed_sidecar_message(
         &message_id,
         None,
         &content_bytes,
+        Some(&metadata_bytes),
         None,
         Some(&circle_id),
         Some(sidecar_mls_binding(view)),
     )
     .map_err(anyhow::Error::msg)?;
     let local_operation_id = sdk_event_local_operation_id(&build.message_event).to_owned();
-    let mut projection = arkret_sdk::AgentSidecarExchangeProjection {
-        schema: arkret_sdk::AgentSidecarExchangeProjectionSchema::V1,
-        controller_id: arkret_sdk::Did::new(controller_id.to_owned())?,
+    let pending = crate::sidecar::PendingSidecarSubmission {
+        controller_id: controller_id.to_owned(),
         sidecar_id: view.sidecar.id.clone(),
-        private_strand_id: arkret_sdk::StrandId::new(private_strand_id.to_owned())?,
+        private_strand_id: private_strand_id.to_owned(),
         exchange_id,
-        origin: arkret_sdk::AgentSidecarExchangeOrigin::SourceTrackRouted,
-        source_track_ref: arkret_sdk::AgentSidecarSourceTrackRef {
-            realm_id: arkret_sdk::RealmId::new(source_realm_id.to_owned())?,
-            strand_id: arkret_sdk::StrandId::new(source_strand_id.to_owned())?,
-            track_name: "discussion".to_owned(),
-        },
-        source_frontier_anchor: source_frontier_anchor
-            .filter(|anchor| !anchor.trim().is_empty())
-            .and_then(|anchor| arkret_sdk::EventId::new(anchor.to_owned()).ok()),
-        source_hlc: source_hlc.clone(),
-        client_order_key,
-        addressed_agent_ids: addressed,
-        participating_agent_ids: Vec::new(),
-        private_request_event_id: build.message_event.event_id.clone(),
-        user_facing_response_event_ids: Vec::new(),
-        status: arkret_sdk::AgentSidecarExchangeStatus::Pending,
-        failure_code: None,
-        updated_hlc: source_hlc,
+        request_context,
+        message_id: message_id.clone(),
+        local_operation_id: local_operation_id.clone(),
     };
-    projection.validate()?;
-    crate::sidecar::stage_sidecar_exchange_projection(&mut state_store.write(), &projection)?;
+    crate::sidecar::save_pending_sidecar_submission(
+        &mut state_store.write(),
+        &intent_digest,
+        &pending,
+    )?;
     let api = crate::transport::auth::authed_api_with_sync(base_url, api_token.clone(), None)?;
     let outcome = crate::views::secure_send::submit_secure_send(
         &api,
@@ -977,6 +1020,8 @@ async fn submit_source_routed_sidecar_message(
         crate::views::secure_send::SecureSendOutcome::Sent { event_id, status } => {
             (event_id, status)
         }
+        // Rejected/failed submit: the pending intent record stays (retryable)
+        // and no durable exchange state is produced (§7.2.4).
         crate::views::secure_send::SecureSendOutcome::CommitFailed { message }
         | crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => {
             anyhow::bail!(message)
@@ -1003,23 +1048,22 @@ async fn submit_source_routed_sidecar_message(
             &format!("message:{message_id}"),
             body,
         );
-    }
-    projection.private_request_event_id = arkret_sdk::EventId::new(event_id.clone())?;
-    projection.status = arkret_sdk::AgentSidecarExchangeStatus::Delivered;
-    projection.updated_hlc =
-        crate::signing_stamp::issue_protocol_hlc(controller_id, device_id, source_realm_id)?;
-    if crate::sidecar::persist_sidecar_exchange_projection(
-        base_url,
-        api_token,
-        state_store,
-        &projection,
-    )
-    .await
-    .is_err()
-    {
-        tracing::warn!(
-            "Sidecar private message accepted; cross-device echo projection upload is pending"
+        // Accepted: drop the client-local pending intent and fold the
+        // accepted request into the local Event-fold cache (`delivered`).
+        // A cache write failure never affects the accepted exchange (§7.2).
+        crate::sidecar::remove_pending_sidecar_submission(
+            &mut store,
+            controller_id,
+            private_strand_id,
+            &intent_digest,
         );
+        if let Err(error) = crate::sidecar::record_accepted_sidecar_exchange_request(
+            &mut store,
+            &pending,
+            &event_id,
+        ) {
+            tracing::warn!(%error, "Sidecar exchange fold cache write is pending a refold");
+        }
     }
     Ok(SourceRoutedSidecarMessageOutcome { event_id })
 }
@@ -1444,7 +1488,7 @@ pub fn ChatPanel(
     let navigator = use_navigator();
     let controller = use_chat_controller(&selected_realm_id, &initial_strand_id, &account_did);
     let mut migrated_draft_applied_for = use_signal(String::new);
-    let mut sidecar_projection_retry_basis_seen = use_signal(String::new);
+    let mut sidecar_exchange_fold_basis_seen = use_signal(String::new);
     let mut member_handle_fetching = use_signal(std::collections::BTreeSet::<String>::new);
     {
         let handle_base_url = base_url.clone();
@@ -1842,75 +1886,71 @@ pub fn ChatPanel(
         }
     });
     {
-        let base_url = base_url.clone();
         let account_did = account_did.clone();
         let device_id = device_id.clone();
         let selected_realm_id = selected_realm_id.clone();
-        let all_messages_for_retry = all_messages_snapshot;
+        let all_messages_for_fold = all_messages_snapshot;
+        let session_scope_hints = sidecar_session
+            .as_ref()
+            .map(|session| {
+                vec![(
+                    session.private_strand_id.clone(),
+                    session.sidecar_id.clone(),
+                )]
+            })
+            .unwrap_or_default();
         use_effect(move || {
             let cursor = sync_cursor();
             let realm_epoch = realm_live_epoch();
-            let accepted_event_ids = all_messages_for_retry
+            // Accepted rows keyed by protocol message id: a pending
+            // submission whose request Event landed (e.g. the cache write
+            // raced a crash) is recognised by its message id and folded to
+            // `delivered` — the Event-truth successor of the old
+            // "Pending → Delivered" account-data retry.
+            let accepted_event_by_message_id = all_messages_for_fold
                 .read()
                 .iter()
                 .filter(|message| !message.pending && !message.failed)
-                .map(|message| message.id.clone())
-                .collect::<std::collections::BTreeSet<_>>();
-            let pending = crate::sidecar::cached_sidecar_exchange_projections(
-                &state_store.read(),
-                &account_did,
-                &selected_realm_id,
-            )
-            .into_iter()
-            .filter(|projection| {
-                projection.status == arkret_sdk::AgentSidecarExchangeStatus::Pending
-                    && accepted_event_ids.contains(projection.private_request_event_id.as_str())
-            })
-            .collect::<Vec<_>>();
-            if pending.is_empty() {
+                .filter_map(|message| {
+                    message
+                        .protocol_message_id
+                        .clone()
+                        .map(|message_id| (message_id, message.id.clone()))
+                })
+                .collect::<std::collections::BTreeMap<_, _>>();
+            let basis = format!("{cursor}\u{1f}{realm_epoch}");
+            if sidecar_exchange_fold_basis_seen.peek().as_str() == basis {
                 return;
             }
-            let basis = format!(
-                "{cursor}\u{1f}{realm_epoch}\u{1f}{}",
-                pending
-                    .iter()
-                    .map(|projection| projection.exchange_id.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\u{1e}")
-            );
-            if sidecar_projection_retry_basis_seen.peek().as_str() == basis {
-                return;
-            }
-            sidecar_projection_retry_basis_seen.set(basis);
-            let credential = token();
-            for mut projection in pending {
-                let Ok(updated_hlc) = crate::signing_stamp::issue_protocol_hlc(
-                    &account_did,
-                    &device_id,
-                    &selected_realm_id,
-                ) else {
+            sidecar_exchange_fold_basis_seen.set(basis);
+            let mut store = state_store.write();
+            for (key, pending) in
+                crate::sidecar::pending_sidecar_submissions(&store, &account_did)
+            {
+                let Some(accepted_event_id) =
+                    accepted_event_by_message_id.get(&pending.message_id)
+                else {
                     continue;
                 };
-                projection.status = arkret_sdk::AgentSidecarExchangeStatus::Delivered;
-                projection.updated_hlc = updated_hlc;
-                let base_url = base_url.clone();
-                let credential = credential.clone();
-                spawn(async move {
-                    if crate::sidecar::persist_sidecar_exchange_projection(
-                        &base_url,
-                        credential,
-                        state_store,
-                        &projection,
-                    )
-                    .await
-                    .is_err()
-                    {
-                        tracing::warn!(
-                            "Pending Sidecar exchange projection retry did not complete"
-                        );
-                    }
-                });
+                store.remove_private_data(&key);
+                if let Err(error) = crate::sidecar::record_accepted_sidecar_exchange_request(
+                    &mut store,
+                    &pending,
+                    accepted_event_id,
+                ) {
+                    tracing::warn!(%error, "accepted Sidecar request fold cache write failed");
+                }
             }
+            // Receive-side Event-truth fold: decrypt exchange bindings and
+            // durable control Events from the synced private-Strand history
+            // and refresh the local fold cache (`zh/models/sidecar.md` §7.2.4).
+            crate::sidecar::refold_sidecar_exchanges_from_history(
+                &mut store,
+                &account_did,
+                &device_id,
+                &selected_realm_id,
+                &session_scope_hints,
+            );
         });
     }
     let all_messages_snapshot = all_messages_snapshot.read().clone();

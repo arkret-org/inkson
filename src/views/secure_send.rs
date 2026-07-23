@@ -46,6 +46,7 @@ pub(crate) type LocalMlsEncryptResult = (
     Option<arkret_sdk::Hash>,
     Vec<arkret_sdk::Did>,
     Option<LocalEncryptedMessage>,
+    Option<LocalEncryptedMessage>,
     Option<arkret_sdk::MlsCommitEnvelope>,
     Option<crate::mls::persistence::MlsSnapshotEnvelope>,
     Option<crate::state::PendingHistorySecrets>,
@@ -62,12 +63,14 @@ pub(crate) type LocalMlsEncryptResult = (
 /// On any failure (missing Welcome/snapshot, restore fails, encrypt fails),
 /// preserve the typed runtime error so the caller can surface the actual
 /// fail-closed reason instead of a generic "could not produce" message.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_local_mls_encrypt(
     mut state_store: SyncSignal<LocalStateStore>,
     realm_id: &str,
     principal_id: &str,
     device_id: &str,
     plaintext_bytes: &[u8],
+    metadata_plaintext_bytes: Option<&[u8]>,
     circle_id: Option<&str>,
     sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
 ) -> Result<LocalMlsEncryptResult, crate::mls::runtime::MlsRuntimeError> {
@@ -82,6 +85,7 @@ pub(crate) fn run_local_mls_encrypt(
         schedule_hash,
         member_dids,
         payload,
+        metadata_payload,
         commit_envelope,
         new_snapshot,
         pending_history_secrets,
@@ -94,13 +98,15 @@ pub(crate) fn run_local_mls_encrypt(
         "application/vnd.arkret.message+json",
         aad.clone(),
         plaintext_bytes,
+        metadata_plaintext_bytes,
         circle_id,
         sidecar_binding,
     )?;
     Ok((
         Some(schedule_hash),
         member_dids,
-        Some((payload, aad)),
+        Some((payload, aad.clone())),
+        metadata_payload.map(|payload| (payload, aad)),
         commit_envelope,
         new_snapshot,
         pending_history_secrets,
@@ -149,6 +155,12 @@ pub(crate) struct SecureSendBuild {
 ///
 /// `seal_view` is the caller-captured `seal_view_for_realm(realm_id)` snapshot;
 /// passing it in keeps the (synchronous) `state_store` read at the call site.
+/// `metadata_plaintext_bytes` — optional `encrypted_metadata` plaintext (the
+/// canonical `MessageMetadata` JSON, e.g. carrying
+/// `message_metadata.sidecar_exchange_binding`). It is MLS-encrypted under the
+/// same group/epoch and the same AAD/visibility as the content and mounted on
+/// the message payload's `encrypted_metadata` field; it never enters plaintext
+/// `metadata`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_secure_send(
     state_store: SyncSignal<LocalStateStore>,
@@ -160,6 +172,7 @@ pub(crate) fn build_secure_send(
     message_id: &str,
     reply_to: Option<&str>,
     plaintext_bytes: &[u8],
+    metadata_plaintext_bytes: Option<&[u8]>,
     expiry: Option<arkret_sdk::DisappearingMessageExpiry>,
     circle_id: Option<&str>,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
@@ -169,6 +182,7 @@ pub(crate) fn build_secure_send(
         local_schedule_hash,
         local_member_dids,
         encrypted_message,
+        encrypted_metadata_message,
         real_commit_envelope,
         new_mls_snapshot,
         pending_history_secrets,
@@ -178,6 +192,7 @@ pub(crate) fn build_secure_send(
         actor,
         device_id,
         plaintext_bytes,
+        metadata_plaintext_bytes,
         circle_id,
         sidecar_binding.as_ref(),
     )
@@ -186,6 +201,9 @@ pub(crate) fn build_secure_send(
     let Some((encrypted_payload, envelope_aad)) = encrypted_message else {
         return Err("Send Secure could not produce an MLS encrypted payload".to_owned());
     };
+    if metadata_plaintext_bytes.is_some() && encrypted_metadata_message.is_none() {
+        return Err("Send Secure could not produce the MLS encrypted metadata".to_owned());
+    }
     let Some(_local_schedule_hash) = local_schedule_hash else {
         return Err("Send Secure could not derive the MLS key schedule hash".to_owned());
     };
@@ -269,6 +287,19 @@ pub(crate) fn build_secure_send(
         encrypted_envelope,
     )
     .with_message_id(message_id.to_owned());
+    if let Some((metadata_payload, metadata_aad)) = encrypted_metadata_message {
+        // Same canonical wrap + AAD visibility + group-state binding as the
+        // `encrypted_content` envelope, mounted parallel to it on the payload.
+        message_payload.encrypted_metadata = Some(
+            arkret_sdk::mls::encrypted_envelope_from_payload(
+                &metadata_payload,
+                metadata_aad,
+                arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
+                &group_state_ref,
+            )
+            .map_err(|err| format!("MLS encrypted metadata envelope build failed: {err}"))?,
+        );
+    }
     if let Some(reply_to) = reply_to.filter(|value| !value.trim().is_empty()) {
         message_payload = message_payload.with_reply_to(reply_to);
     }

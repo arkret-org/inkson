@@ -110,6 +110,54 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
     assert_eq!(state.mls_snapshot_for(realm).unwrap().epoch, 0);
 }
 
+/// Sidecar exchange binding transport (`zh/models/sidecar.md` §7.2.1): the
+/// optional `encrypted_metadata` plaintext is encrypted as a SECOND
+/// application message on the same restored group session, riding the same
+/// epoch as the content payload (never a separate restore, which would fork
+/// the ratchet or double-commit).
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
+    let mut state = temp_state_store("metadata-same-epoch");
+    let secure = MemorySecureKeyStore::new();
+    let actor = "did:web:alice.example";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:01904100-0000-7000-8000-00000000feed";
+
+    super::seed_genesis_governance_proof(&mut state, realm);
+    seed_complete_rfc9420_projection(&mut state, realm, actor);
+    ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
+        .unwrap()
+        .expect("creator snapshot");
+
+    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(
+        arkret_sdk::RealmId::new(realm).unwrap(),
+        "ak.message.create",
+    );
+    let (_, _, content_payload, metadata_payload, commit, snapshot, _) =
+        encrypt_message_with_device_snapshot(
+            &mut state,
+            &secure,
+            realm,
+            actor,
+            device,
+            "application/vnd.arkret.message+json",
+            aad,
+            br#"{"kind":"ak.content.text","body":"routed"}"#,
+            Some(br#"{"sidecar_exchange_binding":{}}"#.as_slice()),
+            None,
+            None,
+        )
+        .unwrap();
+    let metadata_payload = metadata_payload.expect("metadata ciphertext");
+    assert_eq!(metadata_payload.epoch, content_payload.epoch);
+    assert_ne!(metadata_payload.payload_digest, content_payload.payload_digest);
+    assert!(commit.is_none());
+    assert!(snapshot.is_none());
+    // Both application messages advanced the §5.6 observed counter.
+    assert_eq!(state.mls_snapshot_for(realm).unwrap().app_messages_observed, 2);
+}
+
 /// client-sync.md §8.1: once a complete roster hint exposes a mismatch with
 /// the local MLS group, sending pauses conservatively until admission
 /// converges. This is the exact regression that produced an epoch-0 message

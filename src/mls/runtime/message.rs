@@ -1664,11 +1664,18 @@ type DeviceSnapshotEncryption = (
     arkret_sdk::Hash,
     Vec<arkret_sdk::Did>,
     arkret_sdk::EncryptedPayload,
+    Option<arkret_sdk::EncryptedPayload>,
     Option<arkret_sdk::MlsCommitEnvelope>,
     Option<crate::mls::persistence::MlsSnapshotEnvelope>,
     Option<crate::state::PendingHistorySecrets>,
 );
 
+/// Encrypt one message content plaintext — and optionally a second
+/// `encrypted_metadata` plaintext — under the SAME restored group session, so
+/// both ciphertexts ride the same epoch (and the same forced commit, when
+/// one is produced). Callers MUST NOT encrypt the metadata with a separate
+/// call: a second restore from the pre-commit snapshot would fork the ratchet.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn encrypt_message_with_device_snapshot(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -1678,6 +1685,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     content_type: &str,
     aad: arkret_sdk::EncryptedEnvelopeAad,
     plaintext: &[u8],
+    metadata_plaintext: Option<&[u8]>,
     circle_id: Option<&str>,
     sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
 ) -> Result<DeviceSnapshotEncryption, MlsRuntimeError> {
@@ -1725,20 +1733,31 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     // The routing `aad` rides the envelope (`EncryptedPayload.aad` + digest); the
     // AEAD itself binds the epoch via `history_content_aad_bytes`, matching the
     // decrypt-side `try_history_decrypt_standalone`.
-    let encrypted = if use_exporter_aead {
-        let aad_bytes = history_content_aad_bytes(realm_id, group.epoch())
-            .map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
-        group.encrypt_payload_exporter_aead(
-            content_type,
-            realm_id,
-            &aad_bytes,
-            Some(aad),
-            plaintext,
-        )
-    } else {
-        group.encrypt_payload_with_aad(content_type, Some(aad), plaintext)
-    }
-    .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))?;
+    let exporter_aad_bytes = use_exporter_aead
+        .then(|| history_content_aad_bytes(realm_id, group.epoch()))
+        .transpose()
+        .map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
+    let encrypt_one = |group: &mut arkret_sdk::ArkretMlsGroup, bytes: &[u8]| {
+        if let Some(aad_bytes) = exporter_aad_bytes.as_deref() {
+            group.encrypt_payload_exporter_aead(
+                content_type,
+                realm_id,
+                aad_bytes,
+                Some(aad.clone()),
+                bytes,
+            )
+        } else {
+            group.encrypt_payload_with_aad(content_type, Some(aad.clone()), bytes)
+        }
+        .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))
+    };
+    let encrypted = encrypt_one(&mut group, plaintext)?;
+    // The optional `encrypted_metadata` plaintext (e.g. the Sidecar exchange
+    // binding) is a second application message on the same ratchet, bound to
+    // the same canonical AAD/visibility as the content envelope.
+    let encrypted_metadata = metadata_plaintext
+        .map(|metadata| encrypt_one(&mut group, metadata))
+        .transpose()?;
     // §2.10 history sharing: retain this epoch's `history_secret` at author time
     // so a late joiner can decrypt it — see the fuller rationale in
     // `encrypt_values_with_device_snapshot`. Without this the author's own
@@ -1779,27 +1798,30 @@ pub(crate) fn encrypt_message_with_device_snapshot(
         &secret,
         &salt,
     );
+    let sent = 1 + u64::from(encrypted_metadata.is_some());
     if commit_envelope.is_some() {
         // Persist-on-accept: forced epoch advances must only be saved after the
-        // server accepts the matching `ak.mls.commit`. The single message
-        // encrypted above rides the NEW epoch (§5.6 counter restarts at 1).
+        // server accepts the matching `ak.mls.commit`. The messages encrypted
+        // above ride the NEW epoch (§5.6 counter restarts at `sent`).
         return Ok((
             schedule_hash,
             member_dids,
             encrypted,
+            encrypted_metadata,
             commit_envelope,
-            Some(new_envelope.with_app_messages_observed(1)),
+            Some(new_envelope.with_app_messages_observed(sent)),
             pending_history_secrets,
         ));
     }
     new_envelope = new_envelope
         .carry_epoch_started_at(&snapshot)
-        .with_app_messages_observed(snapshot.app_messages_observed.saturating_add(1));
+        .with_app_messages_observed(snapshot.app_messages_observed.saturating_add(sent));
     state_store.save_mls_snapshot_for_effective_scope(realm_id.to_owned(), circle, new_envelope);
     Ok((
         schedule_hash,
         member_dids,
         encrypted,
+        encrypted_metadata,
         None,
         None,
         pending_history_secrets,

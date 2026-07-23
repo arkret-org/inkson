@@ -38,10 +38,9 @@ pub fn ActorKindBadge(actor_kind: Option<String>) -> Element {
 /// The acknowledged object_refs feed `resume_sidecar_refs`, which the
 /// resume button folds into a real `agent_sidecar_exposure_ack`.
 ///
-/// Data source: soland's sidecar exposure projection
-/// (`ak.agent.sidecar_projection.v1`) is not yet wired, so the disclosed
-/// refs are entered by the operator here; once the projection ships, the
-/// agent view's exposure field populates this list automatically.
+/// Data source: soland's sidecar exposure projection is not yet wired, so
+/// the disclosed refs are entered by the operator here; once the projection
+/// ships, the agent view's exposure field populates this list automatically.
 #[component]
 pub fn SidecarExposureDisclosure(
     controller_id: String,
@@ -58,7 +57,7 @@ pub fn SidecarExposureDisclosure(
                 "Controller: {controller_id}. Before resuming a paused agent, acknowledge any Sidecars that became newly visible while it was paused. Acknowledged refs are sent as the resume sidecar_exposure_ack."
             }
             div { class: "muted", "data-testid": "sidecar-exposure-data-source",
-                "Data source: soland sidecar exposure projection (ak.agent.sidecar_projection.v1) pending — enter the disclosed sidecar object_refs below until the projection auto-populates this list."
+                "Data source: soland sidecar exposure projection pending — enter the disclosed sidecar object_refs below until the projection auto-populates this list."
             }
             div { class: "workflow-form",
                 Input {
