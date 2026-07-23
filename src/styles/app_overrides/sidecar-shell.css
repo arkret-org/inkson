@@ -30,9 +30,16 @@
 .sidecar-context-main,
 .sidecar-addressed-now {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
   min-width: 0;
+}
+
+.sidecar-context-main > .muted,
+.sidecar-addressed-now > strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .sidecar-addressed-now {

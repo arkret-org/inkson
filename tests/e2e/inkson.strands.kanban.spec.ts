@@ -122,6 +122,76 @@ test("owned agent sidecar labels private messages in discussion", async ({ page 
   await expect(privacyBadge).toHaveAttribute("data-visibility", "private-sidecar");
 });
 
+test("sidecar display mode persists across tracks and fits a narrow long-agent layout", async ({
+  page,
+}) => {
+  await openKanban(page);
+  await page.getByTestId("kanban-card").first().click();
+  const detailPopup = page.getByTestId("card-detail-modal");
+  await detailPopup.getByTestId("card-detail-sidebar-tab-members").click();
+  await detailPopup
+    .getByTestId("card-detail-agent-row")
+    .getByTestId("card-detail-member-mention-button")
+    .click();
+  await detailPopup.getByTestId("chat-input").fill("@me/assistant keep this private draft");
+
+  const ensureResponse = page.waitForResponse((response) =>
+    response.url().includes("/_arkret/self/agent-sidecars:ensure"),
+  );
+  await detailPopup.getByTestId("send-chat-button").click();
+  await expect((await ensureResponse).ok()).toBeTruthy();
+  await expect(detailPopup).toBeVisible();
+  await expect(page.getByTestId("sidecar-context-strip")).toBeVisible();
+
+  await detailPopup.getByTestId("card-detail-tab-description").click();
+  await expect(detailPopup.getByTestId("sidecar-shared-description-base")).toBeVisible();
+  await expect(detailPopup.getByTestId("sidecar-private-description-label")).toBeVisible();
+
+  await page.getByTestId("sidecar-mode-sidecar-only").click();
+  await expect(page.getByTestId("sidecar-mode-sidecar-only")).toHaveClass(/active/);
+  await expect(detailPopup.getByTestId("sidecar-shared-description-base")).toHaveCount(0);
+  await expect(detailPopup.getByTestId("sidecar-private-description-label")).toBeVisible();
+
+  await detailPopup.getByTestId("card-detail-tab-synthesis").click();
+  await expect(page.getByTestId("sidecar-mode-sidecar-only")).toHaveClass(/active/);
+  await expect(detailPopup.getByTestId("sidecar-shared-synthesis-base")).toHaveCount(0);
+  await expect(detailPopup.getByTestId("sidecar-private-synthesis-label")).toBeVisible();
+
+  await page.getByTestId("sidecar-mode-context-merged").click();
+  await expect(page.getByTestId("sidecar-mode-context-merged")).toHaveClass(/active/);
+  await expect(detailPopup.getByTestId("sidecar-shared-synthesis-base")).toBeVisible();
+
+  await detailPopup.getByTestId("card-detail-tab-discussion").click();
+  await expect(detailPopup.getByTestId("chat-input")).toHaveValue(
+    "@me/assistant keep this private draft",
+  );
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByTestId("sidecar-addressed-now").locator("strong").evaluate((element) => {
+    element.textContent =
+      "assistant-with-an-intentionally-very-long-private-agent-handle-that-must-wrap";
+  });
+  const layout = await page.getByTestId("sidecar-context-strip").evaluate((strip) => {
+    const bounds = strip.getBoundingClientRect();
+    const children = Array.from(strip.children).map((child) => {
+      const rect = child.getBoundingClientRect();
+      return { left: rect.left, right: rect.right };
+    });
+    return {
+      clientWidth: strip.clientWidth,
+      scrollWidth: strip.scrollWidth,
+      left: bounds.left,
+      right: bounds.right,
+      children,
+    };
+  });
+  expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth + 1);
+  for (const child of layout.children) {
+    expect(child.left).toBeGreaterThanOrEqual(layout.left - 1);
+    expect(child.right).toBeLessThanOrEqual(layout.right + 1);
+  }
+});
+
 test("pending sidecar reconciliation blocks contextual send without claiming readiness", async ({ page }) => {
   await openKanban(page);
   await page.getByTestId("kanban-card").first().click();
