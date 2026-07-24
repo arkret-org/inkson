@@ -44,6 +44,18 @@ test.describe("feature coverage placeholders", () => {
   test.beforeEach(async ({ page }) => {
     await mockArkretApi(page);
     await page.addInitScript(() => {
+      localStorage.setItem(
+        "inkson.test.session_injection.v1",
+        JSON.stringify({
+          grant_jwt: "sx:e2e-token",
+          grant_id: "ak:grant:0196419b-0000-7000-8000-00000000e2e1",
+          audience: "did:web:server.local",
+          principal_id: "did:web:alice.example",
+          dpop_seed_b64url: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        }),
+      );
+    });
+    await page.addInitScript(() => {
       if (localStorage.getItem("inkson.config.v1")) {
         return;
       }
@@ -51,6 +63,7 @@ test.describe("feature coverage placeholders", () => {
         "inkson.config.v1",
         JSON.stringify({
           server_url: "https://local.host",
+          principal_servers: ["https://local.host"],
           account_did: "did:web:alice.example",
           device_id: "ak:device:01964137-0000-7000-8000-0000000000a1",
           session_credential: "sx:e2e-token",
@@ -141,20 +154,33 @@ test.describe("feature coverage placeholders", () => {
     await expect(page.getByTestId("sas-mismatch-button")).toBeEnabled();
   });
 
-  test("device pairing: generated request is accepted through account gate", async ({
+  test("device pairing: short-link request is staged, resolved, and accepted through account gate", async ({
     page,
   }) => {
     await page.goto("/settings/devices/pair", { waitUntil: "domcontentloaded", timeout: 120_000 });
     await dismissBlockingDialog(page);
     await expect(page.getByTestId("pair-device-card")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("pending-pairing-requests-card")).toBeVisible({ timeout: 30_000 });
-    await page.getByTestId("pair-device-start-button").click();
-    await expect(page.getByTestId("pair-device-secret")).toHaveValue(/ck\.device\.pair\.request\.v1/, {
-      timeout: 30_000,
-    });
-    const payload = await page.getByTestId("pair-device-secret").inputValue();
 
-    await page.getByTestId("accept-pairing-input").fill(payload);
+    // New device: staging yields a SHORT resolve deep-link (not the old
+    // full-payload blob) in the pairing-link field.
+    await page.getByTestId("pair-device-start-button").click();
+    await expect(page.getByTestId("pair-device-secret")).toHaveValue(
+      /\/_arkret\/open\/device-pairing\/resolve#token=/,
+      { timeout: 30_000 },
+    );
+    const pairingLink = await page.getByTestId("pair-device-secret").inputValue();
+
+    // Authorized device: paste the link, resolve it, then approve.
+    await page.getByTestId("accept-pairing-input").fill(pairingLink);
+    const resolvePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === "/_arkret/open/device-pairing/resolve";
+    });
+    await page.getByTestId("accept-pairing-resolve-button").click();
+    expect((await resolvePromise).ok()).toBeTruthy();
+    // Resolved code surfaces for the human SAS compare before approving.
+    await expect(page.getByTestId("accept-pairing-code")).toBeVisible({ timeout: 30_000 });
 
     const requestPromise = page.waitForRequest((request) => {
       const url = new URL(request.url());
@@ -170,8 +196,13 @@ test.describe("feature coverage placeholders", () => {
     const body = request.postDataJSON();
     expect(body.pairing_code).toBeTruthy();
     expect(body.new_device_pubkey.kid).toMatch(/^ak:device:/);
+    // Canonical field name is `key`, never the legacy `public_key`.
+    expect(body.new_device_pubkey.key).toBeTruthy();
+    expect(body.new_device_pubkey.public_key).toBeUndefined();
     expect(body.challenge_signature).toBeTruthy();
-    await expect(page.getByTestId("accept-pairing-status")).toContainText("Sibling device paired");
+    // The resolved staged request id is echoed so the server flips the row.
+    expect(body.device_pairing_request_id).toMatch(/^device_pairing_request:/);
+    await expect(page.getByTestId("accept-pairing-status")).toContainText("Device paired");
   });
 
   test("cross-signing: Run setup submits ak.cross_signing.publish into the principal control Realm", async ({
@@ -194,6 +225,7 @@ test.describe("feature coverage placeholders", () => {
         "inkson.config.v1",
         JSON.stringify({
           server_url: "https://local.host",
+          principal_servers: ["https://local.host"],
           account_did: "did:web:alice.example",
           device_id: "ak:device:01964137-0000-7000-8000-0000000000a1",
           session_credential: "sx:e2e-token",

@@ -2807,8 +2807,52 @@ export async function mockArkretApi(
       return json(route, {
         device_id: deviceId,
         authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000d001",
-        device_grant: { status: "active" },
-        key_backup_hint: {},
+      });
+    }
+
+    // Server-mediated device-pairing short-link (open, unauthenticated).
+    if (
+      url.pathname === "/_arkret/open/device-pairing/requests" &&
+      route.request().method() === "POST"
+    ) {
+      return json(route, {
+        device_pairing_request_id:
+          "device_pairing_request:01964137-0000-7000-8000-0000000000c1",
+        pairing_code: "7H2K9M4Q",
+        expires_at: "2099-01-01T00:00:00.000Z",
+      });
+    }
+
+    if (
+      url.pathname === "/_arkret/open/device-pairing/resolve" &&
+      route.request().method() === "POST"
+    ) {
+      return json(route, {
+        arkret_base_url: url.origin,
+        device_pairing_request_id:
+          "device_pairing_request:01964137-0000-7000-8000-0000000000c1",
+        pairing_code: "7H2K9M4Q",
+        new_device_pubkey: {
+          kty: "OKP",
+          kid: "ak:device:01964137-0000-7000-8000-0000000000b2",
+          alg: "EdDSA",
+          key: "z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+        },
+        challenge_signature: "Q0hBTExFTkdF",
+        display_name: "New device",
+        device_metadata: { platform: "browser" },
+        expires_at: "2099-01-01T00:00:00.000Z",
+      });
+    }
+
+    if (
+      url.pathname === "/_arkret/open/device-pairing/requests/status" &&
+      route.request().method() === "POST"
+    ) {
+      return json(route, {
+        state: "authorized",
+        device_id: "ak:device:01964137-0000-7000-8000-0000000000b2",
+        authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000d001",
       });
     }
 

@@ -391,7 +391,7 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
     "expires_at": "2099-07-17T00:10:00.000Z",
     "content": {
         "from_device": "ak:device:0196419b-0000-7000-8000-000000000001",
-        "pairing_code": "123456"
+        "pairing_code": "7H2K9M4Q"
     }
     }))
     .unwrap();
@@ -404,7 +404,7 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
     assert_eq!(
         writer.dismiss_pairing_to_device_message(
             "ak:device:0196419b-0000-7000-8000-000000000001",
-            "123456",
+            "7H2K9M4Q",
         ),
         1
     );
@@ -425,7 +425,7 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
         "expires_at": "2099-07-17T00:10:00.000Z",
         "content": {
             "from_device": "ak:device:0196419b-0000-7000-8000-000000000001",
-            "pairing_code": "654321"
+            "pairing_code": "8J3L5N7P"
         }
         }))
         .unwrap();

@@ -100,6 +100,45 @@ impl KeysEndpoints<'_> {
             .await
             .map_err(anyhow::Error::from)
     }
+
+    /// Stage a new device's key server-side, returning the short pairing handle
+    /// + code (`ak.open.device_pairing.command.stage`).
+    pub async fn device_pairing_stage(
+        &self,
+        body: &arkret_sdk::DevicePairingStageRequestBody,
+    ) -> anyhow::Result<arkret_sdk::DevicePairingStageOutcome> {
+        self.transport
+            .http()
+            .device_pairing_stage(body)
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
+    /// Resolve a scanned/pasted pairing token into the staged bootstrap
+    /// (`ak.open.device_pairing.query.resolve`).
+    pub async fn device_pairing_resolve(
+        &self,
+        body: &arkret_sdk::DevicePairingResolveRequestBody,
+    ) -> anyhow::Result<arkret_sdk::DevicePairingBootstrap> {
+        self.transport
+            .http()
+            .device_pairing_resolve(body)
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
+    /// Poll whether a staged pairing request has been authorized
+    /// (`ak.open.device_pairing.query.status`).
+    pub async fn device_pairing_status(
+        &self,
+        body: &arkret_sdk::DevicePairingStatusRequestBody,
+    ) -> anyhow::Result<arkret_sdk::DevicePairingStatusOutcome> {
+        self.transport
+            .http()
+            .device_pairing_status(body)
+            .await
+            .map_err(anyhow::Error::from)
+    }
 }
 
 impl MlsEndpoints<'_> {

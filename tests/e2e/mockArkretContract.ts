@@ -144,13 +144,41 @@ export function mockArkretContract(req) {
     return json({
       device_id: deviceId,
       authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000d001",
-      device_grant: {
-        status: "active",
-        authorized_by_device_id: req.account?.device_id,
-        authorized_at: "2026-04-28T12:00:00.000Z",
-        display_name: body.display_name ?? null,
+    });
+  }
+
+  // Server-mediated device-pairing short-link (open, unauthenticated).
+  if (method === "POST" && path === "/_arkret/open/device-pairing/requests") {
+    return json({
+      device_pairing_request_id: "device_pairing_request:01964137-0000-7000-8000-0000000000c1",
+      pairing_code: "7H2K9M4Q",
+      expires_at: "2099-01-01T00:00:00.000Z",
+    });
+  }
+
+  if (method === "POST" && path === "/_arkret/open/device-pairing/resolve") {
+    return json({
+      arkret_base_url: "https://local.host",
+      device_pairing_request_id: "device_pairing_request:01964137-0000-7000-8000-0000000000c1",
+      pairing_code: "7H2K9M4Q",
+      new_device_pubkey: {
+        kty: "OKP",
+        kid: "ak:device:01964137-0000-7000-8000-0000000000b2",
+        alg: "EdDSA",
+        key: "z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
       },
-      key_backup_hint: {},
+      challenge_signature: "Q0hBTExFTkdF",
+      display_name: "New device",
+      device_metadata: { platform: "browser" },
+      expires_at: "2099-01-01T00:00:00.000Z",
+    });
+  }
+
+  if (method === "POST" && path === "/_arkret/open/device-pairing/requests/status") {
+    return json({
+      state: "authorized",
+      device_id: "ak:device:01964137-0000-7000-8000-0000000000b2",
+      authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000d001",
     });
   }
 

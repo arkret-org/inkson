@@ -61,6 +61,9 @@ pub fn DevicePairApprovalPrompt(token: Signal<String>, device_id: Signal<String>
         display_name,
         platform,
         expires_at,
+        // Already embedded in `request_payload`, so the approve path threads it
+        // into `account_device_pair` without a separate binding here.
+        device_pairing_request_id: _,
         request_payload,
     } = request;
 
