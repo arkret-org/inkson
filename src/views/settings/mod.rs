@@ -438,6 +438,7 @@ pub fn SettingsPanel(
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::get().base_url;
     let mut state_store = crate::app::SessionContext::get().state_store;
+    let backup_trigger_signal = crate::components::try_needs_mls_backup_signal();
     let route = use_route::<Route>();
     let active_section = SettingsSection::from_slug(route.settings_section());
     // Settings-nav filter: matches section labels in the active locale so the
@@ -1916,9 +1917,12 @@ pub fn SettingsPanel(
                                             push_dnd_account_data(
                                                 base_url(),
                                                 token(),
+                                                account_did(),
+                                                device_id(),
                                                 dnd_enabled(),
                                                 dnd_mode(),
                                                 state_store,
+                                                backup_trigger_signal,
                                                 notification_settings_status,
                                             );
                                             push_notification_rules_account_data(

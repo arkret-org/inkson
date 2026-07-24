@@ -62,6 +62,22 @@ async fn bootstrap_session_refresh(
     }
 }
 
+async fn session_scoped_bootstrap_request<T, F>(
+    label: &'static str,
+    session: &crate::runtime::session::SessionCoordinator,
+    generation: u64,
+    future: F,
+) -> Option<anyhow::Result<T>>
+where
+    F: Future<Output = anyhow::Result<T>>,
+{
+    if session.generation() != generation {
+        return None;
+    }
+    let result = bootstrap_request(label, future).await;
+    (session.generation() == generation).then_some(result)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct SessionRefreshWritePlan {
     pub(super) grant: bool,
@@ -600,6 +616,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         return;
                     }
                 }
+                let bootstrap_session_generation = session.generation();
 
                 let Ok(mut authed) = current_authed_api(&base, &session_credential, state_store)
                 else {
@@ -629,11 +646,19 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 //      last_error so the sidebar/status surface can show it, and keep going so sync
                 //      still has a chance to populate realm_tree_nodes.
                 let mut account_personal_handle = None::<String>;
-                let canonical_actor = match bootstrap_request("account viewer", async {
-                    crate::transport::account::account_me(&authed.sdk_http_client()?).await
-                })
+                let Some(account_viewer_result) = session_scoped_bootstrap_request(
+                    "account viewer",
+                    &session,
+                    bootstrap_session_generation,
+                    async {
+                        crate::transport::account::account_me(&authed.sdk_http_client()?).await
+                    },
+                )
                 .await
-                {
+                else {
+                    return;
+                };
+                let canonical_actor = match account_viewer_result {
                     Ok(account) if !account.did.trim().is_empty() => {
                         account_personal_handle =
                             personal_handle_from_account_handle(&account.handle);
@@ -664,14 +689,23 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     return;
                                 };
                                 authed = rebound;
-                                match bootstrap_request("account viewer retry", async {
-                                    crate::transport::account::account_me(
-                                        &authed.sdk_http_client()?,
+                                let Some(account_viewer_retry_result) =
+                                    session_scoped_bootstrap_request(
+                                        "account viewer retry",
+                                        &session,
+                                        bootstrap_session_generation,
+                                        async {
+                                            crate::transport::account::account_me(
+                                                &authed.sdk_http_client()?,
+                                            )
+                                            .await
+                                        },
                                     )
                                     .await
-                                })
-                                .await
-                                {
+                                else {
+                                    return;
+                                };
+                                match account_viewer_retry_result {
                                     Ok(account) if !account.did.trim().is_empty() => {
                                         account_personal_handle =
                                             personal_handle_from_account_handle(&account.handle);
@@ -842,12 +876,17 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     &mut session_credential,
                     &mut authed,
                 );
-                match bootstrap_request(
+                let Some(device_authorization_result) = session_scoped_bootstrap_request(
                     "device authorization check",
+                    &session,
+                    bootstrap_session_generation,
                     probe_device_authorization(&canonical_actor, &device, &authed),
                 )
                 .await
-                {
+                else {
+                    return;
+                };
+                match device_authorization_result {
                     Ok((needs_authorization, has_other)) => {
                         account_has_other_devices.set(has_other);
                         needs_device_authorization.set(needs_authorization);
@@ -871,12 +910,22 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     return;
                                 };
                                 authed = rebound;
-                                match bootstrap_request(
-                                    "device authorization retry",
-                                    probe_device_authorization(&canonical_actor, &device, &authed),
-                                )
-                                .await
-                                {
+                                let Some(device_authorization_retry_result) =
+                                    session_scoped_bootstrap_request(
+                                        "device authorization retry",
+                                        &session,
+                                        bootstrap_session_generation,
+                                        probe_device_authorization(
+                                            &canonical_actor,
+                                            &device,
+                                            &authed,
+                                        ),
+                                    )
+                                    .await
+                                else {
+                                    return;
+                                };
+                                match device_authorization_retry_result {
                                     Ok((needs_authorization, has_other)) => {
                                         account_has_other_devices.set(has_other);
                                         needs_device_authorization.set(needs_authorization);
@@ -959,12 +1008,17 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     &mut session_credential,
                     &mut authed,
                 );
-                let sync_result = match bootstrap_request(
+                let Some(account_subscribe_result) = session_scoped_bootstrap_request(
                     "account subscribe bootstrap",
+                    &session,
+                    bootstrap_session_generation,
                     client_core_account_subscribe_snapshot(&authed),
                 )
                 .await
-                {
+                else {
+                    return;
+                };
+                let sync_result = match account_subscribe_result {
                     Ok(sync) => Ok(sync),
                     Err(error) if is_auth_expired_error(&error) => {
                         match bootstrap_session_refresh(&session).await {
@@ -984,11 +1038,18 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     return;
                                 };
                                 authed = rebound;
-                                bootstrap_request(
-                                    "account subscribe bootstrap retry",
-                                    client_core_account_subscribe_snapshot(&authed),
-                                )
-                                .await
+                                let Some(account_subscribe_retry_result) =
+                                    session_scoped_bootstrap_request(
+                                        "account subscribe bootstrap retry",
+                                        &session,
+                                        bootstrap_session_generation,
+                                        client_core_account_subscribe_snapshot(&authed),
+                                    )
+                                    .await
+                                else {
+                                    return;
+                                };
+                                account_subscribe_retry_result
                             }
                             crate::runtime::session::CurrentSessionRefresh::SignInRequired {
                                 reason,
@@ -1042,12 +1103,19 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             &mut session_credential,
                             &mut authed,
                         );
-                        let invite_notifications =
-                            match bootstrap_request("invite notifications", async {
+                        let Some(invite_notifications_result) = session_scoped_bootstrap_request(
+                            "invite notifications",
+                            &session,
+                            bootstrap_session_generation,
+                            async {
                                 crate::transport::account::invites(&authed.sdk_http_client()?).await
-                            })
-                            .await
-                            {
+                            },
+                        )
+                        .await
+                        else {
+                            return;
+                        };
+                        let invite_notifications = match invite_notifications_result {
                                 Ok(response) => Some(invite_rows_to_values(response.invites)),
                                 Err(error) if is_auth_expired_error(&error) => {
                                     match bootstrap_session_refresh(&session).await {
@@ -1074,15 +1142,25 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                                 return;
                                             };
                                             authed = rebound;
-                                            bootstrap_request("invite notifications retry", async {
-                                                crate::transport::account::invites(
-                                                    &authed.sdk_http_client()?,
+                                            let Some(invite_retry_result) =
+                                                session_scoped_bootstrap_request(
+                                                    "invite notifications retry",
+                                                    &session,
+                                                    bootstrap_session_generation,
+                                                    async {
+                                                        crate::transport::account::invites(
+                                                            &authed.sdk_http_client()?,
+                                                        )
+                                                        .await
+                                                    },
                                                 )
                                                 .await
+                                            else {
+                                                return;
+                                            };
+                                            invite_retry_result.ok().map(|response| {
+                                                invite_rows_to_values(response.invites)
                                             })
-                                            .await
-                                            .ok()
-                                            .map(|response| invite_rows_to_values(response.invites))
                                         }
                                         crate::runtime::session::CurrentSessionRefresh::SignInRequired {
                                             ..
@@ -1598,12 +1676,17 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     &mut authed,
                 );
                 tracing::debug!(target: "session_boot", "connect: post-sync, awaiting events_describe");
-                let events_result = match bootstrap_request(
+                let Some(events_describe_result) = session_scoped_bootstrap_request(
                     "events describe",
+                    &session,
+                    bootstrap_session_generation,
                     client_core_events_describe(&authed, state_store),
                 )
                 .await
-                {
+                else {
+                    return;
+                };
+                let events_result = match events_describe_result {
                     Ok(events) => {
                         tracing::debug!(target: "session_boot", "connect: events_describe returned Ok");
                         Ok(events)
@@ -1626,11 +1709,17 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     return;
                                 };
                                 authed = rebound;
-                                bootstrap_request(
+                                let Some(events_retry_result) = session_scoped_bootstrap_request(
                                     "events describe retry",
+                                    &session,
+                                    bootstrap_session_generation,
                                     client_core_events_describe(&authed, state_store),
                                 )
                                 .await
+                                else {
+                                    return;
+                                };
+                                events_retry_result
                             }
                             crate::runtime::session::CurrentSessionRefresh::SignInRequired {
                                 reason,

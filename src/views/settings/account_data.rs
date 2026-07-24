@@ -389,9 +389,12 @@ pub(super) fn build_dnd_account_data_body(enabled: bool, mode: &str) -> serde_js
 pub(super) fn push_dnd_account_data(
     base_url: String,
     api_token: String,
+    actor_id: String,
+    device_id: String,
     enabled: bool,
     mode: String,
     mut state_store: SyncSignal<LocalStateStore>,
+    backup_trigger_signal: Option<Signal<bool>>,
     mut notification_settings_status: Signal<String>,
 ) {
     let plaintext_body = build_dnd_account_data_body(enabled, &mode);
@@ -410,13 +413,30 @@ pub(super) fn push_dnd_account_data(
         }
     };
     spawn(async move {
-        match with_event_submitter(&base_url, api_token, |sub| async move {
+        match with_event_submitter(&base_url, api_token.clone(), |sub| async move {
             crate::transport::account::set_account_data(&sub, DND_ACCOUNT_DATA_KEY, body).await
         })
         .await
         {
-            Ok(AccountDataSetResult::Stored { .. })
-            | Ok(AccountDataSetResult::Unsupported { .. }) => {
+            Ok(AccountDataSetResult::Stored { .. }) => {
+                if let Some(signal) = backup_trigger_signal {
+                    crate::components::maybe_auto_backup_mls_after_encrypted_write(
+                        base_url,
+                        api_token,
+                        actor_id,
+                        device_id,
+                        state_store,
+                        signal,
+                    )
+                    .await;
+                }
+                notification_settings_status.set(if enabled {
+                    "Do not disturb enabled.".to_owned()
+                } else {
+                    "DND disabled.".to_owned()
+                });
+            }
+            Ok(AccountDataSetResult::Unsupported { .. }) => {
                 notification_settings_status.set(if enabled {
                     "Do not disturb enabled.".to_owned()
                 } else {
