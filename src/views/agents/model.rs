@@ -246,6 +246,12 @@ impl AgentServiceScopePreset {
             Self::SecureMessaging => &[
                 "ak.self.keys.keypackages.upload.create",
                 "ak.self.keys.keypackages.command.consume",
+                // Standard KeyPackage lifecycle is upload|claim|consume|revoke
+                // (device-lifecycle §9). The runtime revokes its own published
+                // pool on unbind/replacement, and the requested_scope ceiling
+                // is immutable after provisioning (key-management §4.5), so
+                // revoke must be part of the default ceiling from day one.
+                "ak.self.keys.keypackages.command.revoke",
                 "ak.self.device_messages.query.list",
                 "ak.self.device_messages.command.ack",
             ],

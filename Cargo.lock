@@ -3328,7 +3328,6 @@ dependencies = [
 [[package]]
 name = "generational-box"
 version = "0.7.9"
-source = "git+https://github.com/arkret-org/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
 dependencies = [
  "parking_lot",
  "tracing",

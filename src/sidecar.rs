@@ -344,11 +344,7 @@ pub(crate) fn save_pending_sidecar_submission(
         &pending.private_strand_id,
         intent_digest,
     );
-    store.save_private_data(
-        &pending.controller_id,
-        key,
-        serde_json::to_string(pending)?,
-    );
+    store.save_private_data(&pending.controller_id, key, serde_json::to_string(pending)?);
     Ok(())
 }
 
@@ -655,7 +651,10 @@ fn refold_sidecar_exchanges_with_decrypt(
         for (_, pending) in pending_sidecar_submissions(store_ref, controller_id) {
             scope_hints.insert(
                 pending.private_strand_id.clone(),
-                (pending.sidecar_id.clone(), pending.backing_circle_id.clone()),
+                (
+                    pending.sidecar_id.clone(),
+                    pending.backing_circle_id.clone(),
+                ),
             );
         }
         // No known Sidecar private Strand for this controller: nothing can
@@ -670,12 +669,18 @@ fn refold_sidecar_exchanges_with_decrypt(
             .collect::<std::collections::BTreeMap<_, _>>();
 
         type ExchangeKey = (String, String);
-        let mut requests =
-            std::collections::BTreeMap::<ExchangeKey, Vec<garth::projection::SidecarExchangeRequestFact>>::new();
-        let mut agent_facts =
-            std::collections::BTreeMap::<ExchangeKey, Vec<garth::projection::SidecarExchangeAgentFact>>::new();
-        let mut controls =
-            std::collections::BTreeMap::<ExchangeKey, Vec<garth::projection::SidecarExchangeControlFact>>::new();
+        let mut requests = std::collections::BTreeMap::<
+            ExchangeKey,
+            Vec<garth::projection::SidecarExchangeRequestFact>,
+        >::new();
+        let mut agent_facts = std::collections::BTreeMap::<
+            ExchangeKey,
+            Vec<garth::projection::SidecarExchangeAgentFact>,
+        >::new();
+        let mut controls = std::collections::BTreeMap::<
+            ExchangeKey,
+            Vec<garth::projection::SidecarExchangeControlFact>,
+        >::new();
         let mut request_event_ids = std::collections::BTreeSet::<String>::new();
         let mut upgraded_exchange_keys = std::collections::BTreeSet::<ExchangeKey>::new();
 
@@ -868,8 +873,7 @@ fn refold_sidecar_exchanges_with_decrypt(
                 continue;
             };
             let exchange_requests = requests.get(&exchange_key).unwrap_or(&empty_requests);
-            let exchange_agent_facts =
-                agent_facts.get(&exchange_key).unwrap_or(&empty_agent_facts);
+            let exchange_agent_facts = agent_facts.get(&exchange_key).unwrap_or(&empty_agent_facts);
             let exchange_controls = controls.get(&exchange_key).unwrap_or(&empty_controls);
             // Controller-local equivocation diagnostic (§7.2.1): several
             // distinct accepted request Events sharing one exchange_id. The
@@ -888,11 +892,8 @@ fn refold_sidecar_exchanges_with_decrypt(
             }
             // F-5 cache gate (§7.2.4): compare the persisted frontier against
             // the locally verified fact set before refolding.
-            let cache_key = sidecar_exchange_fold_cache_key(
-                controller_id,
-                strand_id,
-                exchange_id_raw,
-            );
+            let cache_key =
+                sidecar_exchange_fold_cache_key(controller_id, strand_id, exchange_id_raw);
             let cached_projection = store_ref
                 .load_private_data(controller_id, &cache_key)
                 .and_then(|raw| {
@@ -904,7 +905,11 @@ fn refold_sidecar_exchanges_with_decrypt(
                 let local_ids = exchange_requests
                     .iter()
                     .map(|fact| fact.event_id.clone())
-                    .chain(exchange_agent_facts.iter().map(|fact| fact.event_id.clone()))
+                    .chain(
+                        exchange_agent_facts
+                            .iter()
+                            .map(|fact| fact.event_id.clone()),
+                    )
                     .chain(exchange_controls.iter().map(|fact| fact.event_id.clone()))
                     .collect::<std::collections::BTreeSet<_>>();
                 match garth::projection::evaluate_sidecar_exchange_cache(
@@ -1377,9 +1382,12 @@ mod tests {
 
         // The record is a client-local private_data entry, never an
         // account-data type, and never enters the fold cache.
-        assert!(store.private_data_keys().iter().any(|key| {
-            key.starts_with("ak.local.sidecar_pending_submission.v1:")
-        }));
+        assert!(
+            store
+                .private_data_keys()
+                .iter()
+                .any(|key| { key.starts_with("ak.local.sidecar_pending_submission.v1:") })
+        );
         assert!(
             cached_sidecar_exchange_projections(
                 &store,
@@ -1464,7 +1472,9 @@ mod tests {
                 .all(|key| !key.starts_with("ak.agent."))
         );
         // The fold cache replaces wholesale and is idempotent.
-        assert!(!cache_sidecar_exchange_projection(&mut store, EXCHANGE_ACCOUNT, projection).unwrap());
+        assert!(
+            !cache_sidecar_exchange_projection(&mut store, EXCHANGE_ACCOUNT, projection).unwrap()
+        );
         // Controller binding still fails closed.
         assert!(
             cache_sidecar_exchange_projection(&mut store, "did:web:bob.example", projection)
@@ -1602,10 +1612,8 @@ mod tests {
         // … but scoped to an unrelated Circle the controller can also read.
         event.effective_scope = Some(arkret_wire::EffectiveScope::Circle {
             realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
-            circle_id: arkret_sdk::CircleId::new(
-                "ak:circle:019f0000-0000-7000-8000-0000000000ff",
-            )
-            .unwrap(),
+            circle_id: arkret_sdk::CircleId::new("ak:circle:019f0000-0000-7000-8000-0000000000ff")
+                .unwrap(),
         });
         event.refs = vec![arkret_sdk::EventRef::new(EXCHANGE_REQUEST_EVENT, "after")];
         store.append_raw_operation(

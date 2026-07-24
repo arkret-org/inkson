@@ -170,6 +170,7 @@ mod personal_agent_tests {
                 "ak.self.events.command.submit",
                 "ak.self.keys.keypackages.upload.create",
                 "ak.self.keys.keypackages.command.consume",
+                "ak.self.keys.keypackages.command.revoke",
                 "ak.self.device_messages.query.list",
                 "ak.self.device_messages.command.ack",
             ]
@@ -197,6 +198,10 @@ mod personal_agent_tests {
                 {
                     "kind": "operation",
                     "operation": "ak.self.keys.keypackages.command.consume"
+                },
+                {
+                    "kind": "operation",
+                    "operation": "ak.self.keys.keypackages.command.revoke"
                 },
                 {
                     "kind": "operation",

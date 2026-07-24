@@ -238,6 +238,7 @@ pub async fn direct_conversation_resolve(
     state_store: SyncSignal<crate::state::LocalStateStore>,
     peer: &str,
     create: bool,
+    enable_owned_agent_reply: bool,
 ) -> anyhow::Result<arkret_sdk::DirectConversationResolveOutcome> {
     let http = api.http();
     let body = arkret_sdk::DirectConversationResolveRequestBody {
@@ -297,6 +298,9 @@ pub async fn direct_conversation_resolve(
                 "canonical direct conversation binding was not projected after signed Event submission"
             );
         }
+        if enable_owned_agent_reply {
+            ensure_owned_agent_direct_reply(http, peer, &confirmed).await?;
+        }
         return Ok(confirmed);
     }
     if outcome.state == arkret_sdk::DirectConversationResolveState::AuthoringRequired {
@@ -304,7 +308,67 @@ pub async fn direct_conversation_resolve(
             "direct conversation resolver requires authoring but omitted the materialization draft"
         );
     }
+    if enable_owned_agent_reply
+        && outcome.state == arkret_sdk::DirectConversationResolveState::Found
+    {
+        ensure_owned_agent_direct_reply(http, peer, &outcome).await?;
+    }
     Ok(outcome)
+}
+
+async fn ensure_owned_agent_direct_reply(
+    http: &arkret_sdk::http_client::Client,
+    agent_id: &str,
+    outcome: &arkret_sdk::DirectConversationResolveOutcome,
+) -> anyhow::Result<()> {
+    let realm_id = outcome
+        .realm_id
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("owned-Agent Direct Conversation omitted realm_id"))?;
+    let strand_id = outcome
+        .main_strand_id
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("owned-Agent Direct Conversation omitted main_strand_id"))?;
+    let scope = arkret_sdk::AgentParticipationScope::Strand {
+        realm_id,
+        strand_id,
+    };
+    let existing = http
+        .agent_participation_get(agent_id)
+        .await
+        .map_err(anyhow::Error::from)?;
+    if existing
+        .entries
+        .iter()
+        .any(|entry| entry.scope == scope && entry.effective.reply)
+    {
+        return Ok(());
+    }
+    let mut selection = existing
+        .entries
+        .iter()
+        .find(|entry| entry.scope == scope)
+        .map(|entry| entry.selection)
+        .unwrap_or_default();
+    selection.reply = true;
+    let updated = http
+        .agent_participation_replace(
+            agent_id,
+            &arkret_sdk::AgentParticipationReplaceRequestBody {
+                scope: scope.clone(),
+                selection,
+            },
+        )
+        .await
+        .map_err(anyhow::Error::from)?;
+    if !updated
+        .entries
+        .iter()
+        .any(|entry| entry.scope == scope && entry.effective.reply)
+    {
+        anyhow::bail!("owned-Agent Direct Conversation reply participation remains disabled");
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -326,6 +390,67 @@ fn pending_direct_conversation_key(materialization_id: &str) -> String {
 
 fn pending_direct_conversation_bootstrap_key(materialization_id: &str) -> String {
     format!("direct_conversation.bootstrap.{materialization_id}")
+}
+
+/// Hardened-secure-store key for the resumable signed MLS transaction
+/// (`PendingDirectConversationMls`). Account-scoped so a re-login cannot read a
+/// prior account's pending Commit material.
+fn direct_conversation_pending_secure_key(actor_id: &str, pending_key: &str) -> String {
+    format!("direct_conversation.pending_mls.{actor_id}.{pending_key}")
+}
+
+/// Load the resumable signed MLS transaction, preferring the durable secure
+/// store and falling back to the legacy plaintext-state entry (migrating it
+/// forward on read) so a transaction persisted by an older build still resumes.
+fn load_pending_direct_conversation_mls(
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    state_store: &SyncSignal<crate::state::LocalStateStore>,
+    actor_id: &str,
+    pending_key: &str,
+    pending_secure_key: &str,
+) -> anyhow::Result<Option<PendingDirectConversationMls>> {
+    if let Some(raw) = secure_store
+        .get_secret(pending_secure_key)
+        .map_err(|error| anyhow::anyhow!("read pending direct conversation MLS secret: {error}"))?
+    {
+        return serde_json::from_str::<PendingDirectConversationMls>(&raw)
+            .map(Some)
+            .map_err(|error| {
+                anyhow::anyhow!("decode pending direct conversation MLS transaction: {error}")
+            });
+    }
+    state_store
+        .read()
+        .load_private_data(actor_id, pending_key)
+        .map(|raw| serde_json::from_str::<PendingDirectConversationMls>(&raw))
+        .transpose()
+        .map_err(|error| {
+            anyhow::anyhow!("decode pending direct conversation MLS transaction: {error}")
+        })
+}
+
+/// Durably persist the resumable signed MLS transaction to the hardened secure
+/// store (awaited) so a mid-flow reload can replay the exact same Commit /
+/// Welcome / snapshot. The prior plaintext-state copy is cleared to avoid a
+/// stale divergent resume.
+async fn persist_pending_direct_conversation_mls(
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    state_store: &mut SyncSignal<crate::state::LocalStateStore>,
+    actor_id: &str,
+    pending_key: &str,
+    pending_secure_key: &str,
+    pending: &PendingDirectConversationMls,
+) -> anyhow::Result<()> {
+    let json = serde_json::to_string(pending)?;
+    secure_store
+        .store_secret_durable(pending_secure_key, &json)
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!("durably persist pending direct conversation MLS transaction: {error}")
+        })?;
+    let _ = actor_id;
+    state_store.write().remove_private_data(pending_key);
+    Ok(())
 }
 
 async fn materialize_direct_conversation(
@@ -413,16 +538,25 @@ async fn materialize_direct_conversation(
     }
     refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id).await?;
 
+    // The signed Commit / Welcome / post-commit MLS snapshot MUST survive a
+    // page reload so a resumed materialization replays the SAME Commit and
+    // ciphertext instead of rebuilding a divergent one (contact-and-direct-
+    // conversation.md: crash recovery MUST replay the same Event id + ciphertext,
+    // MUST NOT generate a second Commit). The plaintext-state `save_private_data`
+    // channel is a wasm no-op before the IndexedDB tier is ready and otherwise a
+    // fire-and-forget enqueue, so a reload mid-flow lost `pending` and the retry
+    // hit `epoch-0 MLS snapshot is unavailable`. Persist it through the hardened
+    // secure store with an awaited durable write instead.
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let pending_key = pending_direct_conversation_key(draft.materialization_id.as_str());
-    let mut pending = state_store
-        .read()
-        .load_private_data(&actor_id, &pending_key)
-        .map(|raw| serde_json::from_str::<PendingDirectConversationMls>(&raw))
-        .transpose()
-        .map_err(|error| {
-            anyhow::anyhow!("decode pending direct conversation MLS transaction: {error}")
-        })?;
-
+    let pending_secure_key = direct_conversation_pending_secure_key(&actor_id, &pending_key);
+    let mut pending = load_pending_direct_conversation_mls(
+        secure_store.as_ref(),
+        &state_store,
+        &actor_id,
+        &pending_key,
+        &pending_secure_key,
+    )?;
     if pending.is_none() {
         let genesis_request = crate::mls::governance_proof::proof_request(
             &state_store.read(),
@@ -441,7 +575,6 @@ async fn materialize_direct_conversation(
         .await
         .map_err(anyhow::Error::msg)?;
 
-        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let fresh_summary = {
             let mut store = state_store.write();
             crate::mls::runtime::ensure_creator_mls_snapshot(
@@ -542,11 +675,15 @@ async fn materialize_direct_conversation(
             binding: None,
             snapshot: admission.snapshot,
         };
-        state_store.write().save_private_data(
+        persist_pending_direct_conversation_mls(
+            secure_store.as_ref(),
+            &mut state_store,
             &actor_id,
-            pending_key.clone(),
-            serde_json::to_string(&prepared)?,
-        );
+            &pending_key,
+            &pending_secure_key,
+            &prepared,
+        )
+        .await?;
         pending = Some(prepared);
     }
 
@@ -564,11 +701,15 @@ async fn materialize_direct_conversation(
             .into_iter()
             .next()
             .expect("single Event preparation preserves cardinality");
-        state_store.write().save_private_data(
+        persist_pending_direct_conversation_mls(
+            secure_store.as_ref(),
+            &mut state_store,
             &actor_id,
-            pending_key.clone(),
-            serde_json::to_string(&pending)?,
-        );
+            &pending_key,
+            &pending_secure_key,
+            &pending,
+        )
+        .await?;
     }
     submitter.submit_signed_sdk_event(&pending.welcome).await?;
     refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id).await?;
@@ -582,11 +723,15 @@ async fn materialize_direct_conversation(
                 .next()
                 .expect("single Event preparation preserves cardinality"),
         );
-        state_store.write().save_private_data(
+        persist_pending_direct_conversation_mls(
+            secure_store.as_ref(),
+            &mut state_store,
             &actor_id,
-            pending_key.clone(),
-            serde_json::to_string(&pending)?,
-        );
+            &pending_key,
+            &pending_secure_key,
+            &pending,
+        )
+        .await?;
     }
     submitter
         .submit_signed_sdk_event(
@@ -597,6 +742,7 @@ async fn materialize_direct_conversation(
         )
         .await?;
     state_store.write().remove_private_data(&pending_key);
+    let _ = secure_store.delete_secret(&pending_secure_key);
     Ok(())
 }
 

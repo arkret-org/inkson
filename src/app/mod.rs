@@ -2167,6 +2167,7 @@ fn AppBootstrap() -> Element {
                                                                                         state_store,
                                                                                         &agent_id,
                                                                                         true,
+                                                                                        true,
                                                                                     ).await
                                                                                 },
                                                                             ).await {
@@ -2345,6 +2346,7 @@ fn AppBootstrap() -> Element {
                                                                         state_store,
                                                                         &peer_for_task,
                                                                         true,
+                                                                        false,
                                                                     ).await
                                                                 },
                                                             ).await;
@@ -2594,6 +2596,7 @@ fn AppBootstrap() -> Element {
                                                                                     state_store,
                                                                                     &agent_id,
                                                                                     true,
+                                                                                    false,
                                                                                 ).await
                                                                             },
                                                                         ).await {

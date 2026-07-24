@@ -313,8 +313,8 @@ wasm-bindgen-test = "0.3"
 [patch."https://github.com/DioxusLabs/components"]
 dioxus-primitives = { git = "https://github.com/arkret-org/dioxus-components", rev = "3510aeee2d14f0ca2c11682c9b826650cb557d2f" }
 
-# arkret-org fork of DioxusLabs/dioxus, branched off the v0.7.9 tag. The only delta
-# is `Callback::__point_to` in `packages/core/src/events.rs`: upstream 0.7.9
+# arkret-org fork of DioxusLabs/dioxus, branched off the v0.7.9 tag. Its core
+# delta is `Callback::__point_to` in `packages/core/src/events.rs`: upstream 0.7.9
 # calls `.unwrap()` on `point_to`, which aborts the entire wasm instance (white
 # screen) when an `Option<EventHandler>` prop's owner scope is reclaimed in the
 # same frame the rsx diff tries to re-point its stable handle — surfacing as
@@ -322,19 +322,29 @@ dioxus-primitives = { git = "https://github.com/arkret-org/dioxus-components", r
 # stable handle for the current frame; the real callback is still owned by the
 # new value, so the fork degrades that unwrap to a trace-log no-op.
 #
-# The wasm-shared lifetime crates below MUST come from the same git source as
-# `dioxus-core`: a git `dioxus-core` pulls in git `generational-box` /
-# `subsecond` via workspace deps, and if the registry copies remained, the same
-# crate would exist under two sources and `GenerationalBox<T>` would mismatch
-# across the registry `dioxus-signals`/`dioxus-web` and the patched core.
+# `generational-box` is vendored from the same v0.7.9 fork revision. It also
+# treats pointing a storage entry at a reference which already resolves to that
+# entry as a no-op. Without the resolved-pointer guard, unsync storage borrows
+# the same RefCell immutably and mutably during LinkProps memoization and aborts
+# wasm; sync storage can analogously try to upgrade its own read lock.
+#
+# The wasm-shared lifetime crates below MUST resolve to one source across the
+# graph. A git `dioxus-core` pulls in git `generational-box` / `subsecond` via
+# workspace deps, and if registry copies remained, `GenerationalBox<T>` would
+# mismatch across registry `dioxus-signals`/`dioxus-web` and patched core. The
+# second patch table replaces the fork's internal `generational-box` edge with
+# the same vendored package used for crates.io consumers.
 # See https://github.com/arkret-org/dioxus/commit/e59f9f24a5c27c9303cd61edd0452b44161374ab
 # Pinned by rev; bump deliberately when upgrading.
 [patch.crates-io]
 dioxus-core       = { git = "https://github.com/arkret-org/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
 dioxus-core-types = { git = "https://github.com/arkret-org/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
-generational-box  = { git = "https://github.com/arkret-org/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
+generational-box  = { path = "vendor/generational-box" }
 subsecond         = { git = "https://github.com/arkret-org/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
 subsecond-types   = { git = "https://github.com/arkret-org/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
+
+[patch."https://github.com/arkret-org/dioxus"]
+generational-box = { path = "vendor/generational-box" }
 
 [workspace]
 resolver = "3"

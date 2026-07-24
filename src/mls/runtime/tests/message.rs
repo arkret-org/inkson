@@ -168,11 +168,17 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
         .unwrap();
     let metadata_payload = metadata_payload.expect("metadata ciphertext");
     assert_eq!(metadata_payload.epoch, content_payload.epoch);
-    assert_ne!(metadata_payload.payload_digest, content_payload.payload_digest);
+    assert_ne!(
+        metadata_payload.payload_digest,
+        content_payload.payload_digest
+    );
     assert!(commit.is_none());
     assert!(snapshot.is_none());
     // Both application messages advanced the §5.6 observed counter.
-    assert_eq!(state.mls_snapshot_for(realm).unwrap().app_messages_observed, 2);
+    assert_eq!(
+        state.mls_snapshot_for(realm).unwrap().app_messages_observed,
+        2
+    );
 }
 
 /// client-sync.md §8.1: once a complete roster hint exposes a mismatch with

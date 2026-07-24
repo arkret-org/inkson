@@ -386,6 +386,7 @@ fn ContactRow(
                                             state_store,
                                             &peer,
                                             true,
+                                            false,
                                         ).await
                                     })
                                     .await

@@ -976,8 +976,10 @@ async fn submit_source_routed_sidecar_message(
     // Typed producer binding. It travels ONLY in the encrypted_metadata
     // plaintext (`message_metadata.sidecar_exchange_binding`); plaintext
     // `metadata` and the content block never carry it (§7.2.1).
-    let binding =
-        arkret_sdk::AgentSidecarEventExchangeBinding::request(exchange_id.clone(), request_context.clone())?;
+    let binding = arkret_sdk::AgentSidecarEventExchangeBinding::request(
+        exchange_id.clone(),
+        request_context.clone(),
+    )?;
     let mut message_metadata = arkret_sdk::MessageMetadata::default();
     message_metadata.set_sidecar_exchange_binding(&binding)?;
     let metadata_bytes = serde_json::to_vec(&message_metadata)?;
@@ -1069,9 +1071,7 @@ async fn submit_source_routed_sidecar_message(
             &intent_digest,
         );
         if let Err(error) = crate::sidecar::record_accepted_sidecar_exchange_request(
-            &mut store,
-            &pending,
-            &event_id,
+            &mut store, &pending, &event_id,
         ) {
             tracing::warn!(%error, "Sidecar exchange fold cache write is pending a refold");
         }
@@ -1936,11 +1936,9 @@ pub fn ChatPanel(
             }
             sidecar_exchange_fold_basis_seen.set(basis);
             let mut store = state_store.write();
-            for (key, pending) in
-                crate::sidecar::pending_sidecar_submissions(&store, &account_did)
+            for (key, pending) in crate::sidecar::pending_sidecar_submissions(&store, &account_did)
             {
-                let Some(accepted_event_id) =
-                    accepted_event_by_message_id.get(&pending.message_id)
+                let Some(accepted_event_id) = accepted_event_by_message_id.get(&pending.message_id)
                 else {
                     continue;
                 };
