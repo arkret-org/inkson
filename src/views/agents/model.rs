@@ -3,7 +3,9 @@
 //! These items carry no RSX; they are the unit-testable core behind the
 //! personal-agent administration surfaces.
 
-use arkret_models_collaboration::agent_operations::{AgentProjection, AgentStatus, AgentView};
+use arkret_models_collaboration::agent_operations::{
+    AgentLifecycleState, AgentProjection, AgentRuntimeState, AgentView,
+};
 use arkret_models_collaboration::events_payloads::agent::{
     AgentKeyScope, AgentKeyScopeResource, AgentKeyScopeResourceKind,
 };
@@ -653,12 +655,18 @@ pub fn build_agent_key_authorize_event_for_pairing(
             })
             .collect::<anyhow::Result<Vec<_>>>()?,
         Some(_) => anyhow::bail!("agent key_state.active_authorizations must be an array"),
+        // A keyed agent — projected on the runtime readiness axis as ready or
+        // replacing (key-management.md §3.6.1), never the lifecycle status which
+        // now reads "active" for a never-keyed bootstrap agent too — MUST expose
+        // its authoritative active_authorizations so the replacement supersedes
+        // them exactly. A bootstrap pairing (pending_runtime_key / pairing_expired)
+        // legitimately has none.
         None if matches!(
-            key_state.get("status").and_then(Value::as_str),
-            Some("active" | "paused")
+            key_state.get("runtime_state").and_then(Value::as_str),
+            Some("ready" | "replacing")
         ) =>
         {
-            anyhow::bail!("active agent key_state must expose authoritative active_authorizations")
+            anyhow::bail!("keyed agent key_state must expose authoritative active_authorizations")
         }
         None => Vec::new(),
     };
@@ -763,6 +771,8 @@ pub fn expand_preset_grant(
 pub fn agent_state_label(state: &str) -> &str {
     match state {
         "pending" | "pending_runtime_key" => "Pending",
+        "ready" => "Ready",
+        "replacing" => "Replacing runtime",
         "active" => "Active",
         "pairing_expired" => "Pairing expired",
         "paused" => "Paused",
@@ -777,6 +787,8 @@ pub fn agent_state_label(state: &str) -> &str {
 pub fn agent_state_badge_class(state: &str) -> &'static str {
     match state {
         "pending" | "pending_runtime_key" => "badge amber",
+        "ready" => "badge green",
+        "replacing" => "badge amber",
         "active" => "badge green",
         "pairing_expired" => "badge red",
         "paused" => "badge amber",
@@ -898,23 +910,25 @@ pub(crate) fn agent_view_from_directory_row(row: AgentProjection) -> Option<Agen
         return None;
     }
     let status = row.status;
+    let runtime_state = row.runtime_state;
     Some(AgentView {
         agent: row,
         status,
+        runtime_state,
         grants: Vec::new(),
         key_state: None,
     })
 }
 
-/// Wire string for an `AgentStatus` (matches the schema `agent_status` enum).
-pub(crate) fn agent_status_wire(status: AgentStatus) -> &'static str {
-    match status {
-        AgentStatus::PendingRuntimeKey => "pending_runtime_key",
-        AgentStatus::Active => "active",
-        AgentStatus::PairingExpired => "pairing_expired",
-        AgentStatus::Paused => "paused",
-        AgentStatus::Deactivated => "deactivated",
-    }
+/// Wire string for the lifecycle intent axis (`status`, schema `agent_status`).
+pub(crate) fn agent_lifecycle_wire(status: AgentLifecycleState) -> &'static str {
+    status.as_wire_str()
+}
+
+/// Wire string for the derived runtime readiness axis (`runtime_state`, schema
+/// `agent_runtime_state`).
+pub(crate) fn agent_runtime_state_wire(runtime_state: AgentRuntimeState) -> &'static str {
+    runtime_state.as_wire_str()
 }
 
 /// Build the controller-owned agent identity index used by compact member
@@ -927,10 +941,11 @@ pub(crate) fn mentionable_owned_agent_slugs(
     agents
         .into_iter()
         .filter(|agent| {
-            !matches!(
-                agent_status_wire(agent.status),
-                "deactivated" | "pairing_expired"
-            )
+            // Terminal lifecycle intent (deactivated) or a never-keyed agent
+            // whose bootstrap window lapsed (runtime_state pairing_expired) is
+            // not a mention candidate (key-management.md §3.6.1).
+            agent.status != AgentLifecycleState::Deactivated
+                && agent.runtime_state != AgentRuntimeState::PairingExpired
         })
         .filter_map(|agent| {
             let agent_id = agent.agent_id.as_str().trim();

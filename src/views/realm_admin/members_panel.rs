@@ -94,7 +94,10 @@ struct MemberAgentRow {
     controller_id: String,
     display_name: String,
     slug: String,
+    /// Lifecycle intent wire value (active/paused/deactivated).
     status: String,
+    /// Derived runtime readiness wire value (key-management.md §3.6.1).
+    runtime_state: String,
     mention_policy: AgentMentionPolicy,
     selection: AgentParticipation,
 }
@@ -211,7 +214,9 @@ fn member_agent_row_from_value(
         controller_id,
         display_name,
         slug,
-        status: crate::views::agents::model::agent_status_wire(row.status).to_owned(),
+        status: crate::views::agents::model::agent_lifecycle_wire(row.status).to_owned(),
+        runtime_state: crate::views::agents::model::agent_runtime_state_wire(row.runtime_state)
+            .to_owned(),
         mention_policy: AgentMentionPolicy::Unknown,
         selection: AgentParticipation::NONE,
     })
@@ -228,11 +233,12 @@ async fn fetch_owned_agent_rows(
         let Some(mut row) = member_agent_row_from_value(value, fallback_controller_id) else {
             continue;
         };
-        // Deactivated agents are terminal; pairing_expired agents never bound
-        // a runtime key and can never join a Realm. Pending agents stay because
-        // Realm membership/grants are independent from key pairing, although
-        // the agent cannot act until it has an authorized runtime key.
-        if matches!(row.status.as_str(), "deactivated" | "pairing_expired") {
+        // Deactivated agents (lifecycle terminal) and never-keyed agents whose
+        // bootstrap window lapsed (runtime_state pairing_expired) can never join
+        // a Realm. Pending agents stay because Realm membership/grants are
+        // independent from key pairing (key-management.md §3.6.1), although the
+        // agent cannot act until it has an authorized runtime key.
+        if row.status == "deactivated" || row.runtime_state == "pairing_expired" {
             continue;
         }
         match http.agent_participation_get(&row.agent_id).await {
@@ -4475,6 +4481,7 @@ mod tests {
             display_name: name.to_owned(),
             slug: "summary".to_owned(),
             status: "active".to_owned(),
+            runtime_state: "ready".to_owned(),
             mention_policy: AgentMentionPolicy::Allowed,
             selection: AgentParticipation {
                 reply: false,

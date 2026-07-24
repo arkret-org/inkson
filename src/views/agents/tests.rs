@@ -24,15 +24,14 @@ mod personal_agent_tests {
             false,
             "pending_runtime_key"
         ));
+        // Bootstrap renewal is offered only for the never-keyed runtime states;
+        // ready/replacing (keyed) are not bootstrap-renewable.
+        assert!(!super::super::admin::should_offer_pairing_renewal(
+            true, "ready"
+        ));
         assert!(!super::super::admin::should_offer_pairing_renewal(
             true,
-            "deactivated"
-        ));
-        assert!(!super::super::admin::should_offer_pairing_renewal(
-            true, "active"
-        ));
-        assert!(!super::super::admin::should_offer_pairing_renewal(
-            true, "paused"
+            "replacing"
         ));
     }
 
@@ -52,9 +51,9 @@ mod personal_agent_tests {
             true,
             false
         ));
-        assert!(!should_show_pairing_card("active", true, false, true));
-        assert!(!should_show_pairing_card("paused", true, false, false));
-        assert!(should_show_pairing_card("paused", true, false, true));
+        assert!(!should_show_pairing_card("ready", true, false, true));
+        assert!(!should_show_pairing_card("replacing", true, false, false));
+        assert!(should_show_pairing_card("replacing", true, false, true));
     }
 
     #[test]
@@ -492,7 +491,8 @@ mod personal_agent_tests {
             "controller_id": controller,
             "principal_control_realm_id": "ak:realm:01964137-0000-7000-8000-000000000005",
             "controller_authorization_ref": "ak:event:01964137-0000-7000-8000-000000000006",
-            "status": "pending_runtime_key",
+            "status": "active",
+            "runtime_state": "pending_runtime_key",
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "pairing_code": "12345678",
             "pairing_expires_at": "2026-07-06T00:15:00.000Z",
@@ -633,6 +633,7 @@ mod personal_agent_tests {
             "principal_control_realm_id": "ak:realm:01964137-0000-7000-8000-000000000005",
             "controller_authorization_ref": "ak:event:01964137-0000-7000-8000-000000000006",
             "status": "active",
+            "runtime_state": "replacing",
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "pairing_code": "12345678",
             "pairing_expires_at": "2026-07-06T00:15:00.000Z",

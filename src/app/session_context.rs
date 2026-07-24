@@ -22,6 +22,14 @@ pub struct SessionContext {
     /// re-render when the user switches servers, matching the old prop chain
     /// where the parent re-passed the value on change.
     pub base_url: Signal<String>,
+    /// Monotonic revision bumped whenever the signed-in account's owned-agent
+    /// set changes in Settings → My Agents (provision/pair, pause, resume,
+    /// deactivate). The Contacts sidebar subscribes to it and re-pulls
+    /// `agent_list`, so a newly paired agent appears — or a deactivated one
+    /// disappears — without the user re-opening the tab. My Agents and the
+    /// sidebar each fetch their own view of the directory; this is the single
+    /// change-notification that bridges them.
+    pub owned_agents_rev: Signal<u64>,
 }
 
 impl SessionContext {

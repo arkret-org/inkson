@@ -275,6 +275,9 @@ fn AppBootstrap() -> Element {
     let mut token = use_signal(move || initial_session_credential);
     let mut session_boot_state = use_signal(move || initial_session_boot_state);
     let mut session_generation = use_signal(|| 0_u64);
+    // Bumped by Settings → My Agents on every owned-agent mutation so the
+    // Contacts sidebar can re-pull `agent_list`. See `SessionContext`.
+    let owned_agents_rev = use_signal(|| 0_u64);
 
     // A4 — provide the session-scoped shared handles (`state_store`, `base_url`)
     // via context so descendant components read them through
@@ -283,6 +286,7 @@ fn AppBootstrap() -> Element {
     use_context_provider(|| SessionContext {
         state_store,
         base_url,
+        owned_agents_rev,
     });
     let sidecar_session = use_signal(|| None::<crate::sidecar::HostedSidecarState>);
     use_context_provider(|| crate::sidecar::HostedSidecarStateContext(sidecar_session));
@@ -455,6 +459,28 @@ fn AppBootstrap() -> Element {
     let direct_contacts_loaded = use_signal(|| false);
     let own_agent_rows = use_signal(Vec::<arkret_sdk::AgentProjection>::new);
     let own_agents_loaded = use_signal(|| false);
+    // Keep the Contacts sidebar's owned-agent list in sync with Settings → My
+    // Agents. That panel bumps `owned_agents_rev` after provisioning, pausing,
+    // resuming, or deactivating an agent; re-pull `agent_list` here so the
+    // change is reflected without a manual reload. Only reload once the sidebar
+    // has already loaded its agents — before that the lazy first load fetches
+    // fresh state anyway, so there is nothing to keep in sync yet.
+    use_effect(move || {
+        let _ = owned_agents_rev();
+        if !*own_agents_loaded.peek() {
+            return;
+        }
+        let api_token = token.peek().clone();
+        if api_token.trim().is_empty() {
+            return;
+        }
+        load_own_agents_for_sidebar(
+            base_url.peek().clone(),
+            api_token,
+            own_agent_rows,
+            own_agents_loaded,
+        );
+    });
     let mut own_agents_expanded = use_signal(|| true);
     let mut expanded_contact_agents = use_signal(BTreeSet::<String>::new);
     // One shared in-flight key keeps every direct-chat entry (human contacts,

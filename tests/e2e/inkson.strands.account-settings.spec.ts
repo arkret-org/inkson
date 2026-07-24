@@ -522,67 +522,36 @@ test("active personal agents never expose stale pairing credentials", async ({ p
   await expect(page.getByTestId("agent-admin-pairing-qr")).toHaveCount(0);
   await expect(page.getByTestId("agent-admin-pairing-url")).toHaveCount(0);
   await expect(page.getByTestId("agent-admin-renew-pairing-button")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-replace-runtime-button")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-replace-runtime-guidance")).toContainText(
-    "Pause this agent",
-  );
 
-  const pauseRequestPromise = page.waitForRequest((request) =>
-    request.url().endsWith(
-      "/_arkret/self/agents/did%3Aweb%3Aagents.example%3Aassistant/pause",
-    ),
-  );
-  await page.getByTestId("agent-admin-enabled-switch").click();
-  const pauseRequest = await pauseRequestPromise;
-  const pauseBody = pauseRequest.postDataJSON();
-  expect(pauseBody.reason).toBe("controller_paused");
-  expect(pauseBody.lifecycle_event).toMatchObject({
-    kind: "ak.self.agent.pause",
-    actor_id: "did:web:agents.example:assistant",
-    executed_by: "did:web:alice.example",
-    authorization_ref:
-      "did:web:agents.example:assistant#managed-controller",
-    payload: {
-      agent_id: "did:web:agents.example:assistant",
-      controller_id: "did:web:alice.example",
-      transition: "pause",
-      previous_status: "active",
-      reason: "controller_paused",
-    },
-    effects: [
-      {
-        cell: "ak:cell:ak.component.agent.status.v1:did:web:agents.example:assistant",
-        op: {
-          kind: "transition",
-          from: "active",
-          to: "paused",
-          reason: "controller_paused",
-        },
-      },
-    ],
-  });
-  expect(pauseBody.lifecycle_event.proofs.length).toBeGreaterThan(0);
-
+  // Two orthogonal axes (key-management.md §3.6.1): the derived runtime
+  // readiness badge shows Ready, and an active keyed agent can replace its
+  // runtime directly — the forced-pause gate and its guidance are gone.
+  await expect(page.getByTestId("agent-admin-runtime-state-badge")).toContainText("Ready");
+  await expect(page.getByTestId("agent-admin-replace-runtime-guidance")).toHaveCount(0);
   await expect(page.getByTestId("agent-admin-replace-runtime-button")).toBeVisible();
-  await expect(page.getByTestId("agent-admin-pairing-card")).toHaveCount(0);
-  await page.getByTestId("agent-admin-replace-runtime-button").click();
-  await expect(page.getByTestId("agent-admin-pairing-card")).toBeVisible();
-  await expect(page.getByTestId("agent-admin-pairing-card")).toContainText(
-    "Connect the replacement runtime",
-  );
-  await expect(page.getByTestId("agent-admin-enabled-switch")).toBeDisabled();
-  await expect(page.getByTestId("agent-admin-replace-runtime-button")).toHaveCount(0);
 
-  // The authenticated key_state projection, not page-local state, must keep
-  // resume blocked across a full reload while the replacement handle is open.
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await dismissBlockingRecoveryModal(page);
-  await gotoAndDismissRecovery(page, "/settings/agents");
-  await page.getByTestId("agent-admin-row").filter({ hasText: "assistant" }).click();
-  await expect(page.getByTestId("agent-admin-pairing-card")).toContainText(
-    "Connect the replacement runtime",
+  // Replace runtime asks for explicit confirmation stating the atomic-revoke
+  // fact; the lifecycle switch is never interlocked with the open replacement.
+  await page.getByTestId("agent-admin-replace-runtime-button").click();
+  await expect(page.getByTestId("agent-admin-replace-runtime-confirm")).toContainText(
+    "atomically revokes",
   );
-  await expect(page.getByTestId("agent-admin-enabled-switch")).toBeDisabled();
+  await expect(page.getByTestId("agent-admin-enabled-switch")).toBeEnabled();
+
+  const renewRequestPromise = page.waitForRequest((request) =>
+    request
+      .url()
+      .endsWith(
+        "/_arkret/self/agents/did%3Aweb%3Aagents.example%3Aassistant/renew-pairing",
+      ),
+  );
+  await page.getByTestId("agent-admin-replace-runtime-confirm-button").click();
+  await renewRequestPromise;
+  await expect(page.getByTestId("agent-admin-pairing-card")).toBeVisible();
+  // Lifecycle intent is preserved: the agent stays active with no forced pause
+  // and no resume, while the replacement handle is open.
+  await expect(page.getByTestId("agent-admin-enabled-switch")).toBeChecked();
+  await expect(page.getByTestId("agent-admin-enabled-switch")).toBeEnabled();
 });
 
 test("expired personal agent pairing renews in place with a fresh handle", async ({ page }) => {

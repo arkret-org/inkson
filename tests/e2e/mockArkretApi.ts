@@ -322,6 +322,29 @@ export async function mockArkretApi(
   const personalAgentKeyStates = new Map<string, Record<string, unknown>>();
   const personalAgentGrants = new Map<string, Array<Record<string, unknown>>>();
   let personalAgentCounter = 0;
+  // Two orthogonal axes (key-management.md §3.6.1). The fixtures store a single
+  // legacy status; project it into the lifecycle intent (status) and the
+  // derived runtime readiness (runtime_state) at serve time.
+  const projectAgentAxes = (
+    agentId: string,
+  ): { lifecycle: string; runtime_state: string } => {
+    const stored = String(personalAgents.get(agentId)?.status ?? "active");
+    if (stored === "deactivated") {
+      return { lifecycle: "deactivated", runtime_state: "pairing_expired" };
+    }
+    if (stored === "pending_runtime_key" || stored === "pairing_expired") {
+      return { lifecycle: "active", runtime_state: stored };
+    }
+    const lifecycle = stored === "paused" ? "paused" : "active";
+    const ks = personalAgentKeyStates.get(agentId);
+    const keyed = Boolean(
+      ks &&
+        (ks.authorized_event_ref ||
+          (Array.isArray(ks.active_authorizations) &&
+            ks.active_authorizations.length > 0)),
+    );
+    return { lifecycle, runtime_state: keyed ? "ready" : "pending_runtime_key" };
+  };
   personalAgents.set("did:web:agents.example:assistant", {
     agent_id: "did:web:agents.example:assistant",
     display_name: "Alice Assistant",
@@ -2355,7 +2378,14 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       return json(route, {
-        agents: Array.from(personalAgents.values()),
+        agents: Array.from(personalAgents.keys()).map((id) => {
+          const axes = projectAgentAxes(id);
+          return {
+            ...personalAgents.get(id),
+            status: axes.lifecycle,
+            runtime_state: axes.runtime_state,
+          };
+        }),
         has_more: false,
       });
     }
@@ -2611,18 +2641,15 @@ export async function mockArkretApi(
           404,
         );
       }
-      if (
-        agent.status !== "pending_runtime_key" &&
-        agent.status !== "pairing_expired" &&
-        agent.status !== "paused"
-      ) {
+      const renewAxes = projectAgentAxes(agentId);
+      if (renewAxes.lifecycle === "deactivated") {
         return json(
           route,
           {
             ok: false,
             error: {
               code: "failed_precondition",
-              message: "agent already has an authorized runtime key",
+              message: "agent is deactivated; deactivation is terminal",
             },
           },
           412,
@@ -2630,10 +2657,15 @@ export async function mockArkretApi(
       }
       personalAgentCounter += 1;
       const renewedExpiresAt = "2099-07-06T00:20:00.000Z";
-      const pairingMode = agent.status === "paused" ? "replacement" : "bootstrap";
+      // Both active and paused agents may replace without a forced pause; the
+      // branch is bootstrap for a never-keyed agent, replacement otherwise
+      // (key-management.md §3.6.1).
+      const renewKeyed = renewAxes.runtime_state === "ready";
+      const pairingMode = renewKeyed ? "replacement" : "bootstrap";
       const keyState = {
         ...(personalAgentKeyStates.get(agentId) ?? {}),
-        status: agent.status,
+        status: renewAxes.lifecycle,
+        runtime_state: renewKeyed ? "replacing" : "pending_runtime_key",
         pairing_mode: pairingMode,
         pairing_request_id: `pair-renew-${personalAgentCounter}`,
         pairing_code: "135791",
@@ -2641,7 +2673,6 @@ export async function mockArkretApi(
       };
       personalAgents.set(agentId, {
         ...agent,
-        status: agent.status,
         updated_at: "2026-07-06T00:30:00.000Z",
       });
       personalAgentKeyStates.set(agentId, keyState);
@@ -2703,11 +2734,24 @@ export async function mockArkretApi(
           404,
         );
       }
+      const axes = projectAgentAxes(agentId);
+      const storedKeyState = personalAgentKeyStates.get(agentId);
       return json(route, {
-        agent,
-        status: agent.status ?? "pending_runtime_key",
+        agent: {
+          ...agent,
+          status: axes.lifecycle,
+          runtime_state: axes.runtime_state,
+        },
+        status: axes.lifecycle,
+        runtime_state: axes.runtime_state,
         grants: personalAgentGrants.get(agentId) ?? [],
-        key_state: personalAgentKeyStates.get(agentId) ?? null,
+        key_state: storedKeyState
+          ? {
+              ...storedKeyState,
+              status: axes.lifecycle,
+              runtime_state: axes.runtime_state,
+            }
+          : null,
       });
     }
 

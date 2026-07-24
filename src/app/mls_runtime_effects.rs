@@ -71,6 +71,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
     let SessionContext {
         state_store,
         base_url,
+        ..
     } = SessionContext::get();
     let did_cache = use_context::<Signal<crate::identity::did_resolver::DidResolutionCache>>();
     let mls_admission_retry_attempt = use_signal(|| 0_u32);

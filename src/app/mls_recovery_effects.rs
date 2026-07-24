@@ -37,6 +37,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
     let SessionContext {
         state_store,
         base_url,
+        ..
     } = SessionContext::get();
 
     // D1: detect the account-MLS unlock requirement as soon as a logged-in

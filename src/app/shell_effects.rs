@@ -41,6 +41,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
     let SessionContext {
         mut state_store,
         base_url,
+        ..
     } = SessionContext::get();
     let navigator = use_navigator();
 

@@ -20,6 +20,7 @@ pub(super) fn SyncEffects(
     let SessionContext {
         state_store,
         base_url,
+        ..
     } = SessionContext::get();
     let runtime_services = use_context::<crate::runtime::services::RuntimeServices>();
     let did_cache = use_context::<Signal<crate::identity::did_resolver::DidResolutionCache>>();

@@ -59,6 +59,54 @@ pub(super) fn sidebar_text_matches_query(normalized_query: &str, values: &[&str]
             .any(|value| value.to_ascii_lowercase().contains(normalized_query))
 }
 
+/// The Contacts sidebar is a chat surface: only agents that are currently
+/// active belong here. Pending, paused, expired, and deactivated agents stay in
+/// Settings → My Agents. Keeping this filter in one place ensures the initial
+/// load and the `owned_agents_rev`-driven reload agree on what the sidebar
+/// shows.
+fn active_agents_only(
+    agents: Vec<arkret_sdk::AgentProjection>,
+) -> Vec<arkret_sdk::AgentProjection> {
+    agents
+        .into_iter()
+        .filter(|agent| matches!(agent.status, arkret_sdk::AgentLifecycleState::Active))
+        .collect()
+}
+
+/// Re-pull only the signed-in account's owned agents for the Contacts sidebar,
+/// leaving human contacts untouched. Driven by `SessionContext::owned_agents_rev`
+/// so a provision/pause/resume/deactivate in Settings → My Agents is reflected
+/// in the sidebar without waiting for the user to re-open the tab. A transient
+/// error keeps the previously loaded rows rather than clearing the sidebar.
+pub(super) fn load_own_agents_for_sidebar(
+    base: String,
+    api_token: String,
+    mut own_agent_rows: Signal<Vec<arkret_sdk::AgentProjection>>,
+    mut own_agents_loaded: Signal<bool>,
+) {
+    if api_token.trim().is_empty() {
+        own_agent_rows.set(Vec::new());
+        own_agents_loaded.set(false);
+        return;
+    }
+    own_agents_loaded.set(true);
+    spawn(async move {
+        match crate::transport::auth::with_authed_sdk_client(&base, api_token, |http| async move {
+            http.agent_list().await.map_err(anyhow::Error::from)
+        })
+        .await
+        {
+            Ok(response) => own_agent_rows.set(active_agents_only(response.agents)),
+            Err(err) => {
+                tracing::warn!(
+                    "failed to reload personal agents for Contacts sidebar: {}",
+                    err.display()
+                );
+            }
+        }
+    });
+}
+
 pub(super) fn load_direct_contacts_and_agents_for_sidebar(
     base: String,
     api_token: String,
@@ -98,17 +146,7 @@ pub(super) fn load_direct_contacts_and_agents_for_sidebar(
                     }
                 }
                 match agents {
-                    // The Contacts sidebar is a chat surface: only agents that
-                    // are currently active belong here. Pending, paused,
-                    // expired, and deactivated agents stay in Settings → My
-                    // Agents.
-                    Ok(response) => own_agent_rows.set(
-                        response
-                            .agents
-                            .into_iter()
-                            .filter(|agent| matches!(agent.status, arkret_sdk::AgentStatus::Active))
-                            .collect(),
-                    ),
+                    Ok(response) => own_agent_rows.set(active_agents_only(response.agents)),
                     Err(err) => {
                         own_agents_loaded.set(false);
                         tracing::warn!(error = %err, "failed to load personal agents for Contacts sidebar");

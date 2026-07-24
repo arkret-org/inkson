@@ -25,6 +25,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
     let SessionContext {
         state_store,
         base_url,
+        ..
     } = SessionContext::get();
 
     #[cfg(target_arch = "wasm32")]

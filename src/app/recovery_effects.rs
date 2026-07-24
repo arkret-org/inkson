@@ -18,6 +18,7 @@ pub(super) fn AccountRecoveryEffects(
     let SessionContext {
         state_store,
         base_url,
+        ..
     } = SessionContext::get();
     let runtime_services = use_context::<crate::runtime::services::RuntimeServices>();
     let session_coordinator = runtime_services.session.clone();
