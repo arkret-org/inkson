@@ -31,6 +31,12 @@ pub struct PendingPairingRequest {
     pub platform: String,
     /// RFC 3339 expiry of the request.
     pub expires_at: String,
+    /// When the new device staged its request through the server-mediated
+    /// short-link (`ak.open.device_pairing.command.stage`), the staged
+    /// `device_pairing_request_id`. Echoed back into `account_device_pair` so the
+    /// server flips the staged row to `authorized` for the new device's status
+    /// poll. `None` for legacy direct QR/paste pairing.
+    pub device_pairing_request_id: Option<String>,
     /// The exact payload handed to [`pairing_request_body`].
     pub request_payload: Value,
 }
@@ -85,6 +91,12 @@ pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequ
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned)
                 .unwrap_or_else(|| format!("{requesting_device_id}:{pairing_code}"));
+            let device_pairing_request_id = content
+                .get("device_pairing_request_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned);
             let mut request_payload = json!({
                 "pairing_code": pairing_code,
                 "new_device_pubkey": new_device_pubkey,
@@ -96,6 +108,11 @@ pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequ
             {
                 object.insert("display_name".to_owned(), json!(display_name));
             }
+            if let Some(request_id) = device_pairing_request_id.as_deref()
+                && let Some(object) = request_payload.as_object_mut()
+            {
+                object.insert("device_pairing_request_id".to_owned(), json!(request_id));
+            }
             Some(PendingPairingRequest {
                 request_key,
                 requesting_device_id: requesting_device_id.to_owned(),
@@ -103,6 +120,7 @@ pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequ
                 display_name,
                 platform,
                 expires_at,
+                device_pairing_request_id,
                 request_payload,
             })
         })
@@ -115,13 +133,14 @@ pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequ
 pub fn pairing_request_body(
     payload: &Value,
 ) -> anyhow::Result<arkret_sdk::AccountDevicePairRequestBody> {
-    let pairing_code = arkret_sdk::NonEmptyString::new(
+    let pairing_code = arkret_sdk::DevicePairingCode::new(
         payload
             .get("pairing_code")
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("pairing payload is missing pairing_code"))?,
+            .ok_or_else(|| anyhow::anyhow!("pairing payload is missing pairing_code"))?
+            .to_owned(),
     )
     .map_err(anyhow::Error::msg)?;
     let new_device_pubkey = match payload.get("new_device_pubkey") {
@@ -149,23 +168,44 @@ pub fn pairing_request_body(
         .get("device_metadata")
         .map(|value| serde_json::from_value(value.clone()))
         .transpose()?;
+    let device_pairing_request_id = payload
+        .get("device_pairing_request_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .map(arkret_sdk::DevicePairingRequestId::new)
+        .transpose()
+        .map_err(anyhow::Error::msg)?;
     Ok(arkret_sdk::AccountDevicePairRequestBody {
         pairing_code,
         new_device_pubkey,
         challenge_signature,
         display_name,
         device_metadata,
+        device_pairing_request_id,
     })
 }
 
+/// Normalize a pairing `new_device_pubkey` into the gate-canonical
+/// [`arkret_sdk::PublicKey`] (`{kty, kid, alg, key, key_digest?}`).
+///
+/// Two shapes reach here: the spec-canonical object (key material under `key`)
+/// and the legacy pairing/QR payload that carried it under `public_key`. Because
+/// `PublicKey` denies unknown fields, a legacy payload — even one that already
+/// includes `kty` — cannot be deserialized directly; it must be rewritten. We
+/// therefore only fast-path an object that is already canonical (`key` present
+/// and no legacy `public_key`) and normalize everything else, tolerating either
+/// field name and preserving a provided `kty` when present.
 fn pairing_gate_public_key(value: &Value) -> anyhow::Result<arkret_sdk::PublicKey> {
-    if value.get("kty").is_some() || value.get("key").is_some() {
-        return serde_json::from_value(value.clone()).map_err(Into::into);
-    }
-
     let object = value
         .as_object()
         .ok_or_else(|| anyhow::anyhow!("new_device_pubkey must be an object"))?;
+
+    if object.contains_key("key") && !object.contains_key("public_key") {
+        return serde_json::from_value(value.clone()).map_err(Into::into);
+    }
+
     let kid = object
         .get("kid")
         .and_then(Value::as_str)
@@ -175,14 +215,18 @@ fn pairing_gate_public_key(value: &Value) -> anyhow::Result<arkret_sdk::PublicKe
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("new_device_pubkey is missing alg"))?;
     let key = object
-        .get("public_key")
+        .get("key")
+        .or_else(|| object.get("public_key"))
         .and_then(Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("new_device_pubkey is missing public_key"))?;
-    let kty = match alg {
-        "Ed25519" | "EdDSA" => "OKP",
-        _ => anyhow::bail!(
-            "new_device_pubkey alg `{alg}` cannot be mapped to a gate public-key type"
-        ),
+        .ok_or_else(|| anyhow::anyhow!("new_device_pubkey is missing key material"))?;
+    let kty = match object.get("kty").and_then(Value::as_str) {
+        Some(kty) if !kty.trim().is_empty() => kty.to_owned(),
+        _ => match alg {
+            "Ed25519" | "EdDSA" => "OKP".to_owned(),
+            _ => anyhow::bail!(
+                "new_device_pubkey alg `{alg}` cannot be mapped to a gate public-key type"
+            ),
+        },
     };
     let mut gate_value = json!({
         "kty": kty,
@@ -210,7 +254,7 @@ mod tests {
                 "transaction_id": "txn-1",
                 "from_device": "ak:device:01904100-0000-7000-8000-000000000001",
                 "purpose": "same_principal_device_authorization",
-                "pairing_code": "384921",
+                "pairing_code": "7H2K9M4Q",
                 "new_device_pubkey": {
                     "kid": "ak:device:01904100-0000-7000-8000-000000000001",
                     "alg": "Ed25519",
@@ -236,7 +280,7 @@ mod tests {
             row.requesting_device_id,
             "ak:device:01904100-0000-7000-8000-000000000001"
         );
-        assert_eq!(row.pairing_code, "384921");
+        assert_eq!(row.pairing_code, "7H2K9M4Q");
         assert_eq!(row.display_name, "New browser");
         assert_eq!(row.platform, "browser");
         assert_eq!(row.expires_at, "2026-06-17T12:00:00.000Z");
@@ -271,7 +315,7 @@ mod tests {
         let rows = parse_pending_pairing_requests(&[no_txn]);
         assert_eq!(
             rows[0].request_key,
-            "ak:device:01904100-0000-7000-8000-000000000001:384921"
+            "ak:device:01904100-0000-7000-8000-000000000001:7H2K9M4Q"
         );
     }
 
@@ -281,7 +325,7 @@ mod tests {
             .pop()
             .unwrap();
         let body = pairing_request_body(&row.request_payload).expect("body");
-        assert_eq!(body.pairing_code.as_str(), "384921");
+        assert_eq!(body.pairing_code.as_str(), "7H2K9M4Q");
         assert_eq!(body.challenge_signature.as_str(), "challenge-signature");
         assert_eq!(body.display_name.as_deref(), Some("New browser"));
         assert_eq!(body.new_device_pubkey.kty.as_str(), "OKP");
@@ -293,9 +337,49 @@ mod tests {
     }
 
     #[test]
+    fn body_accepts_canonical_pubkey_with_kty() {
+        // The real payload `build_pair_payload` emits: canonical `key` field
+        // WITH `kty` present. Before the fix this hit the direct-deserialize
+        // fast path and failed on the (then) `public_key` field; now it must
+        // convert cleanly whether the material is under `key`...
+        let payload = json!({
+            "pairing_code": "7H2K9M4Q",
+            "challenge_signature": "challenge-signature",
+            "new_device_pubkey": {
+                "kty": "OKP",
+                "kid": "ak:device:01904100-0000-7000-8000-000000000001",
+                "alg": "EdDSA",
+                "key": "abc-123"
+            }
+        });
+        let body = pairing_request_body(&payload).expect("canonical body");
+        assert_eq!(body.new_device_pubkey.kty.as_str(), "OKP");
+        assert_eq!(body.new_device_pubkey.key.as_str(), "abc-123");
+    }
+
+    #[test]
+    fn body_accepts_legacy_public_key_with_kty() {
+        // ...or under the legacy `public_key` name even alongside `kty` (older
+        // QR payloads already in circulation). The normalizer renames it.
+        let payload = json!({
+            "pairing_code": "7H2K9M4Q",
+            "challenge_signature": "challenge-signature",
+            "new_device_pubkey": {
+                "kty": "OKP",
+                "kid": "ak:device:01904100-0000-7000-8000-000000000001",
+                "alg": "EdDSA",
+                "public_key": "abc-123"
+            }
+        });
+        let body = pairing_request_body(&payload).expect("legacy body");
+        assert_eq!(body.new_device_pubkey.kty.as_str(), "OKP");
+        assert_eq!(body.new_device_pubkey.key.as_str(), "abc-123");
+    }
+
+    #[test]
     fn body_fails_closed_on_missing_pubkey() {
         let payload = json!({
-            "pairing_code": "384921",
+            "pairing_code": "7H2K9M4Q",
             "challenge_signature": "challenge-signature"
         });
         assert!(pairing_request_body(&payload).is_err());
