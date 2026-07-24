@@ -629,13 +629,20 @@ pub fn build_agent_key_authorize_event_for_pairing(
     )?;
     let issued_at = Utc::now();
     let runtime_attestation = request.runtime_attestation.clone();
+    // Runtime replacement re-pairing (key-management §3.6.1): the new key
+    // supersedes EVERY currently-accepted active authorization of this agent.
+    // coauth's `validate_authorize_event_supersedes` requires the supplied set
+    // to equal the authoritative `active_authorizations` exactly — including an
+    // authorization that shares this key_id/verification_method (runtime keys
+    // always use `#runtime-1`, so a re-pair's old authorization has the same
+    // key_id but a different authorized_event_ref). Filtering by key_id dropped
+    // that old authorization, producing an empty `supersedes` that failed the
+    // exact-match check with a CONFLICT ("Server rejected the runtime key
+    // approval"). Supersede all active authorizations, keyed by their distinct
+    // authorized_event_ref.
     let supersedes = match key_state.get("active_authorizations") {
         Some(Value::Array(authorizations)) => authorizations
             .iter()
-            .filter(|authorization| {
-                authorization.get("key_id").and_then(Value::as_str)
-                    != Some(request.verification_method.as_str())
-            })
             .map(|authorization| {
                 Ok(AgentKeySupersession {
                     key_id: key_state_str(authorization, "key_id")?.to_owned(),

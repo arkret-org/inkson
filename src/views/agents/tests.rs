@@ -607,6 +607,81 @@ mod personal_agent_tests {
     }
 
     #[test]
+    fn runtime_key_reauthorize_supersedes_same_key_active_authorization() {
+        // Regression: re-pairing an active agent reuses the `#runtime-1`
+        // verification_method, so the currently-active authorization shares the
+        // new authorization's key_id. `supersedes` MUST still include it —
+        // coauth requires an exact match against the authoritative
+        // `active_authorizations`. A key_id filter dropped that authorization,
+        // yielding an empty `supersedes` that failed coauth's exact-match check
+        // with a CONFLICT surfaced as "Server rejected the runtime key approval".
+        let controller = "did:web:controller.example";
+        let service_id = "did:web:arkret.example";
+        let agent = "did:web:agents.example:summary";
+        let verification_method = "did:web:agents.example:summary#runtime-key-1";
+        let old_event = "ak:event:01999999-0000-7000-8000-0000000000aa";
+        let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
+            [41u8; 32],
+            controller,
+            "ak:device:01964137-0000-7000-8000-000000000007",
+        ));
+        let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
+        let scope = requested_scope_for_presets(&[], &AgentServiceScopePreset::DEFAULTS).unwrap();
+        let key_state = serde_json::json!({
+            "agent_id": agent,
+            "controller_id": controller,
+            "principal_control_realm_id": "ak:realm:01964137-0000-7000-8000-000000000005",
+            "controller_authorization_ref": "ak:event:01964137-0000-7000-8000-000000000006",
+            "status": "active",
+            "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
+            "pairing_code": "12345678",
+            "pairing_expires_at": "2026-07-06T00:15:00.000Z",
+            "requested_scope": scope,
+            "active_authorizations": [{
+                "key_id": verification_method,
+                "verification_method": verification_method,
+                "authorized_event_ref": old_event,
+            }],
+        });
+        let raw = serde_json::json!({
+            "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
+            "agent_id": agent,
+            "verification_method": verification_method,
+            "public_key": {
+                "kty": "OKP",
+                "kid": verification_method,
+                "alg": "Ed25519",
+                "key": arkret_sdk::base64url_encode([9u8; 32]),
+            },
+            "proof_of_possession": {
+                "challenge": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
+                "audience": service_id,
+                "request_canonical_digest": format!("sha256:{}", "0".repeat(64)),
+                "expires_at": "2026-07-06T00:15:00.000Z",
+                "signature": arkret_sdk::base64url_encode([1u8; 64]),
+            },
+        })
+        .to_string();
+        let request = parse_runtime_key_approval_request(&raw).unwrap();
+
+        let event = build_agent_key_authorize_event_for_pairing(
+            controller, service_id, &key_state, &request,
+        )
+        .unwrap();
+
+        let supersedes = event.payload["supersedes"]
+            .as_array()
+            .expect("re-pair authorize event must carry a supersedes array");
+        assert_eq!(
+            supersedes.len(),
+            1,
+            "re-pair must supersede the single active authorization, even with the same key_id"
+        );
+        assert_eq!(supersedes[0]["key_id"], verification_method);
+        assert_eq!(supersedes[0]["authorized_event_ref"], old_event);
+    }
+
+    #[test]
     fn build_action_approve_payload_binds_draft_digest_and_nonce() {
         let draft = serde_json::json!({
             "type": "ak.agent.draft.v1",
