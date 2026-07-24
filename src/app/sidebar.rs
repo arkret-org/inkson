@@ -59,17 +59,23 @@ pub(super) fn sidebar_text_matches_query(normalized_query: &str, values: &[&str]
             .any(|value| value.to_ascii_lowercase().contains(normalized_query))
 }
 
-/// The Contacts sidebar is a chat surface: only agents that are currently
-/// active belong here. Pending, paused, expired, and deactivated agents stay in
-/// Settings → My Agents. Keeping this filter in one place ensures the initial
-/// load and the `owned_agents_rev`-driven reload agree on what the sidebar
-/// shows.
+/// The Contacts sidebar is a chat surface: only lifecycle-active agents with
+/// an effective runtime key belong here. A replacement pairing keeps the
+/// existing authorization effective, while bootstrap-pending and expired
+/// agents stay in Settings → My Agents. Keeping this filter in one place
+/// ensures the initial load and the `owned_agents_rev`-driven reload agree.
 fn active_agents_only(
     agents: Vec<arkret_sdk::AgentProjection>,
 ) -> Vec<arkret_sdk::AgentProjection> {
     agents
         .into_iter()
-        .filter(|agent| matches!(agent.status, arkret_sdk::AgentLifecycleState::Active))
+        .filter(|agent| {
+            matches!(agent.status, arkret_sdk::AgentLifecycleState::Active)
+                && matches!(
+                    agent.runtime_state,
+                    arkret_sdk::AgentRuntimeState::Ready | arkret_sdk::AgentRuntimeState::Replacing
+                )
+        })
         .collect()
 }
 

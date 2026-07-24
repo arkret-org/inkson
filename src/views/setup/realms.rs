@@ -16,7 +16,7 @@ use super::model::{NEW_REALM_STEPS, NewRealmStep};
 use crate::api_error::is_auth_expired_error;
 use crate::config::LocalConfigStore;
 use crate::routes::Route;
-use crate::transport::auth::authed_api;
+use crate::transport::auth::authed_api_ready;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
@@ -765,7 +765,7 @@ pub(super) fn RealmsSection(
                                                 }
                                             }
                                             let invitees = parse_seed_members(&seed_text);
-                                            match authed_api(&base, api_token.clone()) {
+                                            match authed_api_ready(&base, api_token.clone()).await {
                                                 Ok(api) => {
                                                     let mut plaintext_services = plaintext_services_for_policy(
                                                         &configured_plaintext_service_id,

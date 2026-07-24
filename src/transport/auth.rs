@@ -12,6 +12,32 @@ pub fn authed_api(base_url: &str, session_credential: String) -> anyhow::Result<
     authed_api_with_sync(base_url, session_credential, None)
 }
 
+/// Create an authenticated API client through the async session provider.
+///
+/// View tasks that are already async must use this entry instead of relying on
+/// the opportunistic in-memory transport cache. The provider initializes or
+/// refreshes the shared SDK client before returning it.
+pub async fn authed_api_ready(
+    base_url: &str,
+    session_credential: String,
+) -> anyhow::Result<TransportClient> {
+    if session_credential.trim().is_empty() {
+        anyhow::bail!("missing authenticated session");
+    }
+    #[cfg(target_arch = "wasm32")]
+    crate::secure_key_store::ensure_wasm_secure_key_store_ready("inkson")
+        .await
+        .map(|_| ())
+        .map_err(|error| {
+            anyhow::anyhow!("secure key store is not ready for authenticated request: {error}")
+        })?;
+    let http = crate::identity::session_refresh::provide_authenticated_sdk_client(base_url).await?;
+    Ok(crate::transport::TransportClient::from_http(
+        http,
+        crate::transport::RequestContext::new(""),
+    ))
+}
+
 /// Create an authenticated API client that also forwards the latest sync token
 /// for read-your-writes consistency on subsequent reads.
 ///
