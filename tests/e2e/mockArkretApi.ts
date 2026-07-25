@@ -1,5 +1,6 @@
 import { expect, type Page, type Route } from "@playwright/test";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mockArkretContract } from "./mockArkretContract";
@@ -105,6 +106,29 @@ function canonicalSha256(value: unknown) {
   assertJsonTransportable(value, "$");
   return inksonWire<InksonWireDigest>("sha256-canonical-json", { value })
     .digest;
+}
+
+function realmActorFrontier(
+  realmId: string,
+  actorId: string,
+  nextActorSeq = 0,
+  frontierEventIds: string[] = [],
+) {
+  const transcript = {
+    kind: "realm_actor",
+    realm_id: realmId,
+    actor_id: actorId,
+    next_actor_seq: nextActorSeq,
+    frontier_event_ids: frontierEventIds,
+  };
+  const digest = createHash("sha256")
+    .update("ak-realm-actor-frontier-v1\0", "utf8")
+    .update(canonicalJson(transcript), "utf8")
+    .digest("hex");
+  return {
+    ...transcript,
+    frontier_digest: `sha256:${digest}`,
+  };
 }
 
 function inksonWire<T>(command: InksonWireCommand, input: unknown): T {
@@ -392,6 +416,13 @@ export async function mockArkretApi(
     pairing_code: "246810",
     pairing_expires_at: "2099-07-06T00:20:00.000Z",
     authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000a600",
+    active_authorizations: [
+      {
+        key_id: "runtime-key-1",
+        verification_method: `${activeAssistantId}#runtime-key-1`,
+        authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000a600",
+      },
+    ],
   });
   personalAgents.set("did:web:agents.example:deactivated", {
     agent_id: "did:web:agents.example:deactivated",
@@ -1045,18 +1076,25 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       const actorId = url.searchParams.get("actor_id");
+      const realmId = url.searchParams.get("realm_id");
+      if (actorId && realmId) {
+        return json(route, {
+          frontier: realmActorFrontier(realmId, actorId),
+        });
+      }
       if (actorId) {
         return json(route, {
           frontier: {
+            kind: "actor_aggregate",
             actor_id: actorId,
-            actor_seq: 0,
+            realms: [],
           },
         });
       }
-      const realmId = url.searchParams.get("realm_id");
       if (realmId) {
         return json(route, {
           frontier: {
+            kind: "realm_seal",
             realm_id: realmId,
             seal_id:
               "ak:seal:sha256:1111111111111111111111111111111111111111111111111111111111111111",

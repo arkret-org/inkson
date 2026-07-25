@@ -491,10 +491,36 @@ test("account settings split account/server info and surface personal agents", a
   await expect(page.getByTestId("agent-admin-deactivate-confirm-button")).toBeEnabled();
   await page.getByTestId("agent-admin-deactivate-cancel-button").click();
   await expect(page.getByTestId("agent-admin-deactivate-modal")).toHaveCount(0);
+});
 
+test("agent deactivation submits controller-signed revocations before the terminal lifecycle event", async ({
+  page,
+}) => {
+  await gotoAndDismissRecovery(page, "/settings/agents?filter=all");
+  const assistantRow = page.getByTestId("agent-admin-row").filter({ hasText: "assistant" });
+  await assistantRow.click();
+  const deactivateButton = page.getByTestId("agent-admin-deactivate-button");
+  await expect(deactivateButton).toBeVisible();
   await deactivateButton.click();
   await page.getByTestId("agent-admin-deactivate-confirm-input").fill("DEACTIVATE");
+
+  const requestPromise = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" &&
+      new URL(request.url()).pathname ===
+        "/_arkret/self/agents/did%3Aweb%3Aagents.example%3Aassistant/deactivate",
+  );
   await page.getByTestId("agent-admin-deactivate-confirm-button").click();
+  const requestBody = (await requestPromise).postDataJSON();
+  expect(requestBody.reason).toBe("controller_deactivated");
+  expect(requestBody.lifecycle_event.kind).toBe("ak.self.agent.deactivate");
+  expect(requestBody.lifecycle_event.proofs.length).toBeGreaterThan(0);
+  expect(requestBody.key_revocation_events).toHaveLength(1);
+  expect(requestBody.key_revocation_events[0].kind).toBe("ak.agent.key.revoke");
+  expect(requestBody.key_revocation_events[0].payload.key_id).toBe("runtime-key-1");
+  expect(requestBody.key_revocation_events[0].proofs.length).toBeGreaterThan(0);
+  expect(requestBody.capability_revocation_events).toEqual([]);
+
   await expect(page.getByTestId("agent-admin-last-op")).toContainText(
     "Agent deactivated permanently.",
     { timeout: 15_000 },

@@ -937,16 +937,6 @@ fn spawn_deactivate_agent(
                 signer.as_ref(),
                 signer_account_scope.as_deref(),
             )?;
-            super::bootstrap::ensure_managed_agent_pcr_seal_current(
-                &submitter,
-                submitter.http(),
-                signer.as_ref(),
-                &controller_did,
-                &device_id,
-                key_state.principal_control_realm_id.as_str(),
-            )
-            .await?;
-
             let mut prepared = submitter.prepare_sdk_events_batch(drafts).await?;
             let lifecycle_event = prepared
                 .pop()
