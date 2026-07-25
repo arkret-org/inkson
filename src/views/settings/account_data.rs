@@ -13,7 +13,6 @@ use super::{
     PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY, PUSH_RULES_ACCOUNT_DATA_KEY,
     READ_RECEIPT_ACCOUNT_DATA_KEY, build_read_receipt_preferences_body,
 };
-use crate::models::AccountDataSetResult;
 use crate::notification_rules::{WatchLevel, parse_dnd_settings};
 use crate::state::{LocalStateStore, PresencePreferenceState, PresenceVisibility};
 use crate::transport::auth::with_event_submitter;
@@ -58,8 +57,6 @@ pub(crate) fn encrypted_account_data_value(
 /// preferences to soland through `ak.account_data.set`. Read latest values
 /// from the local state store at call time —
 /// the local state is always authoritative; the server-sync is best-effort.
-/// Swallows 404/501/405 via [`AccountDataSetResult::Unsupported`] so older
-/// soland deployments don't surface as user-visible errors.
 pub(super) fn push_read_receipt_account_data(
     base_url: String,
     api_token: String,
@@ -87,12 +84,7 @@ pub(super) fn push_read_receipt_account_data(
         })
         .await
         {
-            Ok(AccountDataSetResult::Stored { .. }) => {}
-            Ok(AccountDataSetResult::Unsupported { status }) => {
-                tracing::debug!(
-                    "soland ak.account_data.set returned {status}; local state still authoritative"
-                );
-            }
+            Ok(_) => {}
             Err(err) => {
                 tracing::warn!(
                     "ak.account_data.set for read-receipt prefs failed: {}",
@@ -172,12 +164,7 @@ pub(super) fn push_presence_preference_account_data(
         })
         .await
         {
-            Ok(AccountDataSetResult::Stored { .. }) => {}
-            Ok(AccountDataSetResult::Unsupported { status }) => {
-                tracing::debug!(
-                    "soland ak.account_data.set for ak.presence.preference returned {status}; local preference remains authoritative"
-                );
-            }
+            Ok(_) => {}
             Err(err) => {
                 tracing::warn!(
                     "ak.account_data.set for ak.presence.preference failed: {}",
@@ -219,12 +206,7 @@ pub(super) fn push_presence_visibility_account_data(
         })
         .await
         {
-            Ok(AccountDataSetResult::Stored { .. }) => {}
-            Ok(AccountDataSetResult::Unsupported { status }) => {
-                tracing::debug!(
-                    "soland ak.account_data.set for ak.presence.visibility returned {status}; local presence policy remains authoritative"
-                );
-            }
+            Ok(_) => {}
             Err(err) => {
                 tracing::warn!(
                     "ak.account_data.set for ak.presence.visibility failed: {}",
@@ -352,12 +334,7 @@ pub(super) fn push_notification_rules_account_data(
         })
         .await
         {
-            Ok(AccountDataSetResult::Stored { .. }) => {}
-            Ok(AccountDataSetResult::Unsupported { status }) => {
-                tracing::debug!(
-                    "soland ak.account_data.set for ak.push_rules returned {status}; local notification rules remain authoritative"
-                );
-            }
+            Ok(_) => {}
             Err(err) => {
                 tracing::debug!(
                     "ak.account_data.set for ak.push_rules failed: {}",
@@ -418,7 +395,7 @@ pub(super) fn push_dnd_account_data(
         })
         .await
         {
-            Ok(AccountDataSetResult::Stored { .. }) => {
+            Ok(_) => {
                 if let Some(signal) = backup_trigger_signal {
                     crate::components::maybe_auto_backup_mls_after_encrypted_write(
                         base_url,
@@ -430,13 +407,6 @@ pub(super) fn push_dnd_account_data(
                     )
                     .await;
                 }
-                notification_settings_status.set(if enabled {
-                    "Do not disturb enabled.".to_owned()
-                } else {
-                    "DND disabled.".to_owned()
-                });
-            }
-            Ok(AccountDataSetResult::Unsupported { .. }) => {
                 notification_settings_status.set(if enabled {
                     "Do not disturb enabled.".to_owned()
                 } else {

@@ -302,22 +302,6 @@ pub struct SpaceCreateResult {
 // (Move/Seal pipeline DTOs deleted; all writes now go through
 // ak.self.events.command.submit via SubmitEventResult.)
 
-/// Result of [`crate::transport::TransportClient::set_account_data`]. Captures the
-/// graceful-degradation contract: 404/501/405 are not treated as errors —
-/// soland's principal-control lookup / event ingest may be absent on older
-/// deployments and the client must keep working when that path is not wired.
-#[derive(Debug, Clone)]
-pub enum AccountDataSetResult {
-    /// Server accepted and stored the value. The caller may inspect the
-    /// echoed body for any server-derived metadata, but most callers can
-    /// ignore the `Value`.
-    Stored { response: serde_json::Value },
-    /// Server doesn't yet support the canonical `ak.account_data.set` submit
-    /// path needed for this setting; the client logged a `tracing::warn` and
-    /// the local state remains the authoritative copy.
-    Unsupported { status: reqwest::StatusCode },
-}
-
 pub const PROFILE_CORE_EVENT_STORE: &str = "ak.profile.core_event_store.v1";
 pub const PROFILE_PRINCIPAL_SERVER_EVENTS_API: &str = "ak.profile.principal_server_events_api.v1";
 

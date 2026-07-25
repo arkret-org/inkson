@@ -6,8 +6,6 @@
 
 use dioxus::prelude::*;
 
-use crate::models::AccountDataSetResult;
-
 const SIDECAR_VIEW_STATE_CACHE_PREFIX: &str = "sidecar.view_state.v1";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1171,10 +1169,7 @@ pub fn push_sidecar_display_mode(
         )
         .await
         {
-            Ok(AccountDataSetResult::Stored { .. }) => {}
-            Ok(AccountDataSetResult::Unsupported { status }) => {
-                tracing::warn!(%status, "Sidecar view-state account data is unsupported");
-            }
+            Ok(_) => {}
             Err(error) => {
                 tracing::warn!(error = %error.display(), "Sidecar view-state sync failed")
             }

@@ -137,15 +137,6 @@ fn terminal_session_grant_message(message: &str) -> bool {
             || message.contains("suspended"))
 }
 
-pub fn unsupported_endpoint_status(error: &anyhow::Error) -> Option<StatusCode> {
-    let (status, _) = api_error_status_and_envelope(error)?;
-    matches!(
-        status,
-        StatusCode::NOT_FOUND | StatusCode::NOT_IMPLEMENTED | StatusCode::METHOD_NOT_ALLOWED
-    )
-    .then_some(status)
-}
-
 pub fn is_actor_seq_cas_conflict_error(error: &anyhow::Error) -> bool {
     actor_seq_cas_conflict_details(error).is_some()
 }

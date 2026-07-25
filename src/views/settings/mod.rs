@@ -37,7 +37,6 @@ use widgets::*;
 use crate::components::{HelpTip, QrSharePanel, UiIcon};
 use crate::config::LocalConfigStore;
 use crate::i18n::Locale;
-use crate::models::AccountDataSetResult;
 use crate::notification_rules::WatchLevel;
 use crate::routes::Route;
 use crate::transport::auth::{with_authed_sdk_client, with_event_submitter};
@@ -97,8 +96,7 @@ pub(crate) fn presence_expiry_to_clears_at(choice: &str) -> Option<String> {
 
 /// A4a — push the current `ak.client.ui_state` payload (theme + sidebar
 /// collapsed) to soland's `ak.account_data.set` endpoint so other
-/// devices pick up the same preference. Same graceful-degradation
-/// contract as [`push_read_receipt_account_data`].
+/// devices pick up the same preference.
 ///
 /// `local_theme` MUST already match the local `LocalConfigStore` write —
 /// we never re-read it from the store here because the Signal copy from
@@ -152,13 +150,7 @@ pub(crate) fn push_client_ui_account_data_with_avatar(
         })
         .await
         {
-            Ok(AccountDataSetResult::Stored { .. }) => {}
-            Ok(AccountDataSetResult::Unsupported { status }) => {
-                tracing::debug!(
-                    "soland ak.account_data.set for ak.client.ui_state returned {status}; \
-                     local state still authoritative"
-                );
-            }
+            Ok(_) => {}
             Err(err) => {
                 tracing::warn!(
                     "ak.account_data.set for ak.client.ui_state failed: {}",
@@ -215,7 +207,7 @@ pub(crate) fn build_read_receipt_preferences_body(
 
 /// Push the actor-private personal blocklist to soland. Local state is
 /// authoritative; network errors are logged only so privacy controls keep
-/// working offline and against older soland builds.
+/// working offline.
 pub(crate) fn push_blocklist_account_data(
     base_url: String,
     api_token: String,
@@ -266,13 +258,7 @@ pub(crate) fn push_blocklist_account_data(
         })
         .await
         {
-            Ok(AccountDataSetResult::Stored { .. }) => {}
-            Ok(AccountDataSetResult::Unsupported { status }) => {
-                tracing::debug!(
-                    "soland ak.account_data.set for ak.account.blocklist returned {status}; \
-                     local blocklist remains authoritative"
-                );
-            }
+            Ok(_) => {}
             Err(err) => {
                 tracing::debug!(
                     "ak.account_data.set for ak.account.blocklist failed: {}",
@@ -352,9 +338,8 @@ pub(crate) fn is_likely_valid_domain(input: &str) -> bool {
 }
 
 /// Spec client-preferences.md §3.7: push (or tombstone) a Realm remark to
-/// soland via `ak.account_data.set`. Same graceful-degradation contract as
-/// [`push_read_receipt_account_data`] — local state is authoritative; the
-/// server PUT is best-effort. `remark.is_empty()` triggers a DELETE so the
+/// soland via `ak.account_data.set`. Local state is authoritative and the
+/// server write is best-effort. `remark.is_empty()` triggers a DELETE so the
 /// row tombstones cleanly across devices.
 pub(crate) fn push_realm_remark_account_data(
     base_url: String,

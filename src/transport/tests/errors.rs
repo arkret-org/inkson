@@ -5,7 +5,7 @@ use crate::api_error::{
     is_auth_expired_error, is_device_not_authorized_error, is_invalid_cursor_error,
     is_plaintext_visibility_policy_error, is_snapshot_unavailable_error,
     is_space_membership_denied_error, is_terminal_session_grant_error,
-    is_terminal_session_grant_refresh_error, rate_limited_retry_after, unsupported_endpoint_status,
+    is_terminal_session_grant_refresh_error, rate_limited_retry_after,
 };
 
 fn sdk_api_error(status: StatusCode, body: &'static [u8]) -> anyhow::Error {
@@ -108,15 +108,6 @@ fn sdk_api_errors_use_same_classifiers() {
         br#"{"ok":false,"error":{"code":"capability_denied","message":"session grant is not active: revoked"},"request_id":"ak:request:test"}"#,
     );
     assert!(is_terminal_session_grant_error(&revoked_session_grant));
-
-    let unsupported_endpoint = sdk_api_error(
-        StatusCode::NOT_IMPLEMENTED,
-        br#"{"ok":false,"error":{"code":"not_implemented","message":"account_data unavailable"},"request_id":"ak:request:test"}"#,
-    );
-    assert_eq!(
-        unsupported_endpoint_status(&unsupported_endpoint),
-        Some(StatusCode::NOT_IMPLEMENTED)
-    );
 
     let actor_seq_cas = sdk_api_error(
         StatusCode::CONFLICT,

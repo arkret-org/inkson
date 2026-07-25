@@ -27,8 +27,8 @@ use serde_json::Value;
 
 use crate::event_submit::EventSubmitter;
 use crate::models::{
-    AccountDataSetResult, ContactListView, CurrentAccount, IdentityDescribeOutcome,
-    IdentityResolveOutcome, SubmitEventResult,
+    ContactListView, CurrentAccount, IdentityDescribeOutcome, IdentityResolveOutcome,
+    SubmitEventResult,
 };
 
 pub(crate) fn did_for_request_field(field: &str, value: &str) -> anyhow::Result<arkret_sdk::Did> {
@@ -1098,47 +1098,20 @@ async fn account_data_actor_scope(
 
 /// Submit a per-account `ak.account_data.set` event so settings UIs can
 /// push preferences (for example `ak.read_receipt.preferences`) to soland
-/// for cross-device sync. If the current server cannot resolve the
-/// principal control Realm yet, 404 / 501 / 405 still degrade to
-/// `Unsupported` and local state remains authoritative.
+/// for cross-device sync.
 pub async fn set_account_data(
     submitter: &EventSubmitter,
     type_key: &str,
     content: Value,
-) -> anyhow::Result<AccountDataSetResult> {
-    let (actor, principal_realm_id) = match account_data_actor_scope(submitter.http()).await {
-        Ok(scope) => scope,
-        Err(error) => {
-            if let Some(status) = crate::api_error::unsupported_endpoint_status(&error) {
-                tracing::warn!(
-                    "principal-realm lookup for account_data returned {status}; \
-                     keeping local state authoritative"
-                );
-                return Ok(AccountDataSetResult::Unsupported { status });
-            }
-            return Err(error);
-        }
-    };
+) -> anyhow::Result<Value> {
+    let (actor, principal_realm_id) = account_data_actor_scope(submitter.http()).await?;
     let key = crate::account_data::AccountDataKey::from_wire(type_key);
     let event =
         crate::account_data::build_account_data_set(&principal_realm_id, &actor, &key, content)
             .build_sdk_event("inkson-account-data")?;
-    let result = submitter.submit_sdk_event(&event).await;
-    match result {
-        Ok(value) => Ok(AccountDataSetResult::Stored {
-            response: serde_json::to_value(value)?,
-        }),
-        Err(error) => {
-            if let Some(status) = crate::api_error::unsupported_endpoint_status(&error) {
-                tracing::warn!(
-                    "ak.account_data.set submit for {type_key} returned {status}; \
-                     keeping local state authoritative"
-                );
-                return Ok(AccountDataSetResult::Unsupported { status });
-            }
-            Err(error)
-        }
-    }
+    Ok(serde_json::to_value(
+        submitter.submit_sdk_event(&event).await?,
+    )?)
 }
 
 /// Submit a private account-data value with an optional CAS guard. Callers
@@ -1149,20 +1122,8 @@ pub async fn set_private_account_data_with_cas(
     type_key: &str,
     encrypted_payload: Value,
     expected_state_digest: Option<&str>,
-) -> anyhow::Result<AccountDataSetResult> {
-    let (actor, principal_realm_id) = match account_data_actor_scope(submitter.http()).await {
-        Ok(scope) => scope,
-        Err(error) => {
-            if let Some(status) = crate::api_error::unsupported_endpoint_status(&error) {
-                tracing::warn!(
-                    "principal-realm lookup for private account_data returned {status}; \
-                     keeping local state authoritative"
-                );
-                return Ok(AccountDataSetResult::Unsupported { status });
-            }
-            return Err(error);
-        }
-    };
+) -> anyhow::Result<Value> {
+    let (actor, principal_realm_id) = account_data_actor_scope(submitter.http()).await?;
     let event = crate::account_data::build_private_account_data_set_with_cas(
         &principal_realm_id,
         &actor,
@@ -1171,50 +1132,21 @@ pub async fn set_private_account_data_with_cas(
         expected_state_digest,
     )?
     .build_sdk_event("inkson-private-account-data")?;
-    let result = submitter.submit_sdk_event(&event).await;
-    match result {
-        Ok(value) => Ok(AccountDataSetResult::Stored {
-            response: serde_json::to_value(value)?,
-        }),
-        Err(error) => {
-            if let Some(status) = crate::api_error::unsupported_endpoint_status(&error) {
-                tracing::warn!(
-                    "ak.account_data.set submit for private {type_key} returned {status}; \
-                     keeping local state authoritative"
-                );
-                return Ok(AccountDataSetResult::Unsupported { status });
-            }
-            Err(error)
-        }
-    }
+    Ok(serde_json::to_value(
+        submitter.submit_sdk_event(&event).await?,
+    )?)
 }
 
 /// Tombstone an account_data entry by submitting `ak.account_data.set` with
-/// `tombstone: true`. Same graceful-degradation contract as
-/// [`set_account_data`].
+/// `tombstone: true`.
 pub async fn delete_account_data(submitter: &EventSubmitter, type_key: &str) -> anyhow::Result<()> {
-    let (actor, principal_realm_id) = match account_data_actor_scope(submitter.http()).await {
-        Ok(scope) => scope,
-        Err(error) => {
-            if crate::api_error::unsupported_endpoint_status(&error).is_some() {
-                return Ok(());
-            }
-            return Err(error);
-        }
-    };
+    let (actor, principal_realm_id) = account_data_actor_scope(submitter.http()).await?;
     let key = crate::account_data::AccountDataKey::from_wire(type_key);
     let event =
         crate::account_data::build_account_data_tombstone(&principal_realm_id, &actor, &key)
             .build_sdk_event("inkson-account-data")?;
-    match submitter.submit_sdk_event(&event).await {
-        Ok(_) => Ok(()),
-        Err(error) => {
-            if crate::api_error::unsupported_endpoint_status(&error).is_some() {
-                return Ok(());
-            }
-            Err(error)
-        }
-    }
+    submitter.submit_sdk_event(&event).await?;
+    Ok(())
 }
 
 pub async fn submit_read_cursor_advance(

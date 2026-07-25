@@ -17,7 +17,6 @@ use hkdf::Hkdf;
 use serde_json::{Value, json};
 use sha2::Sha256;
 
-use crate::models::AccountDataSetResult;
 use crate::transport::TransportClient;
 
 pub const FILE_TRANSFER_PURPOSE: &str = "file_transfer";
@@ -173,18 +172,12 @@ pub async fn upload_actor_private_file(
         anyhow::bail!("file-transfer account_data key derivation drift");
     }
     let envelope = seal_record_envelope(&record, crypto, &account_data_key, actor_id)?;
-    let outcome = crate::transport::account::set_account_data(
+    let server_response = crate::transport::account::set_account_data(
         &api.event_submitter()?,
         &account_data_key,
         envelope,
     )
     .await?;
-    let server_response = match outcome {
-        AccountDataSetResult::Stored { response } => response,
-        AccountDataSetResult::Unsupported { status } => {
-            anyhow::bail!("ak.account_data.set unsupported for file transfer: {status}");
-        }
-    };
     Ok(FileTransferUploadResult {
         item: FileTransferItem {
             account_data_key,
@@ -230,18 +223,12 @@ pub async fn upload_device_bound_file(
         anyhow::bail!("file-transfer account_data key derivation drift");
     }
     let envelope = seal_record_envelope(&record, crypto, &account_data_key, actor_id)?;
-    let outcome = crate::transport::account::set_account_data(
+    let server_response = crate::transport::account::set_account_data(
         &api.event_submitter()?,
         &account_data_key,
         envelope,
     )
     .await?;
-    let server_response = match outcome {
-        AccountDataSetResult::Stored { response } => response,
-        AccountDataSetResult::Unsupported { status } => {
-            anyhow::bail!("ak.account_data.set unsupported for file transfer: {status}");
-        }
-    };
 
     let mut device_message_responses = Vec::with_capacity(dispatches.len());
     let http = api.sdk_http_client()?;
