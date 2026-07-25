@@ -1,5 +1,3 @@
-use dioxus::prelude::*;
-
 use super::card_detail_route_realm_id;
 use super::model::*;
 use crate::views::helpers::short_protocol_id;

@@ -1,4 +1,3 @@
-use dioxus::prelude::*;
 use serde_json::{Value, json};
 
 use super::model::*;

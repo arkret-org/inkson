@@ -1,7 +1,5 @@
 //! Pure chat timeline projection and rendering components.
 
-use dioxus::prelude::*;
-
 use super::model::*;
 use crate::components::ActorIdentityLabel;
 use crate::views::helpers::{MentionNode, short_protocol_id};

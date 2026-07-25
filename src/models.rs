@@ -84,8 +84,7 @@ pub struct ContactListRow {
     /// Principal Server on cross-PS rows, so this is populated whenever soland
     /// learned it from a cross-PS delivery; it stays `None` for same-PS
     /// contacts, where respond correctly falls back to same-PS behaviour.
-    /// Accepts a couple of likely wire spellings for forward compatibility.
-    #[serde(default, alias = "requester_service_id", alias = "source_service_id")]
+    #[serde(default)]
     pub peer_service_id: Option<String>,
     /// U3 — event ref of the `ak.consent.grant` this peer gave me for the
     /// `invite` (or `any`) scope. When present, the realm-invite "from contacts"

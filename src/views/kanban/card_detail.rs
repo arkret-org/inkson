@@ -1,5 +1,3 @@
-use dioxus::prelude::*;
-
 use super::model::*;
 use super::{
     CardAuthorDisplayContext, card_author_display_label, dispatch_card_detail_update,
