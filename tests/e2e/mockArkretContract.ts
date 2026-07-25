@@ -68,6 +68,7 @@ export function mockArkretContract(req) {
         schema: "ak.schema.handle_claim.v1",
         handle: "alice:local.host",
         subject: principalId,
+        binding_state: "verified",
       },
       profile: {
         id: "ak:actor_profile:01964137-0000-7000-8000-0000000000a1",

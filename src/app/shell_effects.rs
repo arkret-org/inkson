@@ -45,9 +45,10 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
     } = SessionContext::get();
     let navigator = use_navigator();
 
-    // Account-viewer is the authoritative source for the Actor Profile and
-    // device display_name. Keep those user-facing labels separate from the
-    // protocol IDs used by requests and copy actions.
+    // Account-viewer is the authoritative source for the Actor Profile,
+    // device display_name, and signed primary handle claim. Keep those
+    // user-facing labels separate from protocol IDs and from the Account
+    // Authority handoff's unsigned account_handle hint.
     use_effect(move || {
         let lookup_base_url = base_url();
         let lookup_actor = account_did();
@@ -76,10 +77,17 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
         current_account_display_name.set(String::new());
         current_account_avatar_blob_ref.set(String::new());
         current_device_display_name.set(String::new());
+        account_primary_handle.set(String::new());
+        personal_handles.set(Vec::new());
+        personal_handles_status.set("Loading handles".to_owned());
+        state_store
+            .write()
+            .set_primary_handle_for_did(&lookup_actor, "");
 
         let base = lookup_base_url;
         let actor = lookup_actor;
         let device = lookup_device;
+        let mut handle_store = state_store;
         spawn(async move {
             let result = crate::transport::auth::with_authed_sdk_client(
                 &base,
@@ -114,9 +122,21 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                 .filter(|name| !name.is_empty())
                 .map(ToOwned::to_owned)
                 .unwrap_or_default();
+            let primary_handle = crate::transport::account::primary_handle_from_viewer(&viewer);
+            handle_store
+                .write()
+                .set_primary_handle_for_did(&actor, &primary_handle);
             try_set_signal(current_account_display_name, display_name);
             try_set_signal(current_account_avatar_blob_ref, avatar_blob_ref);
             try_set_signal(current_device_display_name, device_display_name);
+            if !primary_handle.is_empty() {
+                try_set_signal(account_primary_handle, primary_handle.clone());
+                try_set_signal(
+                    personal_handles_status,
+                    personal_handles_status_for(std::slice::from_ref(&primary_handle)),
+                );
+                try_set_signal(personal_handles, vec![primary_handle]);
+            }
         });
     });
 
@@ -272,26 +292,35 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                             .primary_handle
                             .as_ref()
                             .map(|handle| handle.canonical().to_owned());
-                        handle_store.write().set_primary_handle_for_did(
-                            &lookup_subject,
-                            directory_primary_handle.as_deref().unwrap_or_default(),
-                        );
                         let directory_handles = display_handles_from_directory_response(&res);
-                        // A successful directory response is a complete,
-                        // current projection. Replace the viewer fallback
-                        // instead of merging, which kept revoked/renamed
-                        // handles in the menu for the rest of the session.
-                        try_set_signal(
-                            account_primary_handle,
-                            directory_primary_handle.unwrap_or_default(),
-                        );
-                        let status = if directory_handles.is_empty() {
+                        if let Some(directory_primary_handle) = directory_primary_handle {
+                            handle_store.write().set_primary_handle_for_did(
+                                &lookup_subject,
+                                &directory_primary_handle,
+                            );
+                            try_set_signal(account_primary_handle, directory_primary_handle);
+                        }
+                        // Directory is the complete handle-set projection, but
+                        // AccountView's signed primary claim remains a valid
+                        // fallback if the two reads briefly cross during
+                        // registration or projection refresh.
+                        let handles = if directory_handles.is_empty() {
+                            let viewer_primary_handle = account_primary_handle();
+                            if viewer_primary_handle.trim().is_empty() {
+                                Vec::new()
+                            } else {
+                                vec![viewer_primary_handle]
+                            }
+                        } else {
+                            directory_handles
+                        };
+                        let status = if handles.is_empty() {
                             "No handles published".to_owned()
                         } else {
-                            personal_handles_status_for(&directory_handles)
+                            personal_handles_status_for(&handles)
                         };
                         try_set_signal(personal_handles_status, status);
-                        try_set_signal(personal_handles, directory_handles);
+                        try_set_signal(personal_handles, handles);
                     }
                     Err(err) => {
                         tracing::warn!(

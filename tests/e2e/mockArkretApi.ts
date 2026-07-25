@@ -2368,6 +2368,7 @@ export async function mockArkretApi(
           schema: "ak.schema.handle_claim.v1",
           handle: primaryHandle,
           subject: accountPrincipalId,
+          binding_state: "verified",
         };
       }
       return json(route, viewer);
