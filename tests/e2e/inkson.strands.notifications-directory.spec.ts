@@ -160,22 +160,6 @@ test("directory search resolve and space selection strand works", async ({
   await expect(page.getByTestId("directory-result")).toContainText(
     "Arkret Demo Realm",
   );
-  await expect(page.getByTestId("index-query-results")).toContainText(
-    "Arkret Demo Realm",
-  );
-  await expect(page.getByTestId("generic-entity-card")).toHaveAttribute(
-    "data-render-kind",
-    "card",
-  );
-  await expect(page.getByTestId("entity-type-label")).toContainText("space");
-  await expect(page.getByTestId("entity-facets")).toContainText("renderable");
-  await expect(page.getByTestId("projection-facets")).toContainText(
-    "item: stateful, rankable",
-  );
-  await expect(page.getByTestId("unknown-facets-debug")).toContainText(
-    "com.example.preview",
-  );
-
   await page.getByTestId("directory-select-button").click();
   await page.getByTestId("resolve-selected-button").click();
   // Resolve feedback is a toast now; the message carries the join rule.
@@ -184,20 +168,6 @@ test("directory search resolve and space selection strand works", async ({
   ).toContainText("public");
   await expect(page.getByTestId("directory-result").first()).toContainText(
     "Arkret Demo Realm",
-  );
-
-  await page.getByTestId("directory-advanced-diagnostics-toggle").click();
-  await page.getByTestId("tab-objects").click();
-  await page.getByTestId("directory-search-input").fill("launch");
-  await page.getByTestId("directory-search-button").click();
-  await expect(page.getByTestId("protocol-object-results")).toContainText(
-    "Launch checklist card",
-  );
-  await expect(page.getByTestId("protocol-object-results")).toContainText(
-    "Restricted discussion",
-  );
-  await expect(page.getByTestId("protocol-object-results")).toContainText(
-    "locked",
   );
 
   await page.getByTestId("tab-organizations").click();

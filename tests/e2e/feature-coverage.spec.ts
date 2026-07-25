@@ -503,29 +503,6 @@ test.describe("feature coverage placeholders", () => {
     expect(privateBadges).toBe(0);
   });
 
-  test("directory: locked cross-space ref shows LazyLinkBadge only", async ({ page }) => {
-    // the directory's ProtocolObjects tab fans
-    // out demo `protocol_object_results(...)` rows; any row whose
-    // `access` is `locked` or `external` MUST render the
-    // `LazyLinkBadge` (data-testid `lazy-link-badge`) instead of
-    // exposing title / members / counts. We assert that searching for
-    // an entry the demo dataset always emits at least one
-    // `access=locked` row produces a visible LazyLinkBadge — the
-    // contract a future server-side renderer of the same shape MUST
-    // honor.
-    await page.goto("/directory", { waitUntil: "domcontentloaded", timeout: 120_000 });
-    await page.getByTestId("directory-advanced-diagnostics-toggle").click();
-    await page.getByTestId("tab-objects").click();
-    await page.getByTestId("directory-search-input").fill("locked");
-    await page.getByTestId("directory-search-button").click();
-    // At least one badge MUST render — the demo dataset always carries
-    // an `access=locked` row matching the literal `"locked"` query
-    // substring across its title / summary fields.
-    await page.getByTestId("lazy-link-badge")
-      .first()
-      .waitFor({ state: "visible", timeout: 30_000 });
-  });
-
   // ---- Capability approval workflow ----
   // UI surface: realm admin
   // spec: authz/capabilities.md

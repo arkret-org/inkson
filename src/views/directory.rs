@@ -14,7 +14,6 @@ use crate::views::helpers::{actor_display_label, short_protocol_id};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DirectoryTab {
-    ProtocolObjects,
     Realms,
     Organizations,
     Actors,
@@ -142,7 +141,6 @@ pub fn DirectoryPanel(
     let mut realm_results = use_signal(Vec::<RealmTreeNode>::new);
     let mut org_results = use_signal(Vec::<Value>::new);
     let mut actor_results = use_signal(Vec::<Value>::new);
-    let mut object_results = use_signal(Vec::<Value>::new);
     let mut handle_result = use_signal(|| Option::<ResolveHandleView>::None);
     let mut contact_target_did = use_signal(|| "did:web:bob.example".to_owned());
     let mut contact_requester_did = use_signal(|| "did:web:alice.example".to_owned());
@@ -253,26 +251,7 @@ pub fn DirectoryPanel(
                     span { "entity discovery only" }
                 }
                 div { class: "muted",
-                    "Search stays focused on Realms, organizations, actors, handles, and protocol-level lookups. The old directory shortcut has been folded into the global search entrypoint."
-                }
-                details { class: "advanced-diagnostics", "data-testid": "directory-advanced-diagnostics",
-                    summary { "data-testid": "directory-advanced-diagnostics-toggle",
-                        span { "Advanced diagnostics" }
-                        span { class: "badge amber", "developer tools" }
-                    }
-                    div { class: "muted",
-                        "Protocol-object lookup is for renderer and visibility debugging. It stays collapsed by default so the end-user directory starts on normal entity search."
-                    }
-                    div { class: "actions",
-                        Button {
-                            variant: if active_tab() == DirectoryTab::ProtocolObjects { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                            "data-testid": "tab-objects",
-                            role: "tab",
-                            "aria-selected": if active_tab() == DirectoryTab::ProtocolObjects { "true" } else { "false" },
-                            onclick: move |_| active_tab.set(DirectoryTab::ProtocolObjects),
-                            "Protocol Objects"
-                        }
-                    }
+                    "Search stays focused on Realms, organizations, actors, and handles. The old directory shortcut has been folded into the global search entrypoint."
                 }
             }
 
@@ -418,7 +397,6 @@ pub fn DirectoryPanel(
                 div { class: "event-head",
                     span { "Search" }
                     span { match active_tab() {
-                        DirectoryTab::ProtocolObjects => "developer objects",
                         DirectoryTab::Realms => "realms",
                         DirectoryTab::Organizations => "organizations",
                         DirectoryTab::Actors => "actors",
@@ -430,14 +408,12 @@ pub fn DirectoryPanel(
                         "data-testid": "directory-search-input",
                         value: "{query}",
                         "aria-label": match active_tab() {
-                            DirectoryTab::ProtocolObjects => "Search protocol objects for developer diagnostics",
                             DirectoryTab::Realms => "Search realms",
                             DirectoryTab::Organizations => "Search organizations",
                             DirectoryTab::Actors => "Search actors",
                             DirectoryTab::Handles => "Resolve handle",
                         },
                         placeholder: match active_tab() {
-                            DirectoryTab::ProtocolObjects => "Search Cards, Discussions, Actors, Spaces (diagnostic lookup)",
                             DirectoryTab::Realms => "Search realms",
                             DirectoryTab::Organizations => "Search organizations",
                             DirectoryTab::Actors => "Search actors",
@@ -456,11 +432,8 @@ pub fn DirectoryPanel(
                                 spawn(async move {
                                     let _ = with_authed_sdk_client(&base, api_token, |http| async move {
                                         match tab {
-                                            DirectoryTab::ProtocolObjects => {
-                                                object_results.set(protocol_object_results(&q));
-                                            }
-                                                    DirectoryTab::Realms => {
-                                                        match crate::transport::directory::search_realms(&http, &q, None).await {
+                                            DirectoryTab::Realms => {
+                                                match crate::transport::directory::search_realms(&http, &q, None).await {
                                                     Ok(search) => {
                                                         pagination.write().realms_cursor = search.next_cursor.clone();
                                                         let results = search
@@ -550,9 +523,6 @@ pub fn DirectoryPanel(
                                     spawn(async move {
                                         let _ = with_authed_sdk_client(&base, api_token, |http| async move {
                                             match tab {
-                                                DirectoryTab::ProtocolObjects => {
-                                                    object_results.set(protocol_object_results(&q));
-                                                }
                                                 DirectoryTab::Realms => {
                                                     match crate::transport::directory::search_realms(&http, &q, None).await {
                                                         Ok(search) => {
@@ -749,31 +719,6 @@ pub fn DirectoryPanel(
                 }
             }
 
-            if active_tab() == DirectoryTab::ProtocolObjects {
-                div { class: "event", "data-testid": "protocol-objects-banner",
-                    div { class: "event-head",
-                        span { "Developer object lookup" }
-                        span { "diagnostic projection" }
-                        HelpTip { text: "These results are for protocol debugging and model inspection. They are not the normal end-user directory surface." }
-                    }
-                }
-                div { class: "event", "data-testid": "protocol-object-results",
-                    div { class: "event-head", span { "Protocol Objects" } span { "{object_results().len()} result(s)" } }
-                    if object_results().is_empty() {
-                        div { class: "muted", "Search to see Card, Discussion, Actor and Space projections with visibility state." }
-                    }
-                    for result in object_results() {
-                        // Stable list key: use a stable object identifier
-                        // (target_ref/id/did), falling back to title, so a
-                        // missing key doesn't force the whole list to rebuild.
-                        ProtocolObjectResult {
-                            key: "{value_str_any(&result, &[\"target_ref\", \"id\", \"did\"], json_text(&result, \"title\").as_str())}",
-                            result,
-                        }
-                    }
-                }
-            }
-
             // Realm directory results
             if active_tab() == DirectoryTab::Realms {
                 for realm in realm_results() {
@@ -809,19 +754,6 @@ pub fn DirectoryPanel(
                                     move |_| selected_realm_id.set(id.clone())
                                 },
                                 "Select"
-                            }
-                        }
-                    }
-                }
-                if !realm_results().is_empty() {
-                    div { class: "event", "data-testid": "index-query-results",
-                        div { class: "event-head", span { "Index Projection" } span { "{realm_results().len()} result(s)" } }
-                        for realm in realm_results() {
-                            GenericEntityCard {
-                                key: "{realm.id}", // Stable list key: realm business id (as above).
-                                title: realm.title.clone(),
-                                summary: realm.description.clone().unwrap_or_else(|| "Realm projection".to_owned()),
-                                entity_type: "realm".to_owned(),
                             }
                         }
                     }
@@ -1387,134 +1319,6 @@ fn value_count_any(value: &Value, keys: &[&str]) -> usize {
             current.as_array().map(Vec::len)
         })
         .unwrap_or(0)
-}
-
-fn json_text(value: &Value, key: &str) -> String {
-    value_str(value, key, "-")
-}
-
-#[component]
-fn GenericEntityCard(title: String, summary: String, entity_type: String) -> Element {
-    rsx! {
-        div {
-            class: "event nested-card",
-            "data-testid": "generic-entity-card",
-            "data-render-kind": "card",
-            div { class: "event-head",
-                span { "data-testid": "entity-type-label", "{entity_type}" }
-                span { "projection" }
-            }
-            div { class: "entity-title", "{title}" }
-            div { class: "muted", "{summary}" }
-            div { class: "actions",
-                span { class: "badge green", "data-testid": "entity-facets", "renderable" }
-                span { class: "badge blue", "data-testid": "projection-facets", "item: stateful, rankable" }
-                span { class: "badge amber", "data-testid": "unknown-facets-debug", "com.example.preview" }
-            }
-        }
-    }
-}
-
-#[component]
-fn ProtocolObjectResult(result: Value) -> Element {
-    let kind = json_text(&result, "kind");
-    let access = json_text(&result, "access");
-    let title = json_text(&result, "title");
-    let summary = json_text(&result, "summary");
-    let renderer = json_text(&result, "renderer");
-    let facets = json_value(&result, &["facets"]);
-    let discoverable = json_text(&result, "discoverable");
-
-    rsx! {
-        div { class: "event", "data-testid": "protocol-object-result",
-            div { class: "event-head",
-                span { "{kind}" }
-                span { class: object_state_class(access.as_str()), "{access}" }
-            }
-            div { class: "entity-title", "{title}" }
-            div { class: "muted", "{summary}" }
-            div { class: "actions",
-                span { class: "badge", "renderer {renderer}" }
-                span { class: "badge blue", "facets {facets}" }
-                span { class: object_state_class(discoverable.as_str()), "discoverable {discoverable}" }
-                if access.as_str() == "locked" || access.as_str() == "external" {
-                    crate::components::LazyLinkBadge {
-                        target_ref: None,
-                        reason: Some(access.clone()),
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn json_value(value: &Value, path: &[&str]) -> String {
-    let mut current = value;
-    for key in path {
-        let Some(next) = current.get(*key) else {
-            return "-".to_owned();
-        };
-        current = next;
-    }
-    if let Some(text) = current.as_str() {
-        text.to_owned()
-    } else if current.is_null() {
-        "-".to_owned()
-    } else {
-        current.to_string()
-    }
-}
-
-fn object_state_class(state: &str) -> &'static str {
-    match state {
-        "readable" | "true" => "badge green",
-        "discoverable" | "external" => "badge blue",
-        "locked" | "false" => "badge amber",
-        _ => "badge",
-    }
-}
-
-fn protocol_object_results(query: &str) -> Vec<Value> {
-    let query = query.trim();
-    let suffix = if query.is_empty() { "all" } else { query };
-    vec![
-        serde_json::json!({
-            "kind": "Card",
-            "title": format!("Launch checklist card ({suffix})"),
-            "summary": "Board Card projection with primary Discussion and independent ACL.",
-            "renderer": "card",
-            "facets": ["renderable", "stateful", "rankable"],
-            "access": "readable",
-            "discoverable": "true"
-        }),
-        serde_json::json!({
-            "kind": "Discussion",
-            "title": "Support desk discussion",
-            "summary": "Discussion projection with history_visibility=shared and linked strand metadata.",
-            "renderer": "thread",
-            "facets": ["renderable", "messageable"],
-            "access": "readable",
-            "discoverable": "true"
-        }),
-        serde_json::json!({
-            "kind": "Discussion",
-            "title": "Restricted discussion",
-            "summary": "Locked lazy link: existence can be hinted only by opaque policy-safe reference.",
-            "renderer": "locked",
-            "facets": ["renderable"],
-            "access": "locked",
-            "discoverable": "false"
-        }),
-        serde_json::json!({
-            "kind": "Actor",
-            "title": "did:web:alice.example",
-            "summary": "Verified handle, claim badge, pairwise DID available for private contact.",
-            "renderer": "row",
-            "facets": ["renderable", "claimable"],
-            "access": "discoverable",
-            "discoverable": "true"
-        }),
-    ]
 }
 
 fn value_vec(value: &Value, key: &str) -> Vec<String> {
