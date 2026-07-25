@@ -84,9 +84,14 @@ pub fn generate_recovery_keypair() -> Result<(Vec<u8>, Vec<u8>)> {
 pub fn derive_recovery_keypair_from_recovery_key(recovery_key: &str) -> Result<(Vec<u8>, Vec<u8>)> {
     let canonical = crate::recovery_crypto::normalize_recovery_key_input(recovery_key)
         .ok_or_else(|| anyhow!("recovery key must be a canonical 24-word BIP-39 mnemonic"))?;
-    let mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, canonical.as_str())
-        .map_err(|err| anyhow!("recovery key mnemonic: {err}"))?;
-    derive_recovery_keypair_from_entropy(&mnemonic.to_entropy())
+    let key_material = arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
+        &canonical, "", 0,
+    )
+    .map_err(|err| anyhow!("derive identity recovery key material: {err}"))?;
+    Ok((
+        key_material.backup_hpke_serialized_private_key.to_vec(),
+        key_material.backup_hpke_public_key.to_vec(),
+    ))
 }
 
 /// Deterministically derive the X25519 recovery keypair from BIP-39 entropy.
@@ -229,6 +234,16 @@ mod tests {
         let first = derive_recovery_keypair_from_recovery_key(&mnemonic).unwrap();
         let second = derive_recovery_keypair_from_recovery_key(&mnemonic).unwrap();
         assert_eq!(first, second);
+        let identity_material =
+            arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
+                &mnemonic, "", 0,
+            )
+            .unwrap();
+        assert_eq!(
+            first.0,
+            identity_material.backup_hpke_serialized_private_key
+        );
+        assert_eq!(first.1, identity_material.backup_hpke_public_key);
 
         let other = derive_recovery_keypair_from_recovery_key(
             &crate::recovery_crypto::format_recovery_key(&[8u8; 32]),

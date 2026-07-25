@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use super::backup_body::{
     build_mls_account_secret_backup_body_with_kek_and_version,
-    build_mls_account_secret_recovery_public_key_backup,
+    build_mls_account_secret_recovery_public_key_backup_in_series,
     build_mls_private_plaintext_backup_body_with_kek, is_mls_account_secret_backup,
 };
 use super::restore::fetch_mls_restore_payload;
@@ -322,7 +322,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
 
     let account_backup_id = fresh_backup_id();
     let recovery_key_ref = format!("{actor_id}#recovery");
-    let mut account_body = build_mls_account_secret_recovery_public_key_backup(
+    let account_body = build_mls_account_secret_recovery_public_key_backup_in_series(
         &account_backup_id,
         actor_id,
         device_id,
@@ -331,8 +331,8 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
         &stored.secret,
         stored.version,
         recovery_policy_ref,
+        previous_account_backup.as_ref(),
     )?;
-    apply_next_series(previous_account_backup.as_ref(), &mut account_body)?;
     api.put_key_backup(&account_backup_id, account_body)
         .await
         .map_err(|err| anyhow!("upload recovery-key account MLS secret backup: {err}"))?;

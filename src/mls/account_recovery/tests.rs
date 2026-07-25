@@ -4,6 +4,7 @@ use super::backup_body::{
     MLS_ACCOUNT_SECRET_ITEM_TYPE, MLS_ACCOUNT_SECRET_SECRET_ID, MLS_PRIVATE_PLAINTEXT_ITEM_TYPE,
     MLS_PRIVATE_PLAINTEXT_SECRET_ID, build_mls_account_secret_backup_body_with_kek,
     build_mls_account_secret_recovery_public_key_backup,
+    build_mls_account_secret_recovery_public_key_backup_in_series,
     build_mls_private_plaintext_backup_body_with_kek, decrypt_mls_account_secret_backup,
     decrypt_mls_private_plaintext_backup, is_mls_account_secret_backup,
     is_mls_private_plaintext_backup,
@@ -571,6 +572,50 @@ fn recovery_public_key_backup_policy_ref_is_enforced_on_open() {
         .is_err(),
         "different policy id must be rejected"
     );
+}
+
+#[test]
+fn recovery_public_key_successor_is_sealed_with_final_series_metadata() {
+    use super::backup_body::open_mls_account_secret_recovery_public_key_backup;
+
+    let (recovery_sk, recovery_pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
+    let recovery_key_ref = "did:web:alice.example#recovery";
+    let recovery_policy_ref = ("ak:recovery_policy:P1", 3);
+    let genesis = build_mls_account_secret_recovery_public_key_backup(
+        "ak:backup:01964137-0000-7000-8000-00000000c101",
+        ACTOR,
+        DEVICE,
+        &recovery_pk,
+        recovery_key_ref,
+        ACCOUNT_SECRET,
+        1,
+        recovery_policy_ref,
+    )
+    .unwrap();
+    let successor = build_mls_account_secret_recovery_public_key_backup_in_series(
+        "ak:backup:01964137-0000-7000-8000-00000000c102",
+        ACTOR,
+        DEVICE,
+        &recovery_pk,
+        recovery_key_ref,
+        ACCOUNT_SECRET,
+        2,
+        recovery_policy_ref,
+        Some(&genesis),
+    )
+    .unwrap();
+
+    assert_eq!(successor["series_id"], genesis["series_id"]);
+    assert_eq!(successor["series_seq"], 1);
+    assert_eq!(successor["supersedes"], genesis["backup_id"]);
+    let (secret, version) = open_mls_account_secret_recovery_public_key_backup(
+        &recovery_sk,
+        &successor,
+        recovery_policy_ref,
+    )
+    .unwrap();
+    assert_eq!(secret, ACCOUNT_SECRET);
+    assert_eq!(version, 2);
 }
 
 #[test]

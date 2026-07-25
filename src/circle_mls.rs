@@ -112,26 +112,26 @@ fn build_remove_scope_rotate_draft(
     }
     let mut events = Vec::with_capacity(remove.proposals.len().saturating_add(1));
     let mut proposal_refs = Vec::with_capacity(remove.proposals.len());
-    let proposal_governance_binding = if let Some(sidecar_binding) = sidecar_binding.as_ref() {
-        let circle_id = circle_id.ok_or_else(|| {
+    let request = crate::mls::governance_proof::proof_request(
+        state_store,
+        realm_id,
+        circle_id,
+        remove.commit.group_id.clone(),
+        remove.commit.epoch.saturating_sub(1),
+        remove.commit.epoch,
+    )?;
+    // Remove proposals and their commit are governed as one epoch transition,
+    // so every durable proposal must carry the same verified binding.
+    let mut proposal_governance_binding =
+        crate::mls::governance_proof::cached_verified_binding(state_store, &request)?;
+    if let Some(sidecar_binding) = sidecar_binding.as_ref() {
+        circle_id.ok_or_else(|| {
             "Sidecar MLS removal requires the backing Circle effective scope".to_owned()
         })?;
-        let request = crate::mls::governance_proof::proof_request(
-            state_store,
-            realm_id,
-            Some(circle_id),
-            remove.commit.group_id.clone(),
-            remove.commit.epoch.saturating_sub(1),
-            remove.commit.epoch,
-        )?;
-        Some(
-            crate::mls::governance_proof::cached_verified_binding(state_store, &request)?
-                .with_sidecar_binding(sidecar_binding.clone())
-                .map_err(|error| error.to_string())?,
-        )
-    } else {
-        None
-    };
+        proposal_governance_binding = proposal_governance_binding
+            .with_sidecar_binding(sidecar_binding.clone())
+            .map_err(|error| error.to_string())?;
+    }
     for (proposal, removed_principal) in remove
         .proposals
         .iter()
@@ -143,7 +143,7 @@ fn build_remove_scope_rotate_draft(
             actor_id,
             removed_principal.as_str(),
             proposal,
-            proposal_governance_binding.clone(),
+            Some(proposal_governance_binding.clone()),
         )?;
         proposal_refs.push(proposal_event.event_id.clone());
         events.push(proposal_event);

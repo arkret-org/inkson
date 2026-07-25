@@ -716,11 +716,17 @@ impl IndexedDbSecureKeyStore {
         let keys_req = obj_store
             .get_all_keys()
             .map_err(|err| SecureKeyStoreError::Backend(format!("getAllKeys: {err:?}")))?;
-        let values = Self::idb_request_result(&values_req)
-            .await
+        // Both requests begin as soon as they are created. Install both event
+        // handlers before yielding to the browser; otherwise getAllKeys can
+        // finish while getAll is awaited and its one-shot success event is
+        // lost, leaving secure-store startup pending forever.
+        let (values, keys) = tokio::join!(
+            Self::idb_request_result(&values_req),
+            Self::idb_request_result(&keys_req)
+        );
+        let values = values
             .map_err(|err| SecureKeyStoreError::Backend(format!("getAll awaited: {err:?}")))?;
-        let keys = Self::idb_request_result(&keys_req)
-            .await
+        let keys = keys
             .map_err(|err| SecureKeyStoreError::Backend(format!("getAllKeys awaited: {err:?}")))?;
         let values_arr: js_sys::Array = values.into();
         let keys_arr: js_sys::Array = keys.into();

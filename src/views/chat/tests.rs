@@ -1734,6 +1734,40 @@ fn chat_messages_fold_redacted_revision_tombstone_into_root_tombstone() {
 }
 
 #[test]
+fn chat_messages_keep_standalone_server_redacted_revision_tombstone() {
+    let events = vec![json!({
+        "event_id": "ak:event:msg-4-rev-2",
+        "kind": "ak.message.revise",
+        "actor_id": "did:web:bob.example",
+        "realm_id": "ak:realm:r1",
+        "created_at": "2026-05-22T10:02:00.000Z",
+        "payload": {
+            "content": {"kind": "ak.content.text", "body": "[redacted]"},
+            "message_id": "ak:message:m4",
+            "redacted": true,
+            "redacted_at": "2026-05-22T10:05:00.000Z",
+            "redaction_ref": "ak:event:redact-4",
+            "state": "redacted"
+        },
+        "unsigned": {
+            "local_target_ref": "ak:message:m4",
+            "projection_only": true
+        },
+        "proofs": []
+    })];
+
+    let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        messages[0].protocol_message_id.as_deref(),
+        Some("ak:message:m4")
+    );
+    assert!(messages[0].redacted);
+    assert!(messages[0].body.is_empty());
+}
+
+#[test]
 fn chat_messages_fold_nested_server_redacted_revision_tombstone_into_root_tombstone() {
     let mut events = vec![
         json!({

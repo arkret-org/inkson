@@ -713,7 +713,16 @@ fn fold_event_list_into_chat_messages(
     }
     merge_chat_messages(&mut messages, durable_messages);
     for (target_ref, revision) in pending_revisions {
-        let _ = fold_revision_message(&mut messages, &target_ref, revision);
+        if fold_revision_message(&mut messages, &target_ref, revision.clone()).is_none()
+            && revision.redacted
+        {
+            // Account sync projects one logical row per message_id. When the
+            // latest row is a server-folded redacted revision, its original
+            // create may therefore be absent from this batch. The tombstone is
+            // still self-contained and must survive as the message's durable
+            // row; a later create/backfill copy will dedupe by protocol id.
+            push_or_merge_create_message(&mut messages, revision);
+        }
     }
     apply_message_redactions(&mut messages, events);
     apply_reaction_markers(&mut messages, events);
@@ -1189,17 +1198,31 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     state_store: Option<&LocalStateStore>,
     decrypt_identity: Option<(&str, &str)>,
 ) -> Option<ChatMessage> {
+    let candidates = message_candidates(event);
+    let is_redaction_tombstone = message_is_redaction_tombstone(&candidates);
     // Receiver proof gate (device-lifecycle.md §8.2, fail-closed): a present
     // sender proof that fails verification (bad sig / revoked / absent device)
     // MUST NOT enter the conversation view. Minimal-metadata Realms verify
     // against the active MLS LeafNode instead of the device directory
     // (§2.10.3, SPI-INK-001).
-    let proof_verdict =
+    let mut proof_verdict =
         verify_chat_envelope_proof_for_realm(realm_id, event, state_store, decrypt_identity);
+    let server_projection_tombstone = is_redaction_tombstone
+        && event
+            .pointer("/unsigned/projection_only")
+            .and_then(Value::as_bool)
+            == Some(true);
+    if proof_verdict == ChatProofVerdict::Rejected && server_projection_tombstone {
+        // Soland may replace an accepted create/revision with a proofless
+        // projection-only tombstone. This form can only remove content and is
+        // therefore safe to render as unattributed server state; it cannot
+        // inject sender-authored plaintext or actions. All non-tombstone
+        // attributed rows remain fail-closed above.
+        proof_verdict = ChatProofVerdict::Unattributed;
+    }
     if proof_verdict == ChatProofVerdict::Rejected {
         return None;
     }
-    let candidates = message_candidates(event);
     let effective_scope_circle = candidates
         .iter()
         .find_map(|candidate| {
@@ -1234,7 +1257,6 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     // form (same event_id, body stripped). Render the tombstone marker rather
     // than the original body, even on a fresh reload where this is the only
     // copy of the message the receiver ever sees.
-    let is_redaction_tombstone = message_is_redaction_tombstone(&candidates);
     let expiry_stub_candidate = candidates
         .iter()
         .copied()

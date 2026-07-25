@@ -230,7 +230,37 @@ pub fn build_mls_account_secret_recovery_public_key_backup(
     // backup sealed to the same recovery public key.
     recovery_policy_ref: (&str, u64),
 ) -> Result<Value> {
-    crate::key_backup::build_recovery_public_key_backup_body(
+    build_mls_account_secret_recovery_public_key_backup_in_series(
+        backup_id,
+        actor_id,
+        device_id,
+        recovery_public_key,
+        recovery_key_ref,
+        account_secret,
+        account_secret_version,
+        recovery_policy_ref,
+        None,
+    )
+}
+
+/// Build an HPKE account-secret backup that extends `previous_series_tail`.
+///
+/// Series metadata is part of the HPKE `info`, so the successor link must be
+/// attached before sealing. Mutating `series_id`, `series_seq`, or
+/// `supersedes` afterwards makes the final envelope undecryptable.
+#[allow(clippy::too_many_arguments)]
+pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
+    backup_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    recovery_public_key: &[u8],
+    recovery_key_ref: &str,
+    account_secret: &str,
+    account_secret_version: u32,
+    recovery_policy_ref: (&str, u64),
+    previous_series_tail: Option<&Value>,
+) -> Result<Value> {
+    crate::key_backup::build_recovery_public_key_backup_body_in_series(
         backup_id,
         actor_id,
         device_id,
@@ -246,6 +276,8 @@ pub fn build_mls_account_secret_recovery_public_key_backup(
         },
         account_secret.as_bytes(),
         Some(recovery_policy_ref),
+        None,
+        previous_series_tail,
     )
 }
 
