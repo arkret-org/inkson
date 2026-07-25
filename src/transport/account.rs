@@ -969,12 +969,16 @@ fn current_account_from_viewer(
     }
 }
 
-fn primary_handle_from_viewer(
+pub(crate) fn primary_handle_from_viewer(
     viewer: &arkret_models_collaboration::account_lifecycle::AccountView,
 ) -> String {
     viewer
         .primary_handle_claim
         .as_ref()
+        .filter(|claim| {
+            claim.subject.as_ref() == Some(&viewer.principal_id)
+                && claim.binding_state == Some(arkret_models_identity::HandleBindingState::Verified)
+        })
         .and_then(|claim| claim.handle.as_ref())
         .map(|handle| handle.canonical().trim())
         .filter(|handle| !handle.is_empty())
@@ -1237,7 +1241,8 @@ mod tests {
                 "primary_handle_claim": {
                     "schema": "ak.schema.handle_claim.v1",
                     "handle": "alice:local.host",
-                    "subject": "did:web:alice.example"
+                    "subject": "did:web:alice.example",
+                    "binding_state": "verified"
                 },
                 "profile": {
                     "id": "ak:actor_profile:01970000-0000-7000-8000-000000000001",
@@ -1256,6 +1261,30 @@ mod tests {
         assert_eq!(account.handle, "alice:local.host");
         assert_eq!(account.display_name.as_deref(), Some("Alice"));
         assert_eq!(account.created_at, "2026-06-12T08:00:00.000Z");
+    }
+
+    #[test]
+    fn account_viewer_projection_rejects_unverified_or_foreign_handle_claim() {
+        for (subject, binding_state) in [
+            ("did:web:mallory.example", "verified"),
+            ("did:web:alice.example", "pending"),
+        ] {
+            let viewer: arkret_models_collaboration::account_lifecycle::AccountView =
+                serde_json::from_value(json!({
+                    "principal_id": "did:web:alice.example",
+                    "state": "active",
+                    "devices": [],
+                    "primary_handle_claim": {
+                        "schema": "ak.schema.handle_claim.v1",
+                        "handle": "alice:auth.local.host",
+                        "subject": subject,
+                        "binding_state": binding_state
+                    }
+                }))
+                .expect("account viewer shape");
+
+            assert_eq!(current_account_from_viewer(viewer).handle, "");
+        }
     }
 
     #[test]

@@ -80,7 +80,6 @@ pub fn OnboardingPanel(
                     account_did,
                     device_id,
                     config_store,
-                    account_primary_handle,
                     needs_device_authorization,
                     device_authorization_check_complete,
                 }
@@ -401,7 +400,6 @@ fn PendingAccountIdentityCreation(
 
                                 match result {
                                     Ok((actor, device, grant)) => {
-                                        account_primary_handle.set(handoff.account_handle.clone());
                                         account_did.set(actor);
                                         device_id.set(device);
                                         token.set(grant);
@@ -765,7 +763,6 @@ fn PendingPrincipalBootstrap(
     mut account_did: Signal<String>,
     mut device_id: Signal<String>,
     config_store: Signal<crate::config::LocalConfigStore>,
-    mut account_primary_handle: Signal<String>,
     mut needs_device_authorization: Signal<bool>,
     mut device_authorization_check_complete: Signal<bool>,
 ) -> Element {
@@ -864,8 +861,7 @@ fn PendingPrincipalBootstrap(
                                             config_store,
                                             state_store,
                                         )
-                                        .await
-                                        .map(|completed| (completed, Some(handoff.account_handle))),
+                                        .await,
                                         None => Err(anyhow::anyhow!(
                                             "the account handoff is unavailable; sign in again"
                                         )),
@@ -881,13 +877,10 @@ fn PendingPrincipalBootstrap(
                                         state_store,
                                     )
                                     .await
-                                    .map(|_| ((actor, device, session), None))
+                                    .map(|_| (actor, device, session))
                                 };
                                 match result {
-                                    Ok(((completed_actor, completed_device, completed_session), handle)) => {
-                                        if let Some(handle) = handle {
-                                            account_primary_handle.set(handle);
-                                        }
+                                    Ok((completed_actor, completed_device, completed_session)) => {
                                         account_did.set(completed_actor);
                                         device_id.set(completed_device);
                                         token.set(completed_session);
