@@ -1047,6 +1047,10 @@ pub fn english_translations() -> TranslationDict {
     dict.set("shortcuts.list.palette", "Open command palette");
     dict.set("shortcuts.list.palette_mac", "Open command palette (macOS)");
     dict.set("shortcuts.list.send", "Send the current message");
+    dict.set(
+        "shortcuts.list.send_alias",
+        "Send the current message (compatibility alias)",
+    );
     // Personal blocklist (A5) — actor-private `ak.account.blocklist`
     // account-data namespace. Used by the Settings → Privacy panel, the
     // member-row context action, and the message "blocked user"

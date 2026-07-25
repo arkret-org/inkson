@@ -694,10 +694,13 @@ pub fn build_agent_key_authorization_for_pairing(
             .unwrap_or_else(|| signer.verification_method().to_owned()),
     )
     .map_err(anyhow::Error::msg)?;
+    let agent_key_id = NonEmptyString::new(request.verification_method.as_str().to_owned())
+        .map_err(anyhow::Error::msg)?;
     let mut signing_key_binding = AgentSigningKeyBinding {
         schema: NonEmptyString::new(arkret_sdk::AGENT_SIGNING_KEY_BINDING_SCHEMA.to_owned())
             .map_err(anyhow::Error::msg)?,
         agent_id: request.agent_id.clone(),
+        agent_key_id: agent_key_id.clone(),
         verification_method: request.verification_method.clone(),
         public_key: AgentSigningPublicKey {
             kty: request.public_key.kty.clone(),
@@ -730,7 +733,7 @@ pub fn build_agent_key_authorization_for_pairing(
             .map_err(|reason| anyhow::anyhow!(reason.as_str()))?;
     let payload = AgentKeyAuthorizePayload {
         agent_id: request.agent_id.clone(),
-        key_id: request.verification_method.as_str().to_owned(),
+        key_id: agent_key_id.as_str().to_owned(),
         verification_method: request.verification_method.as_str().to_owned(),
         public_key_digest: Hash::new(runtime_public_key_digest.as_str().to_owned())?,
         signing_key_binding_digest,
@@ -760,6 +763,7 @@ pub fn build_agent_key_authorization_for_pairing(
     )?;
     let mut event = arkret_event_draft::build_agent_key_authorize_event(
         &payload,
+        authorize_event_id,
         realm_id,
         request.agent_id.clone(),
         controller,
@@ -767,7 +771,6 @@ pub fn build_agent_key_authorization_for_pairing(
         1,
         hlc,
     )?;
-    event.event_id = authorize_event_id;
     event.unsigned.insert(
         "pairing_request_id".to_owned(),
         json!(request.pairing_request_id),

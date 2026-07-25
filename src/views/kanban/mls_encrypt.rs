@@ -476,6 +476,7 @@ pub(super) fn dispatch_card_detail_update(
             }
         }
         if let Some(commit_op) = mls_commit_op {
+            let commit_event_id = commit_op.event_id.clone();
             let snapshot_for_submit = mls_new_snapshot.clone();
             let realm_for_submit = realm_id.clone();
             let circle_for_submit = circle_id.clone();
@@ -511,6 +512,20 @@ pub(super) fn dispatch_card_detail_update(
                         if let (Some(circle_id), Some(snapshot)) =
                             (circle_id.as_deref(), mls_new_snapshot.clone())
                         {
+                            if let Err(error) = state_store
+                                .write()
+                                .record_mls_group_state_ref_for_effective_scope(
+                                    realm_id.clone(),
+                                    Some(circle_id),
+                                    snapshot.group_id.as_str(),
+                                    snapshot.epoch,
+                                    commit_event_id,
+                                )
+                            {
+                                board_status
+                                    .set(format!("MLS commit reference persist failed: {error}"));
+                                return;
+                            }
                             state_store.write().save_mls_snapshot_for_effective_scope(
                                 realm_id.clone(),
                                 Some(circle_id),

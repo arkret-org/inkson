@@ -1,5 +1,29 @@
 use super::*;
 
+const MAX_HISTORICAL_MLS_AUTHOR_STATES: usize = 32;
+
+fn historical_mls_state_key(effective_scope_key: &str, group_id: &str, epoch: u64) -> String {
+    format!("{epoch:020}\u{1f}{effective_scope_key}\u{1f}{group_id}")
+}
+
+fn prune_historical_mls_author_states(state: &mut ClientLocalState) {
+    while state.mls_historical_group_state_refs.len() > MAX_HISTORICAL_MLS_AUTHOR_STATES
+        || state.mls_historical_snapshots.len() > MAX_HISTORICAL_MLS_AUTHOR_STATES
+    {
+        let oldest = state
+            .mls_historical_group_state_refs
+            .keys()
+            .chain(state.mls_historical_snapshots.keys())
+            .min()
+            .cloned();
+        let Some(oldest) = oldest else {
+            break;
+        };
+        state.mls_historical_group_state_refs.remove(&oldest);
+        state.mls_historical_snapshots.remove(&oldest);
+    }
+}
+
 /// A history-secret update assembled but not yet published. The owned value
 /// survives while the durable secure-store write is in flight without making
 /// the secret observable through `LocalStateStore` prematurely.
@@ -72,7 +96,17 @@ impl LocalStateStore {
         self.absorb_mls_receive_overlay();
         let realm_id = realm_id.into();
         let key = mls_effective_scope_snapshot_key(&realm_id, circle_id);
+        if let Some(current) = self.cached.mls_snapshots.get(&key)
+            && current.group_id == envelope.group_id
+            && current.epoch < envelope.epoch
+        {
+            let history_key = historical_mls_state_key(&key, &current.group_id, current.epoch);
+            self.cached
+                .mls_historical_snapshots
+                .insert(history_key, current.clone());
+        }
         self.cached.mls_snapshots.insert(key, envelope);
+        prune_historical_mls_author_states(&mut self.cached);
         let _ = self.flush();
         self.persist_e2ee_plaintext_cache_if_ready();
     }
@@ -95,6 +129,21 @@ impl LocalStateStore {
     ) -> Option<crate::mls::persistence::MlsSnapshotEnvelope> {
         let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
         self.load().mls_snapshots.get(&key).cloned()
+    }
+
+    pub fn historical_mls_snapshot_for_effective_scope(
+        &self,
+        realm_id: &str,
+        circle_id: Option<&str>,
+        group_id: &str,
+        epoch: u64,
+    ) -> Option<crate::mls::persistence::MlsSnapshotEnvelope> {
+        let scope_key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        let history_key = historical_mls_state_key(&scope_key, group_id, epoch);
+        self.load()
+            .mls_historical_snapshots
+            .get(&history_key)
+            .cloned()
     }
 
     // ── MLS history-secret persistence (history sharing) ────────────
@@ -505,23 +554,109 @@ impl LocalStateStore {
             .pending_mls_genesis_events
             .remove(&pending_key)
             .is_some();
-        if circle_id.is_none() {
-            let event_ref = genesis_event_id.as_str().to_owned();
-            let view = self.cached.seal_views.entry(realm_id).or_default();
-            if !view.frontier.iter().any(|value| value == &event_ref) {
-                view.frontier.push(event_ref);
-                view.frontier.sort();
-                view.frontier.dedup();
-                changed = true;
-            }
-            if view.mls_epoch != Some(0) {
-                view.mls_epoch = Some(0);
+        if let Some(snapshot) = self.cached.mls_snapshots.get(&pending_key) {
+            let record = MlsGroupStateRefRecord {
+                group_id: snapshot.group_id.clone(),
+                epoch: 0,
+                event_id: genesis_event_id.clone(),
+            };
+            if self.cached.mls_group_state_refs.get(&pending_key) != Some(&record) {
+                self.cached.mls_group_state_refs.insert(pending_key, record);
                 changed = true;
             }
         }
         if changed {
             let _ = self.flush();
         }
+    }
+
+    /// Resolve the only valid MLS group-state reference for an exact local
+    /// `(effective scope, group, epoch)` snapshot.
+    pub fn mls_group_state_ref_for_effective_scope(
+        &self,
+        realm_id: &str,
+        circle_id: Option<&str>,
+        group_id: &str,
+        epoch: u64,
+    ) -> Result<arkret_sdk::EventId, String> {
+        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        let state = self.load();
+        let record = state
+            .mls_group_state_refs
+            .get(&key)
+            .filter(|record| record.group_id == group_id && record.epoch == epoch)
+            .cloned()
+            .or_else(|| {
+                let history_key = historical_mls_state_key(&key, group_id, epoch);
+                state
+                    .mls_historical_group_state_refs
+                    .get(&history_key)
+                    .cloned()
+            })
+            .ok_or_else(|| {
+                format!(
+                    "accepted MLS group-state Event is unavailable for scope {key} at epoch {epoch}"
+                )
+            })?;
+        if record.group_id != group_id || record.epoch != epoch {
+            return Err(format!(
+                "accepted MLS group-state Event does not match group {group_id} epoch {epoch}"
+            ));
+        }
+        Ok(record.event_id)
+    }
+
+    /// Advance the canonical group-state reference after the matching genesis
+    /// or commit Event has been accepted. Rollback and same-epoch forks fail
+    /// closed and never overwrite the known winning reference.
+    pub fn record_mls_group_state_ref_for_effective_scope(
+        &mut self,
+        realm_id: impl Into<String>,
+        circle_id: Option<&str>,
+        group_id: &str,
+        epoch: u64,
+        event_id: arkret_sdk::EventId,
+    ) -> Result<(), String> {
+        self.ensure_cached_loaded();
+        let realm_id = realm_id.into();
+        let key = mls_effective_scope_snapshot_key(&realm_id, circle_id);
+        if let Some(current) = self.cached.mls_group_state_refs.get(&key) {
+            if current.group_id != group_id {
+                return Err(format!(
+                    "MLS group-state group conflict for scope {key}: {} != {group_id}",
+                    current.group_id
+                ));
+            }
+            if epoch < current.epoch {
+                return Err(format!(
+                    "MLS group-state rollback for scope {key}: {epoch} < {}",
+                    current.epoch
+                ));
+            }
+            if epoch == current.epoch {
+                if current.event_id != event_id {
+                    return Err(format!(
+                        "MLS group-state fork for scope {key} epoch {epoch}"
+                    ));
+                }
+                return Ok(());
+            }
+            let history_key = historical_mls_state_key(&key, &current.group_id, current.epoch);
+            self.cached
+                .mls_historical_group_state_refs
+                .insert(history_key, current.clone());
+        }
+        self.cached.mls_group_state_refs.insert(
+            key,
+            MlsGroupStateRefRecord {
+                group_id: group_id.to_owned(),
+                epoch,
+                event_id,
+            },
+        );
+        prune_historical_mls_author_states(&mut self.cached);
+        self.flush()
+            .map_err(|error| format!("persist MLS group-state reference: {error}"))
     }
 
     /// X5.1 — persist the author's own plaintext for an encrypted private

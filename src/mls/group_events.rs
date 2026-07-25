@@ -43,46 +43,16 @@ fn json_path_string(value: &Value, path: &[&str]) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn object_ref_from_seal_ref(value: &str) -> Option<String> {
-    if value.starts_with("ak:event:") && arkret_sdk::EventId::new(value.to_owned()).is_ok() {
-        return Some(value.to_owned());
-    }
-    if value.starts_with("ak:blob:sha256:")
-        && value
-            .strip_prefix("ak:blob:")
-            .and_then(mls_sha256_hash_from_ref)
-            .is_some()
-    {
-        return Some(value.to_owned());
-    }
-    if let Some(hash) = mls_sha256_hash_from_ref(value) {
-        return Some(hash);
-    }
-    None
-}
-
 pub(crate) fn mls_base_epoch_ref_for_scope(
-    seal_view: &LocalSealView,
+    state_store: &LocalStateStore,
     realm_id: &str,
     circle_id: Option<&str>,
-) -> String {
-    seal_view
-        .frontier
-        .iter()
-        .chain(seal_view.leaves.iter())
-        .chain(seal_view.state_root.iter())
-        .find_map(|value| object_ref_from_seal_ref(value))
-        .unwrap_or_else(|| {
-            crate::canonical::canonical_sha256(&json!({
-                "kind": "kanban_mls_base_epoch",
-                "realm_id": realm_id,
-                "circle_id": circle_id,
-                "epoch": seal_view.mls_epoch.unwrap_or(0),
-            }))
-            .unwrap_or_else(|_| {
-                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
-            })
-        })
+    group_id: &str,
+    epoch: u64,
+) -> Result<String, String> {
+    state_store
+        .mls_group_state_ref_for_effective_scope(realm_id, circle_id, group_id, epoch)
+        .map(|event_id| event_id.to_string())
 }
 
 pub(crate) fn mls_policy_root_from_seal_view(
@@ -447,7 +417,6 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
-    let seal_view = state_store.seal_view_for_realm(realm_id);
     // `base_epoch` MUST be the SDK group's PRE-commit epoch so the
     // `next_epoch == base_epoch + 1` invariant holds by construction.
     // `commit_envelope.epoch` is the POST-commit epoch (`self_update_commit`
@@ -460,7 +429,13 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
     let event_id = format!("ak:event:{}", uuid_v7());
     let event_id_typed = arkret_sdk::EventId::new(event_id.clone())
         .map_err(|err| format!("invalid MLS commit event id: {err:?}"))?;
-    let base_group_state_ref = mls_base_epoch_ref_for_scope(&seal_view, realm_id, circle);
+    let base_group_state_ref = mls_base_epoch_ref_for_scope(
+        state_store,
+        realm_id,
+        circle,
+        commit_envelope.group_id.as_str(),
+        prev_epoch,
+    )?;
     let explicit_membership_frontier = explicit_membership_frontier.map(|explicit| {
         explicit
             .into_iter()

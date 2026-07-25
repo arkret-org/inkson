@@ -1,4 +1,5 @@
 pub(crate) mod account_auth;
+pub(crate) mod agent_signer_evidence;
 pub(crate) mod authoring_generation;
 pub(crate) mod device_directory;
 pub(crate) mod device_enrollment;

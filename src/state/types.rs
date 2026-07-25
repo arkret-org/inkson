@@ -651,6 +651,27 @@ pub enum PendingPrincipalRegistrationStage {
     BootstrapAccepted,
 }
 
+/// Canonical accepted Event that defines one locally persisted MLS epoch.
+///
+/// Encrypted content must cite this Event in `key_ref.group_state_ref`; a
+/// Realm Seal, state root, or synthetic digest is not an MLS group-state
+/// reference.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MlsGroupStateRefRecord {
+    pub group_id: String,
+    pub epoch: u64,
+    pub event_id: arkret_sdk::EventId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CachedAgentSignerEvidence {
+    pub evidence: arkret_sdk::AgentSignerEvidence,
+    pub controller_public_key: arkret_sdk::signatures::PublicKeyMaterial,
+    pub source_public_key: arkret_sdk::signatures::PublicKeyMaterial,
+    pub seal_signer_public_keys: BTreeMap<String, arkret_sdk::signatures::PublicKeyMaterial>,
+    pub cached_at_unix_ms: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
@@ -831,6 +852,22 @@ pub struct ClientLocalState {
     /// replay the same Event id and bytes after a crash or lost response.
     #[serde(default)]
     pub pending_mls_genesis_events: BTreeMap<String, String>,
+    /// Exact accepted `ak.mls.genesis` / winning `ak.mls.commit` Event for
+    /// the current locally persisted epoch, keyed by effective scope.
+    #[serde(default)]
+    pub mls_group_state_refs: BTreeMap<String, MlsGroupStateRefRecord>,
+    /// Bounded accepted historical epoch references, keyed by exact
+    /// `(epoch, effective scope, group)` coordinates.
+    #[serde(default)]
+    pub mls_historical_group_state_refs: BTreeMap<String, MlsGroupStateRefRecord>,
+    /// Device-secret-encrypted historical MLS snapshots used only to
+    /// reconstruct authenticated author views for old messages.
+    #[serde(default)]
+    pub mls_historical_snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+    /// Bounded, cryptographically verified portable Agent signer evidence.
+    /// Keys bind agent, method, authorization Event, state root and frontier.
+    #[serde(default)]
+    pub agent_signer_evidence: BTreeMap<String, CachedAgentSignerEvidence>,
     /// MLS governance `policy_root` locked at `ak.mls.genesis`, keyed by the
     /// same effective-scope key as [`Self::mls_genesis_emitted`]
     /// (`mls_effective_scope_snapshot_key`).
@@ -1233,6 +1270,10 @@ impl Default for ClientLocalState {
             mls_receive_recovery_snapshots: BTreeMap::new(),
             mls_genesis_emitted: BTreeSet::new(),
             pending_mls_genesis_events: BTreeMap::new(),
+            mls_group_state_refs: BTreeMap::new(),
+            mls_historical_group_state_refs: BTreeMap::new(),
+            mls_historical_snapshots: BTreeMap::new(),
+            agent_signer_evidence: BTreeMap::new(),
             mls_genesis_policy_root: BTreeMap::new(),
             mls_governance_proofs: BTreeMap::new(),
             mls_governance_proof_acquisitions: BTreeMap::new(),

@@ -1,10 +1,8 @@
 //! A6.4 — keyboard-shortcut help overlay.
 //!
-//! Pressing `?` anywhere outside of an `<input>` / `<textarea>` opens
-//! this overlay. ESC dismisses it. The list of bound shortcuts is
-//! hard-coded here for v1 (mirrors what `app.rs` actually wires up);
-//! when a real command-palette helper surfaces shortcuts dynamically
-//! the list can be sourced from there.
+//! The application shell opens this overlay for `?` or Mod+/ and
+//! dismisses it with Escape. The list is limited to bindings that are
+//! currently implemented.
 
 use dioxus::prelude::*;
 
@@ -30,6 +28,14 @@ pub fn default_shortcuts() -> Vec<ShortcutEntry> {
             description_key: "shortcuts.list.help",
         },
         ShortcutEntry {
+            keys: &["Ctrl", "/"],
+            description_key: "shortcuts.list.help",
+        },
+        ShortcutEntry {
+            keys: &["Cmd", "/"],
+            description_key: "shortcuts.list.help",
+        },
+        ShortcutEntry {
             keys: &["Esc"],
             description_key: "shortcuts.list.dismiss",
         },
@@ -50,8 +56,16 @@ pub fn default_shortcuts() -> Vec<ShortcutEntry> {
             description_key: "shortcuts.list.search",
         },
         ShortcutEntry {
-            keys: &["Ctrl", "Enter"],
+            keys: &["Enter"],
             description_key: "shortcuts.list.send",
+        },
+        ShortcutEntry {
+            keys: &["Ctrl", "Enter"],
+            description_key: "shortcuts.list.send_alias",
+        },
+        ShortcutEntry {
+            keys: &["Cmd", "Enter"],
+            description_key: "shortcuts.list.send_alias",
         },
     ]
 }
@@ -171,7 +185,13 @@ mod tests {
         let bindings = default_shortcuts();
         // Must surface ?, Esc, and the command-palette chord at minimum.
         assert!(bindings.iter().any(|e| e.keys == ["?"]));
+        assert!(
+            bindings
+                .iter()
+                .any(|e| e.keys == ["Ctrl", "/"] || e.keys == ["Cmd", "/"])
+        );
         assert!(bindings.iter().any(|e| e.keys == ["Esc"]));
+        assert!(bindings.iter().any(|e| e.keys == ["Enter"]));
         assert!(bindings.iter().any(
             |e| e.keys.contains(&"K") && (e.keys.contains(&"Ctrl") || e.keys.contains(&"Cmd"))
         ));

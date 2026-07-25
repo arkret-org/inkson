@@ -137,6 +137,7 @@ impl MentionPickerState {
         self.inserted.clear();
         self.query.clear();
         self.open = false;
+        self.active_range = None;
     }
 }
 
@@ -348,6 +349,17 @@ mod tests {
         assert!(state.insert(alice()));
         assert!(!state.insert(alice()));
         assert_eq!(state.inserted.len(), 1);
+    }
+
+    #[test]
+    fn clear_removes_all_picker_state() {
+        let mut state = MentionPickerState::new();
+        state.insert(alice());
+        state.set_active_token("ali".to_owned(), 6, 10);
+
+        state.clear();
+
+        assert_eq!(state, MentionPickerState::new());
     }
 
     #[test]

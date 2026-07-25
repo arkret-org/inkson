@@ -319,6 +319,21 @@ pub async fn submit_circle_scope_rotate_draft(
         None,
     )
     .await?;
+    let accepted_commit_ref = draft
+        .events
+        .iter()
+        .find(|event| event.kind.as_str() == "ak.mls.commit")
+        .map(|event| event.event_id.clone())
+        .ok_or_else(|| anyhow::anyhow!("Circle scope rotate has no MLS commit Event"))?;
+    state_store
+        .record_mls_group_state_ref_for_effective_scope(
+            realm_id.to_owned(),
+            Some(circle_id),
+            draft.post_commit_snapshot.group_id.as_str(),
+            draft.post_commit_snapshot.epoch,
+            accepted_commit_ref,
+        )
+        .map_err(anyhow::Error::msg)?;
     state_store.save_mls_snapshot_for_effective_scope(
         realm_id.to_owned(),
         Some(circle_id),

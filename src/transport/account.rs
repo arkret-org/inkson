@@ -351,7 +351,7 @@ async fn ensure_owned_agent_direct_reply(
         .map(|entry| entry.selection)
         .unwrap_or_default();
     selection.reply = true;
-    let updated = http
+    let replace_result = http
         .agent_participation_replace(
             agent_id,
             &arkret_sdk::AgentParticipationReplaceRequestBody {
@@ -359,16 +359,41 @@ async fn ensure_owned_agent_direct_reply(
                 selection,
             },
         )
-        .await
-        .map_err(anyhow::Error::from)?;
-    if !updated
-        .entries
-        .iter()
-        .any(|entry| entry.scope == scope && entry.effective.reply)
-    {
+        .await;
+    let updated = match replace_result {
+        Ok(updated) => updated,
+        Err(replace_error) => {
+            // Soland persists the controller's participation selection before
+            // attempting its legacy development fan-out. Newer servers reject
+            // that unsigned fan-out with `controller_signed_event_required`.
+            // Re-read the canonical selection so a committed reply policy does
+            // not turn an otherwise successful Direct Conversation into a
+            // dead-end UI action. If the selection was not committed, preserve
+            // the original error.
+            let refreshed = match http.agent_participation_get(agent_id).await {
+                Ok(refreshed) => refreshed,
+                Err(_) => return Err(anyhow::Error::from(replace_error)),
+            };
+            if !participation_reply_is_effective(&refreshed, &scope) {
+                return Err(anyhow::Error::from(replace_error));
+            }
+            refreshed
+        }
+    };
+    if !participation_reply_is_effective(&updated, &scope) {
         anyhow::bail!("owned-Agent Direct Conversation reply participation remains disabled");
     }
     Ok(())
+}
+
+fn participation_reply_is_effective(
+    outcome: &arkret_sdk::AgentParticipationOutcome,
+    scope: &arkret_sdk::AgentParticipationScope,
+) -> bool {
+    outcome
+        .entries
+        .iter()
+        .any(|entry| &entry.scope == scope && entry.effective.reply)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -689,6 +714,16 @@ async fn materialize_direct_conversation(
 
     let mut pending = pending.expect("pending direct conversation MLS transaction is initialized");
     submitter.submit_signed_sdk_event(&pending.commit).await?;
+    state_store
+        .write()
+        .record_mls_group_state_ref_for_effective_scope(
+            realm_id.clone(),
+            None,
+            pending.snapshot.group_id.as_str(),
+            pending.snapshot.epoch,
+            pending.commit.event_id.clone(),
+        )
+        .map_err(anyhow::Error::msg)?;
     state_store
         .write()
         .save_mls_snapshot(realm_id.clone(), pending.snapshot.clone());

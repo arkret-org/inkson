@@ -241,6 +241,10 @@ test("shortcut help opens from the topbar and the ? key", async ({ page }) => {
 
   await page.keyboard.press("Shift+/");
   await expect(page.getByTestId("shortcut-help-overlay")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await page.keyboard.press("Control+/");
+  await expect(page.getByTestId("shortcut-help-overlay")).toBeVisible();
 });
 
 test("global keyboard shortcuts trigger their target surfaces", async ({ page }) => {

@@ -978,6 +978,7 @@ pub fn RealmAdminPanel(
                                         return;
                                     }
                                 };
+                                let commit_event_id = commit_event.event_id.clone();
                                 spawn(async move {
                                     match crate::transport::auth::with_authed_api(
                                         &base,
@@ -992,9 +993,25 @@ pub fn RealmAdminPanel(
                                             // Persist-on-accept: only advance the
                                             // local snapshot after the server
                                             // accepted the ak.mls.commit.
-                                            state_store
+                                            if let Err(error) = state_store
                                                 .write()
-                                                .save_mls_snapshot(realm.clone(), snapshot);
+                                                .record_mls_group_state_ref_for_effective_scope(
+                                                    realm.clone(),
+                                                    None,
+                                                    snapshot.group_id.as_str(),
+                                                    snapshot.epoch,
+                                                    commit_event_id,
+                                                )
+                                            {
+                                                status_msg.set(format!(
+                                                    "rotate accepted but MLS reference persistence failed: {error}"
+                                                ));
+                                                return;
+                                            }
+                                            state_store.write().save_mls_snapshot(
+                                                realm.clone(),
+                                                snapshot,
+                                            );
                                             // A self-update is also the spec-defined
                                             // recovery commit when a historical
                                             // membership transition changed the

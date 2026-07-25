@@ -405,6 +405,98 @@ fn two_member_group_with_bob_snapshot(
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn historical_author_view_survives_epoch_rotation() {
+    let mut state = temp_state_store("historical-author-view");
+    let secure = MemorySecureKeyStore::new();
+    let realm = "ak:realm:01904100-0000-7000-8000-0000000000c1";
+    let bob_actor = "did:web:bob.example";
+    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000c2";
+    let mut alice_group =
+        two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
+    let epoch_one_snapshot = state.mls_snapshot_for(realm).unwrap();
+    let epoch_one_ref =
+        arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-0000000000c3").unwrap();
+    state
+        .record_mls_group_state_ref_for_effective_scope(
+            realm,
+            None,
+            &epoch_one_snapshot.group_id,
+            epoch_one_snapshot.epoch,
+            epoch_one_ref.clone(),
+        )
+        .unwrap();
+    let original_view = minimal_metadata_author_view(
+        &state,
+        &secure,
+        realm,
+        bob_actor,
+        bob_device,
+        &epoch_one_snapshot.group_id,
+        epoch_one_snapshot.epoch,
+        epoch_one_ref.as_str(),
+    )
+    .expect("current epoch author view");
+
+    let secret = load_device_snapshot_secret(&secure, bob_actor, bob_device).unwrap();
+    let mut bob_group =
+        crate::mls::persistence::restore_envelope(&epoch_one_snapshot, &secret, 0).unwrap();
+    let commit = alice_group.self_update_commit().unwrap();
+    bob_group.apply_commit(&commit).unwrap();
+    let post_state = bob_group.export_state_record().unwrap();
+    let serialized = serde_json::to_vec(&post_state).unwrap();
+    let mut salt = [0u8; 16];
+    getrandom::fill(&mut salt).unwrap();
+    let epoch_two_snapshot = crate::mls::persistence::encrypt_state(
+        realm,
+        &post_state.group_id,
+        post_state.epoch,
+        &serialized,
+        &secret,
+        &salt,
+    );
+    let epoch_two_ref =
+        arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-0000000000c4").unwrap();
+    state
+        .record_mls_group_state_ref_for_effective_scope(
+            realm,
+            None,
+            &epoch_two_snapshot.group_id,
+            epoch_two_snapshot.epoch,
+            epoch_two_ref,
+        )
+        .unwrap();
+    state.save_mls_snapshot(realm, epoch_two_snapshot);
+
+    let historical_view = minimal_metadata_author_view(
+        &state,
+        &secure,
+        realm,
+        bob_actor,
+        bob_device,
+        &epoch_one_snapshot.group_id,
+        epoch_one_snapshot.epoch,
+        epoch_one_ref.as_str(),
+    )
+    .expect("historical epoch author view");
+    assert_eq!(historical_view, original_view);
+    assert!(
+        minimal_metadata_author_view(
+            &state,
+            &secure,
+            realm,
+            bob_actor,
+            bob_device,
+            &epoch_one_snapshot.group_id,
+            epoch_one_snapshot.epoch,
+            "ak:event:01904100-0000-7000-8000-0000000000ff",
+        )
+        .is_none(),
+        "non-winning historical ref must fail closed"
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
     // §5.6 MUST + E2EE-at-rest hardening: after a successful decrypt the
     // advanced group state is persisted (so the same-epoch NEXT message

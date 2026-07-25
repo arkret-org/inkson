@@ -318,12 +318,9 @@ pub fn decrypt_application_payload_for_effective_scope(
 /// §2.10.3 minimal-metadata author view for `(group_id, epoch,
 /// group_state_ref)`. The ONLY trust anchor is the local snapshot the device
 /// verified through its own genesis / commit chain — no directory, no
-/// `keys/query`, no current-epoch fallback: a snapshot at a different epoch
-/// or group yields `None` and the caller MUST fail closed (render the author
-/// as unverified, never promote). `group_state_ref` is echoed into the view —
-/// the client's rollback guard is the (group_id, epoch) equality against its
-/// verified snapshot; the ref-vs-winning-commit adjudication is the server's
-/// (event log) duty.
+/// `keys/query`, no current-epoch fallback. The cited `group_state_ref` must
+/// equal the exact accepted genesis / winning commit Event recorded locally
+/// for this group and epoch.
 #[allow(clippy::too_many_arguments)]
 pub fn minimal_metadata_author_view(
     state_store: &crate::state::LocalStateStore,
@@ -335,8 +332,16 @@ pub fn minimal_metadata_author_view(
     epoch: u64,
     group_state_ref: &str,
 ) -> Option<arkret_sdk::mls::AuthorGroupStateView> {
-    let snapshot = state_store.mls_snapshot_for(realm_id)?;
-    if snapshot.epoch != epoch || snapshot.group_id != group_id {
+    let snapshot = state_store
+        .mls_snapshot_for(realm_id)
+        .filter(|snapshot| snapshot.epoch == epoch && snapshot.group_id == group_id)
+        .or_else(|| {
+            state_store.historical_mls_snapshot_for_effective_scope(realm_id, None, group_id, epoch)
+        })?;
+    let accepted_ref = state_store
+        .mls_group_state_ref_for_effective_scope(realm_id, None, group_id, epoch)
+        .ok()?;
+    if accepted_ref.as_str() != group_state_ref {
         return None;
     }
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id).ok()?;
@@ -346,6 +351,64 @@ pub fn minimal_metadata_author_view(
         return None;
     }
     Some(group.author_group_state_view(group_state_ref))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn ordinary_agent_mls_author_view(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    group_id: &str,
+    epoch: u64,
+    group_state_ref: &str,
+) -> Option<arkret_sdk::mls::AgentMlsSignerView> {
+    let group_state = minimal_metadata_author_view(
+        state_store,
+        secure_store,
+        realm_id,
+        actor_id,
+        device_id,
+        group_id,
+        epoch,
+        group_state_ref,
+    )?;
+    let mut leaf_authorization_refs = Vec::new();
+    for leaf in &group_state.active_leaves {
+        let arkret_sdk::mls::AuthorLeafCredential::Basic { identity } = &leaf.credential else {
+            continue;
+        };
+        let Ok(identity) = std::str::from_utf8(identity) else {
+            continue;
+        };
+        let Ok(signer_id) = arkret_sdk::Did::new(identity.to_owned()) else {
+            continue;
+        };
+        for entry in state_store.cached_agent_signer_evidence_for_agent(&signer_id) {
+            let binding = &entry.evidence.signing_key_binding;
+            let Ok(key) = arkret_sdk::base64url_decode(binding.public_key.key.as_str().as_bytes())
+            else {
+                continue;
+            };
+            if key == leaf.signature_key {
+                leaf_authorization_refs.push((
+                    leaf.leaf_index,
+                    binding.agent_key_authorize_event_id.clone(),
+                ));
+            }
+        }
+    }
+    leaf_authorization_refs.sort_by(|left, right| {
+        left.0
+            .cmp(&right.0)
+            .then_with(|| left.1.as_str().cmp(right.1.as_str()))
+    });
+    leaf_authorization_refs.dedup();
+    Some(arkret_sdk::mls::AgentMlsSignerView {
+        group_state,
+        leaf_authorization_refs,
+    })
 }
 
 /// Tier-3 history decrypt: try every granted `history_secret` for this Realm

@@ -104,7 +104,7 @@ impl OutboundPostAcceptHook for InksonPostAcceptHook {
     fn post_accept<'a>(
         &'a self,
         item: &'a garth::SendQueueItem,
-        _event_id: &'a arkret_sdk::EventId,
+        event_id: &'a arkret_sdk::EventId,
         _duplicate: bool,
     ) -> BoxOutboundFuture<'a, ()> {
         Box::pin(async move {
@@ -120,7 +120,7 @@ impl OutboundPostAcceptHook for InksonPostAcceptHook {
             if matches!(action, PostAcceptAction::MlsAdmission { .. }) {
                 return Ok(());
             }
-            persist_post_accept_action(self.state_store.as_ref(), action).await
+            persist_post_accept_action(self.state_store.as_ref(), action, event_id.clone()).await
         })
     }
 }
@@ -128,6 +128,7 @@ impl OutboundPostAcceptHook for InksonPostAcceptHook {
 async fn persist_post_accept_action(
     state_store: Option<&crate::runtime::input::StateStoreHandle>,
     action: PostAcceptAction,
+    accepted_event_id: arkret_sdk::EventId,
 ) -> Result<(), garth::Error> {
     let store = state_store.ok_or_else(|| {
         garth::Error::Protocol(
@@ -146,6 +147,15 @@ async fn persist_post_accept_action(
     };
     let snapshot_realm_id = realm_id.clone();
     let barrier = store.write(|store| {
+        store
+            .record_mls_group_state_ref_for_effective_scope(
+                snapshot_realm_id.clone(),
+                None,
+                snapshot.group_id.as_str(),
+                snapshot.epoch,
+                accepted_event_id,
+            )
+            .map_err(garth::Error::Protocol)?;
         store.save_mls_snapshot(snapshot_realm_id, snapshot);
         store.begin_durable_flush().map_err(|error| {
             garth::Error::Protocol(format!(
@@ -269,9 +279,18 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                                 return Ok(OutboundSubmitOutcome::RetryAfter { delay, reason });
                             }
                         }
-                        if let Err(error) =
-                            persist_post_accept_action(self.state_store.as_ref(), action.clone())
-                                .await
+                        let accepted_event_id = arkret_sdk::EventId::new(result.event_id.clone())
+                            .map_err(|error| {
+                            garth::Error::Protocol(format!(
+                                "accepted MLS commit Event id is invalid: {error}"
+                            ))
+                        })?;
+                        if let Err(error) = persist_post_accept_action(
+                            self.state_store.as_ref(),
+                            action.clone(),
+                            accepted_event_id,
+                        )
+                        .await
                         {
                             return Ok(OutboundSubmitOutcome::RetryAfter {
                                 delay: Duration::from_secs(60),
@@ -2371,9 +2390,13 @@ mod tests {
             snapshot,
         };
 
-        let error = persist_post_accept_action(Some(&handle), action)
-            .await
-            .unwrap_err();
+        let error = persist_post_accept_action(
+            Some(&handle),
+            action,
+            arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000099").unwrap(),
+        )
+        .await
+        .unwrap_err();
         assert!(error.to_string().contains("snapshot secret unavailable"));
         assert!(store.lock().unwrap().mls_snapshot_for(realm_id).is_some());
         drop(store);

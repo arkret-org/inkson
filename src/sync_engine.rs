@@ -373,6 +373,7 @@ fn account_updates_are_empty(updates: &arkret_sdk::SyncUpdates) -> bool {
         && updates.presence.is_empty()
         && updates.account_data.is_empty()
         && updates.notifications.is_empty()
+        && updates.agent_signer_evidence.is_empty()
         && !updates.partial
 }
 
@@ -686,8 +687,17 @@ impl AccountPostCommitHook<crate::client_core::InksonAccountTransport> for Inkso
         }
 
         route_inbound_call_signals(&api, &response, &self.ctx).await;
+        let agent_evidence_changed =
+            crate::identity::agent_signer_evidence::prefetch_from_realm_projections(
+                http,
+                &response.realm_projections,
+                &response.updates.agent_signer_evidence,
+                &self.ctx.state_store,
+                self.ctx.did_cache.clone(),
+            )
+            .await;
         let state_store_for_profiles = self.ctx.state_store.clone();
-        if prefetch_persistent_event_sender_keys(
+        let device_keys_changed = prefetch_persistent_event_sender_keys(
             &api,
             &response,
             self.ctx.did_cache.clone(),
@@ -696,8 +706,8 @@ impl AccountPostCommitHook<crate::client_core::InksonAccountTransport> for Inkso
                     .read(|store| store.realm_projection_is_minimal_metadata(realm_id))
             },
         )
-        .await
-        {
+        .await;
+        if agent_evidence_changed || device_keys_changed {
             refresh_projection_events_from_sync_response(&response, step.initial, &self.ctx);
         }
         prefetch_member_identity_proof_keys(&api, &response, self.ctx.did_cache.clone()).await;
@@ -1079,22 +1089,50 @@ async fn run_circle_scope_rotate_pass(
                         .map_err(anyhow::Error::msg)?;
                     let post_commit_snapshot = draft.post_commit_snapshot;
                     let removed_principals = draft.removed_principals;
+                    let commit_event_id = draft
+                        .events
+                        .iter()
+                        .find(|event| event.kind.as_str() == "ak.mls.commit")
+                        .map(|event| event.event_id.clone())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Realm scope rotate has no MLS commit Event")
+                        })?;
                     let submitter = api.event_submitter()?;
                     for event in draft.events {
                         submitter.submit_sdk_event(&event).await?;
                     }
-                    Ok::<_, anyhow::Error>((post_commit_snapshot, removed_principals))
+                    Ok::<_, anyhow::Error>((
+                        post_commit_snapshot,
+                        removed_principals,
+                        commit_event_id,
+                    ))
                 },
             )
             .await;
             match submitted {
-                Ok((post_commit_snapshot, removed_principals)) => {
+                Ok((post_commit_snapshot, removed_principals, commit_event_id)) => {
                     if generation.get() != start_generation {
                         return;
                     }
-                    ctx.state_store.write(|store| {
-                        store.save_mls_snapshot(realm_id.clone(), post_commit_snapshot)
+                    let persisted = ctx.state_store.write(|store| {
+                        store.record_mls_group_state_ref_for_effective_scope(
+                            realm_id.clone(),
+                            None,
+                            post_commit_snapshot.group_id.as_str(),
+                            post_commit_snapshot.epoch,
+                            commit_event_id,
+                        )?;
+                        store.save_mls_snapshot(realm_id.clone(), post_commit_snapshot);
+                        Ok::<_, String>(())
                     });
+                    if let Err(error) = persisted {
+                        tracing::error!(
+                            %realm_id,
+                            %error,
+                            "sync_engine: accepted Realm MLS commit group-state reference conflicted",
+                        );
+                        return;
+                    }
                     tracing::info!(
                         %realm_id,
                         ?target_principal_ids,
@@ -1247,6 +1285,21 @@ async fn run_circle_scope_rotate_pass(
                 }
             };
             let events = draft.events;
+            let commit_event_id = match events
+                .iter()
+                .find(|event| event.kind.as_str() == "ak.mls.commit")
+                .map(|event| event.event_id.clone())
+            {
+                Some(event_id) => event_id,
+                None => {
+                    tracing::error!(
+                        %realm_id,
+                        %circle_id,
+                        "sync_engine: Circle scope-rotate has no MLS commit Event",
+                    );
+                    continue;
+                }
+            };
             let post_commit_snapshot = draft.post_commit_snapshot;
             let removed_leaves = draft.removed_leaves;
             let removed_principals = draft.removed_principals;
@@ -1280,13 +1333,30 @@ async fn run_circle_scope_rotate_pass(
             if generation.get() != start_generation {
                 return;
             }
-            ctx.state_store.write(|store| {
+            let persisted = ctx.state_store.write(|store| {
+                store.record_mls_group_state_ref_for_effective_scope(
+                    realm_id.clone(),
+                    Some(&circle_id),
+                    post_commit_snapshot.group_id.as_str(),
+                    post_commit_snapshot.epoch,
+                    commit_event_id,
+                )?;
                 store.save_mls_snapshot_for_effective_scope(
                     realm_id.clone(),
                     Some(&circle_id),
                     post_commit_snapshot,
-                )
+                );
+                Ok::<_, String>(())
             });
+            if let Err(error) = persisted {
+                tracing::error!(
+                    %realm_id,
+                    %circle_id,
+                    %error,
+                    "sync_engine: accepted Circle MLS commit group-state reference conflicted",
+                );
+                return;
+            }
             tracing::info!(
                 %realm_id,
                 %circle_id,
@@ -1384,6 +1454,7 @@ async fn run_idle_self_update_pass(
         // way the epoch advances, so a rejection is fine — we simply do NOT
         // persist the local snapshot (persist-on-accept).
         let submit_token = token.clone();
+        let commit_event_id = commit_event.event_id.clone();
         match crate::transport::auth::with_authed_api(&base, submit_token, |api| async move {
             api.event_submitter()?.submit_sdk_event(&commit_event).await
         })
@@ -1395,8 +1466,25 @@ async fn run_idle_self_update_pass(
                     // snapshot into the new generation's store.
                     return;
                 }
-                ctx.state_store
-                    .write(|store| store.save_mls_snapshot(realm_id.clone(), snapshot));
+                let persisted = ctx.state_store.write(|store| {
+                    store.record_mls_group_state_ref_for_effective_scope(
+                        realm_id.clone(),
+                        None,
+                        snapshot.group_id.as_str(),
+                        snapshot.epoch,
+                        commit_event_id,
+                    )?;
+                    store.save_mls_snapshot(realm_id.clone(), snapshot);
+                    Ok::<_, String>(())
+                });
+                if let Err(error) = persisted {
+                    tracing::error!(
+                        %realm_id,
+                        %error,
+                        "sync_engine: idle MLS commit group-state reference conflicted",
+                    );
+                    return;
+                }
                 tracing::info!(
                     %realm_id,
                     epoch = next_epoch,
@@ -2935,6 +3023,7 @@ mod tests {
                 presence: Vec::new(),
                 account_data: Vec::new(),
                 notifications: Vec::new(),
+                agent_signer_evidence: Vec::new(),
                 partial: false,
             },
         }

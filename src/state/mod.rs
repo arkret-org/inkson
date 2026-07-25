@@ -65,6 +65,7 @@ pub use seal_view::*;
 mod mls_sidecar;
 pub(crate) use mls_sidecar::PendingHistorySecrets;
 
+mod agent_evidence;
 mod mls_governance;
 
 mod e2ee_secure_cache;

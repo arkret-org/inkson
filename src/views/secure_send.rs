@@ -211,8 +211,15 @@ pub(crate) fn build_secure_send(
         return Err("Send Secure could not resolve MLS group members".to_owned());
     }
 
-    let base_group_state_ref =
-        crate::mls::group_events::mls_base_epoch_ref_for_scope(seal_view, realm_id, circle_id);
+    let base_group_state_ref = crate::mls::group_events::mls_base_epoch_ref_for_scope(
+        &state_store.read(),
+        realm_id,
+        circle_id,
+        encrypted_payload.group_id.as_str(),
+        encrypted_payload
+            .epoch
+            .saturating_sub(u64::from(real_commit_envelope.is_some())),
+    )?;
     let (group_state_ref, commit_envelope) =
         if let Some(real_commit_envelope) = real_commit_envelope.as_ref() {
             let mls_commit_epoch = real_commit_envelope.epoch;
@@ -402,6 +409,31 @@ pub(crate) async fn submit_secure_send(
                 // pre-commit epoch, so the next Send Secure retries at the
                 // correct `expected_prev_epoch` instead of skewing forever.
                 if let Some(snapshot) = new_mls_snapshot {
+                    let accepted_commit_ref = match arkret_sdk::EventId::new(resp.event_id.clone())
+                    {
+                        Ok(event_id) => event_id,
+                        Err(error) => {
+                            return SecureSendOutcome::MessageFailed {
+                                message: format!(
+                                    "accepted MLS commit returned an invalid Event id: {error}"
+                                ),
+                            };
+                        }
+                    };
+                    if let Err(error) = state_store
+                        .write()
+                        .record_mls_group_state_ref_for_effective_scope(
+                            realm_id.to_owned(),
+                            circle_id.as_deref(),
+                            snapshot.group_id.as_str(),
+                            snapshot.epoch,
+                            accepted_commit_ref,
+                        )
+                    {
+                        return SecureSendOutcome::MessageFailed {
+                            message: format!("persist accepted MLS group-state reference: {error}"),
+                        };
+                    }
                     state_store.write().save_mls_snapshot_for_effective_scope(
                         realm_id.to_owned(),
                         circle_id.as_deref(),

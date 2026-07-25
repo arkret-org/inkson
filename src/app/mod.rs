@@ -1320,65 +1320,6 @@ fn AppBootstrap() -> Element {
             "data-theme": theme_attr,
             "data-testid": "client-shell",
             tabindex: "-1",
-            // A6.4 — global key handler. `?` (Shift+/) opens the
-            // shortcut-help overlay unless the event originated from a
-            // text input / textarea / contenteditable surface. `Esc`
-            // dismisses transient overlays.
-            // A6.1 — `Cmd+F` (Ctrl+F on non-Mac) opens the global
-            // cross-Space message search panel; we intercept the
-            // browser's native find-in-page because the in-app panel
-            // covers all Realms and Spaces the user has access to.
-            onkeydown: move |event| {
-                let key = event.key().to_string();
-                let modifiers = event.modifiers();
-                let ctrl = modifiers.ctrl();
-                let meta = modifiers.meta();
-                if (ctrl || meta) && key.eq_ignore_ascii_case("k") {
-                    event.prevent_default();
-                    event.stop_propagation();
-                    topbar_search_expanded.set(true);
-                    palette_open.set(true);
-                    return;
-                }
-                if crate::views::global_search::key_event_is_search_trigger(&key, ctrl, meta) {
-                    event.prevent_default();
-                    event.stop_propagation();
-                    let _ = navigator.push(Route::Search);
-                    return;
-                }
-                if key == "Escape" {
-                    if notifications_drawer_open() {
-                        notifications_drawer_open.set(false);
-                        event.prevent_default();
-                        event.stop_propagation();
-                        return;
-                    }
-                    if shortcut_help_open() {
-                        shortcut_help_open.set(false);
-                        event.prevent_default();
-                        event.stop_propagation();
-                        return;
-                    }
-                    if palette_open() || topbar_search_expanded() || !global_query().trim().is_empty() {
-                        palette_open.set(false);
-                        topbar_search_expanded.set(false);
-                        global_query.set(String::new());
-                        event.prevent_default();
-                        event.stop_propagation();
-                    }
-                    return;
-                }
-                if crate::components::shortcut_help::key_event_is_help_trigger(&key) {
-                    // We can't reliably inspect event.target() in
-                    // dioxus 0.7 (the target type is opaque); however
-                    // text inputs already swallow the key event before
-                    // it reaches the shell when they're focused — so
-                    // this handler is only reached for "global" key
-                    // presses. Toggle the overlay.
-                    shortcut_help_open.set(true);
-                    event.stop_propagation();
-                }
-            },
             onclick: move |_| {
                 if palette_open() || topbar_search_expanded() || !global_query().trim().is_empty() {
                     palette_open.set(false);
@@ -2158,7 +2099,7 @@ fn AppBootstrap() -> Element {
                                                                         let base = base.clone();
                                                                         let agent_id = agent_id.clone();
                                                                         spawn(async move {
-                                                                            match crate::transport::auth::with_authed_api(
+                                                                            let route = match crate::transport::auth::with_authed_api(
                                                                                 &base,
                                                                                 api_token,
                                                                                 |api| async move {
@@ -2174,26 +2115,32 @@ fn AppBootstrap() -> Element {
                                                                                 Ok(response) if matches!(
                                                                                     response.state,
                                                                                     arkret_sdk::DirectConversationResolveState::Found
-                                                                                ) => {
-                                                                                    if let (Some(realm_id), Some(strand_id)) =
-                                                                                        (response.realm_id, response.main_strand_id)
-                                                                                    {
-                                                                                        let _ = navigator.push(Route::DirectConversation {
+                                                                                ) => response
+                                                                                    .realm_id
+                                                                                    .zip(response.main_strand_id)
+                                                                                    .map(|(realm_id, strand_id)| Route::DirectConversation {
                                                                                             realm_id: realm_id.to_string(),
                                                                                             strand_id: strand_id.to_string(),
-                                                                                        });
-                                                                                    }
+                                                                                        }),
+                                                                                Ok(response) => {
+                                                                                    crate::components::feedback::toast_error(
+                                                                                        "feedback.direct_open_failed",
+                                                                                        vec![],
+                                                                                        Some(format!("state: {:?}", response.state)),
+                                                                                    );
+                                                                                    None
                                                                                 }
-                                                                                Ok(response) => crate::components::feedback::toast_error(
-                                                                                    "feedback.direct_open_failed",
-                                                                                    vec![],
-                                                                                    Some(format!("state: {:?}", response.state)),
-                                                                                ),
-                                                                                Err(err) => crate::components::feedback::toast_error(
-                                                                                    "feedback.direct_open_failed", vec![], Some(err.display()),
-                                                                                ),
-                                                                            }
+                                                                                Err(err) => {
+                                                                                    crate::components::feedback::toast_error(
+                                                                                        "feedback.direct_open_failed", vec![], Some(err.display()),
+                                                                                    );
+                                                                                    None
+                                                                                }
+                                                                            };
                                                                             direct_chat_opening.set(None);
+                                                                            if let Some(route) = route {
+                                                                                let _ = navigator.push(route);
+                                                                            }
                                                                         });
                                                                     }
                                                                 },
@@ -2350,7 +2297,7 @@ fn AppBootstrap() -> Element {
                                                                     ).await
                                                                 },
                                                             ).await;
-                                                            match result {
+                                                            let route = match result {
                                                                 Ok(response) => {
                                                                     if matches!(
                                                                         response.state,
@@ -2358,25 +2305,32 @@ fn AppBootstrap() -> Element {
                                                                     )
                                                                         && let (Some(realm_id), Some(strand_id)) = (response.realm_id, response.main_strand_id)
                                                                     {
-                                                                        let _ = navigator.push(Route::DirectConversation {
+                                                                        Some(Route::DirectConversation {
                                                                             realm_id: realm_id.to_string(),
                                                                             strand_id: strand_id.to_string(),
-                                                                        });
+                                                                        })
                                                                     } else {
                                                                         crate::components::feedback::toast_error(
                                                                             "feedback.direct_open_failed",
                                                                             vec![],
                                                                             Some(format!("state: {:?}", response.state)),
                                                                         );
+                                                                        None
                                                                     }
                                                                 }
-                                                                Err(err) => crate::components::feedback::toast_error(
-                                                                    "feedback.direct_open_failed",
-                                                                    vec![],
-                                                                    Some(err.display()),
-                                                                ),
-                                                            }
+                                                                Err(err) => {
+                                                                    crate::components::feedback::toast_error(
+                                                                        "feedback.direct_open_failed",
+                                                                        vec![],
+                                                                        Some(err.display()),
+                                                                    );
+                                                                    None
+                                                                }
+                                                            };
                                                             direct_chat_opening.set(None);
+                                                            if let Some(route) = route {
+                                                                let _ = navigator.push(route);
+                                                            }
                                                         });
                                                     }
                                                 },
@@ -2587,7 +2541,7 @@ fn AppBootstrap() -> Element {
                                                                     let base = base.clone();
                                                                     let agent_id = agent_id.clone();
                                                                     spawn(async move {
-                                                                        match crate::transport::auth::with_authed_api(
+                                                                        let route = match crate::transport::auth::with_authed_api(
                                                                             &base,
                                                                             api_token,
                                                                             |api| async move {
@@ -2603,26 +2557,32 @@ fn AppBootstrap() -> Element {
                                                                             Ok(response) if matches!(
                                                                                 response.state,
                                                                                 arkret_sdk::DirectConversationResolveState::Found
-                                                                            ) => {
-                                                                                if let (Some(realm_id), Some(strand_id)) =
-                                                                                    (response.realm_id, response.main_strand_id)
-                                                                                {
-                                                                                    let _ = navigator.push(Route::DirectConversation {
+                                                                            ) => response
+                                                                                .realm_id
+                                                                                .zip(response.main_strand_id)
+                                                                                .map(|(realm_id, strand_id)| Route::DirectConversation {
                                                                                         realm_id: realm_id.to_string(),
                                                                                         strand_id: strand_id.to_string(),
-                                                                                    });
-                                                                                }
+                                                                                    }),
+                                                                            Ok(response) => {
+                                                                                crate::components::feedback::toast_error(
+                                                                                    "feedback.direct_open_failed",
+                                                                                    vec![],
+                                                                                    Some(format!("state: {:?}", response.state)),
+                                                                                );
+                                                                                None
                                                                             }
-                                                                            Ok(response) => crate::components::feedback::toast_error(
-                                                                                "feedback.direct_open_failed",
-                                                                                vec![],
-                                                                                Some(format!("state: {:?}", response.state)),
-                                                                            ),
-                                                                            Err(err) => crate::components::feedback::toast_error(
-                                                                                "feedback.direct_open_failed", vec![], Some(err.display()),
-                                                                            ),
-                                                                        }
+                                                                            Err(err) => {
+                                                                                crate::components::feedback::toast_error(
+                                                                                    "feedback.direct_open_failed", vec![], Some(err.display()),
+                                                                                );
+                                                                                None
+                                                                            }
+                                                                        };
                                                                         direct_chat_opening.set(None);
+                                                                        if let Some(route) = route {
+                                                                            let _ = navigator.push(route);
+                                                                        }
                                                                     });
                                                                 }
                                                             },

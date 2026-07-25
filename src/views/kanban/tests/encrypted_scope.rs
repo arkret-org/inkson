@@ -432,6 +432,15 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     );
     envelope.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
     state.save_mls_snapshot(realm, envelope);
+    state
+        .record_mls_group_state_ref_for_effective_scope(
+            realm,
+            None,
+            &record.group_id,
+            record.epoch,
+            arkret_sdk::EventId::new(base_group_state_ref.to_owned()).unwrap(),
+        )
+        .unwrap();
     crate::mls::governance_proof::seed_test_governance_proof(
         &mut state,
         realm,
@@ -518,6 +527,16 @@ fn mls_remove_commit_uses_explicit_revocation_membership_frontier() {
     let proposal_ref =
         arkret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-000000000002".to_owned())
             .unwrap();
+    state
+        .record_mls_group_state_ref_for_effective_scope(
+            TEST_REALM_ID,
+            None,
+            "mls-remove-group",
+            7,
+            arkret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-000000000099".to_owned())
+                .unwrap(),
+        )
+        .unwrap();
     let commit = arkret_sdk::MlsCommitEnvelope {
         group_id: "mls-remove-group".to_owned(),
         epoch: 8,
@@ -539,7 +558,10 @@ fn mls_remove_commit_uses_explicit_revocation_membership_frontier() {
     let event = match blocked {
         Ok(value) => value,
         Err(error) => {
-            assert!(error.contains("state_mismatch"));
+            assert!(
+                error.contains("state_mismatch"),
+                "unexpected error: {error}"
+            );
             return;
         }
     };

@@ -575,6 +575,7 @@ mod personal_agent_tests {
         arkret_signatures::agent_evidence::verify_agent_signing_key_binding(
             &signing_key_binding,
             &request.agent_id,
+            &signing_key_binding.agent_key_id,
             &signing_key_binding.controller_id,
             &request.verification_method,
             &event.event_id,

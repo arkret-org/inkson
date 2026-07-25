@@ -978,6 +978,68 @@ pub(crate) fn verify_chat_envelope_proof_for_realm(
     {
         return verify_minimal_metadata_chat_author(store, realm_id, event, decrypt_identity);
     }
+    let candidates = message_candidates(event);
+    if let Some(envelope) = candidates.iter().copied().find(|candidate| {
+        candidate
+            .pointer("/unsigned/agent_authorization_admission")
+            .is_some()
+    }) {
+        let Some(store) = state_store else {
+            return ChatProofVerdict::Unresolved;
+        };
+        let coordinates = minimal_metadata_content_coordinates(&candidates);
+        let mls_view = if let Some((group_id, epoch, group_state_ref)) = &coordinates {
+            let Some((self_actor, self_device)) = decrypt_identity else {
+                return ChatProofVerdict::Unresolved;
+            };
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+            let Some(view) = crate::mls::runtime::ordinary_agent_mls_author_view(
+                store,
+                secure_store.as_ref(),
+                realm_id,
+                self_actor,
+                self_device,
+                group_id,
+                *epoch,
+                group_state_ref,
+            ) else {
+                return ChatProofVerdict::Unresolved;
+            };
+            Some(view)
+        } else {
+            None
+        };
+        let mls_binding = coordinates
+            .as_ref()
+            .and_then(|(group_id, epoch, group_state_ref)| {
+                mls_view.as_ref().map(|view| {
+                    crate::identity::agent_signer_evidence::OrdinaryAgentMlsBinding {
+                        view,
+                        group_id,
+                        epoch: *epoch,
+                        group_state_ref,
+                    }
+                })
+            });
+        return match crate::identity::agent_signer_evidence::verify_cached_event(
+            envelope,
+            store,
+            mls_binding,
+        ) {
+            crate::identity::agent_signer_evidence::CachedAgentEventVerdict::Verified => {
+                ChatProofVerdict::Verified
+            }
+            crate::identity::agent_signer_evidence::CachedAgentEventVerdict::Rejected => {
+                ChatProofVerdict::Rejected
+            }
+            crate::identity::agent_signer_evidence::CachedAgentEventVerdict::Unresolved => {
+                ChatProofVerdict::Unresolved
+            }
+            crate::identity::agent_signer_evidence::CachedAgentEventVerdict::NotAgent => {
+                ChatProofVerdict::Rejected
+            }
+        };
+    }
     verify_chat_envelope_proof_with_local_identity(event, decrypt_identity)
 }
 

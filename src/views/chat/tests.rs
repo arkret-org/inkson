@@ -2983,12 +2983,18 @@ fn composer_owned_agent_ids_keep_verified_picker_agent_before_handle_loads() {
         agent_slug_at_time: "summary".to_owned(),
     }];
 
-    let ids =
-        owned_agent_ids_from_composer("ask @me/summary for an update", &[], &picker, controller);
+    let ids = owned_agent_ids_from_composer(
+        true,
+        "ask @me/summary for an update",
+        &[],
+        &picker,
+        controller,
+    );
 
     assert_eq!(ids, vec!["did:web:agents.example:summary"]);
     assert!(
-        owned_agent_ids_from_composer("ask for an update", &[], &picker, controller).is_empty()
+        owned_agent_ids_from_composer(true, "ask for an update", &[], &picker, controller)
+            .is_empty()
     );
 }
 
@@ -3009,6 +3015,90 @@ fn owned_agent_mentions_do_not_reopen_sidecar_from_private_composer() {
 fn embedded_sidecar_activation_keeps_the_source_strand_shell() {
     assert!(!composer::sidecar_activation_should_navigate(true));
     assert!(composer::sidecar_activation_should_navigate(false));
+}
+
+#[test]
+fn direct_chat_disables_mention_ui_triggers_and_send_metadata() {
+    let account_did = "did:web:example.com:users:alice";
+    let stale_picker = vec![crate::messaging::mentions::MentionCandidate {
+        did: "did:web:example.com:users:bob".to_owned(),
+        display_name: "Bob".to_owned(),
+        insert_label: "bob:example.com".to_owned(),
+        subtitle: String::new(),
+        is_agent: false,
+        controller_subject_id: String::new(),
+        controller_handle_at_time: String::new(),
+        agent_slug_at_time: String::new(),
+    }];
+
+    let mentions_enabled = composer::chat_mentions_enabled(true);
+    assert!(!mentions_enabled);
+    assert!(
+        !composer::chat_composer_placeholder(mentions_enabled).contains('@'),
+        "direct-chat placeholder must not advertise mentions"
+    );
+    assert!(
+        composer::active_composer_mention_token(mentions_enabled, "hello @").is_none(),
+        "typing @ in direct chat must not activate the picker"
+    );
+    assert!(
+        composer_mention_nodes(
+            mentions_enabled,
+            "hello @me @all @bob:example.com",
+            &stale_picker,
+            account_did,
+        )
+        .is_empty(),
+        "direct-chat sends must not carry mention metadata"
+    );
+    assert!(
+        owned_agent_ids_from_composer(
+            mentions_enabled,
+            "ask @me/summary",
+            &[],
+            &stale_picker,
+            account_did,
+        )
+        .is_empty(),
+        "direct-chat text must not trigger agent mention routing"
+    );
+
+    let collaboration_mentions_enabled = composer::chat_mentions_enabled(false);
+    assert!(collaboration_mentions_enabled);
+    assert!(
+        composer::active_composer_mention_token(collaboration_mentions_enabled, "hello @")
+            .is_some()
+    );
+    assert!(
+        composer::chat_composer_placeholder(collaboration_mentions_enabled).contains('@'),
+        "collaboration composer must keep advertising mentions"
+    );
+}
+
+#[test]
+fn composer_enter_behavior_matches_chat_conventions_and_protects_ime_input() {
+    assert!(composer::chat_composer_should_send_key(
+        "Enter", false, false, false, false,
+    ));
+    assert!(
+        !composer::chat_composer_should_send_key("Enter", true, false, false, false),
+        "Shift+Enter must remain available for new lines"
+    );
+    assert!(
+        !composer::chat_composer_should_send_key("Enter", false, false, true, false),
+        "IME candidate confirmation must not send a message"
+    );
+    assert!(
+        !composer::chat_composer_should_send_key("Enter", false, false, false, true),
+        "holding Enter must not trigger repeated sends"
+    );
+    assert!(
+        !composer::chat_composer_should_send_key("Enter", false, true, false, false),
+        "Alt+Enter must remain available to the platform"
+    );
+    assert!(!composer::chat_composer_should_send_key(
+        "Space", false, false, false, false,
+    ));
 }
 
 #[test]
@@ -3227,6 +3317,7 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
     assert_eq!(candidate.subtitle, "You");
 
     let mentions = composer_mention_nodes(
+        true,
         "ping @me",
         std::slice::from_ref(&candidate),
         &participant.did,
@@ -3235,14 +3326,14 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
     assert_eq!(mention.subject_id.as_str(), participant.did);
     assert_eq!(mention.mention_text_original.as_deref(), Some("@me"));
 
-    let typed_mentions = composer_mention_nodes("ping @me", &[], &participant.did);
+    let typed_mentions = composer_mention_nodes(true, "ping @me", &[], &participant.did);
     let typed_mention = typed_mentions[0]
         .as_mention()
         .expect("typed structured self mention");
     assert_eq!(typed_mention.subject_id.as_str(), participant.did);
     assert_eq!(typed_mention.mention_text_original.as_deref(), Some("@me"));
 
-    assert!(composer_mention_nodes("ask @me/summary", &[], &participant.did).is_empty());
+    assert!(composer_mention_nodes(true, "ask @me/summary", &[], &participant.did).is_empty());
 }
 
 #[test]
@@ -3362,6 +3453,7 @@ fn explicit_member_click_builds_user_and_owned_agent_mentions() {
     assert!(before_handle_load.controller_handle_at_time.is_empty());
     assert!(
         composer_mention_nodes(
+            true,
             "ask @me/summary",
             std::slice::from_ref(&before_handle_load),
             account_did,

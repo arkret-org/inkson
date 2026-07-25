@@ -298,6 +298,7 @@ fn project_visible_messages(
 }
 
 async fn resolve_agent_selector_mentions(
+    mentions_enabled: bool,
     base_url: &str,
     api_token: String,
     wait_for_sync_token: Option<String>,
@@ -307,6 +308,9 @@ async fn resolve_agent_selector_mentions(
     requester: &str,
     own_controller_handle: Option<&str>,
 ) -> Vec<MentionNode> {
+    if !mentions_enabled {
+        return Vec::new();
+    }
     let tokens = parse_agent_selector_mention_tokens(body);
     if tokens.is_empty() {
         return Vec::new();
@@ -400,11 +404,15 @@ fn owned_agent_ids_from_mentions(mentions: &[MentionNode], controller_id: &str) 
 }
 
 fn owned_agent_ids_from_composer(
+    mentions_enabled: bool,
     body: &str,
     mentions: &[MentionNode],
     picker: &[crate::messaging::mentions::MentionCandidate],
     controller_id: &str,
 ) -> Vec<String> {
+    if !mentions_enabled {
+        return Vec::new();
+    }
     let selector_slugs = parse_agent_selector_mention_tokens(body)
         .into_iter()
         .filter(|token| token.controller_handle == "me")
@@ -678,6 +686,16 @@ async fn reconcile_sidecar_mls_access(
         let mut pending = pending.expect("pending Sidecar MLS admission initialized");
         let submitter = api.event_submitter()?;
         submitter.submit_signed_sdk_event(&pending.commit).await?;
+        state_store
+            .write()
+            .record_mls_group_state_ref_for_effective_scope(
+                realm_id.clone(),
+                Some(&circle_id),
+                pending.snapshot.group_id.as_str(),
+                pending.snapshot.epoch,
+                pending.commit.event_id.clone(),
+            )
+            .map_err(anyhow::Error::msg)?;
         state_store.write().save_mls_snapshot_for_effective_scope(
             realm_id.clone(),
             Some(&circle_id),
@@ -754,6 +772,22 @@ async fn reconcile_sidecar_mls_removals(
                 .circle_scope_rotate(&circle_id, &pending.idempotency_key, &body)
                 .await
                 .map_err(anyhow::Error::from)?;
+            let commit_event_id = pending
+                .events
+                .iter()
+                .find(|event| event.kind.as_str() == "ak.mls.commit")
+                .map(|event| event.event_id.clone())
+                .ok_or_else(|| anyhow::anyhow!("Sidecar removal has no MLS commit Event"))?;
+            state_store
+                .write()
+                .record_mls_group_state_ref_for_effective_scope(
+                    realm_id.clone(),
+                    Some(&circle_id),
+                    pending.snapshot.group_id.as_str(),
+                    pending.snapshot.epoch,
+                    commit_event_id,
+                )
+                .map_err(anyhow::Error::msg)?;
             state_store.write().save_mls_snapshot_for_effective_scope(
                 realm_id.clone(),
                 Some(&circle_id),
@@ -828,6 +862,22 @@ async fn reconcile_sidecar_mls_removals(
                 .circle_scope_rotate(&circle_id, &pending.idempotency_key, &body)
                 .await
                 .map_err(anyhow::Error::from)?;
+            let commit_event_id = pending
+                .events
+                .iter()
+                .find(|event| event.kind.as_str() == "ak.mls.commit")
+                .map(|event| event.event_id.clone())
+                .ok_or_else(|| anyhow::anyhow!("Sidecar removal has no MLS commit Event"))?;
+            state_store
+                .write()
+                .record_mls_group_state_ref_for_effective_scope(
+                    realm_id.clone(),
+                    Some(&circle_id),
+                    pending.snapshot.group_id.as_str(),
+                    pending.snapshot.epoch,
+                    commit_event_id,
+                )
+                .map_err(anyhow::Error::msg)?;
             state_store.write().save_mls_snapshot_for_effective_scope(
                 realm_id.clone(),
                 Some(&circle_id),
@@ -1333,10 +1383,14 @@ fn sidecar_agent_label(agent_ids: &[String], participants: &[SpaceParticipant]) 
 }
 
 fn composer_mention_nodes(
+    mentions_enabled: bool,
     body: &str,
     picker: &[crate::messaging::mentions::MentionCandidate],
     account_did: &str,
 ) -> Vec<MentionNode> {
+    if !mentions_enabled {
+        return Vec::new();
+    }
     let mut mentions = parse_mention_nodes(body);
     for chip in picker {
         if mentions.iter().any(|node| {
@@ -3537,10 +3591,12 @@ pub fn ChatPanel(
                     selected_channel_security_encrypted,
                     selected_realm_pending_mls_binding,
                     selected_realm_pending_mls_binding_reason: selected_realm_pending_mls_binding_reason.clone(),
+                    active_sidecar_session: sidecar_session.clone(),
                     sidecar_send_block_reason: sidecar_send_block_reason.clone(),
                     public_agent_dids: public_agent_dids.clone(),
                     own_controller_handle: own_controller_handle.clone(),
                     mention_insert_request,
+                    mentions_enabled: composer::chat_mentions_enabled(direct_mode),
                     token,
                     sync_cursor,
                     frontier_state,

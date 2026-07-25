@@ -597,6 +597,7 @@ mod tests {
                     events: vec![event.clone(), second_device, event],
                 }),
                 notifications: None,
+                agent_signer_evidence_bundle: None,
                 partial: None,
                 priority: None,
                 reconnect_after_ms: None,

@@ -868,6 +868,9 @@ fn spawn_deactivate_agent(
             };
             let event = match arkret_event_draft::build_agent_key_revoke_event(
                 &payload,
+                std::slice::from_ref(&authorization.authorized_event_ref),
+                arkret_sdk::EventId::new(arkret_sdk::new_prefixed_uuid7("ak:event:"))
+                    .expect("generated Agent key revoke Event id is valid"),
                 key_state.principal_control_realm_id.clone(),
                 key_state.agent_id.clone(),
                 key_state.controller_id.clone(),

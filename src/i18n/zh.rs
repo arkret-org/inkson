@@ -1080,6 +1080,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("shortcuts.list.palette", "打开命令面板");
     dict.set("shortcuts.list.palette_mac", "打开命令面板 (macOS)");
     dict.set("shortcuts.list.send", "发送当前消息");
+    dict.set("shortcuts.list.send_alias", "发送当前消息（兼容键）");
     // Personal blocklist (A5)
     dict.set("settings.privacy.title", "隐私");
     dict.set("settings.privacy.blocked_users.title", "已屏蔽的用户");

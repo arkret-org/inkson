@@ -290,6 +290,64 @@ impl ResolverDidAnchor {
             _ => false,
         }
     }
+
+    /// Resolve the configured Principal Server's own WebVH document without
+    /// weakening the untrusted actor-DID SSRF guard. The caller must first
+    /// establish that `service` is the `service_id` returned by the same
+    /// authenticated SDK client's describe endpoint. The DID host and port
+    /// must exactly match the configured server before this path fetches from
+    /// that origin. The SDK then validates the DID document id, WebVH SCID,
+    /// append-only log, proofs, hash chain, and exact log-head state.
+    pub(crate) async fn ensure_trusted_same_origin_service_document(
+        &self,
+        http: &reqwest::Client,
+        trusted_base_url: &url::Url,
+        service: &Did,
+    ) -> bool {
+        if !policy_for(self.profile).permits(service) || service.method() != "webvh" {
+            return false;
+        }
+        if self
+            .cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(service, Utc::now())
+            .is_some()
+        {
+            return true;
+        }
+        let Some((document_url, log_url)) = trusted_webvh_urls(trusted_base_url, service) else {
+            return false;
+        };
+        let Some((document_content_type, document_body)) =
+            fetch_did_bytes_from_url(http, document_url.as_str(), DID_WEB_MAX_DOCUMENT_BYTES).await
+        else {
+            return false;
+        };
+        if !did_document_content_type_allowed(&document_content_type) {
+            return false;
+        }
+        let Some((_log_content_type, log_body)) =
+            fetch_did_bytes_from_url(http, log_url.as_str(), DID_WEBVH_MAX_LOG_BYTES).await
+        else {
+            return false;
+        };
+        let Ok(document) = arkret_sdk::identity::verify_did_webvh_document_and_log_bytes(
+            service,
+            &document_body,
+            &log_body,
+        ) else {
+            return false;
+        };
+        let ttl = policy_for(self.profile)
+            .ttl
+            .unwrap_or_else(|| Duration::minutes(15));
+        self.cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(service.clone(), document, Utc::now(), ttl);
+        true
+    }
 }
 
 impl crate::identity::device_directory::DidAnchor for ResolverDidAnchor {
@@ -389,6 +447,14 @@ async fn fetch_did_bytes(
     if !url_host_is_safe(url) {
         return None;
     }
+    fetch_did_bytes_from_url(http, url, max_bytes).await
+}
+
+async fn fetch_did_bytes_from_url(
+    http: &reqwest::Client,
+    url: &str,
+    max_bytes: usize,
+) -> Option<(String, Vec<u8>)> {
     let response = http.get(url).send().await.ok()?;
     if !response.status().is_success() {
         return None;
@@ -412,6 +478,41 @@ async fn fetch_did_bytes(
         return None;
     }
     Some((content_type, body.to_vec()))
+}
+
+fn trusted_webvh_urls(trusted_base_url: &url::Url, service: &Did) -> Option<(url::Url, url::Url)> {
+    if !matches!(trusted_base_url.scheme(), "http" | "https") {
+        return None;
+    }
+    let (_, host, port, path) = arkret_sdk::identity::did_webvh_parts(service)?;
+    if trusted_base_url.host_str() != Some(host.as_str()) || trusted_base_url.port() != port {
+        return None;
+    }
+    let prefix = if path.is_empty() {
+        "/.well-known".to_owned()
+    } else {
+        format!("/{}", path.join("/"))
+    };
+    let mut document_url = trusted_base_url.clone();
+    document_url.set_path(&format!("{prefix}/did.json"));
+    document_url.set_query(None);
+    document_url.set_fragment(None);
+    let mut log_url = document_url.clone();
+    log_url.set_path(&format!("{prefix}/did.jsonl"));
+    Some((document_url, log_url))
+}
+
+fn did_document_content_type_allowed(content_type: &str) -> bool {
+    matches!(
+        content_type
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "application/did+json" | "application/json"
+    )
 }
 
 /// Build the `did:web` document URL (HTTPS, via the SDK helper) and fetch it.
@@ -1108,6 +1209,29 @@ mod tests {
             "https://alice.example/.well-known/did.json"
         ));
         assert!(url_host_is_safe("https://did.acroidea.com/path/did.json"));
+    }
+
+    #[test]
+    fn trusted_service_fetch_is_confined_to_the_configured_origin() {
+        let base = url::Url::parse("http://127.0.0.1:22618/").unwrap();
+        let service = parse("did:webvh:QmServiceScid:127.0.0.1%3A22618:webvh:service");
+        let (document, log) =
+            trusted_webvh_urls(&base, &service).expect("configured local service origin");
+        assert_eq!(
+            document.as_str(),
+            "http://127.0.0.1:22618/webvh/service/did.json"
+        );
+        assert_eq!(
+            log.as_str(),
+            "http://127.0.0.1:22618/webvh/service/did.jsonl"
+        );
+        let wrong_port = parse("did:webvh:QmServiceScid:127.0.0.1%3A22619:webvh:service");
+        assert!(trusted_webvh_urls(&base, &wrong_port).is_none());
+        let metadata = parse("did:webvh:QmServiceScid:169.254.169.254:webvh:service");
+        assert!(trusted_webvh_urls(&base, &metadata).is_none());
+        let external = parse("did:webvh:QmServiceScid:example.test:webvh:service");
+        assert!(trusted_webvh_urls(&base, &external).is_none());
+        assert!(trusted_webvh_urls(&url::Url::parse("file:///tmp/").unwrap(), &service).is_none());
     }
 
     #[tokio::test]

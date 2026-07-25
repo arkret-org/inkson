@@ -174,30 +174,42 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
         let _ = dioxus::document::eval(
             r#"
             (() => {
-              if (window.__inksonShortcutHelpBridgeInstalled) return;
-              window.__inksonShortcutHelpBridgeInstalled = true;
+              if (window.__inksonShortcutDispatcherInstalled) return;
+              window.__inksonShortcutDispatcherInstalled = true;
               window.addEventListener('keydown', (event) => {
+                if (event.isComposing || event.repeat) return;
                 const target = event.target;
                 const tag = target && target.tagName ? target.tagName.toLowerCase() : '';
-                const editable = target && (target.isContentEditable || tag === 'input' || tag === 'textarea' || tag === 'select');
+                const editable = target && (
+                  target.isContentEditable ||
+                  tag === 'input' ||
+                  tag === 'textarea' ||
+                  tag === 'select' ||
+                  (target.closest && target.closest('[contenteditable="true"], [role="textbox"]'))
+                );
+                if (editable) return;
                 const chord = event.ctrlKey || event.metaKey;
                 const key = typeof event.key === 'string' ? event.key.toLowerCase() : '';
-                const testId = chord && key === 'k'
-                  ? 'topbar-search-button'
-                  : chord && key === 'f'
-                    ? 'global-search-shortcut-target'
-                    : chord && key === 'enter'
-                      ? 'chat-composer'
-                      : (!editable && event.key === '?')
-                        ? 'shortcut-help-trigger'
-                        : '';
-                if (!testId) return;
-                const targetElement = document.querySelector('[data-testid="' + testId + '"]');
+                let targetElement = null;
+                if (key === 'escape') {
+                  targetElement =
+                    document.querySelector('[data-testid="shortcut-help-dismiss"]') ||
+                    document.querySelector('[data-testid="notifications-drawer-close"]');
+                } else if (chord && key === 'k') {
+                  targetElement = document.querySelector('[data-testid="topbar-search-button"]');
+                } else if (chord && key === 'f') {
+                  targetElement = document.querySelector('[data-testid="global-search-shortcut-target"]');
+                } else if (
+                  (chord && key === '/') ||
+                  (event.shiftKey && key === '/') ||
+                  event.key === '?'
+                ) {
+                  targetElement = document.querySelector('[data-testid="topbar-shortcuts-button"]');
+                }
                 if (!(targetElement instanceof HTMLElement)) return;
                 event.preventDefault();
                 event.stopPropagation();
-                if (testId === 'chat-composer') targetElement.focus();
-                else targetElement.click();
+                targetElement.click();
               }, true);
             })();
             "#,

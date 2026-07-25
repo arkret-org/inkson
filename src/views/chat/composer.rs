@@ -13,13 +13,48 @@ pub(super) struct ChatComposerContext {
     pub selected_channel_security_encrypted: bool,
     pub selected_realm_pending_mls_binding: bool,
     pub selected_realm_pending_mls_binding_reason: Option<String>,
+    pub active_sidecar_session: Option<crate::sidecar::HostedSidecarState>,
     pub sidecar_send_block_reason: Option<String>,
     pub public_agent_dids: std::collections::BTreeSet<String>,
     pub own_controller_handle: Option<String>,
     pub mention_insert_request: Option<Signal<Option<MentionInsertRequest>>>,
+    pub mentions_enabled: bool,
     pub token: Signal<String>,
     pub sync_cursor: Signal<String>,
     pub frontier_state: Signal<String>,
+}
+
+pub(super) fn chat_mentions_enabled(direct_mode: bool) -> bool {
+    !direct_mode
+}
+
+pub(super) fn chat_composer_placeholder(mentions_enabled: bool) -> &'static str {
+    if mentions_enabled {
+        "Message this discussion. Use @alice:example.com to mention a member or #task-123 to link a card."
+    } else {
+        "Message this discussion. Use #task-123 to link a card."
+    }
+}
+
+pub(super) fn active_composer_mention_token(
+    mentions_enabled: bool,
+    value: &str,
+) -> Option<(String, usize, usize)> {
+    mentions_enabled
+        .then(|| crate::messaging::mentions::active_mention_token_at_end(value))
+        .flatten()
+}
+
+/// Match desktop chat conventions while leaving Shift+Enter to the textarea.
+/// Ctrl/Cmd+Enter remain send aliases because those modifiers are not blockers.
+pub(super) fn chat_composer_should_send_key(
+    key: &str,
+    shift: bool,
+    alt: bool,
+    is_composing: bool,
+    is_auto_repeating: bool,
+) -> bool {
+    key == "Enter" && !shift && !alt && !is_composing && !is_auto_repeating
 }
 
 pub(super) fn sidecar_activation_should_navigate(embedded: bool) -> bool {
@@ -56,10 +91,12 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         selected_channel_security_encrypted,
         selected_realm_pending_mls_binding,
         selected_realm_pending_mls_binding_reason,
+        active_sidecar_session,
         sidecar_send_block_reason,
         public_agent_dids,
         own_controller_handle,
         mention_insert_request,
+        mentions_enabled,
         token,
         sync_cursor,
         mut frontier_state,
@@ -70,7 +107,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     let mut state_store = crate::app::SessionContext::get().state_store;
     let messages_snapshot = (controller.messages)();
     let messages_for_composer_lookup = &messages_snapshot;
-    let active_sidecar_session = sidecar_session();
     let selected_channel_value = active_sidecar_session
         .as_ref()
         .map(|session| session.private_strand_id.clone())
@@ -138,8 +174,21 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         crate::i18n::tr("chat.send_secure")
     };
     let sidecar_send_blocked = sidecar_send_block_reason.is_some();
+    let active_sidecar_present = active_sidecar_session.is_some();
     let participants_for_plaintext_sidecar = participants_for_messages.clone();
     let participants_for_encrypted_sidecar = participants_for_messages.clone();
+    let composer_placeholder = chat_composer_placeholder(mentions_enabled);
+
+    {
+        use_effect(use_reactive(
+            (&mentions_enabled,),
+            move |(mentions_enabled,)| {
+                if !mentions_enabled {
+                    mention_picker_state.write().clear();
+                }
+            },
+        ));
+    }
 
     {
         let mut request_signal = mention_insert_request;
@@ -147,59 +196,70 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         let request_account_did = account_did.clone();
         let request_public_agent_dids = public_agent_dids.clone();
         let request_controller_handle = own_controller_handle.clone();
-        use_effect(move || {
-            let Some(request_signal) = request_signal.as_mut() else {
-                return;
-            };
-            let Some(request) = request_signal() else {
-                return;
-            };
-            if mention_insert_request_seen.peek().as_str() == request.request_id {
-                return;
-            }
-            let candidate = owned_agent_mention_candidate(
-                &request.target_id,
-                request.agent_slug.as_deref(),
-                &request_account_did,
-                request_controller_handle.as_deref(),
-            )
-            .or_else(|| {
-                let participant = request_participants
-                    .iter()
-                    .find(|participant| participant.did.trim() == request.target_id.trim())?;
-                mention_candidate_for_explicit_target(
-                    participant,
-                    &request_participants,
+        use_effect(use_reactive(
+            (&mentions_enabled,),
+            move |(mentions_enabled,)| {
+                if !mentions_enabled {
+                    if let Some(request_signal) = request_signal.as_mut() {
+                        if request_signal.peek().is_some() {
+                            request_signal.set(None);
+                        }
+                    }
+                    return;
+                }
+                let Some(request_signal) = request_signal.as_mut() else {
+                    return;
+                };
+                let Some(request) = request_signal() else {
+                    return;
+                };
+                if mention_insert_request_seen.peek().as_str() == request.request_id {
+                    return;
+                }
+                let candidate = owned_agent_mention_candidate(
+                    &request.target_id,
+                    request.agent_slug.as_deref(),
                     &request_account_did,
-                    &request_public_agent_dids,
-                    None,
                     request_controller_handle.as_deref(),
                 )
-            });
-            let Some(candidate) = candidate else {
-                return;
-            };
-            mention_insert_request_seen.set(request.request_id);
-            request_signal.set(None);
-            let inserted = mention_picker_state.write().insert(candidate.clone());
-            if inserted {
-                let current = chat_draft();
-                chat_draft.set(crate::messaging::mentions::replace_active_mention_token(
-                    &current,
-                    None,
-                    candidate.insert_label(),
-                ));
-            }
-            mention_picker_state.write().close();
-            let _ = dioxus::document::eval(
-                r#"
+                .or_else(|| {
+                    let participant = request_participants
+                        .iter()
+                        .find(|participant| participant.did.trim() == request.target_id.trim())?;
+                    mention_candidate_for_explicit_target(
+                        participant,
+                        &request_participants,
+                        &request_account_did,
+                        &request_public_agent_dids,
+                        None,
+                        request_controller_handle.as_deref(),
+                    )
+                });
+                let Some(candidate) = candidate else {
+                    return;
+                };
+                mention_insert_request_seen.set(request.request_id);
+                request_signal.set(None);
+                let inserted = mention_picker_state.write().insert(candidate.clone());
+                if inserted {
+                    let current = chat_draft();
+                    chat_draft.set(crate::messaging::mentions::replace_active_mention_token(
+                        &current,
+                        None,
+                        candidate.insert_label(),
+                    ));
+                }
+                mention_picker_state.write().close();
+                let _ = dioxus::document::eval(
+                    r#"
                 requestAnimationFrame(() => {
                   const input = document.querySelector('[data-testid="card-discussion-panel"] [data-testid="chat-input"]');
                   if (input instanceof HTMLElement) input.focus();
                 });
                 "#,
-            );
-        });
+                );
+            },
+        ));
     }
 
     rsx! {
@@ -378,11 +438,17 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                     Textarea {
                         "data-testid": "chat-input",
                         value: "{chat_draft}",
-                        placeholder: "Message this discussion. Use @alice:example.com to mention a member or #task-123 to link a card.",
+                        placeholder: "{composer_placeholder}",
                         onkeydown: move |event: KeyboardEvent| {
                             let key = event.key().to_string();
                             let modifiers = event.modifiers();
-                            if (modifiers.ctrl() || modifiers.meta()) && key == "Enter" {
+                            if chat_composer_should_send_key(
+                                &key,
+                                modifiers.shift(),
+                                modifiers.alt(),
+                                event.is_composing(),
+                                event.is_auto_repeating(),
+                            ) {
                                 event.prevent_default();
                                 event.stop_propagation();
                                 let _ = dioxus::document::eval(
@@ -413,7 +479,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 // to know whether to render the
                                 // `mention-picker` element.
                                 if let Some((query, start, end)) =
-                                    crate::messaging::mentions::active_mention_token_at_end(&value)
+                                    active_composer_mention_token(mentions_enabled, &value)
                                 {
                                     mention_picker_state
                                         .write()
@@ -477,7 +543,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             }
                         },
                     }
-                    if mention_picker_state.read().open {
+                    if mentions_enabled && mention_picker_state.read().open {
                         div { class: "mention-picker",
                             "data-testid": "mention-picker",
                             div { class: "mention-picker-head",
@@ -611,22 +677,24 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                     // button for cotest while production users open the picker
                     // by typing `@`.
                     div { class: "mention-chip-row",
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            r#type: "button",
-                            class: "composer-tool-button",
-                            "data-testid": "mention-trigger-button",
-                            title: "Mention member",
-                            "aria-label": "Mention member",
-                            onclick: move |_| {
-                                let mut state = mention_picker_state.write();
-                                if state.open {
-                                    state.close();
-                                } else {
-                                    state.open();
-                                }
-                            },
-                            UiIcon { name: "at-sign" }
+                        if mentions_enabled {
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                r#type: "button",
+                                class: "composer-tool-button",
+                                "data-testid": "mention-trigger-button",
+                                title: "Mention member",
+                                "aria-label": "Mention member",
+                                onclick: move |_| {
+                                    let mut state = mention_picker_state.write();
+                                    if state.open {
+                                        state.close();
+                                    } else {
+                                        state.open();
+                                    }
+                                },
+                                UiIcon { name: "at-sign" }
+                            }
                         }
                         Button {
                             variant: ButtonVariant::Secondary,
@@ -677,23 +745,25 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 }
                             }
                         }
-                        for chip in mention_picker_state.read().inserted.clone() {
-                            div {
-                                class: "mention-chip",
-                                "data-testid": "mention-chip",
-                                "data-mention-did": "{chip.did}",
-                                span { "@{chip.insert_label()}" }
-                                if !chip.subtitle.is_empty() {
-                                    span { class: "mention-chip-subtitle", "{chip.subtitle}" }
-                                }
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    r#type: "button",
-                                    onclick: {
-                                        let did = chip.did.clone();
-                                        move |_| mention_picker_state.write().remove(&did)
-                                    },
-                                    "\u{00d7}"
+                        if mentions_enabled {
+                            for chip in mention_picker_state.read().inserted.clone() {
+                                div {
+                                    class: "mention-chip",
+                                    "data-testid": "mention-chip",
+                                    "data-mention-did": "{chip.did}",
+                                    span { "@{chip.insert_label()}" }
+                                    if !chip.subtitle.is_empty() {
+                                        span { class: "mention-chip-subtitle", "{chip.subtitle}" }
+                                    }
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        r#type: "button",
+                                        onclick: {
+                                            let did = chip.did.clone();
+                                            move |_| mention_picker_state.write().remove(&did)
+                                        },
+                                        "\u{00d7}"
+                                    }
                                 }
                             }
                         }
@@ -995,6 +1065,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 let inserted_candidates =
                                     mention_picker_state.read().inserted.clone();
                                 let mentions = composer_mention_nodes(
+                                    mentions_enabled,
                                     &body,
                                     &inserted_candidates,
                                     &actor,
@@ -1008,19 +1079,21 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     return;
                                 };
                                 let local_owned_agent_ids = owned_agent_ids_from_composer(
+                                    mentions_enabled,
                                     &body,
                                     &mentions,
                                     &inserted_candidates,
                                     &actor,
                                 );
-                                let targets_owned_agent = should_route_owned_agent_to_sidecar(
-                                    sidecar_session().is_some(),
-                                    selected_channel_is_circle_scoped,
-                                    !local_owned_agent_ids.is_empty(),
-                                    parse_agent_selector_mention_tokens(&body)
-                                        .iter()
-                                        .any(|token| token.controller_handle == "me"),
-                                );
+                                let targets_owned_agent = mentions_enabled
+                                    && should_route_owned_agent_to_sidecar(
+                                        active_sidecar_present,
+                                        selected_channel_is_circle_scoped,
+                                        !local_owned_agent_ids.is_empty(),
+                                        parse_agent_selector_mention_tokens(&body)
+                                            .iter()
+                                            .any(|token| token.controller_handle == "me"),
+                                    );
                                 if targets_owned_agent {
                                     sidecar_route_pending.set(true);
                                     status_msg.set("Activating Private Sidecar…".to_owned());
@@ -1052,6 +1125,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     let navigator = navigator;
                                     spawn(async move {
                                         for mention in resolve_agent_selector_mentions(
+                                            mentions_enabled,
                                             &base,
                                             api_token.clone(),
                                             wait_for,
@@ -1069,6 +1143,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             );
                                         }
                                         let addressed_agent_ids = owned_agent_ids_from_composer(
+                                            mentions_enabled,
                                             &body_for_resolution,
                                             &resolved_mentions,
                                             &inserted_candidates_for_sidecar,
@@ -1262,6 +1337,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 spawn(async move {
                                     let mut mentions = mentions;
                                     for mention in resolve_agent_selector_mentions(
+                                        mentions_enabled,
                                         &base,
                                         api_token.clone(),
                                         wait_for.clone(),
@@ -1432,6 +1508,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 let inserted_candidates =
                                     mention_picker_state.read().inserted.clone();
                                 let mentions = composer_mention_nodes(
+                                    mentions_enabled,
                                     &body,
                                     &inserted_candidates,
                                     &actor,
@@ -1444,20 +1521,22 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     selected_strand.clone()
                                 };
                                 let local_owned_agent_ids = owned_agent_ids_from_composer(
+                                    mentions_enabled,
                                     &body,
                                     &mentions,
                                     &inserted_candidates,
                                     &actor,
                                 );
-                                let active_sidecar_for_send = sidecar_session();
-                                let targets_owned_agent = should_route_owned_agent_to_sidecar(
-                                    active_sidecar_for_send.is_some(),
-                                    selected_channel_is_circle_scoped,
-                                    !local_owned_agent_ids.is_empty(),
-                                    parse_agent_selector_mention_tokens(&body)
-                                        .iter()
-                                        .any(|token| token.controller_handle == "me"),
-                                );
+                                let active_sidecar_for_send = active_sidecar_session.clone();
+                                let targets_owned_agent = mentions_enabled
+                                    && should_route_owned_agent_to_sidecar(
+                                        active_sidecar_for_send.is_some(),
+                                        selected_channel_is_circle_scoped,
+                                        !local_owned_agent_ids.is_empty(),
+                                        parse_agent_selector_mention_tokens(&body)
+                                            .iter()
+                                            .any(|token| token.controller_handle == "me"),
+                                    );
                                 if targets_owned_agent {
                                     sidecar_route_pending.set(true);
                                     status_msg.set("Activating Private Sidecar…".to_owned());
@@ -1489,6 +1568,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     let navigator = navigator;
                                     spawn(async move {
                                         for mention in resolve_agent_selector_mentions(
+                                            mentions_enabled,
                                             &base,
                                             api_token.clone(),
                                             wait_for,
@@ -1506,6 +1586,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             );
                                         }
                                         let addressed_agent_ids = owned_agent_ids_from_composer(
+                                            mentions_enabled,
                                             &body_for_resolution,
                                             &resolved_mentions,
                                             &inserted_candidates_for_sidecar,
@@ -1693,6 +1774,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 spawn(async move {
                                 let mut mentions = mentions;
                                 for mention in resolve_agent_selector_mentions(
+                                    mentions_enabled,
                                     &base,
                                     api_token.clone(),
                                     wait_for.clone(),
