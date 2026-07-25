@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 //! Conformance fixture replay: encoding & crypto-signature.
 //!
 //! Loads `spec/v1/artifacts/fixtures/encoding-fixture.json` and

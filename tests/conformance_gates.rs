@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 //! Conformance gate: every typed builder in inkson MUST produce an
 //! Event that validates against arkret-spec event-envelope.schema.json.
 //!

@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 //! End-to-end: with proof_mode = RealEd25519, build a Realm bootstrap +
 //! send a message, verify each event's seal_ref is real and proofs[0].jws
 //! is a real Ed25519 signature (not "a..b").

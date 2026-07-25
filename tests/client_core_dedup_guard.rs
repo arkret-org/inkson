@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 //! Static deduplication gates for client-core extraction.
 //!
 //! These guards pin surfaces that have already been removed from inkson. They

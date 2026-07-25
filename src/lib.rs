@@ -1,3 +1,6 @@
+// Browser behavior is covered by wasm integration tests. The inline unit-test
+// tree is native-only and depends on native filesystem-backed test helpers.
+#![cfg(not(all(test, target_arch = "wasm32")))]
 // Many helpers and Dioxus components take more parameters than clippy's
 // default `too_many_arguments` threshold of 7 — this is a UI crate where
 // builders, API wrappers, and component prop bundles routinely cross

@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 //! Q3 regression: the production build path must never ship a development
 //! placeholder push token to a real push gateway.
 //!
