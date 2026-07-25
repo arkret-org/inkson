@@ -2625,6 +2625,93 @@ export async function mockArkretApi(
       return json(route, { ok: true, status: expectedTo });
     }
 
+    const agentDeactivateMatch = url.pathname.match(
+      /^\/_arkret\/self\/agents\/([^/]+)\/deactivate$/,
+    );
+    if (agentDeactivateMatch && route.request().method() === "POST") {
+      const agentId = decodeURIComponent(agentDeactivateMatch[1]);
+      const agent = personalAgents.get(agentId);
+      const keyState = personalAgentKeyStates.get(agentId);
+      if (!agent || !keyState) {
+        return json(
+          route,
+          { ok: false, error: { code: "not_found", message: "agent not found" } },
+          404,
+        );
+      }
+      const body = ((await contractRequestBody(route)) ?? {}) as Record<
+        string,
+        any
+      >;
+      const event = body.lifecycle_event as Record<string, any> | undefined;
+      const keyEvents = Array.isArray(body.key_revocation_events)
+        ? body.key_revocation_events
+        : [];
+      const capabilityEvents = Array.isArray(body.capability_revocation_events)
+        ? body.capability_revocation_events
+        : [];
+      const activeAuthorizations = Array.isArray(keyState.active_authorizations)
+        ? keyState.active_authorizations
+        : [];
+      const activeGrants = personalAgentGrants.get(agentId) ?? [];
+      const previousStatus = String(agent.status ?? "active");
+      const effect = Array.isArray(event?.effects) ? event.effects[0] : undefined;
+      const suppliedKeyIds = new Set(
+        keyEvents.map((candidate: Record<string, any>) =>
+          String(candidate?.payload?.key_id ?? ""),
+        ),
+      );
+      const suppliedGrantIds = new Set(
+        capabilityEvents.map((candidate: Record<string, any>) =>
+          String(candidate?.payload?.grant_id ?? ""),
+        ),
+      );
+      const validLifecycle =
+        event?.kind === "ak.self.agent.deactivate" &&
+        event?.realm_id === keyState.principal_control_realm_id &&
+        event?.actor_id === agentId &&
+        event?.executed_by === accountPrincipalId &&
+        event?.authorization_ref === keyState.controller_authorization_ref &&
+        Array.isArray(event?.proofs) &&
+        event.proofs.length > 0 &&
+        event?.payload?.agent_id === agentId &&
+        event?.payload?.controller_id === accountPrincipalId &&
+        event?.payload?.transition === "deactivate" &&
+        event?.payload?.previous_status === previousStatus &&
+        event?.payload?.reason === body.reason &&
+        effect?.cell === `ak:cell:ak.component.agent.status.v1:${agentId}` &&
+        effect?.op?.kind === "transition" &&
+        effect?.op?.from === previousStatus &&
+        effect?.op?.to === "deactivated" &&
+        effect?.op?.reason === body.reason;
+      const keysCovered = activeAuthorizations.every(
+        (authorization: Record<string, any>) =>
+          suppliedKeyIds.has(String(authorization.key_id ?? "")),
+      );
+      const grantsCovered = activeGrants.every((grant) =>
+        suppliedGrantIds.has(String(grant.grant_id ?? "")),
+      );
+      if (!validLifecycle || !keysCovered || !grantsCovered) {
+        return json(
+          route,
+          {
+            ok: false,
+            error: {
+              code: "failed_precondition",
+              message: "deactivation revocation bundle is incomplete",
+            },
+          },
+          412,
+        );
+      }
+      agent.status = "deactivated";
+      agent.updated_at = "2026-07-19T08:00:00.000Z";
+      keyState.status = "deactivated";
+      keyState.active_authorizations = [];
+      personalAgentGrants.set(agentId, []);
+      return json(route, { ok: true, status: "deactivated" });
+    }
+
     const agentRenewPairingMatch = url.pathname.match(
       /^\/_arkret\/self\/agents\/([^/]+)\/renew-pairing$/,
     );
@@ -2786,6 +2873,13 @@ export async function mockArkretApi(
         verification_method: body.verification_method,
         public_key: body.public_key,
         authorized_event_ref: authorizedEventRef,
+        active_authorizations: [
+          {
+            key_id: String(body.verification_method ?? "").split("#").pop() ?? "runtime-key-1",
+            verification_method: body.verification_method,
+            authorized_event_ref: authorizedEventRef,
+          },
+        ],
       });
       return json(route, {
         ok: true,

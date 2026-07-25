@@ -491,6 +491,16 @@ test("account settings split account/server info and surface personal agents", a
   await expect(page.getByTestId("agent-admin-deactivate-confirm-button")).toBeEnabled();
   await page.getByTestId("agent-admin-deactivate-cancel-button").click();
   await expect(page.getByTestId("agent-admin-deactivate-modal")).toHaveCount(0);
+
+  await deactivateButton.click();
+  await page.getByTestId("agent-admin-deactivate-confirm-input").fill("DEACTIVATE");
+  await page.getByTestId("agent-admin-deactivate-confirm-button").click();
+  await expect(page.getByTestId("agent-admin-last-op")).toContainText(
+    "Agent deactivated permanently.",
+    { timeout: 15_000 },
+  );
+  await expect(page.getByTestId("agent-admin-deactivate-modal")).toHaveCount(0);
+  await expect(page.getByTestId("agent-admin-deactivate-button")).toHaveCount(0);
 });
 
 test("deactivated personal agents are available only through the audit deep link", async ({

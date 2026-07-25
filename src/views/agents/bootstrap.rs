@@ -782,7 +782,9 @@ async fn collect_current_managed_pcr_backup_items(
             ));
         };
         agent_realm_ids.insert(key_state.principal_control_realm_id.as_str().to_owned());
-        if agent.status == arkret_models_collaboration::agent_operations::AgentLifecycleState::Deactivated {
+        if agent.status
+            == arkret_models_collaboration::agent_operations::AgentLifecycleState::Deactivated
+        {
             continue;
         }
         if key_state.controller_id.as_str() != controller_id {

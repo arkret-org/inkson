@@ -12,7 +12,8 @@ use arkret_models_collaboration::agent_operations::{
     AgentPcrRecoveryState, AgentProjection, AgentProvisionOutcome, AgentProvisionRequestBody,
     AgentRenewPairingOutcome, AgentResumeRequestBody, AgentRuntimeState, AgentView, KeyState,
 };
-use arkret_models_collaboration::events_payloads::agent::AgentKeyScope;
+use arkret_models_collaboration::events_payloads::agent::{AgentKeyRevokePayload, AgentKeyScope};
+use arkret_models_collaboration::governance::agent_artifacts::GrantSnapshot;
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::{use_navigator, use_route};
@@ -22,9 +23,9 @@ use yoface::utils::dom::copy_text_to_clipboard;
 use super::model::{
     AgentGrantPreset, AgentServiceScopePreset, agent_lifecycle_wire, agent_runtime_state_wire,
     agent_state_badge_class, agent_state_label, agent_view_from_directory_row,
-    build_agent_pairing_deep_link,
-    build_agent_pairing_handoff_token, build_agent_provision_event_drafts,
-    is_pairing_request_expired, render_agent_pairing_qr_svg, requested_scope_for_presets,
+    build_agent_pairing_deep_link, build_agent_pairing_handoff_token,
+    build_agent_provision_event_drafts, is_pairing_request_expired, render_agent_pairing_qr_svg,
+    requested_scope_for_presets,
 };
 use crate::components::UiIcon;
 use crate::routes::Route;
@@ -192,6 +193,8 @@ mod directory_refresh_tests {
             grants: vec![arkret_sdk::GrantSnapshot {
                 grant_id: arkret_sdk::GrantId::new("ak:grant:01964137-0000-7000-8000-000000000010")
                     .unwrap(),
+                realm_id: arkret_sdk::RealmId::new("ak:realm:01964137-0000-7000-8000-000000000011")
+                    .unwrap(),
                 status: None,
                 grant_digest: None,
                 expires_at: None,
@@ -233,7 +236,8 @@ mod directory_refresh_tests {
     }
 
     fn keyed_authorizations()
-    -> Vec<arkret_models_collaboration::governance::agent_artifacts::AgentKeyAuthorizationState> {
+    -> Vec<arkret_models_collaboration::governance::agent_artifacts::AgentKeyAuthorizationState>
+    {
         vec![
             arkret_models_collaboration::governance::agent_artifacts::AgentKeyAuthorizationState {
                 key_id: "runtime-key-1".to_owned(),
@@ -277,7 +281,10 @@ mod directory_refresh_tests {
         assert!(!pairing_material_can_be_exposed(None));
     }
 
-    fn test_pairing_view(status: AgentLifecycleState, runtime_state: AgentRuntimeState) -> AgentView {
+    fn test_pairing_view(
+        status: AgentLifecycleState,
+        runtime_state: AgentRuntimeState,
+    ) -> AgentView {
         let agent_id = arkret_sdk::Did::new("did:web:agents.example:summary").unwrap();
         let controller_id = arkret_sdk::Did::new("did:web:alice.example").unwrap();
         let scope = requested_scope_for_presets(
@@ -331,9 +338,10 @@ mod directory_refresh_tests {
 
     fn test_renew_outcome(mode: AgentPairingMode) -> AgentRenewPairingOutcome {
         let row = match mode {
-            AgentPairingMode::Bootstrap => {
-                test_pairing_view(AgentLifecycleState::Active, AgentRuntimeState::PairingExpired)
-            }
+            AgentPairingMode::Bootstrap => test_pairing_view(
+                AgentLifecycleState::Active,
+                AgentRuntimeState::PairingExpired,
+            ),
             AgentPairingMode::Replacement => {
                 test_pairing_view(AgentLifecycleState::Paused, AgentRuntimeState::Ready)
             }
@@ -392,7 +400,10 @@ mod directory_refresh_tests {
         assert_eq!(rows[0].status, AgentLifecycleState::Active);
         assert_eq!(rows[0].runtime_state, AgentRuntimeState::PendingRuntimeKey);
         let key_state = rows[0].key_state.as_ref().unwrap();
-        assert_eq!(key_state.runtime_state, AgentRuntimeState::PendingRuntimeKey);
+        assert_eq!(
+            key_state.runtime_state,
+            AgentRuntimeState::PendingRuntimeKey
+        );
         assert_eq!(key_state.pairing_code.as_deref(), Some("fresh-code"));
         assert!(key_state.pcr_recovery.is_ready());
     }
@@ -802,6 +813,201 @@ fn spawn_set_agent_enabled(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
+fn spawn_deactivate_agent(
+    base: String,
+    api_token: String,
+    id: String,
+    controller_id: String,
+    status: AgentLifecycleState,
+    key_state: Option<KeyState>,
+    grants: Vec<GrantSnapshot>,
+    mut agents: Signal<Vec<AgentView>>,
+    mut last_op_status: Signal<String>,
+    mut deactivate_dialog_open: Signal<bool>,
+    mut deactivate_confirm: Signal<String>,
+    owned_agents_rev: Signal<u64>,
+) {
+    spawn(async move {
+        if id.is_empty() {
+            return;
+        }
+        let Some(key_state) = key_state else {
+            last_op_status.set(
+                "Agent key binding is unavailable; refresh the Agent details and retry.".to_owned(),
+            );
+            return;
+        };
+        if key_state.agent_id.as_str() != id || key_state.controller_id.as_str() != controller_id {
+            last_op_status.set(
+                "Agent key binding does not match the selected Agent and controller; refresh and retry."
+                    .to_owned(),
+            );
+            return;
+        }
+        if status == AgentLifecycleState::Deactivated {
+            last_op_status.set("Agent is already deactivated.".to_owned());
+            return;
+        }
+
+        let reason = "controller_deactivated".to_owned();
+        let changed_at = crate::clock::now_utc_millis();
+        let placeholder_hlc = match arkret_sdk::Hlc::new("000000000000-0000-00000000") {
+            Ok(hlc) => hlc,
+            Err(error) => {
+                last_op_status.set(format!("Agent deactivation authoring failed: {error}"));
+                return;
+            }
+        };
+        let mut drafts = Vec::new();
+        for authorization in &key_state.active_authorizations {
+            let payload = AgentKeyRevokePayload {
+                agent_id: key_state.agent_id.clone(),
+                key_id: authorization.key_id.clone(),
+                revoked_by: key_state.controller_id.clone(),
+                revoked_at: changed_at,
+                reason: Some(reason.clone()),
+            };
+            let event = match arkret_event_draft::build_agent_key_revoke_event(
+                &payload,
+                key_state.principal_control_realm_id.clone(),
+                key_state.agent_id.clone(),
+                key_state.controller_id.clone(),
+                key_state.controller_authorization_ref.clone(),
+                1,
+                placeholder_hlc.clone(),
+            ) {
+                Ok(event) => event,
+                Err(error) => {
+                    last_op_status.set(format!("Agent key revocation authoring failed: {error}"));
+                    return;
+                }
+            };
+            drafts.push(event);
+        }
+        let key_event_count = drafts.len();
+        for grant in &grants {
+            let event = match crate::operation::ak_ops::capability_revoke(
+                grant.realm_id.as_str(),
+                &controller_id,
+                grant.grant_id.as_str(),
+                Some(&reason),
+            )
+            .and_then(|builder| builder.build_sdk_event("inkson"))
+            {
+                Ok(event) => event,
+                Err(error) => {
+                    last_op_status.set(format!(
+                        "Agent capability revocation authoring failed: {error}"
+                    ));
+                    return;
+                }
+            };
+            drafts.push(event);
+        }
+        let capability_event_count = grants.len();
+        let lifecycle_event = match arkret_event_draft::build_agent_deactivate_event(
+            key_state.agent_id.clone(),
+            key_state.controller_id.clone(),
+            key_state.principal_control_realm_id.clone(),
+            key_state.controller_authorization_ref.clone(),
+            status,
+            Some(reason.clone()),
+            1,
+            placeholder_hlc,
+            changed_at,
+        ) {
+            Ok(event) => event,
+            Err(error) => {
+                last_op_status.set(format!("Agent deactivation authoring failed: {error}"));
+                return;
+            }
+        };
+        drafts.push(lifecycle_event);
+
+        let id_for_status = id.clone();
+        let refresh_api_token = api_token.clone();
+        let result = with_event_submitter(&base, api_token, move |submitter| async move {
+            let controller_did = arkret_sdk::Did::new(controller_id.clone())?;
+            let signer = crate::event_signer::active_signer()
+                .ok_or_else(|| anyhow::anyhow!("active controller signer is unavailable"))?;
+            let signer_account_scope = crate::secure_key_store::active_device_seed_scope();
+            let device_id = super::bootstrap::controller_signer_device_id(
+                &controller_id,
+                signer.as_ref(),
+                signer_account_scope.as_deref(),
+            )?;
+            super::bootstrap::ensure_managed_agent_pcr_seal_current(
+                &submitter,
+                submitter.http(),
+                signer.as_ref(),
+                &controller_did,
+                &device_id,
+                key_state.principal_control_realm_id.as_str(),
+            )
+            .await?;
+
+            let mut prepared = submitter.prepare_sdk_events_batch(drafts).await?;
+            let lifecycle_event = prepared
+                .pop()
+                .ok_or_else(|| anyhow::anyhow!("deactivation lifecycle Event is missing"))?;
+            let capability_revocation_events = prepared.split_off(key_event_count);
+            if capability_revocation_events.len() != capability_event_count {
+                anyhow::bail!("deactivation capability Event count changed during authoring");
+            }
+            let key_revocation_events = prepared;
+            let body = AgentDeactivateRequestBody {
+                reason: Some(reason),
+                lifecycle_event,
+                key_revocation_events,
+                capability_revocation_events,
+            };
+            let outcome = submitter
+                .http()
+                .agent_deactivate(&id, &body)
+                .await
+                .map_err(anyhow::Error::from)?;
+            let seal_warning = super::bootstrap::ensure_managed_agent_pcr_seal_current(
+                &submitter,
+                submitter.http(),
+                signer.as_ref(),
+                &controller_did,
+                &device_id,
+                key_state.principal_control_realm_id.as_str(),
+            )
+            .await
+            .err()
+            .map(|error| error.to_string());
+            Ok((outcome, seal_warning))
+        })
+        .await;
+
+        match result {
+            Ok((outcome, seal_warning)) => {
+                agents.with_mut(|rows| update_agent_status(rows, &id_for_status, outcome.status));
+                bump_owned_agents_rev(owned_agents_rev);
+                let mut message = "Agent deactivated permanently.".to_owned();
+                if let Some(warning) = seal_warning {
+                    message.push_str(&format!(" Seal refresh warning: {warning}"));
+                }
+                last_op_status.set(message);
+                deactivate_dialog_open.set(false);
+                deactivate_confirm.set(String::new());
+            }
+            Err(error) => {
+                last_op_status.set(format!("Deactivate failed: {}", error.display()));
+                spawn_load_agent_details(
+                    base,
+                    refresh_api_token,
+                    id_for_status,
+                    agents,
+                    last_op_status,
+                );
+            }
+        }
+    });
+}
+
 #[component]
 pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> Element {
     // A4 — base_url from session context instead of a prop.
@@ -917,7 +1123,10 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
             .iter()
             .find(|agent| {
                 agent_id(agent) == selected_id_now
-                    && agent_matches_filter(agent_lifecycle_wire(agent.status), &active_agent_filter)
+                    && agent_matches_filter(
+                        agent_lifecycle_wire(agent.status),
+                        &active_agent_filter,
+                    )
             })
             .cloned();
         let visible_agents = rows
@@ -963,6 +1172,16 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
     // originals.
     let replace_pause_controller_id = controller_id.clone();
     let replace_pause_key_state = selected_key_state_owned.clone();
+    let deactivate_controller_id = controller_id.clone();
+    let deactivate_key_state = selected_key_state_owned.clone();
+    let deactivate_status = selected_agent
+        .as_ref()
+        .map(|agent| agent.status)
+        .unwrap_or_default();
+    let deactivate_grants = selected_agent
+        .as_ref()
+        .map(|agent| agent.grants.clone())
+        .unwrap_or_default();
     let selected_pcr_recovery_ready = pairing_material_can_be_exposed(
         selected_key_state.map(|key_state| &key_state.pcr_recovery),
     );
@@ -2319,36 +2538,26 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                             disabled: deactivate_confirm() != "DEACTIVATE",
                                             onclick: {
                                                 let base = base_url.clone();
+                                                let controller_id = deactivate_controller_id.clone();
+                                                let key_state = deactivate_key_state.clone();
+                                                let grants = deactivate_grants.clone();
                                                 move |_| {
                                                     let id = selected_agent_id();
                                                     if id.is_empty() { return; }
-                                                    let id_for_status = id.clone();
-                                                    let base = base.clone();
-                                                    let api_token = token();
-                                                    let body = AgentDeactivateRequestBody { reason: Some("controller_deactivated".to_owned()) };
-                                                    spawn(async move {
-                                                        match with_authed_sdk_client(&base, api_token, move |http| {
-                                                            let id = id.clone();
-                                                            let body = body.clone();
-                                                            async move { http.agent_deactivate(&id, &body).await.map_err(anyhow::Error::from) }
-                                                        })
-                                                        .await
-                                                        {
-                                                            Ok(r) => {
-                                                                agents.with_mut(|rows| {
-                                                                    update_agent_status(rows, &id_for_status, r.status)
-                                                                });
-                                                                bump_owned_agents_rev(owned_agents_rev);
-                                                                last_op_status.set("Agent deactivated permanently.".to_owned());
-                                                                deactivate_dialog_open.set(false);
-                                                                deactivate_confirm.set(String::new());
-                                                            }
-                                                            Err(err) => last_op_status.set(format!(
-                                                                "Deactivate failed: {}",
-                                                                err.display()
-                                                            )),
-                                                        }
-                                                    });
+                                                    spawn_deactivate_agent(
+                                                        base.clone(),
+                                                        token(),
+                                                        id,
+                                                        controller_id.clone(),
+                                                        deactivate_status,
+                                                        key_state.clone(),
+                                                        grants.clone(),
+                                                        agents,
+                                                        last_op_status,
+                                                        deactivate_dialog_open,
+                                                        deactivate_confirm,
+                                                        owned_agents_rev,
+                                                    );
                                                 }
                                             },
                                             "Deactivate agent"
