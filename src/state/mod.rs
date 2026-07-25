@@ -74,8 +74,6 @@ pub(crate) use e2ee_secure_cache::{
 };
 
 mod account_persist;
-#[cfg(target_arch = "wasm32")]
-pub(crate) use account_persist::migrate_localstorage_account_blobs;
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
 pub(crate) use account_persist::run_browser_account_persist_fault_contract;
 
@@ -701,15 +699,8 @@ impl LocalStateStore {
                 .flatten();
             if let Some(grant) = secure_grant {
                 state.session_grant = Some(grant);
-            } else if let Some(legacy_grant) = state.session_grant.as_ref() {
-                // One-way migration from pre-secure-store account JSON. The
-                // next flush strips the legacy plaintext copy.
-                if let Err(error) =
-                    store_session_grant_in_secure_store(secure_store.as_ref(), legacy_grant)
-                {
-                    tracing::error!(?error, "legacy session grant secure-store migration failed");
-                    state.session_grant = None;
-                }
+            } else {
+                state.session_grant = None;
             }
             Some(state)
         }
@@ -813,7 +804,7 @@ impl LocalStateStore {
 
     /// Delete a single account's persisted entry. Best-effort (a missing entry
     /// is fine). Native: removes the sibling file. wasm: removes the
-    /// localStorage key and its corrupt sidecar.
+    /// secure-store key and its corrupt sidecar.
     fn delete_account_state(&self, did: &str) {
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -826,12 +817,6 @@ impl LocalStateStore {
             let store = crate::secure_key_store::default_secure_key_store("inkson");
             let _ = store.delete_secret(&key);
             let _ = store.delete_secret(&format!("{key}.corrupt"));
-            // Also drop any legacy localStorage copy left by a pre-migration
-            // install so the account leaves no readable residue behind.
-            if let Some(storage) = browser_storage() {
-                let _ = storage.remove_item(&key);
-                let _ = storage.remove_item(&format!("{key}.corrupt"));
-            }
         }
     }
 

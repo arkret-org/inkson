@@ -1,7 +1,7 @@
 //! Durable account-main-state persistence engine (E2EE-local-state phase 2).
 //!
-//! On wasm the per-account `ClientLocalState` blob moved off `localStorage`
-//! into the IndexedDB + non-extractable SubtleCrypto encrypted entries store
+//! On wasm the per-account `ClientLocalState` blob is stored in the IndexedDB
+//! + non-extractable SubtleCrypto encrypted entries store
 //! (the same `inkson.secret.inkson`/`entries` store the seed-grade secrets
 //! use). The semantic key is unchanged (`inkson.local_state.v1.account.<did>`),
 //! but the physical backend is now the hardened secure store, so the account
@@ -173,22 +173,6 @@ impl AccountPersistBarrier {
         {
             Ok(())
         }
-    }
-}
-
-async fn preserve_corrupt_account_blob_durable(
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    corrupt_key: &str,
-    legacy: &str,
-) -> Result<(), crate::secure_key_store::SecureKeyStoreError> {
-    secure_store
-        .store_secret_durable(corrupt_key, legacy)
-        .await?;
-    match secure_store.get_secret(corrupt_key)? {
-        Some(readback) if readback == legacy => Ok(()),
-        _ => Err(crate::secure_key_store::SecureKeyStoreError::Backend(
-            "corrupt account blob backup read-back mismatch".to_owned(),
-        )),
     }
 }
 
@@ -442,113 +426,18 @@ pub(crate) use wasm_driver::{
     pending_account_state_json,
 };
 
-// ── wasm boot-time migration + hydration ─────────────────────────────────
+// ── wasm boot-time hydration ──────────────────────────────────────────────
 
 #[cfg(target_arch = "wasm32")]
 mod wasm_bootstrap {
     use std::sync::atomic::Ordering;
 
-    use super::super::{
-        ANONYMOUS_ACCOUNT_NAMESPACE, LocalStateStore, account_state_key, browser_storage,
-    };
-    use super::{
-        ClientLocalState, merge_persisted_into_live, preserve_corrupt_account_blob_durable,
-    };
-    use crate::secure_key_store::SecureKeyStore;
-
-    /// One-time migration of legacy near-plaintext `localStorage` account blobs
-    /// into the IndexedDB encrypted entries store. For each raw account key:
-    /// only when the IndexedDB entry is absent read the legacy value, durably
-    /// write it, read it back to confirm, and only then delete the legacy copy.
-    /// A malformed legacy blob is preserved under a `.corrupt` secure entry and
-    /// removed from localStorage. Never writes a v2 key and never raises the DB
-    /// version — it reuses the existing `entries` store.
-    pub(crate) async fn migrate_localstorage_account_blobs(
-        account_keys: Vec<String>,
-        secure_store: &dyn SecureKeyStore,
-    ) {
-        let Some(storage) = browser_storage() else {
-            return;
-        };
-        for key in account_keys {
-            // Only migrate when the durable tier does not already hold the key —
-            // never let a stale localStorage copy overwrite a newer IndexedDB one.
-            match secure_store.get_secret(&key) {
-                Ok(Some(_)) => continue,
-                Ok(None) => {}
-                Err(_) => continue,
-            }
-            let Some(legacy) = storage.get_item(&key).ok().flatten() else {
-                continue;
-            };
-            if legacy.trim().is_empty() {
-                let _ = storage.remove_item(&key);
-                continue;
-            }
-            if serde_json::from_str::<ClientLocalState>(&legacy).is_err() {
-                // The malformed value may be the only recoverable evidence.
-                // Commit and read back the encrypted sibling before removing
-                // the legacy source; any failure keeps localStorage intact.
-                let corrupt_key = format!("{key}.corrupt");
-                if let Err(error) =
-                    preserve_corrupt_account_blob_durable(secure_store, &corrupt_key, &legacy).await
-                {
-                    tracing::warn!(?error, account_key = %key, "corrupt account blob backup durable write failed; keeping legacy copy");
-                    continue;
-                }
-                if let Err(error) = storage.remove_item(&key) {
-                    tracing::warn!(?error, account_key = %key, "corrupt account blob backup committed but legacy cleanup failed");
-                    continue;
-                }
-                tracing::warn!(
-                    account_key = %key,
-                    "legacy account blob was unreadable; durably preserved an encrypted copy and cleared localStorage",
-                );
-                continue;
-            }
-            if let Err(error) = secure_store.store_secret_durable(&key, &legacy).await {
-                tracing::warn!(?error, account_key = %key, "account blob migration durable write failed; keeping legacy copy");
-                continue;
-            }
-            // Read-back verify before deleting the only remaining source copy.
-            match secure_store.get_secret(&key) {
-                Ok(Some(readback)) if readback == legacy => {
-                    let _ = storage.remove_item(&key);
-                    let _ = storage.remove_item(&format!("{key}.corrupt"));
-                    tracing::debug!(account_key = %key, "migrated legacy account blob to IndexedDB");
-                }
-                _ => {
-                    tracing::warn!(account_key = %key, "account blob migration read-back mismatch; keeping legacy copy");
-                }
-            }
-        }
-    }
+    use super::super::LocalStateStore;
+    use super::{ClientLocalState, merge_persisted_into_live};
 
     impl LocalStateStore {
-        /// The raw storage keys whose legacy localStorage blobs must be migrated:
-        /// the effective active account (or the anonymous sentinel), every known
-        /// account, and the anonymous namespace. Deduplicated, order-stable.
-        pub(crate) fn legacy_account_blob_keys(&self) -> Vec<String> {
-            let root = self.read_root();
-            let mut dids: Vec<String> = Vec::new();
-            dids.push(
-                root.active_did
-                    .clone()
-                    .unwrap_or_else(|| ANONYMOUS_ACCOUNT_NAMESPACE.to_owned()),
-            );
-            for did in root.known_dids {
-                dids.push(did);
-            }
-            dids.push(ANONYMOUS_ACCOUNT_NAMESPACE.to_owned());
-            let mut seen = std::collections::HashSet::new();
-            dids.into_iter()
-                .filter(|did| seen.insert(did.clone()))
-                .map(|did| account_state_key(&did))
-                .collect()
-        }
-
-        /// Hydrate the active account's main state from the (now-migrated)
-        /// IndexedDB entry into `cached`, reconciling with any live writes made
+        /// Hydrate the active account's main state from the IndexedDB entry
+        /// into `cached`, reconciling with any live writes made
         /// before the durable tier was ready (live wins, stored fills gaps). Must
         /// run before `secure_store_bootstrap_ready` is published so the account
         /// state is authoritative before session/connect starts. Persists the
@@ -569,9 +458,6 @@ mod wasm_bootstrap {
         }
     }
 }
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) use wasm_bootstrap::migrate_localstorage_account_blobs;
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
 pub(crate) async fn run_browser_account_persist_fault_contract() -> anyhow::Result<()> {
@@ -693,46 +579,6 @@ pub(crate) async fn run_browser_account_persist_fault_contract() -> anyhow::Resu
         "retry did not clear the older failure"
     );
 
-    let migration_service = format!("account-persist-migration-{}", js_sys::Date::now());
-    let migration_key = format!(
-        "inkson.local_state.v1.account.did:example:migration-{}",
-        js_sys::Date::now()
-    );
-    let legacy = state_json("sx:legacy", &["legacy"])?;
-    let storage = web_sys::window()
-        .and_then(|window| window.local_storage().ok().flatten())
-        .context("browser localStorage is unavailable")?;
-    storage
-        .set_item(&migration_key, &legacy)
-        .map_err(|error| anyhow::anyhow!("seed migration source: {error:?}"))?;
-    let interrupted = IndexedDbSecureKeyStore::new_async(&migration_service)
-        .await
-        .context("open interrupted migration store")?;
-    interrupted.close_database_for_test();
-    migrate_localstorage_account_blobs(vec![migration_key.clone()], &interrupted).await;
-    anyhow::ensure!(
-        storage
-            .get_item(&migration_key)
-            .map_err(|error| anyhow::anyhow!("read interrupted source: {error:?}"))?
-            .as_deref()
-            == Some(legacy.as_str()),
-        "interrupted migration deleted its only source"
-    );
-    let migration_retry = IndexedDbSecureKeyStore::new_async(&migration_service)
-        .await
-        .context("reopen migration store")?;
-    migrate_localstorage_account_blobs(vec![migration_key.clone()], &migration_retry).await;
-    anyhow::ensure!(
-        storage
-            .get_item(&migration_key)
-            .map_err(|error| anyhow::anyhow!("read migrated source: {error:?}"))?
-            .is_none(),
-        "successful migration kept the plaintext source"
-    );
-    anyhow::ensure!(
-        migration_retry.get_secret(&migration_key)?.as_deref() == Some(legacy.as_str()),
-        "successful migration did not preserve the account state"
-    );
     Ok(())
 }
 
@@ -971,69 +817,6 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn corrupt_blob_backup_requires_durable_readback_match() {
-        use garth::{SecretBytes, SecureKeyStoreBackendInfo};
-
-        use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore, SecureKeyStoreError};
-
-        struct MissingReadbackStore;
-
-        impl SecureKeyStore for MissingReadbackStore {
-            fn store_secret_bytes(
-                &self,
-                _key: &str,
-                _value: &[u8],
-            ) -> Result<(), SecureKeyStoreError> {
-                Ok(())
-            }
-
-            fn get_secret_bytes(
-                &self,
-                _key: &str,
-            ) -> Result<Option<SecretBytes>, SecureKeyStoreError> {
-                Ok(None)
-            }
-
-            fn delete_secret(&self, _key: &str) -> Result<(), SecureKeyStoreError> {
-                Ok(())
-            }
-
-            fn list_secret_keys(
-                &self,
-                _prefix: Option<&str>,
-            ) -> Result<Vec<String>, SecureKeyStoreError> {
-                Ok(Vec::new())
-            }
-
-            fn backend_info(&self) -> SecureKeyStoreBackendInfo {
-                SecureKeyStoreBackendInfo {
-                    name: "missing_readback_test",
-                    hardware_backed: false,
-                    exportable: false,
-                }
-            }
-        }
-
-        let committed = MemorySecureKeyStore::new();
-        preserve_corrupt_account_blob_durable(&committed, "account.corrupt", "{broken")
-            .await
-            .expect("committed backup must pass read-back verification");
-        assert_eq!(
-            committed.get_secret("account.corrupt").unwrap().as_deref(),
-            Some("{broken")
-        );
-
-        let error = preserve_corrupt_account_blob_durable(
-            &MissingReadbackStore,
-            "account.corrupt",
-            "{broken",
-        )
-        .await
-        .expect_err("source deletion gate must reject a missing durable read-back");
-        assert!(error.to_string().contains("read-back mismatch"));
-    }
-
     #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
     #[wasm_bindgen_test::wasm_bindgen_test(async)]
     async fn browser_rapid_writes_coalesce_and_reload_latest_cursor_and_dedupe_window() {
@@ -1231,40 +1014,5 @@ mod tests {
             serde_json::from_str(&reopened.get_secret(key).unwrap().expect("retry persisted"))
                 .unwrap();
         assert_eq!(state.sync_cursor.as_deref(), Some("sx:retry"));
-    }
-
-    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-    #[wasm_bindgen_test::wasm_bindgen_test(async)]
-    async fn browser_migration_interruption_keeps_source_then_retry_removes_it() {
-        let service = browser_test_service("migration-interrupt");
-        let key = format!(
-            "inkson.local_state.v1.account.did:example:migrate-{}",
-            js_sys::Date::now()
-        );
-        let legacy = account_state_json("sx:legacy", &["event-legacy"]);
-        let storage = web_sys::window()
-            .and_then(|window| window.local_storage().ok().flatten())
-            .expect("browser localStorage");
-        storage.set_item(&key, &legacy).expect("seed legacy state");
-
-        let interrupted = IndexedDbSecureKeyStore::new_async(&service)
-            .await
-            .expect("open migration store");
-        interrupted.close_database_for_test();
-        migrate_localstorage_account_blobs(vec![key.clone()], &interrupted).await;
-        assert_eq!(
-            storage.get_item(&key).unwrap().as_deref(),
-            Some(legacy.as_str())
-        );
-
-        let retry = IndexedDbSecureKeyStore::new_async(&service)
-            .await
-            .expect("reopen migration store");
-        migrate_localstorage_account_blobs(vec![key.clone()], &retry).await;
-        assert!(storage.get_item(&key).unwrap().is_none());
-        assert_eq!(
-            retry.get_secret(&key).unwrap().as_deref(),
-            Some(legacy.as_str())
-        );
     }
 }

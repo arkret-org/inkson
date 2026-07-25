@@ -47,21 +47,12 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         .write()
                         .switch_active_account(&account_did_for_secure_upgrade());
                     tracing::debug!(target: "secure_store", "secure store upgrade: Ok(Some) — IndexedDb tier installed");
-                    // Phase 2: one-time migration of legacy localStorage account
-                    // blobs into the IndexedDB encrypted entries store, then
-                    // hydrate the active account's main state into `cached` before
+                    // Hydrate the active account's main state from the IndexedDB
+                    // encrypted entries store into `cached` before
                     // anything downstream reads it. Runs before the E2EE plaintext
                     // cache hydration (which merges plaintext INTO the account
                     // state) and before `secure_store_bootstrap_ready` is published
                     // so the account state is authoritative before session/connect.
-                    let account_blob_keys = state_store_for_secure_upgrade
-                        .read()
-                        .legacy_account_blob_keys();
-                    crate::state::migrate_localstorage_account_blobs(
-                        account_blob_keys,
-                        secure_store.as_ref(),
-                    )
-                    .await;
                     state_store_for_secure_upgrade
                         .write()
                         .hydrate_active_account_state_from_secure_store();

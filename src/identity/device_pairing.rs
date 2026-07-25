@@ -35,7 +35,7 @@ pub struct PendingPairingRequest {
     /// short-link (`ak.open.device_pairing.command.stage`), the staged
     /// `device_pairing_request_id`. Echoed back into `account_device_pair` so the
     /// server flips the staged row to `authorized` for the new device's status
-    /// poll. `None` for legacy direct QR/paste pairing.
+    /// poll. `None` for direct QR/paste pairing.
     pub device_pairing_request_id: Option<String>,
     /// The exact payload handed to [`pairing_request_body`].
     pub request_payload: Value,
@@ -144,7 +144,7 @@ pub fn pairing_request_body(
     )
     .map_err(anyhow::Error::msg)?;
     let new_device_pubkey = match payload.get("new_device_pubkey") {
-        Some(value @ Value::Object(_)) => pairing_gate_public_key(value)?,
+        Some(value @ Value::Object(_)) => serde_json::from_value(value.clone())?,
         _ => anyhow::bail!("pairing payload is missing new_device_pubkey"),
     };
     let challenge_signature = arkret_sdk::Base64UrlString::new(
@@ -187,59 +187,6 @@ pub fn pairing_request_body(
     })
 }
 
-/// Normalize a pairing `new_device_pubkey` into the gate-canonical
-/// [`arkret_sdk::PublicKey`] (`{kty, kid, alg, key, key_digest?}`).
-///
-/// Two shapes reach here: the spec-canonical object (key material under `key`)
-/// and the legacy pairing/QR payload that carried it under `public_key`. Because
-/// `PublicKey` denies unknown fields, a legacy payload — even one that already
-/// includes `kty` — cannot be deserialized directly; it must be rewritten. We
-/// therefore only fast-path an object that is already canonical (`key` present
-/// and no legacy `public_key`) and normalize everything else, tolerating either
-/// field name and preserving a provided `kty` when present.
-fn pairing_gate_public_key(value: &Value) -> anyhow::Result<arkret_sdk::PublicKey> {
-    let object = value
-        .as_object()
-        .ok_or_else(|| anyhow::anyhow!("new_device_pubkey must be an object"))?;
-
-    if object.contains_key("key") && !object.contains_key("public_key") {
-        return serde_json::from_value(value.clone()).map_err(Into::into);
-    }
-
-    let kid = object
-        .get("kid")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("new_device_pubkey is missing kid"))?;
-    let alg = object
-        .get("alg")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("new_device_pubkey is missing alg"))?;
-    let key = object
-        .get("key")
-        .or_else(|| object.get("public_key"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("new_device_pubkey is missing key material"))?;
-    let kty = match object.get("kty").and_then(Value::as_str) {
-        Some(kty) if !kty.trim().is_empty() => kty.to_owned(),
-        _ => match alg {
-            "Ed25519" | "EdDSA" => "OKP".to_owned(),
-            _ => anyhow::bail!(
-                "new_device_pubkey alg `{alg}` cannot be mapped to a gate public-key type"
-            ),
-        },
-    };
-    let mut gate_value = json!({
-        "kty": kty,
-        "kid": kid,
-        "alg": alg,
-        "key": key,
-    });
-    if let Some(key_digest) = object.get("key_digest") {
-        gate_value["key_digest"] = key_digest.clone();
-    }
-    serde_json::from_value(gate_value).map_err(Into::into)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,9 +203,10 @@ mod tests {
                 "purpose": "same_principal_device_authorization",
                 "pairing_code": "7H2K9M4Q",
                 "new_device_pubkey": {
+                    "kty": "OKP",
                     "kid": "ak:device:01904100-0000-7000-8000-000000000001",
-                    "alg": "Ed25519",
-                    "public_key": "abc-123"
+                    "alg": "EdDSA",
+                    "key": "abc-123"
                 },
                 "challenge_signature": "challenge-signature",
                 "device_metadata": {
@@ -338,10 +286,6 @@ mod tests {
 
     #[test]
     fn body_accepts_canonical_pubkey_with_kty() {
-        // The real payload `build_pair_payload` emits: canonical `key` field
-        // WITH `kty` present. Before the fix this hit the direct-deserialize
-        // fast path and failed on the (then) `public_key` field; now it must
-        // convert cleanly whether the material is under `key`...
         let payload = json!({
             "pairing_code": "7H2K9M4Q",
             "challenge_signature": "challenge-signature",
@@ -358,9 +302,7 @@ mod tests {
     }
 
     #[test]
-    fn body_accepts_legacy_public_key_with_kty() {
-        // ...or under the legacy `public_key` name even alongside `kty` (older
-        // QR payloads already in circulation). The normalizer renames it.
+    fn body_rejects_noncanonical_public_key_field() {
         let payload = json!({
             "pairing_code": "7H2K9M4Q",
             "challenge_signature": "challenge-signature",
@@ -371,9 +313,7 @@ mod tests {
                 "public_key": "abc-123"
             }
         });
-        let body = pairing_request_body(&payload).expect("legacy body");
-        assert_eq!(body.new_device_pubkey.kty.as_str(), "OKP");
-        assert_eq!(body.new_device_pubkey.key.as_str(), "abc-123");
+        assert!(pairing_request_body(&payload).is_err());
     }
 
     #[test]
