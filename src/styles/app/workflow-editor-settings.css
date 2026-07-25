@@ -56,11 +56,6 @@
     border-top: 1px solid var(--border, var(--ak-line));
   }
 }
-.chat-message-actions {
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-}
 .compact-composer {
   padding: 10px;
 }

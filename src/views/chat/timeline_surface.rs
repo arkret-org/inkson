@@ -153,10 +153,8 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                             // Deep-link focus target (design/route-view-ia.md §3.2).
                             let is_focus_message =
                                 !focus_message_id.is_empty() && msg.id == focus_message_id;
-                            // T7: shared per-message action dispatchers. The hover
-                            // action row and the right-click context menu both call
-                            // these closures so the two surfaces expose an identical
-                            // action set without duplicating the underlying logic.
+                            // Shared per-message dispatchers keep the overflow-button
+                            // and context-click paths on the same action set.
                             // Signals are `Copy`, so each closure re-shadows the ones
                             // it mutates as a local `mut` copy to stay a plain `Fn`.
                             let reply_action: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
@@ -183,15 +181,16 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                 let msg_id = msg.id.clone();
                                 move || controller.confirm_redaction(msg_id.clone())
                             });
-                            // T7: holder-private save, shared between the context
-                            // menu and the hover `chat-save-button`. Writes the
-                            // `ak.saved.v1:*` account-data entry exactly like the
-                            // `ak.saved.v1e context-menu handler.
+                            // Holder-private save is shared by every way the
+                            // message action menu can be opened.
                             let private_save_action: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
                                 let context = command_context.clone();
                                 let target_ref = message_target_ref.clone();
                                 move || controller.save_message_private(context.clone(), target_ref.clone())
                             });
+                            let message_menu_is_open =
+                                message_context_menu().as_deref() == Some(msg.id.as_str());
+                            let message_menu_id = format!("message-actions-{}", msg.id);
                             rsx! {
                         div {
                             key: "{msg.id}",
@@ -274,15 +273,25 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                     "aria-label": "This message is part of the Circle named {circle.title}",
                                 }
                             }
-                            // Tiny pop-out menu. Shared pin writes durable
-                            // `ak.pin.*`; private save writes `ak.saved.v1:*`
-                            // through holder-private account-d`ak.saved.v1
-                            // The render condition checks per-message
-                            // so only one menu is visible at a time.
-                            if message_context_menu().as_deref() == Some(msg.id.as_str()) {
+                            // Shared pins and holder-private saved items remain
+                            // distinct operations inside the same compact menu.
+                            if message_menu_is_open {
                                 div {
+                                    class: "message-context-menu-scrim",
+                                    "aria-hidden": "true",
+                                    onclick: move |_| controller.close_message_menu(),
+                                }
+                                div {
+                                    id: "{message_menu_id}",
                                     class: "message-context-menu",
                                     "data-testid": "message-context-menu",
+                                    role: "menu",
+                                    "aria-label": crate::i18n::tr("message.actions"),
+                                    onkeydown: move |event: KeyboardEvent| {
+                                        if event.key().to_string() == "Escape" {
+                                            controller.close_message_menu();
+                                        }
+                                    },
                                     {
                                         let target_ref = msg.pin_saved_target_ref().to_owned();
                                         let is_pinned = shared_pins()
@@ -294,16 +303,12 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                         let strand_for_pin = msg.strand_id.clone();
                                         let target_for_pin = target_ref.clone();
                                         rsx! {
-                                            // T7: mirror the hover action row so both
-                                            // surfaces expose the same action set. The
-                                            // entries reuse the shared per-message
-                                            // dispatchers and only add the menu-close
-                                            // glue. Hidden for redacted messages, same
-                                            // as the hover row.
                                             if !msg.redacted && !message_is_read_only_shared {
                                                 Button {
                                                     variant: ButtonVariant::Secondary,
                                                     r#type: "button",
+                                                    class: "message-context-menu-item",
+                                                    role: "menuitem",
                                                     "data-testid": "message-context-reply-button",
                                                     disabled: msg.reply_target_ref().is_none(),
                                                     onclick: {
@@ -318,6 +323,8 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                 Button {
                                                     variant: ButtonVariant::Secondary,
                                                     r#type: "button",
+                                                    class: "message-context-menu-item",
+                                                    role: "menuitem",
                                                     "data-testid": "message-context-react-button",
                                                     onclick: {
                                                         let react_action = react_action.clone();
@@ -331,6 +338,8 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                 Button {
                                                     variant: ButtonVariant::Secondary,
                                                     r#type: "button",
+                                                    class: "message-context-menu-item",
+                                                    role: "menuitem",
                                                     "data-testid": "message-context-edit-button",
                                                     onclick: {
                                                         let edit_action = edit_action.clone();
@@ -341,24 +350,13 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                     },
                                                     {crate::i18n::tr("common.edit")}
                                                 }
-                                                Button {
-                                                    variant: ButtonVariant::Secondary,
-                                                    r#type: "button",
-                                                    "data-testid": "message-context-redact-button",
-                                                    onclick: {
-                                                        let redact_action = redact_action.clone();
-                                                        move |_| {
-                                                            (*redact_action)();
-                                                            controller.close_message_menu();
-                                                        }
-                                                    },
-                                                    {crate::i18n::tr("chat.button.redact")}
-                                                }
                                             }
                                             if !message_is_read_only_shared {
                                             Button {
                                                 variant: ButtonVariant::Secondary,
                                                 r#type: "button",
+                                                class: "message-context-menu-item",
+                                                role: "menuitem",
                                                 "data-testid": "message-shared-pin-button",
                                                 "data-source": "shared-event",
                                                 "data-permission": if is_pinned { "ak.pin.remove" } else { "ak.pin.add" },
@@ -384,15 +382,12 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                             Button {
                                                 variant: ButtonVariant::Secondary,
                                                 r#type: "button",
+                                                class: "message-context-menu-item",
+                                                role: "menuitem",
                                                 disabled: is_saved_private,
                                                 "data-testid": "message-private-save-button",
                                                 "data-source": "private-account-data",
                                                 "data-account-data-prefix": "ak.saved.v1",
-                                                // T7: delegates to the shared dispatcher
-                                                // (also used by the hover
-                                                // `chat-save-button`); it handles the
-                                                // already-saved early-return and closes
-                                                // the menu itself.
                                                 onclick: {
                                                     let private_save_action = private_save_action.clone();
                                                     move |_| (*private_save_action)()
@@ -403,13 +398,22 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                     {crate::i18n::tr("message.private_save")}
                                                 }
                                             }
-                                            Button {
-                                                variant: ButtonVariant::Secondary,
-                                                r#type: "button",
-                                                onclick: move |_| {
-                                                    controller.close_message_menu();
-                                                },
-                                                "Cancel"
+                                            if !msg.redacted && !message_is_read_only_shared {
+                                                Button {
+                                                    variant: ButtonVariant::Destructive,
+                                                    r#type: "button",
+                                                    class: "message-context-menu-item danger",
+                                                    role: "menuitem",
+                                                    "data-testid": "message-context-redact-button",
+                                                    onclick: {
+                                                        let redact_action = redact_action.clone();
+                                                        move |_| {
+                                                            (*redact_action)();
+                                                            controller.close_message_menu();
+                                                        }
+                                                    },
+                                                    {crate::i18n::tr("chat.button.redact")}
+                                                }
                                             }
                                         }
                                     }
@@ -738,99 +742,32 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                     }
                                 }
                                 if !msg.redacted {
-                                    div { class: "actions chat-message-actions",
-                                        if !message_is_read_only_shared {
+                                    div {
+                                        class: if message_menu_is_open {
+                                            "chat-message-actions is-open"
+                                        } else {
+                                            "chat-message-actions"
+                                        },
                                         Button {
                                             variant: ButtonVariant::Secondary,
-                                            class: "chat-message-action",
-                                            "data-testid": "chat-reply-button",
-                                            disabled: msg.reply_target_ref().is_none(),
+                                            r#type: "button",
+                                            class: "chat-message-menu-button",
+                                            "data-testid": "chat-message-menu-button",
+                                            title: crate::i18n::tr("message.actions"),
+                                            "aria-label": crate::i18n::tr("message.actions"),
+                                            "aria-haspopup": "menu",
+                                            "aria-controls": "{message_menu_id}",
+                                            "aria-expanded": if message_menu_is_open { "true" } else { "false" },
                                             onclick: {
-                                                let reply_action = reply_action.clone();
-                                                move |_| (*reply_action)()
+                                                let msg_id = msg.id.clone();
+                                                move |_| controller.toggle_message_menu(msg_id.clone())
                                             },
-                                            {crate::i18n::tr("chat.button.reply")}
-                                        }
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            class: "chat-message-action",
-                                            "data-testid": "chat-react-button",
-                                            onclick: {
-                                                let react_action = react_action.clone();
-                                                move |_| (*react_action)()
+                                            onkeydown: move |event: KeyboardEvent| {
+                                                if event.key().to_string() == "Escape" {
+                                                    controller.close_message_menu();
+                                                }
                                             },
-                                            {crate::i18n::tr("chat.button.react")}
-                                        }
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            class: "chat-message-action",
-                                            "data-testid": "chat-edit-button",
-                                            onclick: {
-                                                let edit_action = edit_action.clone();
-                                                move |_| (*edit_action)()
-                                            },
-                                            {crate::i18n::tr("common.edit")}
-                                        }
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            class: "chat-message-action",
-                                            "data-testid": "chat-redact-button",
-                                            onclick: {
-                                                let redact_action = redact_action.clone();
-                                                move |_| (*redact_action)()
-                                            },
-                                            {crate::i18n::tr("chat.button.redact")}
-                                        }
-                                        // Shared-pin toggle exposed directly on the
-                                        // hover action row (mirrors the right-click
-                                        // context-menu pin), so E2E and keyboard
-                                        // users can pin without the native menu.
-                                        // Writes the same durable `ak.pin.*` events.
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            class: "chat-message-action",
-                                            "data-testid": "chat-pin-button",
-                                            "data-source": "shared-event",
-                                            "data-pinned": if message_is_pinned { "true" } else { "false" },
-                                            "data-permission": if message_is_pinned { "ak.pin.remove" } else { "ak.pin.add" },
-                                            onclick: {
-                                                let context = command_context.clone();
-                                                let realm_id = msg.realm_id.clone();
-                                                let strand_id = msg.strand_id.clone();
-                                                let target_ref = message_target_ref.clone();
-                                                move |_| controller.toggle_shared_pin(
-                                                    context.clone(),
-                                                    realm_id.clone(),
-                                                    strand_id.clone(),
-                                                    target_ref.clone(),
-                                                )
-                                            },
-                                            if message_is_pinned {
-                                                {crate::i18n::tr("message.shared_unpin")}
-                                            } else {
-                                                {crate::i18n::tr("message.shared_pin")}
-                                            }
-                                        }
-                                        }
-                                        // T7: holder-private save exposed on the hover
-                                        // action row, mirroring the context-menu entry.
-                                        // Both delegate to the shared dispatcher.
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            class: "chat-message-action",
-                                            disabled: message_is_saved_private,
-                                            "data-testid": "chat-save-button",
-                                            "data-source": "private-account-data",
-                                            "data-account-data-prefix": "ak.saved.v1",
-                                            onclick: {
-                                                let private_save_action = private_save_action.clone();
-                                                move |_| (*private_save_action)()
-                                            },
-                                            if message_is_saved_private {
-                                                {crate::i18n::tr("message.private_saved")}
-                                            } else {
-                                                {crate::i18n::tr("message.private_save")}
-                                            }
+                                            UiIcon { name: "more-horizontal" }
                                         }
                                     }
                                 }

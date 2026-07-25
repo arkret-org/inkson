@@ -36,6 +36,8 @@ test("chat reloads sent messages and keeps actor sequence increasing", async ({ 
   await expect(reloadedMessage).toHaveClass(/is-own/);
   await expect(reloadedMessage.locator(".name")).toHaveText("inkson");
   await expect(reloadedMessage).not.toContainText("did:web:alice.example");
+  const compactMessageBox = await reloadedMessage.locator(".msg-body").boundingBox();
+  expect(compactMessageBox?.height).toBeLessThan(80);
 
   const secondSend = page.waitForRequest(
     (request) => request.url().endsWith("/_arkret/self/events") && request.method() === "POST",
@@ -74,7 +76,7 @@ test("chat composer sends with Ctrl+Enter", async ({ page }) => {
   await expect(page.getByTestId("chat-status")).toContainText(/Message sent|Send Secure/);
 });
 
-test("chat send failures mark the message and keep actions quiet until hover", async ({ page }) => {
+test("chat send failures keep the compact action menu quiet until hover", async ({ page }) => {
   await refreshServer(page);
   await openDiscussion(page);
   await createDiscussion(page, "Failure Discussion");
@@ -111,10 +113,16 @@ test("chat send failures mark the message and keep actions quiet until hover", a
   await expect(message).toHaveClass(/is-failed/);
   await expect(page.getByTestId("chat-message-error").last()).toContainText("transient send failure");
   await expect(page.getByTestId("chat-retry-button").last()).toBeVisible();
-  await expect(page.getByTestId("chat-reply-button").last()).toBeHidden();
+  const messageActionHost = message.locator(".chat-message-actions");
+  const messageMenuButton = page.getByTestId("chat-message-menu-button").last();
+  await expect(messageActionHost).toHaveCSS("opacity", "0");
 
   await message.hover();
-  await expect(page.getByTestId("chat-reply-button").last()).toBeVisible();
+  await expect(messageActionHost).toHaveCSS("opacity", "1");
+  await expect(messageMenuButton).toBeVisible();
+  await messageMenuButton.click();
+  await expect(page.getByTestId("message-context-menu")).toBeVisible();
+  await expect(page.getByTestId("message-context-reply-button")).toBeVisible();
 });
 
 test("chat membership denial restores draft without panicking", async ({ page }) => {

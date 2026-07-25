@@ -145,8 +145,7 @@
   line-height: 1;
 }
 
-.message-retry-button,
-.chat-message-action {
+.message-retry-button {
   border: 0;
   background: transparent;
   box-shadow: none;
@@ -167,38 +166,68 @@
 }
 
 .chat-message-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 1px;
+  position: absolute;
+  top: -13px;
+  right: 8px;
+  z-index: 2;
+  display: inline-flex;
+  margin: 0;
   opacity: 0;
-  visibility: hidden;
   pointer-events: none;
-  transition: opacity 120ms ease;
+  transform: translateY(2px);
+  transition: opacity 100ms ease, transform 100ms ease;
 }
 
 .discussion-message:hover .chat-message-actions,
-.discussion-message:focus-within .chat-message-actions {
+.discussion-message:focus-within .chat-message-actions,
+.chat-message-actions.is-open {
   opacity: 1;
-  visibility: visible;
   pointer-events: auto;
+  transform: translateY(0);
 }
 
-.chat-message-action {
+.chat-message-menu-button {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 26px;
+  min-width: 28px;
+  min-height: 26px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
   color: var(--text-2);
-  font-size: 11px;
-  font-weight: 500;
-  opacity: 0.78;
+  background: var(--surface-solid, var(--surface));
+  box-shadow: var(--shadow-sm);
 }
 
-.chat-message-action:hover,
-.chat-message-action:focus-visible,
+.chat-message-menu-button .ui-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.chat-message-menu-button:hover,
+.chat-message-menu-button:focus-visible,
+.chat-message-actions.is-open .chat-message-menu-button {
+  color: var(--accent-ink);
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border-strong));
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  outline: none;
+}
+
 .message-retry-button:hover,
 .message-retry-button:focus-visible {
   color: var(--accent-ink);
-  opacity: 1;
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+@media (hover: none) {
+  .chat-message-actions {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
 }
 
 .discussion-empty {

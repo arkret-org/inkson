@@ -186,6 +186,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("common.online", "online");
     dict.set("common.offline", "offline");
     dict.set("common.reconnecting", "reconnecting");
+    dict.set("message.actions", "Message actions");
 
     // R-i18n-002 extra keys for the highest-visibility surfaces.
     dict.set(

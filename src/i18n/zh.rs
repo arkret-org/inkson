@@ -262,6 +262,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("common.online", "在线");
     dict.set("common.offline", "离线");
     dict.set("common.reconnecting", "重连中");
+    dict.set("message.actions", "消息操作");
 
     // R-i18n-002 mirrored keys.
     dict.set("topbar.search_placeholder", "跳转到 Realm、视图或操作...");
