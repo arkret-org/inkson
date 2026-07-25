@@ -546,31 +546,74 @@ pub fn english_translations() -> TranslationDict {
     dict.set("recovery.title", "Recovery");
     dict.set("recovery.recovery_key_section", "Recovery Key (24 words)");
     dict.set("recovery.social_section", "Social Recovery");
-    dict.set("mls_unlock.aria_label", "Authorize this device");
-    dict.set("mls_unlock.title", "Authorize this device");
-    dict.set("mls_unlock.subtitle", "Existing device approval");
+    dict.set("device_authorization.aria_label", "Authorize this device");
+    dict.set("device_authorization.title", "Authorize this device");
     dict.set(
-        "mls_unlock.description",
-        "This browser is signed in, but it is not an authorized device for encrypted history yet. Arkret v1 requires an already-authorized device to approve a new device before MLS history keys are shared.",
+        "device_authorization.subtitle",
+        "Approve from another device",
     );
     dict.set(
-        "mls_unlock.approve_step_existing_title",
+        "device_authorization.description",
+        "This browser is signed in, but it is not yet trusted for encrypted data. Start an approval request here. An authorized device that is online will usually show a confirmation prompt automatically.",
+    );
+    dict.set(
+        "device_authorization.approve_step_existing_title",
         "On an existing device",
     );
     dict.set(
+        "device_authorization.approve_step_existing_body",
+        "Compare the 8-character code in the confirmation prompt, then approve. If no prompt appears, open Settings → Devices → Add a device and refresh requests.",
+    );
+    dict.set(
+        "device_authorization.approve_step_new_title",
+        "On this browser",
+    );
+    dict.set(
+        "device_authorization.approve_step_new_body",
+        "Keep the approval request open. After approving on the other device, return here and check the status.",
+    );
+    dict.set(
+        "device_authorization.limitation",
+        "Until approved, encrypted history and security-sensitive actions remain unavailable. You can continue with limited access and return to this step at any time.",
+    );
+    dict.set("device_authorization.open_pairing", "Start device approval");
+    dict.set(
+        "device_authorization.dismiss",
+        "Continue with limited access",
+    );
+    dict.set("device_authorization.reopen", "Authorize this device");
+    dict.set("mls_unlock.aria_label", "Restore encrypted history");
+    dict.set("mls_unlock.title", "Restore encrypted history");
+    dict.set(
+        "mls_unlock.subtitle",
+        "Use another device or your Recovery Key",
+    );
+    dict.set(
+        "mls_unlock.description",
+        "This device is authorized, but it does not yet have the keys needed to open encrypted history. Restore them from another authorized device or with your Recovery Key.",
+    );
+    dict.set(
+        "mls_unlock.approve_step_existing_title",
+        "From another authorized device",
+    );
+    dict.set(
         "mls_unlock.approve_step_existing_body",
-        "Open Settings -> Devices -> Pair new device, review the pending request, compare the code, and approve it.",
+        "If this device still shows an approval request, approve it on the other device and compare the code. Key sharing continues after approval.",
     );
     dict.set("mls_unlock.approve_step_new_title", "On this browser");
     dict.set(
         "mls_unlock.approve_step_new_body",
-        "Open the pairing request screen and keep it available while the existing device approves.",
+        "Keep this tab open while keys are restored, or choose Use recovery key instead below.",
     );
     dict.set(
         "mls_unlock.loading_hint",
         "Restoring multiple encrypted realms can take a few seconds. Keep this tab open.",
     );
-    dict.set("mls_unlock.open_pairing", "Show pairing request");
+    dict.set(
+        "mls_unlock.limitation",
+        "You can continue without restoring now, but older encrypted content stays unavailable until this step is complete.",
+    );
+    dict.set("mls_unlock.open_pairing", "Open device approval");
     dict.set("mls_unlock.show_recovery_key", "Use recovery key instead");
     dict.set("mls_unlock.hide_recovery_key", "Hide recovery key");
     dict.set(
@@ -580,8 +623,8 @@ pub fn english_translations() -> TranslationDict {
     dict.set("mls_unlock.placeholder", "24-word recovery key");
     dict.set("mls_unlock.button_idle", "Unlock with key");
     dict.set("mls_unlock.button_busy", "Unlocking...");
-    dict.set("mls_unlock.dismiss", "Do this later");
-    dict.set("mls_unlock.reopen", "Authorize this device");
+    dict.set("mls_unlock.dismiss", "Continue without history");
+    dict.set("mls_unlock.reopen", "Restore encrypted history");
     dict.set(
         "mls_unlock.status.enter_passphrase",
         "Enter your 24-word recovery key to unlock encrypted history.",

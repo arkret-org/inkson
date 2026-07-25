@@ -577,7 +577,7 @@
   font-weight: 700;
 }
 .mls-device-authorization-details .mls-device-authorization-path {
-  padding: 0 10px 10px;
+  padding: 10px;
 }
 .mls-device-authorization-step {
   display: grid;
@@ -596,6 +596,24 @@
   color: var(--text-2);
   font-size: 12px;
   line-height: 1.45;
+}
+.mls-device-authorization-limitation {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.mls-device-authorization-limitation svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  color: var(--warning);
 }
 .mls-recovery-modal textarea {
   width: 100%;

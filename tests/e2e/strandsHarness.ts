@@ -40,7 +40,7 @@ export async function dismissBlockingRecoveryModal(page: import("@playwright/tes
       break;
     }
     const dismiss = modal.getByRole("button", {
-      name: /^(Not now|Dismiss|Do this later)$/,
+      name: /^(Not now|Dismiss|Do this later|Continue with limited access|Continue without history)$/,
     });
     if ((await dismiss.count()) === 0) {
       break;
@@ -48,7 +48,11 @@ export async function dismissBlockingRecoveryModal(page: import("@playwright/tes
     await dismiss.first().evaluate((button: HTMLElement) => button.click());
     await page.waitForTimeout(150);
   }
-  const authorizeLater = page.getByRole("button", { name: "Do this later" }).last();
+  const authorizeLater = page
+    .getByRole("button", {
+      name: /^(Do this later|Continue with limited access|Continue without history)$/,
+    })
+    .last();
   if (await authorizeLater.isVisible().catch(() => false)) {
     await authorizeLater.click();
   }

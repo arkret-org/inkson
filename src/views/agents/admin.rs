@@ -18,7 +18,6 @@ use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::{use_navigator, use_route};
 use serde_json::Value;
-use yoface::utils::dom::copy_text_to_clipboard;
 
 use super::model::{
     AgentGrantPreset, AgentServiceScopePreset, agent_lifecycle_wire, agent_runtime_state_wire,
@@ -27,7 +26,7 @@ use super::model::{
     build_agent_provision_event_drafts, is_pairing_request_expired, render_agent_pairing_qr_svg,
     requested_scope_for_presets,
 };
-use crate::components::UiIcon;
+use crate::components::{QrSharePanel, UiIcon};
 use crate::routes::Route;
 use crate::transport::auth::{with_authed_api, with_authed_sdk_client, with_event_submitter};
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
@@ -35,7 +34,6 @@ use crate::ui::checkbox::Checkbox;
 use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
 use crate::ui::switch::Switch;
-use crate::ui::textarea::Textarea;
 use crate::views::helpers::short_protocol_id;
 
 fn normalize_agent_slug(value: &str) -> String {
@@ -1027,7 +1025,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
     // (key-management.md §3.6.1). Forced pause is no longer required.
     let mut replace_runtime_confirm_open = use_signal(|| false);
     let mut last_op_status = use_signal(String::new);
-    let mut copied_pairing_url = use_signal(String::new);
     let mut pairing_action_agent_id = use_signal(String::new);
     let mut pairing_action_phase = use_signal(PairingActionPhase::default);
     let state_store = crate::app::SessionContext::get().state_store;
@@ -1835,7 +1832,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                 } else {
                                     build_agent_pairing_deep_link(&base_url, &pairing_token)
                                 };
-                                let pairing_url_was_copied = copied_pairing_url() == deep_link;
                                 let pairing_qr_svg = render_agent_pairing_qr_svg(&deep_link);
                                 let pairing_badge = if !selected_pcr_recovery_ready {
                                     "badge amber"
@@ -1869,46 +1865,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                             }
                                             div { class: "agent-admin-pairing-head-actions",
                                                 span { class: "{pairing_badge}", "{pairing_label}" }
-                                                if selected_pcr_recovery_ready && !selected_pairing_is_expired {
-                                                    Button {
-                                                        variant: ButtonVariant::Secondary,
-                                                        size: ButtonSize::Sm,
-                                                        class: if pairing_url_was_copied {
-                                                            "btn agent-admin-pairing-action success"
-                                                        } else {
-                                                            "btn agent-admin-pairing-action"
-                                                        },
-                                                        "data-testid": "agent-admin-copy-pairing-link-button",
-                                                        disabled: deep_link.is_empty(),
-                                                        onclick: {
-                                                            let deep_link = deep_link.clone();
-                                                            move |_| {
-                                                                copy_text_to_clipboard(&deep_link);
-                                                                copied_pairing_url.set(deep_link.clone());
-                                                                let copied_url = deep_link.clone();
-                                                                spawn(async move {
-                                                                    crate::runtime_helpers::sleep_for(
-                                                                        Duration::from_millis(2_000),
-                                                                    )
-                                                                    .await;
-                                                                    if copied_pairing_url() == copied_url {
-                                                                        copied_pairing_url.set(String::new());
-                                                                    }
-                                                                });
-                                                            }
-                                                        },
-                                                        if pairing_url_was_copied {
-                                                            UiIcon { name: "check" }
-                                                        } else {
-                                                            UiIcon { name: "copy" }
-                                                        }
-                                                        span {
-                                                            "aria-live": "polite",
-                                                            "aria-atomic": "true",
-                                                            if pairing_url_was_copied { "Copied" } else { "Copy URL" }
-                                                        }
-                                                    }
-                                                }
                                             }
                                         }
                                         if !selected_pcr_recovery_ready {
@@ -2083,31 +2039,16 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                             }
                                         }
                                         if selected_pcr_recovery_ready && !selected_pairing_is_expired {
-                                            div { class: "agent-admin-pairing-panel",
-                                                div { class: "agent-admin-pairing-qr-pane",
-                                                    strong { class: "agent-admin-pairing-pane-label", "QR" }
-                                                    if pairing_qr_svg.is_empty() {
-                                                        div { class: "muted", "QR unavailable" }
-                                                    } else {
-                                                        div {
-                                                            class: "agent-admin-qr",
-                                                            "data-testid": "agent-admin-pairing-qr",
-                                                            role: "img",
-                                                            "aria-label": "Agent runtime pairing QR code",
-                                                            dangerous_inner_html: "{pairing_qr_svg}",
-                                                        }
-                                                    }
-                                                }
-                                                div { class: "agent-admin-pairing-url-pane",
-                                                    strong { class: "agent-admin-pairing-pane-label", "URL" }
-                                                    Textarea {
-                                                        class: "mono agent-admin-pairing-url-field",
-                                                        "data-testid": "agent-admin-pairing-url",
-                                                        readonly: true,
-                                                        rows: "7",
-                                                        value: "{deep_link}",
-                                                    }
-                                                }
+                                            QrSharePanel {
+                                                qr_svg: pairing_qr_svg,
+                                                url: deep_link,
+                                                qr_aria_label: "Agent runtime pairing QR code".to_owned(),
+                                                url_aria_label: "Agent runtime pairing URL".to_owned(),
+                                                qr_test_id: "agent-admin-pairing-qr".to_owned(),
+                                                url_test_id: "agent-admin-pairing-url".to_owned(),
+                                                copy_test_id: "agent-admin-copy-pairing-link-button".to_owned(),
+                                                copy_label: "Copy link".to_owned(),
+                                                url_rows: 5,
                                             }
                                         }
                                         if selected_can_renew_pairing {

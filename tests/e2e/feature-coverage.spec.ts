@@ -31,7 +31,9 @@ async function dismissBlockingDialog(page: import("@playwright/test").Page) {
     if (!(await dialog.isVisible().catch(() => false))) {
       return;
     }
-    const dismiss = dialog.getByRole("button", { name: /^(Not now|Dismiss)$/ });
+    const dismiss = dialog.getByRole("button", {
+      name: /^(Not now|Dismiss|Continue with limited access|Continue without history)$/,
+    });
     if ((await dismiss.count()) === 0) {
       return;
     }
@@ -161,6 +163,15 @@ test.describe("feature coverage placeholders", () => {
     await dismissBlockingDialog(page);
     await expect(page.getByTestId("pair-device-card")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("pending-pairing-requests-card")).toBeVisible({ timeout: 30_000 });
+    const deviceAccessNav = page.getByRole("navigation", { name: "Device settings" });
+    await expect(deviceAccessNav.getByRole("link", { name: "Add a device" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expect(deviceAccessNav.getByRole("link", { name: "Devices" })).toHaveAttribute(
+      "aria-current",
+      "false",
+    );
 
     // New device: staging yields a SHORT resolve deep-link (not the old
     // full-payload blob) in the pairing-link field.
@@ -169,6 +180,8 @@ test.describe("feature coverage placeholders", () => {
       /\/_arkret\/open\/device-pairing\/resolve#token=/,
       { timeout: 30_000 },
     );
+    await expect(page.getByTestId("pair-device-qr")).toBeVisible();
+    await expect(page.getByTestId("pair-device-copy-button")).toBeVisible();
     const pairingLink = await page.getByTestId("pair-device-secret").inputValue();
 
     // Authorized device: paste the link, resolve it, then approve.
@@ -203,6 +216,35 @@ test.describe("feature coverage placeholders", () => {
     // The resolved staged request id is echoed so the server flips the row.
     expect(body.device_pairing_request_id).toMatch(/^device_pairing_request:/);
     await expect(page.getByTestId("accept-pairing-status")).toContainText("Device paired");
+  });
+
+  test("device list keeps headers aligned and becomes labelled rows when narrow", async ({ page }) => {
+    await page.setViewportSize({ width: 1800, height: 1000 });
+    await page.goto("/settings/devices", { waitUntil: "domcontentloaded", timeout: 120_000 });
+    await dismissBlockingDialog(page);
+
+    const list = page.getByTestId("device-list");
+    await expect(list).toBeVisible({ timeout: 30_000 });
+    const headers = list.getByRole("columnheader");
+    const firstRow = list.getByTestId("device-row").first();
+    const cells = firstRow.getByRole("cell");
+    await expect(headers).toHaveCount(4);
+    await expect(cells).toHaveCount(4);
+
+    for (let index = 0; index < 4; index += 1) {
+      const headerBox = await headers.nth(index).boundingBox();
+      const cellBox = await cells.nth(index).boundingBox();
+      expect(headerBox).not.toBeNull();
+      expect(cellBox).not.toBeNull();
+      expect(Math.abs((headerBox?.x ?? 0) - (cellBox?.x ?? 0))).toBeLessThanOrEqual(2);
+    }
+
+    await page.setViewportSize({ width: 760, height: 900 });
+    await expect(firstRow.getByText("Verification", { exact: true })).toBeVisible();
+    const horizontalOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(horizontalOverflow).toBeLessThanOrEqual(1);
   });
 
   test("cross-signing: Run setup submits ak.cross_signing.publish into the principal control Realm", async ({

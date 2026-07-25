@@ -165,6 +165,9 @@ test("fresh browser requires device authorization before recovery or encryption 
   const authModal = latestTestId(page, "device-authorization-modal");
   await expect(authModal).toBeVisible({ timeout: 30_000 });
   await expect(authModal).toContainText("Authorize this device");
+  await expect(authModal).toContainText("will usually show a confirmation prompt automatically");
+  await expect(authModal).toContainText("encrypted history and security-sensitive actions remain unavailable");
+  await expect(authModal).not.toContainText("Arkret v1");
   await expect(latestTestId(page, "device-authorization-open-pairing")).toBeVisible();
   await expect(page.getByTestId("recommended-encryption-floor-modal")).toHaveCount(0);
   await expect(page.getByTestId("recovery-setup-banner")).toHaveCount(0);

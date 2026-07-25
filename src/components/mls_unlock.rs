@@ -262,12 +262,17 @@ pub fn MlsUnlockPrompt(
     };
 
     rsx! {
-        section {
-            class: "event mls-recovery-modal mls-account-unlock-banner mls-unlock-banner",
+        Dialog {
+            open: true,
+            on_open_change: move |open: bool| {
+                if !open && !busy() {
+                    dismissed.set(true);
+                }
+            },
             "data-testid": "mls-unlock-banner",
-            role: "region",
             "aria-labelledby": "mls-unlock-title",
-            div { class: "event-head",
+            div { class: "modal mls-recovery-modal mls-unlock-dialog",
+            div { class: "modal-head event-head",
                 div {
                     h3 { id: "mls-unlock-title", {crate::i18n::tr("mls_unlock.title")} }
                     span { class: "muted", {crate::i18n::tr("mls_unlock.subtitle")} }
@@ -285,14 +290,13 @@ pub fn MlsUnlockPrompt(
                     UiIcon { name: "x" }
                 }
             }
-            div { class: "mls-recovery-modal-body",
+            div { class: "modal-body mls-recovery-modal-body",
                 div { class: "muted",
                     {crate::i18n::tr("mls_unlock.description")}
                 }
-                details {
+                div {
                     class: "mls-device-authorization-details",
                     "data-testid": "mls-device-authorization-path",
-                    summary { {crate::i18n::tr("mls_unlock.subtitle")} }
                     div {
                         class: "mls-device-authorization-path",
                         div {
@@ -307,6 +311,10 @@ pub fn MlsUnlockPrompt(
                         }
                     }
                 }
+                div { class: "mls-device-authorization-limitation",
+                    UiIcon { name: "alert" }
+                    span { {crate::i18n::tr("mls_unlock.limitation")} }
+                }
                 if busy() {
                     div {
                         class: "muted",
@@ -318,8 +326,34 @@ pub fn MlsUnlockPrompt(
                 if !status().is_empty() {
                     div { class: "muted", "data-testid": "mls-unlock-status", "{status}" }
                 }
+                if recovery_key_open() {
+                    div { class: "actions mls-unlock-row mls-unlock-recovery-row",
+                        div { class: "muted mls-unlock-fallback-note",
+                            {crate::i18n::tr("mls_unlock.recovery_fallback_hint")}
+                        }
+                        Input {
+                            r#type: "password",
+                            "data-testid": "mls-unlock-passphrase",
+                            placeholder: crate::i18n::tr("mls_unlock.placeholder"),
+                            value: "{passphrase}",
+                            disabled: busy(),
+                            oninput: move |event: FormEvent| passphrase.set(event.value()),
+                        }
+                        Button {
+                            variant: ButtonVariant::Primary,
+                            "data-testid": "mls-unlock-submit",
+                            disabled: busy(),
+                            onclick: on_unlock,
+                            if busy() {
+                                {crate::i18n::tr("mls_unlock.button_busy")}
+                            } else {
+                                {crate::i18n::tr("mls_unlock.button_idle")}
+                            }
+                        }
+                    }
+                }
             }
-            div { class: "actions mls-unlock-row",
+            div { class: "modal-foot actions mls-unlock-row",
                 Link {
                     class: "primary",
                     "data-testid": "mls-unlock-open-pairing",
@@ -339,31 +373,6 @@ pub fn MlsUnlockPrompt(
                     }
                 }
             }
-            if recovery_key_open() {
-                div { class: "actions mls-unlock-row mls-unlock-recovery-row",
-                    div { class: "muted mls-unlock-fallback-note",
-                        {crate::i18n::tr("mls_unlock.recovery_fallback_hint")}
-                    }
-                    Input {
-                        r#type: "password",
-                        "data-testid": "mls-unlock-passphrase",
-                        placeholder: crate::i18n::tr("mls_unlock.placeholder"),
-                        value: "{passphrase}",
-                        disabled: busy(),
-                        oninput: move |event: FormEvent| passphrase.set(event.value()),
-                    }
-                    Button {
-                        variant: ButtonVariant::Primary,
-                        "data-testid": "mls-unlock-submit",
-                        disabled: busy(),
-                        onclick: on_unlock,
-                        if busy() {
-                            {crate::i18n::tr("mls_unlock.button_busy")}
-                        } else {
-                            {crate::i18n::tr("mls_unlock.button_idle")}
-                        }
-                    }
-                }
             }
         }
     }

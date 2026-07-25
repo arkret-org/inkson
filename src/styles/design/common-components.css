@@ -336,6 +336,99 @@ button[data-style="link"]:disabled:hover {
    ("Verified" / "Unverified") read as a pill rather than a count bubble. */
 .device-verification-badge { gap: 3px; min-width: 0; }
 
+/* Shared QR + URL handoff surface for invitations and all pairing flows. */
+.qr-share-container {
+  min-width: 0;
+  container-type: inline-size;
+}
+.qr-share-panel {
+  display: grid;
+  grid-template-columns: minmax(192px, 220px) minmax(0, 1fr);
+  align-items: stretch;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-2) 78%, var(--surface));
+}
+.qr-share-qr-pane,
+.qr-share-url-pane {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  min-width: 0;
+  padding: 14px;
+}
+.qr-share-qr-pane {
+  justify-items: center;
+  border-right: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
+}
+.qr-share-pane-label {
+  justify-self: start;
+  color: var(--text-3);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.qr-share-image {
+  max-width: 100%;
+  margin: 0;
+  box-sizing: border-box;
+}
+.qr-share-image svg {
+  display: block;
+  width: min(192px, 100%);
+  height: auto;
+}
+.qr-share-url-pane {
+  align-self: center;
+}
+.qr-share-url-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.qr-share-copy {
+  flex: 0 0 auto;
+}
+.qr-share-url-field {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-height: 132px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  resize: none;
+}
+.qr-share-hint {
+  font-size: 11px;
+  line-height: 1.4;
+}
+.qr-share-empty {
+  display: grid;
+  place-items: center;
+  width: 192px;
+  max-width: 100%;
+  aspect-ratio: 1;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+@container (max-width: 520px) {
+  .qr-share-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .qr-share-qr-pane {
+    border-right: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
+  }
+  .qr-share-url-head {
+    align-items: flex-start;
+  }
+}
+
 /* Member visual indicators (A1): agent/bot badge surfaced in member
    lists, @mention picker rows, and chat sender attribution wherever a
    DID identified by selector mention metadata is rendered. */

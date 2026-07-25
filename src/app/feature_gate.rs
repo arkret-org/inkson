@@ -116,7 +116,7 @@ pub(super) fn route_label(route: &Route) -> &'static str {
         Route::Call { .. } => "Call",
         Route::Recovery => "Recovery",
         Route::SettingsDevices => "Devices",
-        Route::SettingsDevicesPair => "Pair new device",
+        Route::SettingsDevicesPair => "Add a device",
         Route::SettingsRecovery => "Recovery",
         Route::Onboarding => "Onboarding",
         Route::Quarantine => "Invite Quarantine",

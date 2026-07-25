@@ -55,6 +55,7 @@ pub mod mls_history_backup;
 /// that restores encrypted history on a fresh device. Mounted once near the
 /// app shell; renders only when boot detection flags `needs_mls_unlock`.
 pub mod mls_unlock;
+pub mod qr_share_panel;
 pub mod recovery_key_setup_prompt;
 // YOU-02-008: the P3B.5 `offline_pending_badge` component was removed
 // together with the unwired offline-queue modules (see `src/lib.rs`).
@@ -112,6 +113,7 @@ pub(crate) use mls_history_backup::{
     schedule_mls_history_backup_after_commit, upload_mls_history_backup_now,
 };
 pub use mls_unlock::{MlsRecoverySetupMissingBanner, MlsUnlockPrompt};
+pub use qr_share_panel::QrSharePanel;
 pub use recovery_key_setup_prompt::RecoveryKeySetupPrompt;
 pub use report_problem::{
     CrashTelemetryPrefs, CrashTelemetryToggle, ReportProblemButton, build_report_body,

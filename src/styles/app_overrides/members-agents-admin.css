@@ -633,21 +633,6 @@
   overflow-wrap: anywhere;
 }
 
-.agent-admin-qr {
-  width: 192px;
-  max-width: 100%;
-  padding: 8px;
-  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
-  border-radius: 8px;
-  background: var(--surface);
-}
-
-.agent-admin-qr svg {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-
 .agent-admin-pairing-card {
   gap: 12px;
 }
@@ -661,59 +646,6 @@
   min-width: 0;
 }
 
-.agent-admin-pairing-action .ui-icon {
-  width: 14px;
-  height: 14px;
-}
-
-.agent-admin-pairing-action {
-  min-width: 104px;
-  justify-content: center;
-}
-
-.agent-admin-pairing-panel {
-  display: grid;
-  grid-template-columns: minmax(250px, 0.74fr) minmax(240px, 1.26fr);
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--surface-2) 78%, var(--surface));
-}
-
-.agent-admin-pairing-qr-pane,
-.agent-admin-pairing-url-pane {
-  display: grid;
-  align-content: start;
-  gap: 10px;
-  min-width: 0;
-  padding: 16px;
-}
-
-.agent-admin-pairing-qr-pane {
-  justify-items: stretch;
-  border-right: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
-}
-
-.agent-admin-pairing-card .agent-admin-qr {
-  justify-self: center;
-}
-
-.agent-admin-pairing-pane-label {
-  color: var(--text-3);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-}
-
-.agent-admin-pairing-url-field {
-  width: 100%;
-  min-height: 210px;
-  box-sizing: border-box;
-  resize: none;
-  overflow: auto;
-}
-
 @media (max-width: 900px) {
   .agent-admin-pairing-card .agent-admin-section-head {
     align-items: flex-start;
@@ -725,18 +657,6 @@
     width: 100%;
   }
 
-  .agent-admin-pairing-panel {
-    grid-template-columns: 1fr;
-  }
-
-  .agent-admin-pairing-qr-pane {
-    border-right: 0;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
-  }
-
-  .agent-admin-pairing-url-field {
-    min-height: 128px;
-  }
 }
 
 @media (min-width: 981px) {
@@ -983,42 +903,14 @@
   box-shadow: var(--shadow-lg);
 }
 
-.shell.app > .device-authorization-banner,
-.shell.app > .mls-account-unlock-banner {
-  position: fixed;
-  top: 50%;
-  right: auto;
-  bottom: auto;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: var(--layer-toast);
-  width: min(540px, calc(100vw - var(--sidebar-w, 264px) - 32px));
-  max-width: calc(100vw - 32px);
-  max-height: none;
-  overflow: visible;
-  padding: 12px 14px;
-  box-shadow: var(--shadow-lg);
-}
-
 .shell.app.sidebar-collapsed > .recovery-setup-banner {
   left: calc(var(--sidebar-collapsed-w, 72px) + 16px);
   max-width: min(760px, calc(100vw - var(--sidebar-collapsed-w, 72px) - 32px));
 }
 
-.shell.app.sidebar-collapsed > .device-authorization-banner,
-.shell.app.sidebar-collapsed > .mls-account-unlock-banner {
-  width: min(540px, calc(100vw - var(--sidebar-collapsed-w, 72px) - 32px));
-}
-
 .shell.app.rtl > .recovery-setup-banner {
   right: calc(var(--sidebar-w, 264px) + 16px);
   left: 16px;
-}
-
-.shell.app.rtl > .device-authorization-banner,
-.shell.app.rtl > .mls-account-unlock-banner {
-  right: auto;
-  left: 50%;
 }
 
 .shell.app.rtl.sidebar-collapsed > .recovery-setup-banner {
@@ -1184,38 +1076,12 @@
     z-index: var(--layer-sticky);
   }
 
-  .shell.app > .device-authorization-banner,
-  .shell.app > .mls-account-unlock-banner {
-    position: relative;
-    top: auto;
-    right: auto;
-    bottom: auto;
-    left: auto;
-    transform: none;
-    grid-column: 1;
-    grid-row: 2;
-    width: auto;
-    margin: 8px 12px;
-    max-width: none;
-    max-height: none;
-    overflow: visible;
-    padding: 10px 12px;
-    align-self: start;
-    z-index: var(--layer-sticky);
-  }
-
-  .shell.app > .recovery-setup-banner .actions,
-  .shell.app > .device-authorization-banner .actions,
-  .shell.app > .mls-account-unlock-banner .actions {
+  .shell.app > .recovery-setup-banner .actions {
     flex-direction: row;
   }
 
   .shell.app > .recovery-setup-banner .actions > .primary,
-  .shell.app > .recovery-setup-banner .actions > .secondary,
-  .shell.app > .device-authorization-banner .actions > .primary,
-  .shell.app > .device-authorization-banner .actions > .secondary,
-  .shell.app > .mls-account-unlock-banner .actions > .primary,
-  .shell.app > .mls-account-unlock-banner .actions > .secondary {
+  .shell.app > .recovery-setup-banner .actions > .secondary {
     width: auto;
     flex: 1 1 160px;
   }

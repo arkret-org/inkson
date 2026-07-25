@@ -34,7 +34,7 @@ use sections::*;
 use serde_json::{Map, Value, json};
 use widgets::*;
 
-use crate::components::{HelpTip, UiIcon};
+use crate::components::{HelpTip, QrSharePanel, UiIcon};
 use crate::config::LocalConfigStore;
 use crate::i18n::Locale;
 use crate::models::AccountDataSetResult;
@@ -48,7 +48,6 @@ use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
 use crate::ui::slider::Slider;
-use crate::ui::textarea::Textarea;
 use crate::views::helpers::{actor_display_label, short_protocol_id};
 use crate::workflows::blocked_release_workflows;
 
@@ -1294,21 +1293,6 @@ pub fn SettingsPanel(
                                                 variant: ButtonVariant::Secondary,
                                                 size: ButtonSize::Sm,
                                                 class: "btn invite-locator-action",
-                                                "data-testid": "settings-invite-locator-copy",
-                                                onclick: {
-                                                    let invite_url = invite_locator_url.clone();
-                                                    move |_| {
-                                                        copy_text_to_clipboard(&invite_url);
-                                                        crate::components::feedback::toast_success("feedback.copied_invite_url", vec![]);
-                                                    }
-                                                },
-                                                UiIcon { name: "copy" }
-                                                span { "Copy URL" }
-                                            }
-                                            Button {
-                                                variant: ButtonVariant::Secondary,
-                                                size: ButtonSize::Sm,
-                                                class: "btn invite-locator-action",
                                                 "data-testid": "settings-invite-locator-refresh",
                                                 onclick: move |_| {
                                                     let base = base_url();
@@ -1346,39 +1330,17 @@ pub fn SettingsPanel(
                                     if !invite_locator_status().is_empty() {
                                         div { class: "muted", "data-testid": "settings-invite-locator-status", "{invite_locator_status}" }
                                     }
-                                    div { class: "invite-locator-panel",
-                                        div { class: "invite-locator-qr-pane",
-                                            strong { class: "invite-locator-pane-label", "QR" }
-                                            if invite_locator_qr_svg.is_empty() {
-                                                div {
-                                                    class: "muted",
-                                                    "data-testid": "settings-invite-locator-qr-empty",
-                                                    "QR unavailable"
-                                                }
-                                            } else {
-                                                div {
-                                                    class: "qr-image",
-                                                    "data-testid": "settings-invite-locator-qr",
-                                                    role: "img",
-                                                    "aria-label": "Invite locator QR code",
-                                                    dangerous_inner_html: "{invite_locator_qr_svg}",
-                                                }
-                                            }
-                                        }
-                                        div {
-                                            class: "invite-locator-url-pane",
-                                            "data-testid": "settings-invite-locator-url-pane",
-                                            strong { class: "invite-locator-pane-label", "URL" }
-                                            Textarea {
-                                                id: "settings-invite-locator-url-input",
-                                                class: "mono invite-locator-url-field",
-                                                "data-testid": "settings-invite-locator-url",
-                                                "aria-label": "Invite locator URL",
-                                                title: "{invite_locator_url}",
-                                                readonly: true,
-                                                rows: "4",
-                                                value: "{invite_locator_url}",
-                                            }
+                                    div { "data-testid": "settings-invite-locator-url-pane",
+                                        QrSharePanel {
+                                            qr_svg: invite_locator_qr_svg,
+                                            url: invite_locator_url,
+                                            qr_aria_label: "Invite locator QR code".to_owned(),
+                                            url_aria_label: "Invite locator URL".to_owned(),
+                                            qr_test_id: "settings-invite-locator-qr".to_owned(),
+                                            url_test_id: "settings-invite-locator-url".to_owned(),
+                                            copy_test_id: "settings-invite-locator-copy".to_owned(),
+                                            copy_label: "Copy link".to_owned(),
+                                            url_rows: 4,
                                         }
                                     }
                                 } else {

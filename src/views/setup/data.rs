@@ -191,11 +191,7 @@ pub(super) const ANCHOR_PROFILE_OPTIONS: [(&str, &str, &str); 4] = [
 // `sha256` is the universal default; other choices target hardened
 // or interop-with-other-hash-systems deployments.
 pub(super) const HASH_PROFILE_OPTIONS: [(&str, &str, &str); 4] = [
-    (
-        "sha256",
-        "SHA-256",
-        "Default. Interoperable everywhere in Arkret v1.",
-    ),
+    ("sha256", "SHA-256", "Default. Interoperable everywhere."),
     (
         "sha512",
         "SHA-512",

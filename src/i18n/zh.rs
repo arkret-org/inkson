@@ -662,28 +662,68 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("recovery.title", "恢复");
     dict.set("recovery.recovery_key_section", "恢复密钥（24 词）");
     dict.set("recovery.social_section", "社交恢复");
-    dict.set("mls_unlock.aria_label", "授权此设备");
-    dict.set("mls_unlock.title", "授权此设备");
-    dict.set("mls_unlock.subtitle", "优先使用已授权设备确认");
+    dict.set("device_authorization.aria_label", "授权此设备");
+    dict.set("device_authorization.title", "授权此设备");
+    dict.set(
+        "device_authorization.subtitle",
+        "请在另一台已授权设备上确认",
+    );
+    dict.set(
+        "device_authorization.description",
+        "此浏览器已经登录，但尚未获得加密数据的信任。请先在这里发起审批；在线的已授权设备通常会自动弹出确认提示。",
+    );
+    dict.set(
+        "device_authorization.approve_step_existing_title",
+        "在已有设备上",
+    );
+    dict.set(
+        "device_authorization.approve_step_existing_body",
+        "在确认提示中比对 8 位验证码，然后批准。如果没有弹出提示，请打开“设置 → 设备 → 添加设备”并刷新待审批请求。",
+    );
+    dict.set(
+        "device_authorization.approve_step_new_title",
+        "在此浏览器上",
+    );
+    dict.set(
+        "device_authorization.approve_step_new_body",
+        "保持审批请求页面打开。在另一台设备批准后，回到这里检查状态。",
+    );
+    dict.set(
+        "device_authorization.limitation",
+        "批准前，加密历史和安全敏感操作仍不可用。你可以先以受限模式继续，并随时回来完成此步骤。",
+    );
+    dict.set("device_authorization.open_pairing", "开始设备审批");
+    dict.set("device_authorization.dismiss", "以受限模式继续");
+    dict.set("device_authorization.reopen", "授权此设备");
+    dict.set("mls_unlock.aria_label", "恢复加密历史");
+    dict.set("mls_unlock.title", "恢复加密历史");
+    dict.set("mls_unlock.subtitle", "使用另一台设备或恢复密钥");
     dict.set(
         "mls_unlock.description",
-        "此浏览器已经登录，但还不是可读取加密历史的已授权设备。Arkret v1 要求已有授权设备先批准新设备，然后才共享 MLS 历史密钥。",
+        "此设备已经获得授权，但尚未取得打开加密历史所需的密钥。请从另一台已授权设备恢复，或使用恢复密钥。",
     );
-    dict.set("mls_unlock.approve_step_existing_title", "在已有设备上");
+    dict.set(
+        "mls_unlock.approve_step_existing_title",
+        "从另一台已授权设备恢复",
+    );
     dict.set(
         "mls_unlock.approve_step_existing_body",
-        "打开 Settings -> Devices -> Pair new device，查看待审批请求，比对验证码后批准。",
+        "如果此设备仍显示审批请求，请在另一台设备上比对验证码并批准；批准后会继续共享密钥。",
     );
     dict.set("mls_unlock.approve_step_new_title", "在此浏览器上");
     dict.set(
         "mls_unlock.approve_step_new_body",
-        "打开配对请求页面并保持可见，等待已有设备完成批准。",
+        "恢复期间请保持此标签页打开，或在下方选择“改用恢复密钥”。",
     );
     dict.set(
         "mls_unlock.loading_hint",
         "批量恢复加密空间可能需要几秒钟，请保持此标签页打开。",
     );
-    dict.set("mls_unlock.open_pairing", "显示配对请求");
+    dict.set(
+        "mls_unlock.limitation",
+        "你可以暂时跳过恢复，但在完成此步骤前仍无法打开较早的加密内容。",
+    );
+    dict.set("mls_unlock.open_pairing", "打开设备审批");
     dict.set("mls_unlock.show_recovery_key", "改用恢复密钥");
     dict.set("mls_unlock.hide_recovery_key", "隐藏恢复密钥");
     dict.set(
@@ -693,8 +733,8 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("mls_unlock.placeholder", "24 词恢复密钥");
     dict.set("mls_unlock.button_idle", "用密钥解锁");
     dict.set("mls_unlock.button_busy", "正在解锁…");
-    dict.set("mls_unlock.dismiss", "稍后处理");
-    dict.set("mls_unlock.reopen", "授权此设备");
+    dict.set("mls_unlock.dismiss", "暂不恢复历史");
+    dict.set("mls_unlock.reopen", "恢复加密历史");
     dict.set(
         "mls_unlock.status.enter_passphrase",
         "输入 24 词恢复密钥以解锁加密历史。",

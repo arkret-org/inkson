@@ -94,14 +94,33 @@ impl OutboundQueueStore for InksonOutboundStore {
                 };
                 let mut queue = garth::SendQueue::from_snapshot(snapshot)?;
                 let result = mutation(&mut queue)?;
-                let encoded = serde_json::to_string(&queue.snapshot()).map_err(|error| {
+                let mut encoded = serde_json::to_string(&queue.snapshot()).map_err(|error| {
                     garth::Error::Protocol(format!("encode browser outbound queue: {error}"))
                 })?;
-                storage
-                    .set_item(&self.storage_key, &encoded)
-                    .map_err(|error| {
-                        garth::Error::Protocol(format!("persist browser outbound queue: {error:?}"))
+                if let Err(initial_error) = storage.set_item(&self.storage_key, &encoded) {
+                    // Browser localStorage has a small per-origin quota. Preserve
+                    // every pending/dependency item, discard only unreferenced
+                    // terminal history, and retry the same mutation once.
+                    let removed = queue.prune_terminal_before(chrono::Utc::now());
+                    if removed == 0 {
+                        return Err(garth::Error::Protocol(format!(
+                            "persist browser outbound queue: {initial_error:?}"
+                        )));
+                    }
+                    encoded = serde_json::to_string(&queue.snapshot()).map_err(|error| {
+                        garth::Error::Protocol(format!(
+                            "encode compacted browser outbound queue: {error}"
+                        ))
                     })?;
+                    storage
+                        .set_item(&self.storage_key, &encoded)
+                        .map_err(|error| {
+                            garth::Error::Protocol(format!(
+                                "persist compacted browser outbound queue after removing {removed} \
+                             terminal item(s): {error:?}; initial error: {initial_error:?}"
+                            ))
+                        })?;
+                }
                 Ok(result)
             })
         }
