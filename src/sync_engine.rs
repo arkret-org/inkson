@@ -1682,7 +1682,7 @@ fn collect_proof_sender_devices_from_value(
 fn proof_bearing_sender_device(
     object: &serde_json::Map<String, Value>,
 ) -> Option<(String, String)> {
-    object
+    let proofs = object
         .get("proofs")
         .and_then(Value::as_array)
         .filter(|proofs| !proofs.is_empty())?;
@@ -1692,6 +1692,28 @@ fn proof_bearing_sender_device(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|actor| !actor.is_empty())?;
+    // AKP-0008 / AKP-0009: delegated Events keep the accountable principal
+    // in `actor_id`, while `executed_by` identifies the runtime that actually
+    // signed the envelope. Keep this selector byte-aligned with the chat proof
+    // verifier when that signer is a real directory-backed device. Independent
+    // Native Agent MLS endpoints use their authenticated LeafNode key instead
+    // and deliberately do not form a device-directory lookup here.
+    let proof_controller = object
+        .get("executed_by")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|controller| !controller.is_empty())
+        .unwrap_or(actor);
+    let controller_matches = proofs
+        .iter()
+        .filter_map(|proof| proof.get("verification_method").and_then(Value::as_str))
+        .any(|method| {
+            let no_query = method.split_once('?').map_or(method, |(head, _)| head);
+            no_query.split_once('#').map_or(no_query, |(head, _)| head) == proof_controller
+        });
+    if !controller_matches {
+        return None;
+    }
     let device = object
         .get("device_id")
         .or_else(|| object.get("sender_device_id"))
@@ -1699,8 +1721,8 @@ fn proof_bearing_sender_device(
         .map(str::trim)
         .filter(|device| !device.is_empty())
         .map(str::to_owned)
-        .or_else(|| proof_sender_device_from_verification_method(object, actor))?;
-    Some((actor.to_owned(), device))
+        .or_else(|| proof_sender_device_from_verification_method(object, proof_controller))?;
+    Some((proof_controller.to_owned(), device))
 }
 
 fn proof_sender_device_from_verification_method(
@@ -3659,6 +3681,34 @@ mod tests {
                     "ak:device:01904100-0000-7000-8000-000000000002".to_owned()
                 )
             ]
+        );
+    }
+
+    #[test]
+    fn delegated_event_prefetches_executing_principals_device_key() {
+        let controller = "did:web:bob.example";
+        let agent = "did:web:bob.example:agent:assistant";
+        let device = "ak:device:01904100-0000-7000-8000-0000000000aa";
+        let mut response = empty_response("cursor-agent");
+        response.realm_projections.insert(
+            "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+            json!({
+                "timeline": {
+                    "events": [{
+                        "actor_id": controller,
+                        "executed_by": agent,
+                        "device_id": device,
+                        "proofs": [{
+                            "verification_method": format!("{agent}#{device}")
+                        }]
+                    }]
+                }
+            }),
+        );
+
+        assert_eq!(
+            collect_persistent_proof_sender_devices(&response, &|_: &str| false),
+            vec![(agent.to_owned(), device.to_owned())]
         );
     }
 

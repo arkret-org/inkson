@@ -235,6 +235,93 @@ mod device_identity_proof_tests {
     }
 
     #[test]
+    fn native_agent_message_verifies_against_unique_active_mls_leaf() {
+        let agent = "did:web:chat-agent.example";
+        let signer = crate::event_signer::build_ed25519_signer_with_verification_method(
+            [59u8; 32],
+            agent,
+            format!("{agent}#runtime-1"),
+        );
+        let envelope = signed_message_envelope_inner(&signer, agent, None);
+        let view = arkret_sdk::mls::AuthorGroupStateView {
+            group_id: "agent-group".to_owned(),
+            epoch: 1,
+            group_state_ref: "ak:event:agent-commit".to_owned(),
+            active_leaves: vec![arkret_sdk::mls::AuthorLeaf {
+                leaf_index: 1,
+                credential: arkret_sdk::mls::AuthorLeafCredential::Basic {
+                    identity: agent.as_bytes().to_vec(),
+                },
+                signature_key: ed25519_dalek::SigningKey::from_bytes(&[59u8; 32])
+                    .verifying_key()
+                    .to_bytes()
+                    .to_vec(),
+            }],
+        };
+
+        assert_eq!(
+            verify_mls_endpoint_envelope_against_view(&envelope, agent, &view),
+            ChatProofVerdict::Verified
+        );
+    }
+
+    #[test]
+    fn native_agent_message_rejects_non_matching_or_ambiguous_mls_leaf() {
+        let agent = "did:web:chat-agent-rejected.example";
+        let signer = crate::event_signer::build_ed25519_signer_with_verification_method(
+            [60u8; 32],
+            agent,
+            format!("{agent}#runtime-1"),
+        );
+        let envelope = signed_message_envelope_inner(&signer, agent, None);
+        let leaf = arkret_sdk::mls::AuthorLeaf {
+            leaf_index: 1,
+            credential: arkret_sdk::mls::AuthorLeafCredential::Basic {
+                identity: agent.as_bytes().to_vec(),
+            },
+            signature_key: ed25519_dalek::SigningKey::from_bytes(&[61u8; 32])
+                .verifying_key()
+                .to_bytes()
+                .to_vec(),
+        };
+        let wrong_key_view = arkret_sdk::mls::AuthorGroupStateView {
+            group_id: "agent-group".to_owned(),
+            epoch: 1,
+            group_state_ref: "ak:event:agent-commit".to_owned(),
+            active_leaves: vec![leaf.clone()],
+        };
+        assert_eq!(
+            verify_mls_endpoint_envelope_against_view(&envelope, agent, &wrong_key_view),
+            ChatProofVerdict::Rejected
+        );
+
+        let mut duplicate = leaf;
+        duplicate.leaf_index = 2;
+        let ambiguous_view = arkret_sdk::mls::AuthorGroupStateView {
+            group_id: "agent-group".to_owned(),
+            epoch: 1,
+            group_state_ref: "ak:event:agent-commit".to_owned(),
+            active_leaves: vec![
+                arkret_sdk::mls::AuthorLeaf {
+                    leaf_index: 1,
+                    credential: arkret_sdk::mls::AuthorLeafCredential::Basic {
+                        identity: agent.as_bytes().to_vec(),
+                    },
+                    signature_key: ed25519_dalek::SigningKey::from_bytes(&[60u8; 32])
+                        .verifying_key()
+                        .to_bytes()
+                        .to_vec(),
+                },
+                duplicate,
+            ],
+        };
+        assert_eq!(
+            verify_mls_endpoint_envelope_against_view(&envelope, agent, &ambiguous_view),
+            ChatProofVerdict::Rejected
+        );
+    }
+
+    #[test]
     fn proofless_attributed_projection_is_rejected() {
         let envelope = json!({
             "kind": "ak.message.create",
