@@ -8,7 +8,7 @@ use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::dialog::Dialog;
 use crate::views::agents::{
-    bootstrap_provisioned_agent, build_agent_key_authorize_event_for_pairing,
+    bootstrap_provisioned_agent, build_agent_key_authorization_for_pairing,
     build_requested_scope_disclosure_for_pairing, parse_runtime_key_approval_request,
     runtime_key_pairing_error_message, summarize_runtime_key_approval_request,
 };
@@ -367,13 +367,15 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                         };
                                         let service_id =
                                             api.describe_cached().await?.service_id.to_string();
-                                        let authorize_event =
-                                            build_agent_key_authorize_event_for_pairing(
+                                        let authorization =
+                                            build_agent_key_authorization_for_pairing(
                                                 &controller,
                                                 &service_id,
                                                 &key_state,
                                                 &body,
                                             )?;
+                                        let authorize_event =
+                                            authorization.authorize_event;
                                         let requested_scope_disclosure =
                                             build_requested_scope_disclosure_for_pairing(
                                                 &controller,
@@ -384,6 +386,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                         let pair_request = body.into_pair_request(
                                             requested_scope_disclosure,
                                             authorize_event.clone(),
+                                            authorization.signing_key_binding,
                                         );
                                         let outcome = api
                                             .event_submitter()?

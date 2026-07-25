@@ -529,10 +529,11 @@ mod personal_agent_tests {
         )
         .unwrap();
 
-        let event = build_agent_key_authorize_event_for_pairing(
-            controller, service_id, &key_state, &request,
-        )
-        .unwrap();
+        let authorization =
+            build_agent_key_authorization_for_pairing(controller, service_id, &key_state, &request)
+                .unwrap();
+        let event = authorization.authorize_event;
+        let signing_key_binding = authorization.signing_key_binding;
 
         assert_eq!(disclosure.agent_id.as_str(), agent);
         assert_eq!(disclosure.controller_id.as_str(), controller);
@@ -563,6 +564,30 @@ mod personal_agent_tests {
         assert_eq!(event.payload["agent_id"], agent);
         assert_eq!(event.payload["verification_method"], verification_method);
         assert_eq!(event.payload["public_key_digest"], runtime_digest.as_str());
+        let binding_digest = arkret_signatures::agent_evidence::agent_signing_key_binding_digest(
+            &signing_key_binding,
+        )
+        .unwrap();
+        assert_eq!(
+            event.payload["signing_key_binding_digest"],
+            binding_digest.as_str()
+        );
+        arkret_signatures::agent_evidence::verify_agent_signing_key_binding(
+            &signing_key_binding,
+            &request.agent_id,
+            &signing_key_binding.controller_id,
+            &request.verification_method,
+            &event.event_id,
+            &runtime_digest,
+            &binding_digest,
+            &arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
+                bytes: ed25519_dalek::SigningKey::from_bytes(&[41u8; 32])
+                    .verifying_key()
+                    .to_bytes()
+                    .to_vec(),
+            },
+        )
+        .unwrap();
         let event_wire = serde_json::to_value(&event).unwrap();
         let event_created_at = event_wire["created_at"].as_str().unwrap();
         assert_eq!(event_created_at.len(), 24);

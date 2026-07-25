@@ -13,9 +13,10 @@ use arkret_models_collaboration::governance::agent_participation::AgentParticipa
 use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
     AgentKeyAuthorizePayloadRuntimeAttestation, AgentKeyPairRequestBody, AgentKeySupersession,
-    AgentPairingBootstrap, AgentProvisionEvents, AgentRequestedScopeDisclosure, Did, DidUrl, Event,
-    EventId, GrantConstraint, GrantConstraintEffect, GrantConstraintSubtype, GrantConstraintType,
-    Hash, NonEmptyJsonObject, NonEmptyString, Proof, PublicKey, RealmId, RequestId,
+    AgentPairingBootstrap, AgentProvisionEvents, AgentRequestedScopeDisclosure,
+    AgentSigningKeyBinding, AgentSigningPublicKey, Did, DidUrl, Event, EventId, GrantConstraint,
+    GrantConstraintEffect, GrantConstraintSubtype, GrantConstraintType, Hash, NonEmptyJsonObject,
+    NonEmptyString, Proof, PublicKey, RealmId, RequestId,
 };
 use chrono::Utc;
 use serde::Deserialize;
@@ -434,6 +435,7 @@ impl RuntimeKeyApprovalRequest {
         self,
         requested_scope_disclosure: AgentRequestedScopeDisclosure,
         authorize_event: Event,
+        signing_key_binding: AgentSigningKeyBinding,
     ) -> AgentKeyPairRequestBody {
         AgentKeyPairRequestBody {
             pairing_request_id: self.pairing_request_id,
@@ -444,6 +446,7 @@ impl RuntimeKeyApprovalRequest {
             requested_scope_disclosure,
             runtime_attestation: self.runtime_attestation,
             authorize_event,
+            signing_key_binding,
         }
     }
 }
@@ -594,12 +597,17 @@ fn key_state_str<'a>(key_state: &'a Value, key: &str) -> anyhow::Result<&'a str>
         .ok_or_else(|| anyhow::anyhow!("agent key_state.{key} is required"))
 }
 
-pub fn build_agent_key_authorize_event_for_pairing(
+pub struct AgentKeyAuthorizationForPairing {
+    pub authorize_event: Event,
+    pub signing_key_binding: AgentSigningKeyBinding,
+}
+
+pub fn build_agent_key_authorization_for_pairing(
     controller_id: &str,
     service_id: &str,
     key_state: &Value,
     request: &RuntimeKeyApprovalRequest,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<AgentKeyAuthorizationForPairing> {
     let controller = Did::new(controller_id.trim().to_owned())?;
     if key_state_str(key_state, "controller_id")? != controller.as_str() {
         anyhow::bail!("agent key_state.controller_id does not match the signed-in controller");
@@ -676,11 +684,56 @@ pub fn build_agent_key_authorize_event_for_pairing(
         }
         None => Vec::new(),
     };
+    let authorize_event_id = EventId::new(arkret_sdk::new_prefixed_uuid7("ak:event:"))?;
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("no active controller signer is available"))?;
+    let controller_verification_method = DidUrl::new(
+        signer
+            .device_id()
+            .map(|device_id| format!("{}#{device_id}", controller.as_str()))
+            .unwrap_or_else(|| signer.verification_method().to_owned()),
+    )
+    .map_err(anyhow::Error::msg)?;
+    let mut signing_key_binding = AgentSigningKeyBinding {
+        schema: NonEmptyString::new(arkret_sdk::AGENT_SIGNING_KEY_BINDING_SCHEMA.to_owned())
+            .map_err(anyhow::Error::msg)?,
+        agent_id: request.agent_id.clone(),
+        verification_method: request.verification_method.clone(),
+        public_key: AgentSigningPublicKey {
+            kty: request.public_key.kty.clone(),
+            alg: request.public_key.alg.clone(),
+            key: request.public_key.key.clone(),
+        },
+        public_key_digest: runtime_public_key_digest.clone(),
+        agent_key_authorize_event_id: authorize_event_id.clone(),
+        issued_at,
+        expires_at: None,
+        controller_id: controller.clone(),
+        controller_proof: arkret_sdk::AgentControllerProof {
+            kind: NonEmptyString::new("detached_jws").map_err(anyhow::Error::msg)?,
+            verification_method: controller_verification_method.clone(),
+            jws: NonEmptyString::new("pending").map_err(anyhow::Error::msg)?,
+        },
+    };
+    let binding_bytes = arkret_signatures::agent_evidence::agent_signing_key_binding_signing_bytes(
+        &signing_key_binding,
+    )
+    .map_err(|reason| anyhow::anyhow!(reason.as_str()))?;
+    signing_key_binding.controller_proof.jws =
+        NonEmptyString::new(signer.detached_jws_over_payload_with_kid(
+            controller_verification_method.as_str(),
+            &binding_bytes,
+        )?)
+        .map_err(anyhow::Error::msg)?;
+    let signing_key_binding_digest =
+        arkret_signatures::agent_evidence::agent_signing_key_binding_digest(&signing_key_binding)
+            .map_err(|reason| anyhow::anyhow!(reason.as_str()))?;
     let payload = AgentKeyAuthorizePayload {
         agent_id: request.agent_id.clone(),
         key_id: request.verification_method.as_str().to_owned(),
         verification_method: request.verification_method.as_str().to_owned(),
-        public_key_digest: Some(Hash::new(runtime_public_key_digest.as_str().to_owned())?),
+        public_key_digest: Hash::new(runtime_public_key_digest.as_str().to_owned())?,
+        signing_key_binding_digest,
         accountable_principal_id: controller.clone(),
         agent_key_scope: requested_scope,
         audience: vec![service_id.to_owned()],
@@ -714,11 +767,31 @@ pub fn build_agent_key_authorize_event_for_pairing(
         1,
         hlc,
     )?;
+    event.event_id = authorize_event_id;
     event.unsigned.insert(
         "pairing_request_id".to_owned(),
         json!(request.pairing_request_id),
     );
-    Ok(event)
+    event.unsigned.insert(
+        "agent_signing_key_binding".to_owned(),
+        serde_json::to_value(&signing_key_binding)?,
+    );
+    Ok(AgentKeyAuthorizationForPairing {
+        authorize_event: event,
+        signing_key_binding,
+    })
+}
+
+pub fn build_agent_key_authorize_event_for_pairing(
+    controller_id: &str,
+    service_id: &str,
+    key_state: &Value,
+    request: &RuntimeKeyApprovalRequest,
+) -> anyhow::Result<Event> {
+    Ok(
+        build_agent_key_authorization_for_pairing(controller_id, service_id, key_state, request)?
+            .authorize_event,
+    )
 }
 
 /// Expand one preset into a canonical `ak.capability.grant` object for
