@@ -2,8 +2,8 @@
 //!
 //! Edits the actor `invite_receive_policy` (spec `invite-addressing.md` §5,
 //! authoritative `arkret_sdk::InviteReceivePolicy`):
-//! - `holder_allowed_introduction_kinds` — which introduction-evidence kinds are accepted at
-//!   all (consent_grant / locator_ref / shared_realm / same_principal_server / explicit_address).
+//! - `holder_allowed_introduction_kinds` — which introduction-evidence kinds are accepted at all
+//!   (consent_grant / locator_ref / shared_realm / same_principal_server / explicit_address).
 //! - `explicit_address_behavior` — drop / quarantine / notify for raw-address invites.
 //! - `disclosure.high_trust` — whether contacts learn the invite outcome.
 //! - `denied_subjects` — list of subjects barred from inviting, with removal.

@@ -248,11 +248,11 @@ pub fn build_realm_bootstrap_events(
 
     let delivery_binding_policy = json!({
         "realm_id": realm_id,
-        "allow_binding_sources": ["realm_policy"],
-        "allow_did_document_default": false,
+        "allowed_binding_sources": ["realm_policy"],
+        "did_document_default_allowed": false,
         "allowed_recipient_services": [notary_did],
         "required_endorsers": [],
-        "allow_unroutable_membership": true,
+        "unroutable_membership_allowed": true,
         "rebind_authorization": "member",
     });
     let delivery_binding_policy_event = build_realm_state_event(
@@ -537,7 +537,7 @@ pub fn build_managed_agent_pcr_create_event(
             }
         });
         object["notary"] = json!({
-            "type": "single_did",
+            "kind": "single_did",
             "did": agent_id,
             "recovery_members": [controller_id],
             "controller_organization": controller_id,
@@ -662,7 +662,7 @@ fn realm_genesis_notary(notary_profile: &str, notary_did: &str) -> anyhow::Resul
             // profile, where the host *is* the org authority). For the default
             // `did:webvh` actor the org's webvh DID carries its own SCID that is
             // unknowable client-side, so we omit the org-scoped fields and emit
-            // the orgless `{type, did}` single_did genesis (realm.schema.json
+            // the orgless `{kind, did}` single_did genesis (realm.schema.json
             // single_did allOf; decisions/0003 §7 — personal Realms fall back to
             // per-user recovery) rather than fabricate a malformed
             // `did:webvh:<host>` (no SCID) identifier.
@@ -1474,7 +1474,7 @@ mod notary_derivation_tests {
             Some("did:web:alice.example".to_owned())
         );
         let notary = realm_genesis_notary("single_did", "did:web:alice.example").unwrap();
-        assert_eq!(notary["type"], "single_did");
+        assert_eq!(notary["kind"], "single_did");
         assert_eq!(notary["controller_organization"], "did:web:alice.example");
         assert_eq!(
             notary["recovery_members"][0],
@@ -1503,7 +1503,7 @@ mod notary_derivation_tests {
         // recovery path / org-scoped fields are omitted (personal Realms fall
         // back to per-user recovery, decisions/0003 §7) rather than fabricated
         // into a malformed did:webvh:<host>.
-        assert_eq!(notary["type"], "single_did");
+        assert_eq!(notary["kind"], "single_did");
         assert_eq!(notary["did"], actor);
         assert!(notary.get("recovery_members").is_none());
         assert!(notary.get("controller_organization").is_none());

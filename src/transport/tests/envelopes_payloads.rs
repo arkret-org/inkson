@@ -330,7 +330,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     assert_eq!(create.payload["object"]["history_visibility"], "shared");
     assert!(create.payload["object"]["content_encryption_floor"].is_null());
     assert!(create.payload["object"]["metadata_encryption_floor"].is_null());
-    assert_eq!(create.payload["object"]["notary"]["type"], "single_did");
+    assert_eq!(create.payload["object"]["notary"]["kind"], "single_did");
     assert_eq!(
         create.payload["object"]["notary"]["did"],
         "did:web:server.example"
@@ -459,7 +459,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         ])
     );
     assert_eq!(
-        events[8].payload["allow_binding_sources"],
+        events[8].payload["allowed_binding_sources"],
         json!(["realm_policy"])
     );
     assert_eq!(events[9].payload["membership"], "join");
@@ -614,9 +614,12 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
     )
     .unwrap();
 
+    let invitee = "did:webvh:z2dmjBobScidVnosYTzHAMbzYDRZkVrD32ea9Sr2XNs8NkgMB5mn:bob.example";
     let invite = events
         .iter()
-        .find(|event| event.kind.as_str() == "ak.member.state")
+        .find(|event| {
+            event.kind.as_str() == "ak.member.state" && event.payload["actor_id"] == invitee
+        })
         .expect("bootstrap invite event");
     assert_eq!(invite.preconditions[0].predicate.value, Some(json!(null)));
     assert_eq!(invite.effects[0].op.from, Some(json!("leave")));
