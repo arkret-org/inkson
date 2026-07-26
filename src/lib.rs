@@ -79,7 +79,6 @@ pub mod move_builder;
 pub mod notification_rules;
 pub mod notification_sound;
 pub mod object_address;
-pub mod objects;
 pub(crate) mod payload;
 mod signing_stamp;
 // YOU-02-008: the former `offline` / `offline_queue` modules (P3B.5
