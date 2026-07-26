@@ -11,29 +11,6 @@ use serde_json::{Value, json};
 
 use crate::operation::OperationBuilder;
 
-/// Build a `ak.morph.create` operation. Body shape mirrors
-/// `models/morph.md` §3 (typed Morph object).
-pub fn build_morph_create(
-    realm_id: &str,
-    actor: &str,
-    morph: &Morph,
-) -> anyhow::Result<OperationBuilder> {
-    // `morph_create_payload` (additionalProperties:false) carries the typed
-    // Morph under the canonical `object` key — NOT `morph`. Build the
-    // `{object}` envelope via the SDK's shared `ObjectCreatePayload` so the
-    // key/shape stays aligned with the schema.
-    let body = arkret_sdk::ObjectCreatePayload::new(morph)
-        .to_value()
-        .map_err(|e| anyhow::anyhow!("ak.morph.create payload serialize: {e}"))?;
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::MorphCreate,
-    )
-    .target_ref(morph.id.as_str())
-    .body(body))
-}
-
 /// Build a `ak.morph.update` operation. `patch` is a JSON object of fields to
 /// set/replace; the reducer applies these against the existing Morph state.
 ///
@@ -91,17 +68,6 @@ pub fn build_relation_create(
     )
     .target_ref(relation_id)
     .body(body))
-}
-
-/// Build a `ak.relation.tombstone` operation by id.
-pub fn build_relation_delete(realm_id: &str, actor: &str, relation_id: &str) -> OperationBuilder {
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::RelationTombstone,
-    )
-    .target_ref(relation_id)
-    .body(json!({"relation_id": relation_id}))
 }
 
 /// Build a `ak.container.rebalance` operation. The required position fields

@@ -9,7 +9,6 @@ use serde_json::Value;
 use sha2::Sha256;
 
 use crate::canonical::{canonical_sha256, validate_timestamp_canonical};
-use crate::hlc::Hlc;
 
 pub const DRAFT_MESSAGE_SLOT: &str = "compose";
 pub const DRAFT_STRAND_FIELD_SLOT_PREFIX: &str = "field_";
@@ -89,7 +88,7 @@ pub fn validate_draft_sync_value(value: &arkret_sdk::DraftSyncValue) -> anyhow::
         anyhow::bail!("draft content must not be null");
     }
     validate_draft_slot(value.kind, &value.draft_slot)?;
-    Hlc::parse(&value.updated_hlc)?;
+    arkret_sdk::Hlc::new(value.updated_hlc.as_str())?;
     validate_timestamp_canonical(&value.retention_expires_at)
         .map_err(|error| anyhow::anyhow!("retention_expires_at is not canonical: {error:?}"))?;
     super::draft_account_data_key(
@@ -124,7 +123,7 @@ pub fn validate_saved_item_value(value: &arkret_sdk::SavedItemValue) -> anyhow::
     if value.collection_title.trim().is_empty() {
         anyhow::bail!("saved item collection_title must not be empty");
     }
-    Hlc::parse(&value.updated_hlc)?;
+    arkret_sdk::Hlc::new(value.updated_hlc.as_str())?;
     super::saved_account_data_key(
         b"inkson-saved-validation-namespace",
         &value.collection_title,
@@ -183,9 +182,7 @@ pub fn compare_draft_versions(
     validate_same_draft_cell(local, remote)?;
     validate_draft_sync_value(local)?;
     validate_draft_sync_value(remote)?;
-    let local_hlc = Hlc::parse(&local.updated_hlc)?;
-    let remote_hlc = Hlc::parse(&remote.updated_hlc)?;
-    match local_hlc.cmp(&remote_hlc) {
+    match arkret_sdk::compare_hlc(&local.updated_hlc, &remote.updated_hlc)? {
         Ordering::Equal => Ok(local
             .origin_device_id
             .to_string()

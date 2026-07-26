@@ -186,19 +186,17 @@ mod tests {
 
     #[test]
     fn call_signal_classifies_as_ephemeral_in_registry() {
-        use crate::conformance::{EventKindWireScope, event_kind_wire_scope};
         assert_eq!(
-            event_kind_wire_scope("ak.call.signal"),
-            Some(EventKindWireScope::Ephemeral)
+            arkret_sdk::events::kinds::event_wire_scope("ak.call.signal"),
+            arkret_sdk::events::kinds::EventWireScope::EphemeralEvent
         );
     }
 
     #[test]
     fn call_state_durable_kind_lookup() {
-        use crate::conformance::{EventKindWireScope, event_kind_wire_scope};
         assert_eq!(
-            event_kind_wire_scope("ak.call.state"),
-            Some(EventKindWireScope::Durable)
+            arkret_sdk::events::kinds::event_wire_scope("ak.call.state"),
+            arkret_sdk::events::kinds::EventWireScope::DurableEvent
         );
     }
 

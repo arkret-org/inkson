@@ -6,8 +6,8 @@
 //! - `ak.profile.disclosed_audit.e2ee.v1` — disclosed audit policy with `ak.audit.ryw_receipt`
 //!   (read-your-write) per-actor receipts.
 //!
-//! Both kinds are already in `conformance::known_event_kinds`; this module
-//! provides typed builders so call sites don't hand-roll the body shape.
+//! Both kinds are already in the SDK event-kind registry; this module provides
+//! typed builders so call sites don't hand-roll the body shape.
 
 use serde_json::{Value, json};
 
