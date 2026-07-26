@@ -1203,18 +1203,19 @@ fn managed_agent_pcr_delegated_controller(
     bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
     notary: &arkret_sdk::NotaryValue,
 ) -> Result<Option<arkret_sdk::Did>, String> {
-    let managed_cell =
-        arkret_sdk::CellRef::new(arkret_bootstrap::MANAGED_AGENT_PRINCIPAL_CONTROL_CREATE_CELL)
-            .map_err(|error| format!("invalid managed Agent PCR marker cell: {error}"))?;
     let managed = bundle
         .frontier_events
         .iter()
         .filter(|event| {
             event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE
+                && event.executed_by.is_some()
                 && event
-                    .effects
-                    .iter()
-                    .any(|effect| effect.cell == managed_cell)
+                    .payload
+                    .get("object")
+                    .and_then(|object| object.get("fields"))
+                    .and_then(|fields| fields.get("purpose"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some("principal_control")
         })
         .collect::<Vec<_>>();
     if managed.is_empty() {
@@ -1226,14 +1227,11 @@ fn managed_agent_pcr_delegated_controller(
         );
     }
     let create = managed[0];
-    let expected_effect = arkret_bootstrap::managed_agent_principal_control_create_effect(
-        &create.realm_id,
-        create.actor_seq,
-    )
-    .map_err(|error| format!("derive managed Agent PCR marker: {error}"))?;
-    if create.effects.len() != 1 || create.effects[0] != expected_effect {
+    let expected_effects = arkret_bootstrap::realm_create_effects(create)
+        .map_err(|error| format!("derive managed Agent PCR effect set: {error}"))?;
+    if create.effects != expected_effects {
         return Err(
-            "managed Agent PCR genesis does not carry the canonical delegated create marker"
+            "managed Agent PCR genesis does not carry the canonical Realm create effect set"
                 .to_owned(),
         );
     }

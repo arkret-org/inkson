@@ -887,10 +887,14 @@ async fn collect_current_managed_pcr_backup_items(
 fn has_managed_agent_pcr_create(events: &[arkret_sdk::Event]) -> bool {
     events.iter().any(|event| {
         event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE
-            && event.effects.iter().any(|effect| {
-                effect.cell.as_str()
-                    == arkret_bootstrap::MANAGED_AGENT_PRINCIPAL_CONTROL_CREATE_CELL
-            })
+            && event.executed_by.is_some()
+            && event
+                .payload
+                .get("object")
+                .and_then(|object| object.get("fields"))
+                .and_then(|fields| fields.get("purpose"))
+                .and_then(serde_json::Value::as_str)
+                == Some("principal_control")
     })
 }
 

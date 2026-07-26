@@ -1863,18 +1863,8 @@ fn apply_actor_chain_basis_to_sdk_event(
     next_actor_seq: u64,
     frontier_event_ids: &[arkret_sdk::EventId],
 ) {
-    let previous_actor_seq = event.actor_seq;
     event.actor_seq = next_actor_seq;
     event.prev_refs = frontier_event_ids.to_vec();
-    // Ordered-log effects use the Event actor sequence as their per-issuer
-    // deduplication key. Builders create unsigned drafts before the canonical
-    // actor frontier is known, so refreshing actor_seq must update any effect
-    // that was bound to the draft sequence before the envelope is signed.
-    for effect in &mut event.effects {
-        if effect.op.issuer_seq == Some(previous_actor_seq) {
-            effect.op.issuer_seq = Some(next_actor_seq);
-        }
-    }
 }
 
 fn mls_genesis_event_id_from_events(
@@ -2401,15 +2391,20 @@ mod tests {
     }
 
     #[test]
-    fn apply_actor_frontier_rebinds_ordered_log_effect_to_next_sequence() {
+    fn apply_actor_frontier_does_not_rebind_cell_local_ordered_log_sequence() {
         let mut event = sdk_event_without_proof("did:web:alice.example");
-        event.effects = vec![
-            arkret_bootstrap::managed_agent_principal_control_create_effect(
-                &event.realm_id,
-                event.actor_seq,
-            )
-            .unwrap(),
-        ];
+        event.effects = vec![arkret_sdk::Effect {
+            cell: arkret_sdk::CellRef::new(arkret_bootstrap::REALM_CREATE_CELL).unwrap(),
+            op: arkret_sdk::LatticeOp {
+                op_type: arkret_sdk::LatticeOpType::Append,
+                tag: None,
+                value: Some(serde_json::json!("entry")),
+                from: None,
+                to: None,
+                reason: None,
+                issuer_seq: Some(3),
+            },
+        }];
         let frontier = arkret_sdk::RealmActorFrontierView::new(
             event.realm_id.clone(),
             event.actor_id.clone(),
@@ -2424,7 +2419,7 @@ mod tests {
         apply_actor_frontier_to_sdk_event(&mut event, &frontier).unwrap();
 
         assert_eq!(event.actor_seq, 8);
-        assert_eq!(event.effects[0].op.issuer_seq, Some(8));
+        assert_eq!(event.effects[0].op.issuer_seq, Some(3));
     }
 
     #[test]

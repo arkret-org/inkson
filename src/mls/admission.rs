@@ -293,10 +293,10 @@ pub(crate) fn build_realm_key_share_event(
         share_class: arkret_sdk::RealmKeyShareClass::MemberDevice,
         recipient_principal_id: recipient_did,
         target: arkret_sdk::RealmKeyShareTarget::MemberDevice {
-            recipient_device_id: arkret_sdk::DeviceId::new(
-                recipient_device_id.trim().to_owned(),
-            )
-            .map_err(|err| format!("invalid realm_key.share recipient device id: {err:?}"))?,
+            recipient_device_id: arkret_sdk::DeviceId::new(recipient_device_id.trim().to_owned())
+                .map_err(|err| {
+                format!("invalid realm_key.share recipient device id: {err:?}")
+            })?,
         },
         sender_device_id: arkret_sdk::DeviceId::new(sender_device_id.trim().to_owned())
             .map_err(|err| format!("invalid realm_key.share sender device id: {err:?}"))?,
