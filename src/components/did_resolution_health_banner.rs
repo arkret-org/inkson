@@ -4,11 +4,11 @@
 //! only renders a session-wide warning when the identity describe probe says
 //! live resolution is unavailable or falling back to cached evidence.
 
+use arkret_sdk::identity::DidResolutionCache;
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 
 use super::UiIcon;
-use crate::identity::did_resolver::DidResolutionCache;
 use crate::models::IdentityDescribeOutcome;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -204,10 +204,10 @@ mod tests {
     }
 
     fn cache_with_entry(ttl: Duration, now: DateTime<Utc>) -> DidResolutionCache {
-        let mut cache = DidResolutionCache::new(8);
+        let cache = DidResolutionCache::new(8);
         let did = Did::new("did:web:alice.example".to_owned()).expect("valid did");
         let document = DidDocument::new(did.clone(), "owner", "z6Mksample");
-        cache.insert(did, document, now, ttl);
+        cache.insert(did, document, now, ttl).unwrap();
         cache
     }
 

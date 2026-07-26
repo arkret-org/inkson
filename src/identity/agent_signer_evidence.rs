@@ -43,7 +43,7 @@ pub(crate) async fn prefetch_from_realm_projections(
     projections: &BTreeMap<String, Value>,
     bundled_evidence: &[AgentSignerEvidence],
     state_store: &crate::runtime::input::StateStoreHandle,
-    did_cache: crate::runtime::input::ValueCell<crate::identity::did_resolver::DidResolutionCache>,
+    did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
 ) -> bool {
     let mut selectors = BTreeSet::new();
     for (realm_id, projection) in projections {

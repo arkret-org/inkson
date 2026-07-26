@@ -43,7 +43,7 @@ async fn prefetch_account_presence_device_keys(
     );
     let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
         crate::identity::did_resolver::DeploymentProfile::PersonalNode,
-        crate::identity::did_resolver::DidResolutionCache::new(64),
+        arkret_sdk::identity::DidResolutionCache::new(64),
     );
     crate::identity::device_directory::prefetch_device_keys(&api, &anchor, &pairs).await;
 }

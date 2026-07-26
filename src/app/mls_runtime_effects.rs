@@ -73,7 +73,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         base_url,
         ..
     } = SessionContext::get();
-    let did_cache = use_context::<Signal<crate::identity::did_resolver::DidResolutionCache>>();
+    let did_cache = use_context::<Signal<arkret_sdk::identity::DidResolutionCache>>();
     let mls_admission_retry_attempt = use_signal(|| 0_u32);
     let mls_key_package_publish_retry_attempt = use_signal(|| 0_u32);
     let realm_key_pull_retry_key = use_signal(|| Option::<String>::None);

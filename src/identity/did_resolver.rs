@@ -18,12 +18,11 @@
 //! mention autocomplete, contact card) live in `components::verify_badges`
 //! and `views::contacts` — those are tagged `TRUST-CACHE`.
 
-use std::collections::HashMap;
-
 use arkret_sdk::identity::{
-    CompositeDidResolver, DID_WEB_MAX_DOCUMENT_BYTES, DidKeyResolver, DidResolver as _,
-    DidWebDocumentOutcome, DidWebResolver, DidWebvhDocumentOutcome, DidWebvhLogOutcome,
-    DidWebvhResolver, ResolverFailMode, ResolverPolicy, host_is_safe_for_outbound,
+    CompositeDidResolver, DID_WEB_MAX_DOCUMENT_BYTES, DidKeyResolver, DidResolutionCache,
+    DidResolver as _, DidWebDocumentOutcome, DidWebResolver, DidWebvhDocumentOutcome,
+    DidWebvhLogOutcome, DidWebvhResolver, ResolverFailMode, ResolverPolicy,
+    host_is_safe_for_outbound,
 };
 use arkret_sdk::{Did, DidDocument};
 use chrono::{DateTime, Duration, Utc};
@@ -345,19 +344,19 @@ impl ResolverDidAnchor {
         self.cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(service.clone(), document, Utc::now(), ttl);
-        true
+            .insert(service.clone(), document, Utc::now(), ttl)
+            .is_ok()
     }
 }
 
 impl crate::identity::device_directory::DidAnchor for ResolverDidAnchor {
     fn resolve_did_document(&self, actor: &Did) -> Option<DidDocument> {
         let resolver = self.current_resolver();
-        let mut cache = self
+        let cache = self
             .cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        resolve_with_cache(&resolver, &mut cache, actor, Utc::now()).ok()
+        resolve_with_cache(&resolver, &cache, actor, Utc::now()).ok()
     }
 
     fn ensure_actor_document<'a>(
@@ -603,8 +602,8 @@ pub async fn fetch_raw_did_document_json(
 /// Y1: cache-first authority resolution helper.
 ///
 /// Authority call sites should enter here before `verify_principal`:
-/// 1. Check `cache` first. A [`Freshness::Fresh`] hit returns the cached document directly and
-///    skips the resolver chain, avoiding repeated network / chain lookups.
+/// 1. Check `cache` first. A [`arkret_sdk::identity::Freshness::Fresh`] hit returns the cached
+///    document directly and skips the resolver chain, avoiding repeated network / chain lookups.
 /// 2. On miss or `Stale`, call [`verify_principal`] through the full resolver chain, including
 ///    policy validation and document id comparison, then write back to `cache` with the policy
 ///    `ttl`.
@@ -624,7 +623,7 @@ pub async fn fetch_raw_did_document_json(
 /// `views::contacts` (TRUST-CACHE), without reusing this path.
 pub fn resolve_with_cache(
     resolver: &CompositeDidResolver,
-    cache: &mut DidResolutionCache,
+    cache: &DidResolutionCache,
     principal: &Did,
     now: DateTime<Utc>,
 ) -> Result<DidDocument, VerifyError> {
@@ -639,175 +638,10 @@ pub fn resolve_with_cache(
         .policy()
         .ttl
         .unwrap_or_else(|| Duration::minutes(15));
-    cache.insert(principal.clone(), doc.clone(), now, ttl);
+    cache
+        .insert(principal.clone(), doc.clone(), now, ttl)
+        .map_err(|error| VerifyError::Unresolved(error.to_string()))?;
     Ok(doc)
-}
-
-/// F-DID-CACHE-1: in-memory LRU + TTL cache for resolved DID documents.
-///
-/// Spec `identity/did-resolution.md §4` says clients SHOULD cache
-/// resolved DIDs + key logs to avoid repeated network calls. The SDK
-/// `CompositeDidResolver` carries a `ttl` field on its policy but does
-/// not actually cache: every `resolve_did(...)` call walks the resolver
-/// chain again. This struct fills that gap on the inkson side.
-///
-/// Invariants:
-/// - `max_entries == 0` disables caching entirely (every `get` misses).
-/// - Eviction is LRU by `cached_at` (the entry with the oldest `cached_at` is dropped first) —
-///   sufficient because each `insert` bumps `cached_at` to "now".
-/// - `get(now)` returns `None` for entries whose `expires_at <= now` and also lazily removes them
-///   so size bookkeeping stays honest.
-/// - `invalidate(did)` is for revocation pushes — the spec requires clients to drop cached evidence
-///   when a `ak.cross_signing.reset` or `ak.device.revoke` event arrives for the actor.
-///
-/// Persistence to IndexedDB / local state is a follow-up; this revision
-/// is in-memory only so the cache survives a single login session.
-#[derive(Clone, Debug)]
-pub struct DidResolutionCache {
-    entries: HashMap<String, CachedDidEntry>,
-    max_entries: usize,
-}
-
-#[derive(Clone, Debug)]
-pub struct CachedDidEntry {
-    pub document: DidDocument,
-    pub cached_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
-}
-
-/// Y1: freshness of a cache entry relative to `now`.
-///
-/// Defined locally on purpose, without adding SDK symbols while the SDK is being
-/// modified concurrently. It has two states:
-/// - `Fresh`: `now < expires_at`; the cache hit can be reused directly.
-/// - `Stale`: `now >= expires_at`; display code can degrade to the `stale` badge and the authority
-///   path abandons the cache and walks the resolver chain.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Freshness {
-    Fresh,
-    Stale,
-}
-
-impl CachedDidEntry {
-    /// Return this entry's freshness at `now`. The expiration instant
-    /// (`expires_at`) itself is considered expired, matching
-    /// [`DidResolutionCache::get`] and its `expires_at > now` check.
-    pub fn freshness(&self, now: DateTime<Utc>) -> Freshness {
-        if self.expires_at > now {
-            Freshness::Fresh
-        } else {
-            Freshness::Stale
-        }
-    }
-}
-
-impl DidResolutionCache {
-    pub fn new(max_entries: usize) -> Self {
-        Self {
-            entries: HashMap::new(),
-            max_entries,
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    /// Return whether any cached identity evidence is still inside its TTL at
-    /// `now`. This is a read-only UX/status helper; authority paths still use
-    /// [`Self::get`] so expired entries are evicted before trust decisions.
-    pub fn has_fresh_entry(&self, now: DateTime<Utc>) -> bool {
-        self.entries
-            .values()
-            .any(|entry| entry.freshness(now) == Freshness::Fresh)
-    }
-
-    /// Return whether the cache contains evidence but none of it is fresh at
-    /// `now`. Display code can use this to distinguish stale fallback from a
-    /// complete identity-resolution outage.
-    pub fn has_only_stale_entries(&self, now: DateTime<Utc>) -> bool {
-        !self.entries.is_empty() && !self.has_fresh_entry(now)
-    }
-
-    /// Look up `did` and return a clone of the cached document if a
-    /// valid entry exists. Expired entries are evicted as a side
-    /// effect so `len()` reflects the post-cleanup state.
-    pub fn get(&mut self, did: &Did, now: DateTime<Utc>) -> Option<DidDocument> {
-        let key = did.as_str().to_owned();
-        match self.entries.get(&key) {
-            Some(entry) if entry.expires_at > now => Some(entry.document.clone()),
-            Some(_) => {
-                self.entries.remove(&key);
-                None
-            }
-            None => None,
-        }
-    }
-
-    /// Insert `document` for `did`, applying TTL relative to `now`.
-    /// Evicts the least-recently-cached entry when the cache exceeds
-    /// `max_entries` (a no-op when `max_entries == 0` since we never
-    /// admit the new entry either — the lookup will always miss).
-    pub fn insert(&mut self, did: Did, document: DidDocument, now: DateTime<Utc>, ttl: Duration) {
-        if self.max_entries == 0 {
-            return;
-        }
-        let key = did.as_str().to_owned();
-        let entry = CachedDidEntry {
-            document,
-            cached_at: now,
-            expires_at: now + ttl,
-        };
-        if !self.entries.contains_key(&key) && self.entries.len() >= self.max_entries {
-            // Pick the oldest cached_at for eviction — straightforward
-            // O(n) scan; cache sizes here are small (10s, not 100k).
-            if let Some(victim_key) = self
-                .entries
-                .iter()
-                .min_by_key(|(_, e)| e.cached_at)
-                .map(|(k, _)| k.clone())
-            {
-                self.entries.remove(&victim_key);
-            }
-        }
-        self.entries.insert(key, entry);
-    }
-
-    /// Y3: read-only cache entry probe that does not evict expired entries.
-    /// Display code (verify_badges / contacts) uses it to read `binding_state`
-    /// and [`Freshness`] and render `cached` / `stale` / `degraded` badges.
-    /// Unlike `get`, which is a mutable borrow for the authority path and
-    /// lazily evicts expired entries, `peek` is pure UX-side access and still
-    /// returns expired entries with `Freshness::Stale`, letting UI distinguish
-    /// "miss" from "stale".
-    pub fn peek<'a>(&'a self, did: &Did) -> Option<&'a CachedDidEntry> {
-        self.entries.get(did.as_str())
-    }
-
-    /// Drop the cached entry (if any) for `did`. Called by
-    /// `ak.cross_signing.reset` / `ak.device.revoke` handlers so a
-    /// rotated key set isn't masked by stale cache.
-    pub fn invalidate(&mut self, did: &Did) {
-        self.entries.remove(did.as_str());
-    }
-
-    /// Clear every entry (e.g. on logout or trust-bundle reset).
-    pub fn clear(&mut self) {
-        self.entries.clear();
-    }
-}
-
-impl Default for DidResolutionCache {
-    /// Default cache:
-    /// - 128 entries — a comfortable upper bound on the number of distinct actors a single inkson
-    ///   session interacts with.
-    fn default() -> Self {
-        Self::new(128)
-    }
 }
 
 #[cfg(test)]
@@ -856,127 +690,10 @@ mod tests {
         }
     }
 
-    // ── F-DID-CACHE-1 ────────────────────────────────────────────────
-
     fn sample_document(did_str: &str) -> (Did, DidDocument) {
         let did = parse(did_str);
         let doc = DidDocument::new(did.clone(), "key-1", "z6Mksample");
         (did, doc)
-    }
-
-    #[test]
-    fn cache_hit_returns_cloned_document_within_ttl() {
-        let mut cache = DidResolutionCache::new(8);
-        let (did, doc) = sample_document("did:web:alice.example");
-        let t0 = Utc::now();
-        cache.insert(did.clone(), doc.clone(), t0, Duration::seconds(60));
-        let hit = cache.get(&did, t0 + Duration::seconds(30));
-        assert_eq!(hit.as_ref().map(|d| d.id.as_str()), Some(did.as_str()));
-        assert_eq!(cache.len(), 1);
-    }
-
-    #[test]
-    fn cache_evicts_expired_entries_lazily_on_get() {
-        let mut cache = DidResolutionCache::new(8);
-        let (did, doc) = sample_document("did:web:alice.example");
-        let t0 = Utc::now();
-        cache.insert(did.clone(), doc, t0, Duration::seconds(60));
-        // 61s later — past expires_at.
-        let miss = cache.get(&did, t0 + Duration::seconds(61));
-        assert!(miss.is_none());
-        assert_eq!(cache.len(), 0, "expired entry should be removed on get");
-    }
-
-    #[test]
-    fn cache_invalidate_drops_entry_for_revocation_pushes() {
-        let mut cache = DidResolutionCache::new(8);
-        let (did, doc) = sample_document("did:web:alice.example");
-        let t0 = Utc::now();
-        cache.insert(did.clone(), doc, t0, Duration::seconds(60));
-        cache.invalidate(&did);
-        assert_eq!(cache.len(), 0);
-        assert!(cache.get(&did, t0).is_none());
-    }
-
-    #[test]
-    fn cache_evicts_least_recently_cached_when_full() {
-        let mut cache = DidResolutionCache::new(2);
-        let (did_a, doc_a) = sample_document("did:web:alice.example");
-        let (did_b, doc_b) = sample_document("did:web:bob.example");
-        let (did_c, doc_c) = sample_document("did:web:carol.example");
-
-        let t0 = Utc::now();
-        cache.insert(did_a.clone(), doc_a, t0, Duration::seconds(600));
-        cache.insert(
-            did_b.clone(),
-            doc_b,
-            t0 + Duration::seconds(1),
-            Duration::seconds(600),
-        );
-        // At capacity. Inserting C should evict the oldest by cached_at — A.
-        cache.insert(
-            did_c.clone(),
-            doc_c,
-            t0 + Duration::seconds(2),
-            Duration::seconds(600),
-        );
-
-        assert_eq!(cache.len(), 2);
-        assert!(cache.get(&did_a, t0 + Duration::seconds(3)).is_none());
-        assert!(cache.get(&did_b, t0 + Duration::seconds(3)).is_some());
-        assert!(cache.get(&did_c, t0 + Duration::seconds(3)).is_some());
-    }
-
-    #[test]
-    fn cache_with_zero_capacity_disables_inserts() {
-        let mut cache = DidResolutionCache::new(0);
-        let (did, doc) = sample_document("did:web:alice.example");
-        let t0 = Utc::now();
-        cache.insert(did.clone(), doc, t0, Duration::seconds(60));
-        assert_eq!(cache.len(), 0);
-        assert!(cache.get(&did, t0).is_none());
-    }
-
-    #[test]
-    fn cache_reports_fresh_and_stale_summary() {
-        let mut cache = DidResolutionCache::new(8);
-        let (did, doc) = sample_document("did:web:alice.example");
-        let t0 = Utc::now();
-        assert!(!cache.has_fresh_entry(t0));
-        assert!(!cache.has_only_stale_entries(t0));
-
-        cache.insert(did, doc, t0, Duration::seconds(60));
-        assert!(cache.has_fresh_entry(t0 + Duration::seconds(30)));
-        assert!(!cache.has_only_stale_entries(t0 + Duration::seconds(30)));
-        assert!(!cache.has_fresh_entry(t0 + Duration::seconds(60)));
-        assert!(cache.has_only_stale_entries(t0 + Duration::seconds(60)));
-    }
-
-    // ── Y1 freshness / resolve_with_cache ────────────────────────────
-
-    #[test]
-    fn freshness_reports_fresh_before_expiry_and_stale_after() {
-        let (_did, doc) = sample_document("did:web:alice.example");
-        let t0 = Utc::now();
-        let entry = CachedDidEntry {
-            document: doc,
-            cached_at: t0,
-            expires_at: t0 + Duration::seconds(60),
-        };
-        assert_eq!(
-            entry.freshness(t0 + Duration::seconds(30)),
-            Freshness::Fresh
-        );
-        // The expiration instant itself is Stale, matching `get` and its
-        // `expires_at > now` check.
-        assert_eq!(
-            entry.freshness(t0 + Duration::seconds(60)),
-            Freshness::Stale
-        );
-        assert_eq!(
-            entry.freshness(t0 + Duration::seconds(61)),
-            Freshness::Stale
-        );
     }
 
     #[test]
@@ -985,12 +702,14 @@ mod tests {
         // and not touch the resolver. The resolver has no evidence, so a real
         // resolution attempt would be Unresolved.
         let resolver = build_default_resolver(DeploymentProfile::PersonalNode);
-        let mut cache = DidResolutionCache::new(8);
+        let cache = DidResolutionCache::new(8);
         let (did, doc) = sample_document("did:web:alice.example");
         let t0 = Utc::now();
-        cache.insert(did.clone(), doc, t0, Duration::seconds(600));
+        cache
+            .insert(did.clone(), doc, t0, Duration::seconds(600))
+            .unwrap();
 
-        let out = resolve_with_cache(&resolver, &mut cache, &did, t0 + Duration::seconds(1))
+        let out = resolve_with_cache(&resolver, &cache, &did, t0 + Duration::seconds(1))
             .expect("fresh cache hit must succeed without touching resolver");
         assert_eq!(out.id.as_str(), did.as_str());
     }
@@ -1000,10 +719,10 @@ mod tests {
         // Empty cache + resolver with no evidence -> chain resolution ->
         // Unresolved (fail-closed).
         let resolver = build_default_resolver(DeploymentProfile::PersonalNode);
-        let mut cache = DidResolutionCache::new(8);
+        let cache = DidResolutionCache::new(8);
         let did = parse("did:web:alice.example");
         let t0 = Utc::now();
-        match resolve_with_cache(&resolver, &mut cache, &did, t0) {
+        match resolve_with_cache(&resolver, &cache, &did, t0) {
             Err(VerifyError::Unresolved(_)) => {}
             other => panic!("expected Unresolved on cache miss, got {other:?}"),
         }
@@ -1017,11 +736,13 @@ mod tests {
         // then resolver fallback runs and returns Unresolved because there is no
         // evidence.
         let resolver = build_default_resolver(DeploymentProfile::PersonalNode);
-        let mut cache = DidResolutionCache::new(8);
+        let cache = DidResolutionCache::new(8);
         let (did, doc) = sample_document("did:web:alice.example");
         let t0 = Utc::now();
-        cache.insert(did.clone(), doc, t0, Duration::seconds(60));
-        match resolve_with_cache(&resolver, &mut cache, &did, t0 + Duration::seconds(61)) {
+        cache
+            .insert(did.clone(), doc, t0, Duration::seconds(60))
+            .unwrap();
+        match resolve_with_cache(&resolver, &cache, &did, t0 + Duration::seconds(61)) {
             Err(VerifyError::Unresolved(_)) => {}
             other => panic!("expected Unresolved after expiry, got {other:?}"),
         }
@@ -1030,12 +751,16 @@ mod tests {
 
     #[test]
     fn cache_clear_empties_everything() {
-        let mut cache = DidResolutionCache::default();
+        let cache = DidResolutionCache::default();
         let (did_a, doc_a) = sample_document("did:web:alice.example");
         let (did_b, doc_b) = sample_document("did:web:bob.example");
         let t0 = Utc::now();
-        cache.insert(did_a, doc_a, t0, Duration::seconds(60));
-        cache.insert(did_b, doc_b, t0, Duration::seconds(60));
+        cache
+            .insert(did_a, doc_a, t0, Duration::seconds(60))
+            .unwrap();
+        cache
+            .insert(did_b, doc_b, t0, Duration::seconds(60))
+            .unwrap();
         assert_eq!(cache.len(), 2);
         cache.clear();
         assert_eq!(cache.len(), 0);

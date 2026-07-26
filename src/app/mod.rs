@@ -399,9 +399,8 @@ fn AppBootstrap() -> Element {
     //     invalidation hook can invalidate/clear while ingesting projections.
     // The cache is pure in-memory state, is not persisted, and only lives for a
     // single login session, matching the `DidResolutionCache` docs.
-    let mut did_cache = use_context_provider(|| {
-        Signal::new(crate::identity::did_resolver::DidResolutionCache::default())
-    });
+    let mut did_cache =
+        use_context_provider(|| Signal::new(arkret_sdk::identity::DidResolutionCache::default()));
     let did_resolution_health = use_signal(crate::components::DidResolutionHealth::healthy);
     let mut theme = use_signal(move || initial_theme);
     {

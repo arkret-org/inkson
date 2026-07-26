@@ -296,7 +296,7 @@ pub(crate) async fn fetch_verify_and_cache_proof_bundle<S: GovernanceProofStateS
 
     let authority = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
         crate::identity::did_resolver::DeploymentProfile::PersonalNode,
-        crate::identity::did_resolver::DidResolutionCache::default(),
+        arkret_sdk::identity::DidResolutionCache::default(),
     );
     let mut resolver = StaticProofDidResolver::default();
     for did in authority_proof_signer_dids(&bundle)? {
@@ -585,7 +585,7 @@ pub(crate) async fn prefetch_managed_agent_pcr_seal_head_device_key(
 ) -> anyhow::Result<()> {
     let authority = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
         crate::identity::did_resolver::DeploymentProfile::PersonalNode,
-        crate::identity::did_resolver::DidResolutionCache::default(),
+        arkret_sdk::identity::DidResolutionCache::default(),
     );
     ensure_managed_agent_pcr_seal_head_device_key_with(
         seal,

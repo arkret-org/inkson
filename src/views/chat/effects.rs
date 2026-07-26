@@ -22,7 +22,7 @@ pub(super) fn ChatEffects(
 ) -> Element {
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
-    let did_cache = use_context::<Signal<crate::identity::did_resolver::DidResolutionCache>>();
+    let did_cache = use_context::<Signal<arkret_sdk::identity::DidResolutionCache>>();
     let selected_channel_value = (controller.selected_channel)();
     let event_sink = ChatProjectionSink::new(controller);
 

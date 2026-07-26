@@ -23,7 +23,7 @@ pub(super) fn SyncEffects(
         ..
     } = SessionContext::get();
     let runtime_services = use_context::<crate::runtime::services::RuntimeServices>();
-    let did_cache = use_context::<Signal<crate::identity::did_resolver::DidResolutionCache>>();
+    let did_cache = use_context::<Signal<arkret_sdk::identity::DidResolutionCache>>();
     let call_signal_hub = use_context::<crate::views::call_signals::CallSignalHub>();
 
     let sync_effects = runtime_services.effects.clone();

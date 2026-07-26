@@ -278,7 +278,7 @@ pub(super) struct ConnectContext {
     /// PSK against the actor's DID document through a resolver backed by a
     /// snapshot of this cache; back-fills are written back. Shared with the
     /// SyncEngine's `did_cache` so both receive paths reuse resolved documents.
-    pub(super) did_cache: Signal<crate::identity::did_resolver::DidResolutionCache>,
+    pub(super) did_cache: Signal<arkret_sdk::identity::DidResolutionCache>,
     /// App-shell DID resolution health banner state. The root identity
     /// describe probe updates this on every connect/manual refresh; authority
     /// resolution remains fail-closed in `did_resolver`.
