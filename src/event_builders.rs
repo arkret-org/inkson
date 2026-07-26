@@ -246,6 +246,60 @@ pub fn build_realm_bootstrap_events(
         events.push(event);
     }
 
+    let delivery_binding_policy = json!({
+        "realm_id": realm_id,
+        "allow_binding_sources": ["realm_policy"],
+        "allow_did_document_default": false,
+        "allowed_recipient_services": [notary_did],
+        "required_endorsers": [],
+        "allow_unroutable_membership": true,
+        "rebind_authorization": "member",
+    });
+    let delivery_binding_policy_event = build_realm_state_event(
+        realm_id,
+        actor_id,
+        EventKind::RealmDeliveryBindingPolicy,
+        delivery_binding_policy,
+    )?;
+    let delivery_binding_policy_event_id = delivery_binding_policy_event.event_id.clone();
+    events.push(delivery_binding_policy_event);
+
+    use arkret_sdk::{
+        BindingScope, BindingSource, DeliveryMode, MemberDeliveryBinding, RecipientServiceType,
+    };
+    let creator_delivery_binding = MemberDeliveryBinding {
+        recipient_service_id: arkret_sdk::Did::new(notary_did.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid creator service DID: {err}"))?,
+        recipient_service_type: RecipientServiceType::PrincipalServer,
+        binding_scope: BindingScope::Realm,
+        binding_source: BindingSource::RealmPolicy,
+        delivery_modes: [
+            DeliveryMode::Events,
+            DeliveryMode::Sync,
+            DeliveryMode::ToDevice,
+            DeliveryMode::Push,
+            DeliveryMode::KeyPackages,
+        ]
+        .into_iter()
+        .collect(),
+        service_endpoint: None,
+        did_document_digest: None,
+        resolved_at: event_timestamp(),
+        service_acceptance_ref: None,
+        holder_proof_ref: None,
+        policy_event_ref: Some(delivery_binding_policy_event_id),
+        expires_at: None,
+    };
+    events.push(build_member_state_transition_event_with_binding(
+        realm_id,
+        actor_id,
+        actor_id,
+        Some("join"),
+        "join",
+        "creator_delivery_binding",
+        Some(creator_delivery_binding),
+    )?);
+
     for invitee in invitees.iter() {
         if invitee.actor_id != actor_id {
             events.push(build_member_state_event(
@@ -829,6 +883,7 @@ pub fn build_realm_state_event(
             | EventKind::RealmDiscovery
             | EventKind::RealmSchema
             | EventKind::RealmPolicyComponents
+            | EventKind::RealmDeliveryBindingPolicy
     ) {
         return Err(anyhow::anyhow!(
             "unsupported Realm state event kind {}",
@@ -883,6 +938,7 @@ pub fn build_realm_state_event(
                 })?;
             arkret_sdk::HistoryVisibilityPayload::new(typed).to_value()?
         }
+        EventKind::RealmDeliveryBindingPolicy => value,
         _ => json!({ "value": value }),
     };
     OperationBuilder::new(realm_id, actor_id, kind)
@@ -1108,7 +1164,12 @@ fn build_member_state_transition_event_with_binding(
     let realm_value = arkret_sdk::RealmId::new(realm_id_wire.clone())
         .map_err(|err| anyhow::anyhow!("realm_id not canonical: {err}"))?;
     let mut membership_payload = if membership == MembershipPayloadState::Join {
-        MembershipPayload::join(realm_value, member_did, DeliveryStatus::Unroutable, reason)
+        let delivery_status = if delivery_binding.is_some() {
+            DeliveryStatus::Routable
+        } else {
+            DeliveryStatus::Unroutable
+        };
+        MembershipPayload::join(realm_value, member_did, delivery_status, reason)
     } else {
         MembershipPayload::transition(membership, member_did, reason).with_realm_id(realm_value)
     };

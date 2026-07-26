@@ -696,7 +696,7 @@ impl ChatController {
             .messages
             .write()
             .iter_mut()
-            .find(|candidate| candidate.id == local_id)
+            .find(|candidate| candidate.matches_id_or_protocol(&local_id))
         {
             found.id = retry_message_id.clone();
             found.protocol_message_id = Some(retry_message_id.clone());
@@ -776,7 +776,7 @@ impl ChatController {
                     if let Some(found) = messages
                         .write()
                         .iter_mut()
-                        .find(|candidate| candidate.id == message_id_for_lookup)
+                        .find(|candidate| candidate.matches_id_or_protocol(&message_id_for_lookup))
                     {
                         found.id = submitted.event_id.clone();
                         found.pending = false;
@@ -868,7 +868,7 @@ fn mark_message_command_succeeded(messages: &mut Signal<Vec<ChatMessage>>, messa
     if let Some(message) = messages
         .write()
         .iter_mut()
-        .find(|message| message.id == message_id)
+        .find(|message| message.matches_id_or_protocol(message_id))
     {
         message.pending = false;
         message.failed = false;
@@ -884,7 +884,7 @@ fn mark_message_command_failed(
     if let Some(message) = messages
         .write()
         .iter_mut()
-        .find(|message| message.id == message_id)
+        .find(|message| message.matches_id_or_protocol(message_id))
     {
         message.pending = false;
         message.failed = true;

@@ -48,6 +48,18 @@ fn sidecar_projection_message_for_realm(
     }
 }
 
+#[test]
+fn chat_message_matches_protocol_id_after_server_rekeys_render_id() {
+    let mut message =
+        sidecar_projection_message("ak:message:local", "ak:strand:discussion", "hello");
+    message.protocol_message_id = Some("ak:message:local".to_owned());
+    message.id = "ak:event:accepted".to_owned();
+
+    assert!(message.matches_id_or_protocol("ak:event:accepted"));
+    assert!(message.matches_id_or_protocol("ak:message:local"));
+    assert!(!message.matches_id_or_protocol("ak:message:other"));
+}
+
 /// A valid `delivered` Event-fold projection (§7.2.4 shape: no Pending, no
 /// updated_hlc; coordinator + folded_frontier are required).
 fn delivered_exchange_projection_fixture(
@@ -1950,6 +1962,25 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
             ],
         )]
     );
+}
+
+#[test]
+fn durable_echo_settles_newer_optimistic_message_by_protocol_id() {
+    let mut optimistic = sidecar_projection_message("ak:message:local", "ak:strand:topic", "hello");
+    optimistic.protocol_message_id = Some("ak:message:local".to_owned());
+    optimistic.created_at = Some(chrono::Utc::now());
+    optimistic.pending = true;
+
+    let mut durable = sidecar_projection_message("ak:event:accepted", "ak:strand:topic", "hello");
+    durable.protocol_message_id = Some("ak:message:local".to_owned());
+    durable.created_at = None;
+
+    merge_duplicate_create_message(&mut optimistic, durable);
+
+    assert_eq!(optimistic.id, "ak:message:local");
+    assert!(!optimistic.pending);
+    assert!(!optimistic.failed);
+    assert!(optimistic.error.is_none());
 }
 
 #[test]

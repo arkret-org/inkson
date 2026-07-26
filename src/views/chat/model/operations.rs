@@ -17,7 +17,7 @@ pub(crate) fn fail_optimistic_chat_send(
     if let Some(found) = messages
         .write()
         .iter_mut()
-        .find(|candidate| candidate.id == message_id)
+        .find(|candidate| candidate.matches_id_or_protocol(message_id))
     {
         found.pending = false;
         found.failed = true;
@@ -476,19 +476,32 @@ pub(crate) async fn submit_chat_operation_with_plaintext_retry(
             if services.is_empty() {
                 return Err(error);
             }
-            crate::transport::realm_write::update_realm_plaintext_visible_services(
-                &api.event_submitter()?,
-                realm_id,
-                actor_id,
-                services,
-            )
-            .await
-            .map_err(|update_error| {
-                anyhow::anyhow!(
-                    "plaintext policy update failed: {update_error}; original send failed: {error}"
+            let policy_update =
+                crate::transport::realm_write::update_realm_plaintext_visible_services(
+                    &api.event_submitter()?,
+                    realm_id,
+                    actor_id,
+                    services,
                 )
-            })?;
-            api.event_submitter()?.submit_sdk_event(operation).await
+                .await;
+            let mut retry_operation = operation.clone();
+            retry_operation.event_id =
+                arkret_sdk::EventId::new(format!("ak:event:{}", crate::operation::uuid_v7()))?;
+            retry_operation.unsigned.insert(
+                "local_operation_idempotency_alias".to_owned(),
+                serde_json::Value::String(format!("ak:operation:{}", crate::operation::uuid_v7())),
+            );
+            let retry = api
+                .event_submitter()?
+                .submit_sdk_event(&retry_operation)
+                .await;
+            match (policy_update, retry) {
+                (_, Ok(response)) => Ok(response),
+                (Ok(_), Err(retry_error)) => Err(retry_error),
+                (Err(update_error), Err(retry_error)) => Err(anyhow::anyhow!(
+                    "plaintext policy update failed: {update_error}; retry after policy convergence failed: {retry_error}; original send failed: {error}"
+                )),
+            }
         }
         Err(error) => Err(error),
     }

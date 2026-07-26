@@ -531,14 +531,17 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                         }
                                     }
                                     time { "{msg.timestamp}" }
-                                    if msg.failed {
+                                    if sender_is_own && msg.failed {
                                         span {
                                             class: "message-status-icon is-failed",
                                             "data-testid": "message-send-status",
                                             title: "Message send failed",
                                             "!"
                                         }
-                                    } else if msg.pending && message_is_queued_offline {
+                                    } else if sender_is_own
+                                        && msg.pending
+                                        && message_is_queued_offline
+                                    {
                                         // Parked in the offline outbox: distinct
                                         // from the in-flight "Sending" spinner so
                                         // the user (and E2E) can tell a message is
@@ -550,7 +553,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                             title: crate::i18n::tr("chat.outbox.queued_offline"),
                                             "\u{23f8}"
                                         }
-                                    } else if msg.pending {
+                                    } else if sender_is_own && msg.pending {
                                         span {
                                             class: "message-status-icon is-pending",
                                             "data-testid": "message-send-status",

@@ -303,6 +303,10 @@ pub enum RecipientSealOutcome {
 /// reports [`RecipientSealOutcome::Unverified`], the epoch is not treated as
 /// durably sealed, and the retained `history_secret` stays eligible for a
 /// later retry once the caller can name the authorizing event.
+///
+/// `authorization_grant_ref` is the active capability grant authorizing the
+/// `ak.realm_key.share` data event. It is intentionally independent from the
+/// source policy reference and likewise fails closed when unavailable.
 #[allow(clippy::too_many_arguments)]
 pub fn build_eager_seal_events(
     realm_id: &str,
@@ -313,6 +317,7 @@ pub fn build_eager_seal_events(
     did_documents: &std::collections::BTreeMap<String, Value>,
     policy_digest: Value,
     source_authorization_ref: Option<&str>,
+    authorization_grant_ref: Option<&str>,
 ) -> Vec<RecipientSealOutcome> {
     if history_secrets.is_empty() || !durability_is_effective(policy) {
         return Vec::new();
@@ -330,6 +335,19 @@ pub fn build_eager_seal_events(
                          projection does not carry the durability-policy Control Move event \
                          ref yet (encryption-and-audit.md §2.3.5(c))"
                     .to_owned(),
+            })
+            .collect();
+    };
+    let Some(authorization_grant_ref) = authorization_grant_ref
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return policy
+            .recovery_recipients
+            .iter()
+            .map(|recipient| RecipientSealOutcome::Unverified {
+                recipient_id: recipient.recipient_id.clone(),
+                reason: "ak.realm_key.share capability grant unavailable".to_owned(),
             })
             .collect();
     };
@@ -379,7 +397,10 @@ pub fn build_eager_seal_events(
                 }
             };
             match crate::mls::admission::wrap_realm_key_share_payload_event(
-                realm_id, actor_id, payload,
+                realm_id,
+                actor_id,
+                payload,
+                authorization_grant_ref,
             ) {
                 Ok(event) => RecipientSealOutcome::Sealed {
                     recipient_id,

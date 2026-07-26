@@ -931,7 +931,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                                 &content,
                                                             );
                                                     }
-                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == poll_id_for_status) {
+                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.matches_id_or_protocol(&poll_id_for_status)) {
                                                         found.pending = false;
                                                         found.failed = false;
                                                         found.error = None;
@@ -940,7 +940,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                 }
                                                 Err(error) => {
                                                     let error_text = error.display();
-                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == poll_id_for_status) {
+                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.matches_id_or_protocol(&poll_id_for_status)) {
                                                         found.pending = false;
                                                         found.failed = true;
                                                         found.error = Some(format!("Poll send failed: {error_text}"));
@@ -1056,7 +1056,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                                 &content,
                                                             );
                                                     }
-                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == poll_id_for_status) {
+                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.matches_id_or_protocol(&poll_id_for_status)) {
                                                         found.pending = false;
                                                         found.failed = false;
                                                         found.error = None;
@@ -1065,7 +1065,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                 }
                                                 Err(error) => {
                                                     let error_text = error.display();
-                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == poll_id_for_status) {
+                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.matches_id_or_protocol(&poll_id_for_status)) {
                                                         found.pending = false;
                                                         found.failed = true;
                                                         found.error = Some(format!("Poll send failed: {error_text}"));
@@ -1404,7 +1404,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     if let Some(found) = messages
                                         .write()
                                         .iter_mut()
-                                        .find(|candidate| candidate.id == local_id)
+                                        .find(|candidate| candidate.matches_id_or_protocol(&local_id))
                                     {
                                         found.mentions = mentions.clone();
                                     }
@@ -1423,7 +1423,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             if let Some(found) = messages
                                                 .write()
                                                 .iter_mut()
-                                                .find(|candidate| candidate.id == local_id)
+                                                .find(|candidate| {
+                                                    candidate.matches_id_or_protocol(&local_id)
+                                                })
                                             {
                                                 found.pending = false;
                                                 found.failed = true;
@@ -1470,7 +1472,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             if let Some(found) = messages
                                                 .write()
                                                 .iter_mut()
-                                                .find(|candidate| candidate.id == local_id)
+                                                .find(|candidate| {
+                                                    candidate.matches_id_or_protocol(&local_id)
+                                                })
                                             {
                                                 found.id = resp.event_id.clone();
                                                 found.pending = false;
@@ -1505,7 +1509,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             } else if let Some(found) = messages
                                                 .write()
                                                 .iter_mut()
-                                                .find(|candidate| candidate.id == local_id)
+                                                .find(|candidate| {
+                                                    candidate.matches_id_or_protocol(&local_id)
+                                                })
                                             {
                                                 found.pending = false;
                                                 found.failed = true;
@@ -2132,7 +2138,11 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     if let Some(found) = messages
                                         .write()
                                         .iter_mut()
-                                        .find(|candidate| candidate.id == message_id_for_lookup)
+                                        .find(|candidate| {
+                                            candidate.matches_id_or_protocol(
+                                                &message_id_for_lookup,
+                                            )
+                                        })
                                     {
                                         found.id = resp_event_id.clone();
                                         found.pending = false;

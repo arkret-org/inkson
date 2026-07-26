@@ -600,6 +600,7 @@ pub(crate) fn merge_duplicate_create_message(
     existing: &mut ChatMessage,
     mut incoming: ChatMessage,
 ) {
+    let incoming_is_settled = !incoming.pending && !incoming.failed;
     if existing.redacted && !incoming.redacted {
         carry_create_metadata(existing, &incoming);
         append_revision_body(existing, incoming.body);
@@ -640,6 +641,11 @@ pub(crate) fn merge_duplicate_create_message(
         *existing = incoming;
     } else {
         carry_create_metadata(existing, &incoming);
+        if incoming_is_settled {
+            existing.pending = false;
+            existing.failed = false;
+            existing.error = None;
+        }
         if incoming.edited {
             existing.edited = true;
         }

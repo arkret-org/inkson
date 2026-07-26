@@ -504,6 +504,35 @@ async fn materialize_direct_conversation(
         &mut founding_grant_event,
         &signer,
     )?;
+    arkret_sdk::schema::materialize_capability_grant_event_contract(&mut founding_grant_event)
+        .map_err(|error| {
+            anyhow::anyhow!("materialize direct conversation founding grant effect: {error}")
+        })?;
+    let founding_grant_id = founding_grant_event
+        .payload
+        .get("grant_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            anyhow::anyhow!("direct conversation founding grant omitted payload.grant_id")
+        })?
+        .to_owned();
+    let mut main_strand_grant_event = draft.main_strand_grant_event.clone();
+    crate::event_submit::attach_capability_grant_payload_proof_with_signer(
+        &mut main_strand_grant_event,
+        &signer,
+    )?;
+    arkret_sdk::schema::materialize_capability_grant_event_contract(&mut main_strand_grant_event)
+        .map_err(|error| {
+        anyhow::anyhow!("materialize direct conversation main Strand grant effect: {error}")
+    })?;
+    let main_strand_grant_id = main_strand_grant_event
+        .payload
+        .get("grant_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            anyhow::anyhow!("direct conversation main Strand grant omitted payload.grant_id")
+        })?
+        .to_owned();
 
     let bootstrap_key =
         pending_direct_conversation_bootstrap_key(draft.materialization_id.as_str());
@@ -548,18 +577,55 @@ async fn materialize_direct_conversation(
             )
             .await?;
         state_store.write().remove_private_data(&bootstrap_key);
-        accepted = accepted_direct_materialization_events(&submitter, &realm_id).await;
+        accepted = wait_for_direct_materialization_events(
+            &submitter,
+            &realm_id,
+            pending_bootstrap
+                .events
+                .iter()
+                .map(|event| event.event_id.as_str()),
+        )
+        .await?;
     } else {
         state_store.write().remove_private_data(&bootstrap_key);
     }
 
     save_direct_conversation_realm_projection(&mut state_store, &realm_id, &actor_id, peer);
-    refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id).await?;
+    refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id, None).await?;
+
+    let pre_strand_grant_seal_frontier = state_store.read().seal_view_for_realm(&realm_id).frontier;
+    if !accepted.contains(draft.main_strand_grant_event.event_id.as_str()) {
+        main_strand_grant_event.authorization_ref = Some(founding_grant_id);
+        submitter
+            .submit_sdk_event(&main_strand_grant_event)
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!("submit direct conversation main Strand grant: {error}")
+            })?;
+        accepted = wait_for_direct_materialization_events(
+            &submitter,
+            &realm_id,
+            [draft.main_strand_grant_event.event_id.as_str()],
+        )
+        .await?;
+    }
+    refresh_direct_conversation_seal(
+        &submitter,
+        &mut state_store,
+        &realm_id,
+        Some(&pre_strand_grant_seal_frontier),
+    )
+    .await?;
 
     if !accepted.contains(draft.main_strand_event.event_id.as_str()) {
-        submitter.submit_sdk_event(&draft.main_strand_event).await?;
+        let mut main_strand_event = draft.main_strand_event.clone();
+        main_strand_event.authorization_ref = Some(main_strand_grant_id);
+        submitter
+            .submit_sdk_event(&main_strand_event)
+            .await
+            .map_err(|error| anyhow::anyhow!("submit direct conversation main Strand: {error}"))?;
     }
-    refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id).await?;
+    refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id, None).await?;
 
     // The signed Commit / Welcome / post-commit MLS snapshot MUST survive a
     // page reload so a resumed materialization replays the SAME Commit and
@@ -648,7 +714,7 @@ async fn materialize_direct_conversation(
         state_store
             .write()
             .mark_mls_genesis_emitted_with_event(&realm_id, &draft.mls_genesis_event_ref);
-        refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id).await?;
+        refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id, None).await?;
 
         let commit_request = crate::mls::governance_proof::proof_request(
             &state_store.read(),
@@ -725,7 +791,7 @@ async fn materialize_direct_conversation(
     state_store
         .write()
         .save_mls_snapshot(realm_id.clone(), pending.snapshot.clone());
-    refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id).await?;
+    refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id, None).await?;
 
     if pending.welcome.proofs.is_empty() {
         pending.welcome = submitter
@@ -745,7 +811,7 @@ async fn materialize_direct_conversation(
         .await?;
     }
     submitter.submit_signed_sdk_event(&pending.welcome).await?;
-    refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id).await?;
+    refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id, None).await?;
 
     if pending.binding.is_none() {
         pending.binding = Some(
@@ -795,15 +861,54 @@ async fn accepted_direct_materialization_events(
         .unwrap_or_default()
 }
 
+async fn wait_for_direct_materialization_events<'a>(
+    submitter: &EventSubmitter,
+    realm_id: &str,
+    expected_event_ids: impl IntoIterator<Item = &'a str>,
+) -> anyhow::Result<std::collections::BTreeSet<String>> {
+    const ATTEMPTS: usize = 40;
+    let expected = expected_event_ids
+        .into_iter()
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    for attempt in 0..ATTEMPTS {
+        let accepted = accepted_direct_materialization_events(submitter, realm_id).await;
+        if expected.iter().all(|event_id| accepted.contains(event_id)) {
+            return Ok(accepted);
+        }
+        if attempt + 1 < ATTEMPTS {
+            crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(250)).await;
+        }
+    }
+    anyhow::bail!(
+        "direct conversation bootstrap was accepted but did not become readable before authoring the main Strand"
+    )
+}
+
 async fn refresh_direct_conversation_seal(
     submitter: &EventSubmitter,
     state_store: &mut SyncSignal<crate::state::LocalStateStore>,
     realm_id: &str,
+    previous_frontier: Option<&[String]>,
 ) -> anyhow::Result<()> {
     const ATTEMPTS: usize = 20;
     for attempt in 0..ATTEMPTS {
         match submitter.events_frontier_realm_seal_view(realm_id).await {
             Ok(view) => {
+                if previous_frontier.is_some_and(|frontier| {
+                    frontier
+                        .iter()
+                        .any(|seal_id| seal_id == view.seal_id.as_str())
+                }) {
+                    if attempt + 1 < ATTEMPTS {
+                        crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(250))
+                            .await;
+                        continue;
+                    }
+                    anyhow::bail!(
+                        "direct conversation capability grant was accepted but its Seal did not advance"
+                    );
+                }
                 state_store.write().set_realm_seal_view(
                     realm_id.to_owned(),
                     crate::state::LocalSealView {

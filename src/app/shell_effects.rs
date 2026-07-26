@@ -236,7 +236,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
     let route = use_route::<Route>();
     use_effect(move || {
         if matches!(route, Route::Login) && !token().trim().is_empty() {
-            let _ = navigator.push(Route::Dashboard);
+            let _ = navigator.replace(Route::Dashboard);
         } else if matches!(route, Route::Recovery) {
             let _ = navigator.replace(Route::SettingsRecovery);
         }

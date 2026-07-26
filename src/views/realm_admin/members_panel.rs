@@ -1796,6 +1796,53 @@ fn history_share_source_authorization_ref_from_events(events: &[Value]) -> Optio
     })
 }
 
+fn realm_key_share_capability_ref_from_events(events: &[Value], actor_id: &str) -> Option<String> {
+    events.iter().rev().find_map(|event| {
+        let kind = event
+            .get("kind")
+            .or_else(|| event.get("event_kind"))
+            .and_then(Value::as_str)?;
+        if kind != arkret_sdk::events::EventKind::CAPABILITY_GRANT {
+            return None;
+        }
+        let payload = event.get("payload").unwrap_or(event);
+        let grant = payload.get("grant").unwrap_or(payload);
+        let subject = grant.get("subject").and_then(Value::as_str)?;
+        let actions = grant.get("actions").and_then(Value::as_array)?;
+        if subject.trim() != actor_id.trim()
+            || !actions.iter().any(|action| {
+                action
+                    .as_str()
+                    .is_some_and(|action| action == "ak.realm_key.share")
+            })
+        {
+            return None;
+        }
+        payload
+            .get("grant_id")
+            .or_else(|| grant.get("id"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|grant_id| grant_id.starts_with("ak:grant:"))
+            .map(ToOwned::to_owned)
+    })
+}
+
+fn realm_key_share_capability_ref(
+    store: &LocalStateStore,
+    realm_id: &str,
+    actor_id: &str,
+) -> Option<String> {
+    let state = store.load();
+    let events = state
+        .realm_tree_projections
+        .get(realm_id.trim())?
+        .get("state")?
+        .get("events")?
+        .as_array()?;
+    realm_key_share_capability_ref_from_events(events, actor_id)
+}
+
 /// Provider-side: answer one `ak.realm_key.request` from a late joiner by
 /// sealing the retained `history_secret` range to the requester's advertised
 /// HPKE public key and submitting a durable `ak.realm_key.share`
@@ -1856,10 +1903,11 @@ pub(crate) async fn share_history_to_requester(
         &device_id,
     )
     .await?;
-    let (all, policy_digest, local_source_authorization_ref) = {
+    let (all, policy_digest, local_source_authorization_ref, local_authorization_grant_ref) = {
         let store = state_store.read();
         let source_authorization_ref =
             realm_history_share_source_authorization_ref(&store, &realm_id);
+        let authorization_grant_ref = realm_key_share_capability_ref(&store, &realm_id, &actor_id);
         let policy_digest = match store.genesis_policy_root_for_effective_scope(&realm_id, None) {
             Some(stored) => {
                 arkret_sdk::Hash::new(stored.clone()).map_err(|err| {
@@ -1879,6 +1927,7 @@ pub(crate) async fn share_history_to_requester(
             store.history_secrets_for(&realm_id),
             policy_digest,
             source_authorization_ref,
+            authorization_grant_ref,
         )
     };
     if all.is_empty() {
@@ -1888,12 +1937,33 @@ pub(crate) async fn share_history_to_requester(
     // security-critical authorization reference from the authoritative,
     // fully-paginated event log when the local projection no longer carries
     // it; never invent a reference or weaken the receiver/server checks.
-    let source_authorization_ref = match local_source_authorization_ref {
-        Some(event_id) => Some(event_id),
-        None => {
-            let backfill = api.event_submitter()?.backfill(&realm_id).await?;
-            history_share_source_authorization_ref_from_events(&backfill.event_values())
-        }
+    let backfill_events =
+        if local_source_authorization_ref.is_none() || local_authorization_grant_ref.is_none() {
+            Some(
+                api.event_submitter()?
+                    .backfill(&realm_id)
+                    .await?
+                    .event_values(),
+            )
+        } else {
+            None
+        };
+    let source_authorization_ref = local_source_authorization_ref.or_else(|| {
+        backfill_events
+            .as_deref()
+            .and_then(history_share_source_authorization_ref_from_events)
+    });
+    let authorization_grant_ref = local_authorization_grant_ref.or_else(|| {
+        backfill_events
+            .as_deref()
+            .and_then(|events| realm_key_share_capability_ref_from_events(events, &actor_id))
+    });
+    let Some(authorization_grant_ref) = authorization_grant_ref else {
+        tracing::warn!(
+            realm = %short_protocol_id(&realm_id),
+            "cannot answer ak.realm_key.request: ak.realm_key.share capability unavailable"
+        );
+        return Ok(false);
     };
     // §2.3.5(c): every ak.realm_key.share must name the authorizing Control
     // Move. Without it the answer fails closed and the request stays in the
@@ -1938,6 +2008,7 @@ pub(crate) async fn share_history_to_requester(
         policy_digest,
         sealed,
         &source_authorization_ref,
+        &authorization_grant_ref,
     )
     .map_err(|err| anyhow::anyhow!(err))?;
     api.event_submitter()?
@@ -1985,7 +2056,7 @@ pub(crate) async fn seal_history_to_recovery_recipients(
         &device_id,
     )
     .await?;
-    let (policy, history_secrets, policy_digest, source_authorization_ref) = {
+    let (policy, history_secrets, policy_digest, source_authorization_ref, authorization_grant_ref) = {
         let store = state_store.read();
         let Some(policy) = store.realm_durability_policy(&realm_id) else {
             return Ok((0, 0));
@@ -2003,11 +2074,13 @@ pub(crate) async fn seal_history_to_recovery_recipients(
             .unwrap_or(Value::Null);
         let source_authorization_ref =
             realm_history_share_source_authorization_ref(&store, &realm_id);
+        let authorization_grant_ref = realm_key_share_capability_ref(&store, &realm_id, &actor_id);
         (
             policy,
             history_secrets,
             policy_digest,
             source_authorization_ref,
+            authorization_grant_ref,
         )
     };
     if history_secrets.is_empty() {
@@ -2036,6 +2109,7 @@ pub(crate) async fn seal_history_to_recovery_recipients(
         &did_documents,
         policy_digest,
         source_authorization_ref.as_deref(),
+        authorization_grant_ref.as_deref(),
     );
     let mut events = Vec::new();
     let mut unverified = 0_usize;

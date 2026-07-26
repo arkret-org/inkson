@@ -1,5 +1,31 @@
 use super::*;
 
+fn verified_bundle_covers_observed_head(
+    bundle: &serde_json::Value,
+    accepted_heads: &BTreeSet<&str>,
+) -> bool {
+    bundle
+        .get("seal_path")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|seal_path| {
+            seal_path.iter().any(|seal| {
+                seal.get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|id| accepted_heads.contains(id))
+                    || seal
+                        .get("predecessor_refs")
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|predecessors| {
+                            predecessors.iter().any(|predecessor| {
+                                predecessor
+                                    .as_str()
+                                    .is_some_and(|id| accepted_heads.contains(id))
+                            })
+                        })
+            })
+        })
+}
+
 impl LocalStateStore {
     /// Return the stored remark for `realm_id`, if any. `None` means the
     /// user has not set a local override and the public Realm title
@@ -234,6 +260,10 @@ impl LocalStateStore {
         self.cached.mls_governance_proofs.retain(|_, entry| {
             entry.request.realm_id.as_str() != realm_id
                 || accepted_heads.contains(entry.accepted_seal_id.as_str())
+                // Sync and proof acquisition race independently. A lagging
+                // frontier may still be an authenticated predecessor of the
+                // freshly verified accepted Seal and must not evict its proof.
+                || verified_bundle_covers_observed_head(&entry.bundle, &accepted_heads)
         });
         self.cached.seal_views.insert(realm_id, view);
         let _ = self.flush();
@@ -250,5 +280,27 @@ impl LocalStateStore {
     /// [`LocalSealView::move_seal_ref`].
     pub fn seal_ref_for_realm_move(&self, realm_id: &str) -> String {
         self.seal_view_for_realm(realm_id).move_seal_ref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::verified_bundle_covers_observed_head;
+
+    #[test]
+    fn verified_bundle_recognizes_an_observed_predecessor_head() {
+        let bundle = serde_json::json!({
+            "seal_path": [{
+                "id": "ak:seal:sha256:accepted",
+                "predecessor_refs": ["ak:seal:sha256:previous"]
+            }]
+        });
+        let previous = BTreeSet::from(["ak:seal:sha256:previous"]);
+        let unrelated = BTreeSet::from(["ak:seal:sha256:unrelated"]);
+
+        assert!(verified_bundle_covers_observed_head(&bundle, &previous));
+        assert!(!verified_bundle_covers_observed_head(&bundle, &unrelated));
     }
 }

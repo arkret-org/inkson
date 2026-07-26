@@ -156,6 +156,14 @@ pub(crate) struct ModerationAppealPrompt {
 }
 
 impl ChatMessage {
+    pub(crate) fn matches_id_or_protocol(&self, message_ref: &str) -> bool {
+        self.id == message_ref
+            || self
+                .protocol_message_id
+                .as_deref()
+                .is_some_and(|protocol_id| protocol_id == message_ref)
+    }
+
     pub(crate) fn pin_saved_target_ref(&self) -> &str {
         self.protocol_message_id
             .as_deref()

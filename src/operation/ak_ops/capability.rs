@@ -162,5 +162,18 @@ mod tests {
             serde_json::to_value(arkret_sdk::current_capability_action_registry_digest().unwrap())
                 .unwrap()
         );
+        assert_eq!(event.effects.len(), 1);
+        assert_eq!(
+            event.effects[0].cell.as_str(),
+            "ak:cell:ak.component.capability.grant.v1:ak:grant:019f9000-0000-7000-8000-000000000002"
+        );
+        assert_eq!(
+            event.effects[0].op.tag.as_deref(),
+            Some(format!("{}:0", event.event_id).as_str())
+        );
+        assert_eq!(
+            event.effects[0].op.value.as_ref(),
+            Some(&event.payload["grant"])
+        );
     }
 }

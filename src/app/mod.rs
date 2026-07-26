@@ -2302,6 +2302,7 @@ fn AppBootstrap() -> Element {
                                                         let api_token = token();
                                                         let base = base.clone();
                                                         let peer_for_task = peer.clone();
+                                                        let peer_for_log = peer_for_task.clone();
                                                         spawn(async move {
                                                             let result = crate::transport::auth::with_authed_api(
                                                                 &base,
@@ -2338,6 +2339,11 @@ fn AppBootstrap() -> Element {
                                                                     }
                                                                 }
                                                                 Err(err) => {
+                                                                    tracing::error!(
+                                                                        error = %err.display(),
+                                                                        peer = %peer_for_log,
+                                                                        "direct conversation open failed"
+                                                                    );
                                                                     crate::components::feedback::toast_error(
                                                                         "feedback.direct_open_failed",
                                                                         vec![],

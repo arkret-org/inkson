@@ -297,6 +297,13 @@ impl OperationBuilder {
             .map_err(|err| anyhow::anyhow!("invalid executed_by DID: {err}"))?;
         event.authorization_ref = self.authorization_ref;
         event.unsigned = unsigned;
+        if event.kind.as_str() == arkret_sdk::events::EventKind::CAPABILITY_GRANT
+            && event.effects.is_empty()
+        {
+            arkret_sdk::schema::materialize_capability_grant_event_contract(&mut event).map_err(
+                |error| anyhow::anyhow!("capability grant effect derivation failed: {error}"),
+            )?;
+        }
         Ok(event)
     }
 }

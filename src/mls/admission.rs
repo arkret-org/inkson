@@ -270,6 +270,7 @@ pub(crate) fn build_realm_key_share_event(
     policy_digest: String,
     sealed_ciphertext: String,
     source_authorization_ref: &str,
+    authorization_grant_ref: &str,
 ) -> Result<arkret_sdk::Event, String> {
     let source_authorization_ref =
         arkret_sdk::EventId::new(source_authorization_ref.trim().to_owned())
@@ -278,6 +279,16 @@ pub(crate) fn build_realm_key_share_event(
         .map_err(|err| format!("invalid realm_key.share recipient DID: {err:?}"))?;
     let policy_digest = arkret_sdk::Hash::new(policy_digest.trim().to_owned())
         .map_err(|err| format!("invalid realm_key.share policy_digest: {err:?}"))?;
+    let digest_suite_name = policy_digest
+        .as_str()
+        .split_once(':')
+        .map(|(suite, _)| suite)
+        .ok_or_else(|| "realm_key.share policy_digest has no digest suite".to_owned())?;
+    let digest_suite = arkret_sdk::canonical::digest_suite(digest_suite_name)
+        .map_err(|err| format!("unsupported realm_key.share digest suite: {err}"))?;
+    let authorization_grant_ref =
+        arkret_sdk::GrantId::new(authorization_grant_ref.trim().to_owned())
+            .map_err(|err| format!("invalid realm_key.share authorization grant ref: {err:?}"))?;
     let key_scope = arkret_sdk::RealmKeyScope {
         effective_scope: arkret_wire::EffectiveScope::Realm {
             realm_id: arkret_sdk::RealmId::new(trim_realm_id(realm_id))
@@ -327,14 +338,18 @@ pub(crate) fn build_realm_key_share_event(
         .ok_or_else(|| "ak.realm_key.share requires an active sender device signer".to_owned())?;
     let body = serde_json::to_value(&payload)
         .map_err(|err| format!("serialize ak.realm_key.share payload: {err}"))?;
-    crate::operation::OperationBuilder::new(
+    let mut event = crate::operation::OperationBuilder::new(
         realm_id,
         actor_id,
         arkret_sdk::events::kinds::EventKind::RealmKeyShare,
     )
     .body(body)
+    .authorization_ref(authorization_grant_ref.as_str())
     .build_sdk_event("inkson")
-    .map_err(|err| format!("ak.realm_key.share SDK Event conversion failed: {err}"))
+    .map_err(|err| format!("ak.realm_key.share SDK Event conversion failed: {err}"))?;
+    arkret_sdk::schema::materialize_single_target_append_event_contract(&mut event, digest_suite)
+        .map_err(|err| format!("ak.realm_key.share effect derivation failed: {err}"))?;
+    Ok(event)
 }
 
 /// Wrap an already-constructed [`arkret_sdk::RealmKeySharePayload`] (e.g. the
@@ -352,19 +367,36 @@ pub(crate) fn wrap_realm_key_share_payload_event(
     realm_id: &str,
     actor_id: &str,
     mut payload: arkret_sdk::RealmKeySharePayload,
+    authorization_grant_ref: &str,
 ) -> Result<arkret_sdk::Event, String> {
+    let digest_suite_name = payload
+        .key_scope
+        .policy_digest
+        .as_str()
+        .split_once(':')
+        .map(|(suite, _)| suite)
+        .ok_or_else(|| "realm_key.share policy_digest has no digest suite".to_owned())?;
+    let digest_suite = arkret_sdk::canonical::digest_suite(digest_suite_name)
+        .map_err(|err| format!("unsupported realm_key.share digest suite: {err}"))?;
+    let authorization_grant_ref =
+        arkret_sdk::GrantId::new(authorization_grant_ref.trim().to_owned())
+            .map_err(|err| format!("invalid realm_key.share authorization grant ref: {err:?}"))?;
     payload.sender_device_signature = sign_realm_key_share_sender_signature(&payload)
         .ok_or_else(|| "ak.realm_key.share requires an active sender device signer".to_owned())?;
     let body = serde_json::to_value(&payload)
         .map_err(|err| format!("serialize ak.realm_key.share payload: {err}"))?;
-    crate::operation::OperationBuilder::new(
+    let mut event = crate::operation::OperationBuilder::new(
         realm_id,
         actor_id,
         arkret_sdk::events::kinds::EventKind::RealmKeyShare,
     )
     .body(body)
+    .authorization_ref(authorization_grant_ref.as_str())
     .build_sdk_event("inkson")
-    .map_err(|err| format!("ak.realm_key.share SDK Event conversion failed: {err}"))
+    .map_err(|err| format!("ak.realm_key.share SDK Event conversion failed: {err}"))?;
+    arkret_sdk::schema::materialize_single_target_append_event_contract(&mut event, digest_suite)
+        .map_err(|err| format!("ak.realm_key.share effect derivation failed: {err}"))?;
+    Ok(event)
 }
 
 /// Sign the canonical `RealmKeySharePayload::sender_signing_input()` with this
@@ -747,6 +779,7 @@ mod tests {
             policy_digest.clone(),
             "c2VhbGVk".to_owned(),
             "ak:event:01904100-0000-7000-8000-0000000000e7",
+            "ak:grant:01904100-0000-7000-8000-0000000000e8",
         )
         .unwrap();
 
@@ -767,6 +800,17 @@ mod tests {
             json!({ "kind": "realm", "realm_id": realm })
         );
         assert_eq!(event.payload["key_scope"]["policy_digest"], policy_digest);
+        assert_eq!(
+            event.authorization_ref.as_deref(),
+            Some("ak:grant:01904100-0000-7000-8000-0000000000e8")
+        );
+        assert_eq!(event.effects.len(), 1);
+        let cell = arkret_sdk::CellId::from_ref(&event.effects[0].cell).unwrap();
+        assert_eq!(cell.component(), "ak.component.realm_key.delivery.v1");
+        assert_eq!(
+            arkret_sdk::events::cba_cell_family_plane(cell.component()),
+            Some(arkret_sdk::events::CbaEffectPlane::Data)
+        );
         let created_at = event.payload["created_at"]
             .as_str()
             .expect("realm_key.share created_at is a string");
