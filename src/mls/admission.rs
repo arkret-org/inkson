@@ -292,12 +292,12 @@ pub(crate) fn build_realm_key_share_event(
     let mut payload = arkret_sdk::RealmKeySharePayload {
         share_class: arkret_sdk::RealmKeyShareClass::MemberDevice,
         recipient_principal_id: recipient_did,
-        recipient_device_id: Some(
-            arkret_sdk::DeviceId::new(recipient_device_id.trim().to_owned())
-                .map_err(|err| format!("invalid realm_key.share recipient device id: {err:?}"))?,
-        ),
-        recipient_verification_method: None,
-        recovery_recipient_id: None,
+        target: arkret_sdk::RealmKeyShareTarget::MemberDevice {
+            recipient_device_id: arkret_sdk::DeviceId::new(
+                recipient_device_id.trim().to_owned(),
+            )
+            .map_err(|err| format!("invalid realm_key.share recipient device id: {err:?}"))?,
+        },
         sender_device_id: arkret_sdk::DeviceId::new(sender_device_id.trim().to_owned())
             .map_err(|err| format!("invalid realm_key.share sender device id: {err:?}"))?,
         source_authorization_ref,
@@ -311,11 +311,10 @@ pub(crate) fn build_realm_key_share_event(
         // durable Event-envelope proof.
         sender_device_signature: arkret_sdk::SignatureMaterial::Variant1(BTreeMap::new()),
         key_scope,
-        ciphertext: Some(
-            arkret_sdk::NonEmptyString::new(sealed_ciphertext)
+        material: arkret_sdk::RealmKeyShareMaterial::Ciphertext {
+            ciphertext: arkret_sdk::NonEmptyString::new(sealed_ciphertext)
                 .map_err(|err| format!("invalid realm_key.share ciphertext: {err}"))?,
-        ),
-        encrypted_key_ref: None,
+        },
         aad_digest: None,
         expires_at: None,
         created_at: crate::clock::now_utc_canonical(),
@@ -383,7 +382,8 @@ pub(crate) fn sign_realm_key_share_sender_signature(
 ) -> Option<arkret_sdk::SignatureMaterial> {
     let signer = crate::event_signer::active_signer()?;
     let pubkey_multibase = signer.public_key_multibase()?;
-    let signing_input = payload.sender_signing_input();
+    // Canonicalization failure must not degrade into signing empty bytes.
+    let signing_input = payload.sender_signing_input().ok()?;
     let signature = signer.sign_raw(&signing_input).ok()?;
     let mut fields = BTreeMap::new();
     fields.insert("alg".to_owned(), Value::String("Ed25519".to_owned()));

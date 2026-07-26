@@ -1648,7 +1648,9 @@ fn realm_key_share_sender_signature_round_trips() {
 
     // Tamper with the covered body → signature must no longer verify.
     let mut tampered = payload.clone();
-    tampered.ciphertext = Some(arkret_sdk::NonEmptyString::new("dGFtcGVyZWQ").unwrap());
+    tampered.material = arkret_sdk::RealmKeyShareMaterial::Ciphertext {
+        ciphertext: arkret_sdk::NonEmptyString::new("dGFtcGVyZWQ").unwrap(),
+    };
     assert!(!verify_realm_key_share_sender_signature(&tampered, None));
 
     // An empty signature object is tolerated on the Miss path (HPKE seal gates).

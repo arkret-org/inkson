@@ -683,12 +683,13 @@ pub(crate) fn ingest_realm_key_share(
     // only with this device's HPKE private key anyway, but check the routing
     // first). RRK shares (share_class=realm_recovery_key) carry no
     // recipient_device_id and are not consumed here.
-    if payload
-        .recipient_device_id
-        .as_ref()
-        .map(|device| device.as_str().trim())
-        != Some(device_id.trim())
-    {
+    let arkret_sdk::RealmKeyShareTarget::MemberDevice {
+        ref recipient_device_id,
+    } = payload.target
+    else {
+        return Ok(Vec::new());
+    };
+    if recipient_device_id.as_str().trim() != device_id.trim() {
         return Ok(Vec::new());
     }
     // SEC-02 / device-lifecycle.md §13: sender-device authentication. When the
@@ -700,13 +701,13 @@ pub(crate) fn ingest_realm_key_share(
         tracing::debug!(%realm_id, "reject ak.realm_key.share: sender_device_signature failed");
         return Ok(Vec::new());
     }
-    let Some(sealed) = payload
-        .ciphertext
-        .as_deref()
-        .filter(|c| !c.trim().is_empty())
-    else {
+    let arkret_sdk::RealmKeyShareMaterial::Ciphertext { ref ciphertext } = payload.material else {
         return Ok(Vec::new());
     };
+    let sealed = ciphertext.as_str();
+    if sealed.trim().is_empty() {
+        return Ok(Vec::new());
+    }
     let privkey = match super::load_device_hpke_private_key(secure_store, actor_id, device_id) {
         Ok(Some(privkey)) => privkey,
         Ok(None) => {
@@ -868,7 +869,11 @@ pub(crate) fn verify_realm_key_share_sender_signature(
     let Ok(verifying_key) = VerifyingKey::from_bytes(&pubkey_bytes) else {
         return false;
     };
-    let signing_input = payload.sender_signing_input();
+    // Fail closed when the transcript cannot be rebuilt: verifying against
+    // empty bytes would accept a signature over nothing.
+    let Ok(signing_input) = payload.sender_signing_input() else {
+        return false;
+    };
     verifying_key.verify(&signing_input, &signature).is_ok()
 }
 

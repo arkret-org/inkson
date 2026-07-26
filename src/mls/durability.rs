@@ -165,24 +165,24 @@ pub fn seal_history_secrets(
     Ok(arkret_sdk::RealmKeySharePayload {
         share_class: arkret_sdk::RealmKeyShareClass::RealmRecoveryKey,
         recipient_principal_id: recovery_key.principal_id.clone(),
-        recipient_device_id: None,
-        recipient_verification_method: Some(
-            arkret_sdk::DidUrl::new(recovery_key.verification_method.clone())
-                .map_err(|reason| format!("invalid RRK verification method: {reason}"))?,
-        ),
-        recovery_recipient_id: Some(
-            arkret_sdk::NonEmptyString::new(recovery_key.recipient_id.clone())
-                .map_err(|reason| format!("invalid RRK recipient id: {reason}"))?,
-        ),
+        target: arkret_sdk::RealmKeyShareTarget::RealmRecoveryKey {
+            recipient_verification_method: arkret_sdk::DidUrl::new(
+                recovery_key.verification_method.clone(),
+            )
+            .map_err(|reason| format!("invalid RRK verification method: {reason}"))?,
+            recovery_recipient_id: arkret_sdk::NonEmptyString::new(
+                recovery_key.recipient_id.clone(),
+            )
+            .map_err(|reason| format!("invalid RRK recipient id: {reason}"))?,
+        },
         sender_device_id,
         source_authorization_ref,
         sender_device_signature,
         key_scope: scope,
-        ciphertext: Some(
-            arkret_sdk::NonEmptyString::new(ciphertext)
+        material: arkret_sdk::RealmKeyShareMaterial::Ciphertext {
+            ciphertext: arkret_sdk::NonEmptyString::new(ciphertext)
                 .map_err(|reason| format!("invalid RRK ciphertext: {reason}"))?,
-        ),
-        encrypted_key_ref: None,
+        },
         aad_digest: None,
         expires_at: None,
         created_at: crate::clock::now_utc_canonical(),
@@ -501,7 +501,12 @@ mod tests {
 
         let opened = arkret_crypto::secret_share::open_history_secret_with_device_privkey(
             &sk,
-            payload.ciphertext.as_ref().unwrap(),
+            match &payload.material {
+                arkret_sdk::RealmKeyShareMaterial::Ciphertext { ciphertext } => ciphertext,
+                arkret_sdk::RealmKeyShareMaterial::EncryptedKeyRef { .. } => {
+                    panic!("RRK seal must carry inline ciphertext")
+                }
+            },
         )
         .unwrap();
         assert_eq!(opened, rows);
