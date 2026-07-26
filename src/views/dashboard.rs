@@ -655,8 +655,8 @@ fn dashboard_contacts_summary(
 ) -> DashboardContactsSummary {
     let mut summary = DashboardContactsSummary::default();
     for contact in contacts {
-        match contact.state.as_str() {
-            "accepted" => {
+        match contact.state {
+            arkret_sdk::ContactState::Accepted => {
                 summary.accepted += 1;
                 if contact.direct_conversation.is_some()
                     || contact
@@ -671,8 +671,8 @@ fn dashboard_contacts_summary(
                     summary.direct_ready += 1;
                 }
             }
-            "pending_incoming" => summary.pending_incoming += 1,
-            "pending_outgoing" | "pending" => summary.pending_outgoing += 1,
+            arkret_sdk::ContactState::PendingIncoming => summary.pending_incoming += 1,
+            arkret_sdk::ContactState::PendingOutgoing => summary.pending_outgoing += 1,
             _ => {}
         }
     }
@@ -760,7 +760,7 @@ mod tests {
         contact_summary_delta, dashboard_contacts_summary, dashboard_recent_strands,
         projection_collection_label, projection_kind_label, recent_projection_collection_label,
     };
-    use crate::models::{ContactListRow, DirectConversationSummary, RealmTreeNodeKind};
+    use crate::models::{ContactListRow, RealmTreeNodeKind};
     use crate::state::RawOperationRecord;
 
     #[test]
@@ -790,29 +790,64 @@ mod tests {
 
     #[test]
     fn contact_summary_counts_actionable_rows() {
+        fn contact(
+            peer: &str,
+            state: arkret_sdk::ContactState,
+            direct_ready: bool,
+        ) -> ContactListRow {
+            ContactListRow {
+                peer: arkret_sdk::Did::new(peer.to_owned()).unwrap(),
+                state,
+                request_event_ref: None,
+                response_event_ref: None,
+                tombstone_event_ref: None,
+                granted_by_me: Vec::new(),
+                granted_to_me: Vec::new(),
+                bidirectional_scopes: Vec::new(),
+                effective_scopes: Vec::new(),
+                invite_consent_grant_ref: None,
+                peer_service_id: None,
+                direct_conversation: direct_ready.then(|| arkret_sdk::DirectConversationSummary {
+                    realm_id: arkret_sdk::RealmId::new(
+                        "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+                    )
+                    .unwrap(),
+                    main_strand_id: arkret_sdk::StrandId::new(
+                        "ak:strand:01904100-0000-7000-8000-000000000002".to_owned(),
+                    )
+                    .unwrap(),
+                    binding_event_ref: None,
+                    state: arkret_sdk::DirectConversationBindingState::Active,
+                }),
+                agents: Vec::new(),
+            }
+        }
+
         let rows = vec![
-            ContactListRow {
-                peer: "did:example:alice".to_owned(),
-                state: "accepted".to_owned(),
-                bidirectional_scopes: vec!["direct_message".to_owned()],
-                ..Default::default()
+            {
+                let mut row = contact(
+                    "did:web:alice.example",
+                    arkret_sdk::ContactState::Accepted,
+                    false,
+                );
+                row.bidirectional_scopes = vec!["direct_message".to_owned()];
+                row
             },
-            ContactListRow {
-                peer: "did:example:bob".to_owned(),
-                state: "accepted".to_owned(),
-                direct_conversation: Some(DirectConversationSummary::default()),
-                ..Default::default()
-            },
-            ContactListRow {
-                peer: "did:example:casey".to_owned(),
-                state: "pending_incoming".to_owned(),
-                ..Default::default()
-            },
-            ContactListRow {
-                peer: "did:example:drew".to_owned(),
-                state: "blocked".to_owned(),
-                ..Default::default()
-            },
+            contact(
+                "did:web:bob.example",
+                arkret_sdk::ContactState::Accepted,
+                true,
+            ),
+            contact(
+                "did:web:casey.example",
+                arkret_sdk::ContactState::PendingIncoming,
+                false,
+            ),
+            contact(
+                "did:web:drew.example",
+                arkret_sdk::ContactState::Tombstoned,
+                false,
+            ),
         ];
 
         let summary = dashboard_contacts_summary(&rows);

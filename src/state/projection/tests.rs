@@ -108,7 +108,7 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
             if matches!(
                 message.as_ref(),
                 garth::DecodedMessage {
-                    payload: garth::MessageEventPayload::Create(_),
+                    payload: arkret_sdk::MessageEventPayload::Create(_),
                     ..
                 }
             )
@@ -119,7 +119,7 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
             if matches!(
                 message.as_ref(),
                 garth::DecodedMessage {
-                    payload: garth::MessageEventPayload::ReactionAdd(_),
+                    payload: arkret_sdk::MessageEventPayload::ReactionAdd(_),
                     ..
                 }
             )

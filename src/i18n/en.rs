@@ -89,8 +89,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.system", "System");
 
     // Settings navigation — section labels (design/settings-ia-reorg.md §3.1).
-    // Terminology humanised: TSP connections → External connections,
-    // Capabilities → App authorizations, Blocked actors → Block list,
+    // Terminology humanised: Capabilities → App authorizations, Blocked actors → Block list,
     // Consent → Invites & consent, Diagnostics → Release status.
     dict.set("settings.section.account", "Account information");
     dict.set("settings.section.agents", "My Agents");
@@ -100,7 +99,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.section.encryption", "Security");
     dict.set("settings.section.recovery", "Recovery");
     dict.set("settings.section.mimi", "Integrations");
-    dict.set("settings.section.connections", "External connections");
     dict.set("settings.section.notifications", "Notifications");
     dict.set("settings.section.privacy", "Privacy & sharing");
     dict.set("settings.section.invite_policy", "Who can invite me");
@@ -545,7 +543,6 @@ pub fn english_translations() -> TranslationDict {
     // Recovery view (top-level section headers)
     dict.set("recovery.title", "Recovery");
     dict.set("recovery.recovery_key_section", "Recovery Key (24 words)");
-    dict.set("recovery.social_section", "Social Recovery");
     dict.set("device_authorization.aria_label", "Authorize this device");
     dict.set("device_authorization.title", "Authorize this device");
     dict.set(

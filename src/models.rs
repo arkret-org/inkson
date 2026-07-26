@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
 pub use arkret_sdk::{
-    ClaimedProfileEntry, CompatSurfaceEntry, ServiceDescribe, VerifiedProfileEntry,
+    ClaimedProfileEntry, CompatSurfaceEntry, ContactAgentProjection as ContactAgentRow,
+    ContactList as ContactListView, ContactListRow, DirectConversationSummary, ServiceDescribe,
+    VerifiedProfileEntry,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -32,172 +34,7 @@ pub struct IndexSearchView {
     pub next_cursor: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct DirectConversationSummary {
-    pub realm_id: String,
-    pub main_strand_id: String,
-    #[serde(default)]
-    pub binding_event_ref: Option<String>,
-    pub state: String,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct ContactAgentRow {
-    pub agent_id: String,
-    pub controller_id: String,
-    #[serde(default)]
-    pub display_name: Option<String>,
-    #[serde(default)]
-    pub slug: String,
-    #[serde(default)]
-    pub avatar_blob_ref: Option<arkret_sdk::BlobRef>,
-    #[serde(default)]
-    pub direct_conversation: Option<DirectConversationSummary>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct ContactListRow {
-    pub peer: String,
-    pub state: String,
-    #[serde(default)]
-    pub request_event_ref: Option<String>,
-    #[serde(default)]
-    pub response_event_ref: Option<String>,
-    #[serde(default)]
-    pub tombstone_event_ref: Option<String>,
-    #[serde(default)]
-    pub granted_by_me: Vec<String>,
-    #[serde(default)]
-    pub granted_to_me: Vec<String>,
-    #[serde(default)]
-    pub bidirectional_scopes: Vec<String>,
-    #[serde(default)]
-    pub effective_scopes: Vec<String>,
-    #[serde(default)]
-    pub direct_conversation: Option<DirectConversationSummary>,
-    /// Cross-PS addressing: the peer's originating Principal Server service DID,
-    /// used to reverse-deliver an accept/reject when the request came from
-    /// another PS. Passed through to `contacts/respond` as
-    /// `requester_service_id`.
-    ///
-    /// `GET /_arkret/self/contacts` now surfaces the peer's originating
-    /// Principal Server on cross-PS rows, so this is populated whenever soland
-    /// learned it from a cross-PS delivery; it stays `None` for same-PS
-    /// contacts, where respond correctly falls back to same-PS behaviour.
-    #[serde(default)]
-    pub peer_service_id: Option<String>,
-    /// U3 — event ref of the `ak.consent.grant` this peer gave me for the
-    /// `invite` (or `any`) scope. When present, the realm-invite "from contacts"
-    /// path can build `IntroductionEvidence::ConsentGrant { consent_grant_ref }`
-    /// instead of requiring a locator URL.
-    ///
-    /// soland's `GET /_arkret/self/contacts` now surfaces this field directly
-    /// (a legal `ak:event` ref when the peer granted me invite/any consent,
-    /// otherwise empty/absent). When it is empty the contact has not authorised
-    /// me to invite them, so the UI disables the row rather than guessing a ref.
-    #[serde(default)]
-    pub invite_consent_grant_ref: Option<String>,
-    #[serde(default)]
-    pub agents: Vec<ContactAgentRow>,
-}
-
-impl ContactListRow {
-    /// U3 — the `consent_grant` event ref for the realm-invite "from contacts"
-    /// path. Returns the server-supplied `invite_consent_grant_ref` verbatim
-    /// (filtering empty strings); there is no fallback — if the peer never gave
-    /// me invite/any consent this is `None` and the row is not invitable.
-    pub fn invite_consent_ref(&self) -> Option<&str> {
-        self.invite_consent_grant_ref
-            .as_deref()
-            .filter(|r| !r.trim().is_empty())
-    }
-
-    /// Whether this contact has granted me the `invite` scope (i.e. I'm allowed
-    /// to pull them into a Realm via the contact path).
-    pub fn grants_me_invite(&self) -> bool {
-        self.granted_to_me.iter().any(|s| s == "invite")
-            || self.bidirectional_scopes.iter().any(|s| s == "invite")
-            || self.effective_scopes.iter().any(|s| s == "invite")
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ContactListView {
-    #[serde(default)]
-    pub contacts: Vec<ContactListRow>,
-    #[serde(default)]
-    pub has_more: bool,
-    #[serde(default)]
-    pub next_cursor: Option<String>,
-}
-
-impl ContactListView {
-    pub fn from_sdk(list: arkret_sdk::ContactList) -> anyhow::Result<Self> {
-        Ok(Self {
-            contacts: list
-                .contacts
-                .into_iter()
-                .map(ContactListRow::from_sdk)
-                .collect(),
-            has_more: list.has_more,
-            next_cursor: list.next_cursor.map(|cursor| cursor.encode()).transpose()?,
-        })
-    }
-}
-
-impl ContactListRow {
-    pub fn from_sdk(row: arkret_sdk::ContactListRow) -> Self {
-        Self {
-            peer: row.peer.to_string(),
-            state: contact_state_wire(row.state).to_owned(),
-            request_event_ref: row.request_event_ref.map(|value| value.to_string()),
-            response_event_ref: row.response_event_ref.map(|value| value.to_string()),
-            tombstone_event_ref: row.tombstone_event_ref.map(|value| value.to_string()),
-            granted_by_me: row.granted_by_me,
-            granted_to_me: row.granted_to_me,
-            bidirectional_scopes: row.bidirectional_scopes,
-            effective_scopes: row.effective_scopes,
-            direct_conversation: row
-                .direct_conversation
-                .map(DirectConversationSummary::from_sdk),
-            peer_service_id: row.peer_service_id.map(|value| value.to_string()),
-            invite_consent_grant_ref: row.invite_consent_grant_ref.map(|value| value.to_string()),
-            agents: row
-                .agents
-                .into_iter()
-                .map(ContactAgentRow::from_sdk)
-                .collect(),
-        }
-    }
-}
-
-impl ContactAgentRow {
-    fn from_sdk(row: arkret_sdk::ContactAgentProjection) -> Self {
-        Self {
-            agent_id: row.agent_id.to_string(),
-            controller_id: row.controller_id.to_string(),
-            display_name: row.display_name,
-            slug: row.agent_slug.unwrap_or_default(),
-            avatar_blob_ref: row.avatar_blob_ref,
-            direct_conversation: row
-                .direct_conversation
-                .map(DirectConversationSummary::from_sdk),
-        }
-    }
-}
-
-impl DirectConversationSummary {
-    pub fn from_sdk(summary: arkret_sdk::DirectConversationSummary) -> Self {
-        Self {
-            realm_id: summary.realm_id.to_string(),
-            main_strand_id: summary.main_strand_id.to_string(),
-            binding_event_ref: summary.binding_event_ref.map(|value| value.to_string()),
-            state: direct_conversation_binding_state_wire(summary.state).to_owned(),
-        }
-    }
-}
-
-fn contact_state_wire(state: arkret_sdk::ContactState) -> &'static str {
+pub fn contact_state_wire(state: arkret_sdk::ContactState) -> &'static str {
     match state {
         arkret_sdk::ContactState::PendingOutgoing => "pending_outgoing",
         arkret_sdk::ContactState::PendingIncoming => "pending_incoming",
@@ -207,7 +44,7 @@ fn contact_state_wire(state: arkret_sdk::ContactState) -> &'static str {
     }
 }
 
-fn direct_conversation_binding_state_wire(
+pub fn direct_conversation_binding_state_wire(
     state: arkret_sdk::DirectConversationBindingState,
 ) -> &'static str {
     match state {
@@ -216,6 +53,29 @@ fn direct_conversation_binding_state_wire(
         arkret_sdk::DirectConversationBindingState::Duplicate => "duplicate",
         arkret_sdk::DirectConversationBindingState::NonCanonical => "non_canonical",
     }
+}
+
+/// Return the server-supplied invite consent event reference. There is no
+/// fallback to request/response events: without this field the contact is not
+/// eligible for the consent-grant invite path.
+pub fn contact_invite_consent_ref(contact: &ContactListRow) -> Option<&str> {
+    contact
+        .invite_consent_grant_ref
+        .as_ref()
+        .map(arkret_sdk::EventId::as_str)
+        .filter(|value| !value.trim().is_empty())
+}
+
+pub fn contact_grants_me_invite(contact: &ContactListRow) -> bool {
+    contact.granted_to_me.iter().any(|scope| scope == "invite")
+        || contact
+            .bidirectional_scopes
+            .iter()
+            .any(|scope| scope == "invite")
+        || contact
+            .effective_scopes
+            .iter()
+            .any(|scope| scope == "invite")
 }
 
 /// U4 - actor `invite_receive_policy` ("who can invite me").
@@ -833,22 +693,38 @@ mod tests {
     #[test]
     fn contact_row_invite_consent_ref_uses_real_field_no_fallback() {
         let mut row = super::ContactListRow {
-            peer: "did:web:bob.example".to_owned(),
-            state: "accepted".to_owned(),
-            response_event_ref: Some("ak:event:resp".to_owned()),
+            peer: arkret_sdk::Did::new("did:web:bob.example".to_owned()).unwrap(),
+            state: arkret_sdk::ContactState::Accepted,
+            request_event_ref: None,
+            response_event_ref: Some(
+                arkret_sdk::EventId::new(
+                    "ak:event:01904100-0000-7000-8000-000000000001".to_owned(),
+                )
+                .unwrap(),
+            ),
+            tombstone_event_ref: None,
+            granted_by_me: Vec::new(),
             granted_to_me: vec!["invite".to_owned()],
-            ..Default::default()
+            bidirectional_scopes: Vec::new(),
+            effective_scopes: Vec::new(),
+            invite_consent_grant_ref: None,
+            peer_service_id: None,
+            direct_conversation: None,
+            agents: Vec::new(),
         };
         // No fallback: an absent invite_consent_grant_ref yields None even
         // though response_event_ref is present and the peer granted invite.
-        assert_eq!(row.invite_consent_ref(), None);
-        assert!(row.grants_me_invite());
+        assert_eq!(super::contact_invite_consent_ref(&row), None);
+        assert!(super::contact_grants_me_invite(&row));
         // The real server-supplied consent ref is surfaced verbatim.
-        row.invite_consent_grant_ref = Some("ak:event:consent".to_owned());
-        assert_eq!(row.invite_consent_ref(), Some("ak:event:consent"));
-        // Empty strings are treated as absent.
-        row.invite_consent_grant_ref = Some("  ".to_owned());
-        assert_eq!(row.invite_consent_ref(), None);
+        row.invite_consent_grant_ref = Some(
+            arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000002".to_owned())
+                .unwrap(),
+        );
+        assert_eq!(
+            super::contact_invite_consent_ref(&row),
+            Some("ak:event:01904100-0000-7000-8000-000000000002")
+        );
     }
 }
 

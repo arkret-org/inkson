@@ -138,8 +138,9 @@ async fn contact_request_event_id_for_requester(
     contacts
         .contacts
         .into_iter()
-        .find(|row| row.peer == requester && row.request_event_ref.is_some())
+        .find(|row| row.peer.as_str() == requester && row.request_event_ref.is_some())
         .and_then(|row| row.request_event_ref)
+        .map(|event_id| event_id.to_string())
         .ok_or_else(|| {
             anyhow::anyhow!("contact request_id is required for responding to `{requester}`")
         })
@@ -194,9 +195,7 @@ pub async fn respond_contact_with_request_id_and_service(
 }
 
 pub async fn contacts(http: &arkret_sdk::http_client::Client) -> anyhow::Result<ContactListView> {
-    let response: arkret_sdk::ContactList =
-        http.contacts_list().await.map_err(anyhow::Error::from)?;
-    ContactListView::from_sdk(response)
+    http.contacts_list().await.map_err(anyhow::Error::from)
 }
 
 /// Read the actor's `invite_receive_policy` ("who can invite me", U4).

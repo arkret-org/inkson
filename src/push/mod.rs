@@ -20,16 +20,12 @@ use chime::{ChimePushRegisterDeviceOutcome, PushBridgeDescribeOutcome};
 pub use gateway::*;
 pub use request::*;
 pub use token_provider::*;
-pub use token_source::*;
 
 #[cfg(test)]
 use crate::secure_key_store::SecureKeyStore;
 
 /// Application identifier stamped into every register-device request.
 pub(crate) const APP_ID: &str = "inkson";
-/// Human-readable display name stamped into register-device requests.
-pub(crate) const DISPLAY_NAME: &str = "inkson";
-
 #[cfg(test)]
 #[allow(clippy::field_reassign_with_default)] // inner gateway field needs a separate type literal.
 mod tests;

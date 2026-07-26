@@ -195,38 +195,6 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    /// Append a structured user-action log entry to the buffered telemetry
-    /// log. Bounded by [`TELEMETRY_BUFFER_CAP`] - excess entries are
-    /// dropped from the front (oldest-first).
-    pub fn append_telemetry(&mut self, entry: UserActionLogEntry) {
-        self.ensure_cached_loaded();
-        self.cached.telemetry_log.push(entry);
-        let overflow = self
-            .cached
-            .telemetry_log
-            .len()
-            .saturating_sub(TELEMETRY_BUFFER_CAP);
-        if overflow > 0 {
-            self.cached.telemetry_log.drain(0..overflow);
-        }
-        let _ = self.flush();
-    }
-
-    /// Read-only snapshot of the buffered telemetry entries.
-    pub fn telemetry_log(&self) -> Vec<UserActionLogEntry> {
-        self.load().telemetry_log
-    }
-
-    /// Drain the buffered telemetry entries — returns the existing
-    /// entries and clears the on-disk buffer atomically. Called by the
-    /// flush path once a network channel is available.
-    pub fn drain_telemetry(&mut self) -> Vec<UserActionLogEntry> {
-        self.ensure_cached_loaded();
-        let drained = std::mem::take(&mut self.cached.telemetry_log);
-        let _ = self.flush();
-        drained
-    }
-
     pub fn push_registration(&self) -> Option<PushRegistrationState> {
         self.load().push_registration
     }

@@ -7,46 +7,13 @@
 use chime::{
     ChimePushRegisterDeviceOutcome, ChimePushRegisterDeviceRequest,
     ChimePushUnregisterDeviceRequest, GatewayBinding, PushDeviceConfig, PushGatewayType,
-    PushRegistrationState, build_register_device_request, build_registration_state,
-    build_unregister_device_request,
+    PushRegistrationState, build_registration_state, build_unregister_device_request,
 };
 use chrono::Utc;
 
-use super::token_source::{
-    acquire_platform_push_key, current_platform, default_gateway_binding, push_preferences,
-};
-use super::{APP_ID, DISPLAY_NAME};
+use super::APP_ID;
+use super::token_source::{current_platform, default_gateway_binding, push_preferences};
 use crate::models::PushRegisterView;
-
-pub fn build_register_request(device_id: &str) -> anyhow::Result<ChimePushRegisterDeviceRequest> {
-    build_register_request_for_actor(device_id, None)
-}
-
-pub fn build_register_request_for_actor(
-    device_id: &str,
-    principal_id: Option<&str>,
-) -> anyhow::Result<ChimePushRegisterDeviceRequest> {
-    let push_key = acquire_platform_push_key();
-    let platform = current_platform();
-    let prefs = push_preferences();
-    let binding = default_gateway_binding();
-    let idempotency_key = format!("inkson-push-register-{device_id}");
-    let config = PushDeviceConfig {
-        principal_id,
-        device_id,
-        push_key: Some(&push_key),
-        platform: Some(platform),
-        app_id: Some(APP_ID),
-        domestic_app_id: None,
-        registration_id: None,
-        display_name: Some(DISPLAY_NAME),
-        idempotency_key: Some(&idempotency_key),
-        request_id: None,
-        proof: None,
-    };
-
-    Ok(build_register_device_request(&config, &binding, &prefs)?)
-}
 
 pub fn build_unregister_request(
     device_id: &str,

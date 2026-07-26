@@ -11,6 +11,7 @@ use std::time::Duration;
 
 #[cfg(test)]
 use arkret_sdk::ErrorEnvelope;
+use arkret_sdk::events::{CbaEffectPlane, cba_cell_family_plane};
 use garth::outbound::BoxOutboundFuture;
 use garth::{
     OutboundEngine, OutboundEngineOutcome, OutboundGenerationFenceDecision, OutboundPostAcceptHook,
@@ -1890,18 +1891,6 @@ fn mls_genesis_event_id_from_events(
         .map(|event| event.event_id.clone())
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CbaEffectPlane {
-    Data,
-    Control,
-}
-
-const DATA_PLANE_CELL_FAMILIES: &[&str] = &[
-    "ak.component.strand.discussion.timeline.v1",
-    "ak.component.message.reactions.v1",
-    "ak.component.pin.v1",
-];
-
 fn cba_exempt_reducer_kind(kind: &arkret_sdk::events::kinds::EventKind) -> bool {
     matches!(kind, arkret_sdk::events::kinds::EventKind::RealmCreate)
 }
@@ -1909,11 +1898,14 @@ fn cba_exempt_reducer_kind(kind: &arkret_sdk::events::kinds::EventKind) -> bool 
 fn cba_effect_plane_for_event(event: &arkret_sdk::Event) -> anyhow::Result<CbaEffectPlane> {
     let mut observed = None;
     for effect in &event.effects {
-        let plane = if DATA_PLANE_CELL_FAMILIES.contains(&cba_cell_family(effect.cell.as_str())?) {
-            CbaEffectPlane::Data
-        } else {
-            CbaEffectPlane::Control
-        };
+        let cell = arkret_sdk::CellId::from_ref(&effect.cell)
+            .map_err(|error| anyhow::anyhow!("effects[].cell is invalid: {error}"))?;
+        let plane = cba_cell_family_plane(cell.component()).ok_or_else(|| {
+            anyhow::anyhow!(
+                "effects[].cell references unknown cell family {}",
+                cell.component()
+            )
+        })?;
         match observed {
             Some(existing) if existing != plane => {
                 anyhow::bail!(
@@ -1926,24 +1918,6 @@ fn cba_effect_plane_for_event(event: &arkret_sdk::Event) -> anyhow::Result<CbaEf
         }
     }
     observed.ok_or_else(|| anyhow::anyhow!("event {} has no effects", event.event_id))
-}
-
-fn cba_cell_family(cell: &str) -> anyhow::Result<&str> {
-    arkret_sdk::CellRef::new(cell.to_owned()).map_err(|_| {
-        anyhow::anyhow!(
-            "effects[].cell must use canonical ak:cell:ak.component.<facet-path>.v<n>:<subject> form"
-        )
-    })?;
-    let rest = cell
-        .strip_prefix("ak:cell:")
-        .ok_or_else(|| anyhow::anyhow!("validated CellRef is missing the ak:cell: prefix"))?;
-    let (family, subject) = rest
-        .split_once(':')
-        .ok_or_else(|| anyhow::anyhow!("effects[].cell must include family and subject"))?;
-    if family.trim().is_empty() || subject.trim().is_empty() {
-        anyhow::bail!("effects[].cell must include non-empty family and subject");
-    }
-    Ok(family)
 }
 
 fn data_event_auth_context(event: &arkret_sdk::Event) -> anyhow::Result<arkret_sdk::AuthContext> {

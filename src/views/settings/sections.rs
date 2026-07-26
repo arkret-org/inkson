@@ -14,8 +14,6 @@ pub(super) enum SettingsSection {
     Encryption,
     Recovery,
     Mimi,
-    /// TSP connections (`/settings/connections`) — interop extension profile.
-    Connections,
     Notifications,
     Privacy,
     /// U4 invite_receive_policy (`/settings/invite-policy`).
@@ -46,7 +44,6 @@ impl SettingsSection {
             "encryption" => Self::Encryption,
             "security" | "key-backup" | "recovery" => Self::Recovery,
             "mimi" => Self::Mimi,
-            "connections" | "tsp" => Self::Connections,
             "push" | "notifications" => Self::Notifications,
             "privacy" => Self::Privacy,
             "invite-policy" | "invite_policy" => Self::InvitePolicy,
@@ -71,7 +68,6 @@ impl SettingsSection {
             Self::Encryption => "encryption",
             Self::Recovery => "recovery",
             Self::Mimi => "mimi",
-            Self::Connections => "connections",
             Self::Notifications => "notifications",
             Self::Privacy => "privacy",
             Self::InvitePolicy => "invite-policy",
@@ -86,9 +82,8 @@ impl SettingsSection {
     }
 
     /// i18n key for the section label. Render sites resolve it through
-    /// [`crate::i18n::tr`]; terminology was humanised here (TSP
-    /// connections → External connections, Capabilities → App
-    /// authorizations, Blocked actors → Block list, Consent → Invites &
+    /// [`crate::i18n::tr`]; terminology was humanised here (Capabilities →
+    /// App authorizations, Blocked actors → Block list, Consent → Invites &
     /// consent, Diagnostics → Release status).
     pub(super) fn label_key(self) -> &'static str {
         match self {
@@ -100,7 +95,6 @@ impl SettingsSection {
             Self::Encryption => "settings.section.encryption",
             Self::Recovery => "settings.section.recovery",
             Self::Mimi => "settings.section.mimi",
-            Self::Connections => "settings.section.connections",
             Self::Notifications => "settings.section.notifications",
             Self::Privacy => "settings.section.privacy",
             Self::InvitePolicy => "settings.section.invite_policy",
@@ -163,11 +157,6 @@ pub(super) const SETTINGS_PRIVACY_GROUP: &[SettingsSection] = &[
 pub(super) const SETTINGS_NOTIFICATIONS_GROUP: &[SettingsSection] =
     &[SettingsSection::Notifications];
 pub(super) const SETTINGS_APPEARANCE_GROUP: &[SettingsSection] = &[SettingsSection::Theme];
-// `Connections` (TSP) is intentionally absent from every group, like `Mimi`:
-// the current page only records a local placeholder row and never performs
-// the real `ak.service.tsp` bootstrap, so it must not present itself as a
-// working setting. It stays reachable at `/settings/connections` for
-// development until the live TSP flow lands.
 pub(super) const SETTINGS_ADVANCED_GROUP: &[SettingsSection] = &[
     SettingsSection::Storage,
     SettingsSection::Release,

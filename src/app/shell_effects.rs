@@ -363,7 +363,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
             let mut peers = direct_contact_rows
                 .read()
                 .iter()
-                .map(|contact| contact.peer.trim().to_owned())
+                .map(|contact| contact.peer.as_str().trim().to_owned())
                 .filter(|peer| peer.starts_with("did:"))
                 .collect::<BTreeSet<_>>();
             if !lookup_supported || lookup_token.trim().is_empty() || peers.is_empty() {

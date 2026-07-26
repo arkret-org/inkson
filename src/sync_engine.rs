@@ -122,8 +122,7 @@ pub struct SyncEngineContext {
     /// projections, the Y2 invalidation hook uses it to call `invalidate` for
     /// related actor DIDs when `ak.cross_signing.reset` / `ak.device.revoke`
     /// arrive, and `clear` on logout / trust-bundle reset.
-    pub did_cache:
-        crate::runtime::input::ValueCell<crate::identity::did_resolver::DidResolutionCache>,
+    pub did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
     /// Receive side of `ak.call.signal`. The engine routes inbound
     /// call-signal envelopes from each incremental sync body into this hub
     /// (dedup → incoming ring / per-call inbox). `Copy`, zero-cost to hold.
@@ -1566,7 +1565,7 @@ async fn route_inbound_call_signals(
 pub(crate) async fn prefetch_persistent_event_sender_keys(
     api: &TransportClient,
     response: &AccountSyncStep,
-    did_cache: crate::runtime::input::ValueCell<crate::identity::did_resolver::DidResolutionCache>,
+    did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
     is_minimal_metadata_realm: impl Fn(&str) -> bool,
 ) -> bool {
     let pairs = collect_persistent_proof_sender_devices(response, &is_minimal_metadata_realm);
@@ -1582,7 +1581,7 @@ pub(crate) async fn prefetch_persistent_event_sender_keys(
 async fn prefetch_member_identity_proof_keys(
     api: &TransportClient,
     response: &AccountSyncStep,
-    did_cache: crate::runtime::input::ValueCell<crate::identity::did_resolver::DidResolutionCache>,
+    did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
 ) -> bool {
     let mut pairs = BTreeSet::<(String, String)>::new();
     for body in response.realm_projections.values() {
@@ -1649,7 +1648,7 @@ fn split_verification_method(verification_method: &str) -> Option<(String, Strin
 pub(crate) async fn prefetch_persistent_event_sender_keys_from_values(
     api: &TransportClient,
     values: &[Value],
-    did_cache: crate::runtime::input::ValueCell<crate::identity::did_resolver::DidResolutionCache>,
+    did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
 ) -> bool {
     let mut pairs = BTreeSet::<(String, String)>::new();
     for value in values {
@@ -1665,7 +1664,7 @@ pub(crate) async fn prefetch_persistent_event_sender_keys_from_values(
 pub(crate) async fn prefetch_device_key_pairs(
     api: &TransportClient,
     pairs: Vec<(String, String)>,
-    did_cache: crate::runtime::input::ValueCell<crate::identity::did_resolver::DidResolutionCache>,
+    did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
 ) -> bool {
     prefetch_persistent_event_sender_key_pairs(api, pairs, did_cache).await
 }
@@ -1673,7 +1672,7 @@ pub(crate) async fn prefetch_device_key_pairs(
 async fn prefetch_persistent_event_sender_key_pairs(
     api: &TransportClient,
     pairs: Vec<(String, String)>,
-    did_cache: crate::runtime::input::ValueCell<crate::identity::did_resolver::DidResolutionCache>,
+    did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
 ) -> bool {
     if pairs.is_empty() {
         return false;
@@ -2591,7 +2590,7 @@ fn ingest_member_identity_events_from_projection(
 ///
 /// Finds `ak.cross_signing.reset` / `ak.device.revoke` events in one Realm
 /// projection `body`, then calls
-/// [`crate::identity::did_resolver::DidResolutionCache::invalidate`] for the related actor
+/// [`arkret_sdk::identity::DidResolutionCache::invalidate`] for the related actor
 /// DID. Events may appear in:
 /// - inline `identity_events[]` on each member roster entry;
 /// - projection event logs at `state.events[]`.
@@ -2604,7 +2603,7 @@ fn ingest_member_identity_events_from_projection(
 /// TRUST-CACHE boundary: this only clears cache entries so the next resolution
 /// walks the authority chain again; it does not replace authority validation.
 fn invalidate_cache_for_revocation_events(
-    cache: &mut crate::identity::did_resolver::DidResolutionCache,
+    cache: &mut arkret_sdk::identity::DidResolutionCache,
     body: &Value,
 ) {
     /// Return whether the event kind is reset / revoke.
@@ -2629,7 +2628,7 @@ fn invalidate_cache_for_revocation_events(
 
     /// Invalidate for a batch of events when kind matches and DID syntax is valid.
     fn invalidate_from_events(
-        cache: &mut crate::identity::did_resolver::DidResolutionCache,
+        cache: &mut arkret_sdk::identity::DidResolutionCache,
         events: &[Value],
         fallback: Option<&Value>,
     ) {
@@ -3878,20 +3877,21 @@ mod tests {
 
     // ── Y2 invalidation hook ──────────────────────────────────────────
 
+    use arkret_sdk::identity::DidResolutionCache;
     use arkret_sdk::{Did, DidDocument};
 
-    use crate::identity::did_resolver::DidResolutionCache;
-
     fn seed_cache(did_str: &str) -> (DidResolutionCache, Did) {
-        let mut cache = DidResolutionCache::new(8);
+        let cache = DidResolutionCache::new(8);
         let did = Did::new(did_str.to_owned()).expect("valid did");
         let doc = DidDocument::new(did.clone(), "key-1", "z6Mksample");
-        cache.insert(
-            did.clone(),
-            doc,
-            chrono::Utc::now(),
-            chrono::Duration::seconds(600),
-        );
+        cache
+            .insert(
+                did.clone(),
+                doc,
+                chrono::Utc::now(),
+                chrono::Duration::seconds(600),
+            )
+            .unwrap();
         (cache, did)
     }
 

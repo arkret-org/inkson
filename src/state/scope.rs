@@ -143,7 +143,7 @@ impl LocalStateStore {
 
     /// Wipe every account-scoped projection field of the ACTIVE account while
     /// keeping that account's own device-level state (`local_identity`,
-    /// `push_registration`, `telemetry_log`, `dpop_device_key`) and session
+    /// `push_registration`, `dpop_device_key`) and session
     /// grant. Called on a same-account server switch or soft cache reset —
     /// anything that means the cached *projection* is stale but the account
     /// itself is unchanged.
@@ -161,7 +161,6 @@ impl LocalStateStore {
         self.ensure_cached_loaded();
         let preserved_identity = self.cached.local_identity.clone();
         let preserved_push = self.cached.push_registration.clone();
-        let preserved_telemetry = std::mem::take(&mut self.cached.telemetry_log);
         let preserved_grant = self.cached.session_grant.clone();
         let preserved_dpop = self.cached.dpop_device_key.clone();
         // YOU-02-004: the MLS receive-chain overlay is account-scoped state —
@@ -172,7 +171,6 @@ impl LocalStateStore {
         self.cached = ClientLocalState {
             local_identity: preserved_identity,
             push_registration: preserved_push,
-            telemetry_log: preserved_telemetry,
             session_grant: preserved_grant,
             dpop_device_key: preserved_dpop,
             ..ClientLocalState::default()

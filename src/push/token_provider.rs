@@ -29,7 +29,8 @@ use chime::PushBridgeDescribeOutcome;
 
 /// Production push-token provider trait. One implementation
 /// is installed at boot (`set_push_token_provider`); push-registration
-/// callers go through it instead of the `DevPlaceholderTokenSource` fallback.
+/// callers go through it instead of manufacturing a token when no provider is
+/// available.
 ///
 /// `subscribe` is async because the Web Push provider has to await the
 /// service-worker registration + `pushManager.subscribe(...)` promise,

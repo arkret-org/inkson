@@ -227,30 +227,33 @@ fn ContactRow(
     let mut busy = use_signal(|| false);
     let mut confirm_block = use_signal(|| false);
 
-    let peer = contact.peer.clone();
-    let state = contact.state.clone();
+    let peer = contact.peer.to_string();
+    let state = contact.state;
     // Cross-PS source: if the backend exposed the requester's PS in the list
     // row, pass `requester_service_id` through on respond for reverse
     // delivery. Otherwise use None and follow same-PS behavior.
     let peer_service_id = contact
         .peer_service_id
-        .clone()
-        .filter(|s| !s.trim().is_empty());
+        .as_ref()
+        .map(ToString::to_string)
+        .filter(|service_id| !service_id.trim().is_empty());
     let peer_label = actor_display_label(&state_store.read(), &peer);
-    let is_pending_incoming = state == "pending_incoming";
-    let is_pending_outgoing = state == "pending_outgoing" || state == "pending";
-    let is_accepted = state == "accepted";
-    let is_weak = state == "rejected" || state == "tombstoned" || state == "blocked";
+    let is_pending_incoming = state == arkret_sdk::ContactState::PendingIncoming;
+    let is_pending_outgoing = state == arkret_sdk::ContactState::PendingOutgoing;
+    let is_accepted = state == arkret_sdk::ContactState::Accepted;
+    let is_weak = matches!(
+        state,
+        arkret_sdk::ContactState::Rejected | arkret_sdk::ContactState::Tombstoned
+    );
+    let state_wire = crate::models::contact_state_wire(state);
 
     // Human-readable state label.
-    let state_label = match state.as_str() {
-        "pending_incoming" => tr("contacts.state.pending_incoming"),
-        "pending_outgoing" | "pending" => tr("contacts.state.pending_outgoing"),
-        "accepted" => tr("contacts.state.accepted"),
-        "rejected" => tr("contacts.state.rejected"),
-        "tombstoned" => tr("contacts.state.tombstoned"),
-        "blocked" => tr("contacts.state.blocked"),
-        other => other.to_owned(),
+    let state_label = match state {
+        arkret_sdk::ContactState::PendingIncoming => tr("contacts.state.pending_incoming"),
+        arkret_sdk::ContactState::PendingOutgoing => tr("contacts.state.pending_outgoing"),
+        arkret_sdk::ContactState::Accepted => tr("contacts.state.accepted"),
+        arkret_sdk::ContactState::Rejected => tr("contacts.state.rejected"),
+        arkret_sdk::ContactState::Tombstoned => tr("contacts.state.tombstoned"),
     };
 
     let row_class = if is_weak {
@@ -264,7 +267,7 @@ fn ContactRow(
             class: "{row_class}",
             "data-testid": "contact-row",
             "data-peer": "{peer}",
-            "data-state": "{state}",
+            "data-state": "{state_wire}",
             div { class: "event-head",
                 span { "{state_label}" }
                 span { class: "mono", title: "{peer}", "{peer_label}" }
@@ -295,7 +298,8 @@ fn ContactRow(
                         onclick: {
                             let base = base_url.clone();
                             let peer = peer.clone();
-                            let request_event_ref = contact.request_event_ref.clone();
+                            let request_event_ref =
+                                contact.request_event_ref.as_ref().map(ToString::to_string);
                             let service = peer_service_id.clone();
                             move |_| {
                                 run_contact_action(
@@ -318,7 +322,8 @@ fn ContactRow(
                         onclick: {
                             let base = base_url.clone();
                             let peer = peer.clone();
-                            let request_event_ref = contact.request_event_ref.clone();
+                            let request_event_ref =
+                                contact.request_event_ref.as_ref().map(ToString::to_string);
                             let service = peer_service_id.clone();
                             move |_| {
                                 run_contact_action(

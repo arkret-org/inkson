@@ -378,7 +378,13 @@ pub fn DirectoryPanel(
                                             let summary = result
                                                 .contacts
                                                 .iter()
-                                                .map(|contact| format!("{} {}", contact.peer, contact.state))
+                                                .map(|contact| {
+                                                    format!(
+                                                        "{} {}",
+                                                        contact.peer,
+                                                        crate::models::contact_state_wire(contact.state)
+                                                    )
+                                                })
                                                 .collect::<Vec<_>>()
                                                 .join(", ");
                                             contact_state.set(format!("contacts {} {}", result.contacts.len(), summary));
@@ -1074,28 +1080,6 @@ pub fn DirectoryPanel(
                                             filter: String::new(),
                                         },
                                         "Block"
-                                    }
-                                }
-                            }
-                            {
-                                // TSP is an interop extension profile: external
-                                // VID endpoints can be reached over a TSP
-                                // relationship managed under /settings/connections.
-                                let actor_id = actor
-                                    .get("did")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_owned();
-                                rsx! {
-                                    Link {
-                                        class: "secondary",
-                                        "data-testid": "establish-tsp-button",
-                                        "data-remote-vid": "{actor_id}",
-                                        to: Route::SettingsSection {
-                                            section: "connections".to_owned(),
-                                            filter: String::new(),
-                                        },
-                                        "Establish TSP"
                                     }
                                 }
                             }

@@ -10,10 +10,9 @@
 //! and render an `<span>` with a stable `data-testid` for the e2e
 //! harness.
 
+use arkret_sdk::identity::{CachedResolution, DidResolutionCache, Freshness};
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
-
-use crate::identity::did_resolver::{CachedDidEntry, Freshness};
 
 // TRUST-CACHE: `NeedsVerificationBadge` is a
 // cache-allowed surfaces per AKP B-E §1 / identity-handles §6. They
@@ -77,12 +76,13 @@ impl TrustCacheState {
 /// - `None` (cache miss) -> `Degraded`.
 /// - `Some` with [`Freshness::Fresh`] -> `Cached`.
 /// - `Some` with [`Freshness::Stale`] -> `Stale`.
-pub fn trust_cache_state(entry: Option<&CachedDidEntry>, now: DateTime<Utc>) -> TrustCacheState {
+pub fn trust_cache_state(entry: Option<&CachedResolution>, now: DateTime<Utc>) -> TrustCacheState {
     match entry {
         None => TrustCacheState::Degraded,
-        Some(entry) => match entry.freshness(now) {
+        Some(entry) => match entry.freshness_at(now) {
             Freshness::Fresh => TrustCacheState::Cached,
-            Freshness::Stale => TrustCacheState::Stale,
+            Freshness::Stale { .. } => TrustCacheState::Stale,
+            Freshness::Missing => TrustCacheState::Degraded,
         },
     }
 }
@@ -97,12 +97,13 @@ pub fn trust_cache_state(entry: Option<&CachedDidEntry>, now: DateTime<Utc>) -> 
 /// TRUST-CACHE: this badge is a UX hint only and is not trust evidence.
 #[component]
 pub fn TrustCacheBadge(peer: String) -> Element {
-    let cache = use_context::<Signal<crate::identity::did_resolver::DidResolutionCache>>();
+    let cache = use_context::<Signal<DidResolutionCache>>();
     let now = Utc::now();
     let state = match arkret_sdk::Did::new(peer.clone()) {
         Ok(did) => {
             let guard = cache.read();
-            trust_cache_state(guard.peek(&did), now)
+            let entry = guard.peek(&did);
+            trust_cache_state(entry.as_ref(), now)
         }
         Err(_) => TrustCacheState::Degraded,
     };
@@ -140,13 +141,14 @@ mod tests {
 
     // ── Y3 TRUST-CACHE display degradation ───────────────────────────
 
-    fn sample_entry(ttl_secs: i64, now: DateTime<Utc>) -> CachedDidEntry {
+    fn sample_entry(ttl_secs: i64, now: DateTime<Utc>) -> CachedResolution {
         let did = Did::new("did:web:alice.example".to_owned()).expect("valid did");
-        CachedDidEntry {
-            document: DidDocument::new(did, "key-1", "z6Mksample"),
-            cached_at: now,
-            expires_at: now + Duration::seconds(ttl_secs),
-        }
+        CachedResolution::new(
+            DidDocument::new(did, "key-1", "z6Mksample"),
+            now,
+            now + Duration::seconds(ttl_secs),
+        )
+        .unwrap()
     }
 
     #[test]

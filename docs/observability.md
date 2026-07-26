@@ -89,19 +89,7 @@ The P5 work threads the same value end-to-end on the client:
 
 For bug reports always capture the `request_id` first.
 
-## 4. Local audit log
-
-The `crate::telemetry::emit_user_action_log` path buffers entries into
-`LocalStateStore::telemetry_log` (bounded at `TELEMETRY_BUFFER_CAP`).
-This is **always-on** and **device-local** — entries never leave the
-device unless the user explicitly exports the buffer via
-`/developer → Export telemetry log`.
-
-The buffer survives a browser refresh / desktop restart because it rides
-on the same `state.json` / `localStorage` channel as the rest of the
-local state.
-
-## 5. What we do **not** capture
+## 4. What we do **not** capture
 
 - Message bodies.
 - Recovery material (passphrases, vault blobs, recovery keys).
