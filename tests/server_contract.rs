@@ -14,7 +14,6 @@ use inkson::models::{
 use inkson::operation::OperationBuilder;
 use inkson::push::validate_blind_wakeup_payload;
 use inkson::service_parse::parse_server_description;
-use inkson::telemetry::{UserActionOutcome, build_user_action_entry, format_user_action_line};
 use reqwest::StatusCode;
 use serde_json::json;
 
@@ -765,21 +764,6 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
         next_cursor: None,
     };
     assert_no_secret("search", &search, secret);
-
-    let log_line = format_user_action_line(
-        "did:web:local.example",
-        "message.create",
-        UserActionOutcome::Success,
-        None,
-    );
-    assert!(!log_line.contains(secret));
-    let log_entry = build_user_action_entry(
-        "did:web:local.example",
-        "message.create",
-        UserActionOutcome::Success,
-        None,
-    );
-    assert_no_secret("log", &log_entry, secret);
 
     let directory = arkret_models_discovery::DirectoryRealmSearchOutcome {
         realms: vec![arkret_models_discovery::RealmPreview {

@@ -814,17 +814,6 @@ pub struct ClientLocalState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_principal_registration: Option<PendingPrincipalRegistration>,
     /// Client-side telemetry log buffer. Mirrors sodmin's
-    /// `utils/audit.rs` shape - each entry is a structured "user action"
-    /// record (actor / action / outcome / timestamp). Written by
-    /// [`crate::telemetry::emit_user_action_log`] when offline; the flush
-    /// path reads + clears via [`LocalStateStore::drain_telemetry`] once a
-    /// network channel is available.
-    ///
-    /// The buffer is bounded at [`TELEMETRY_BUFFER_CAP`] (oldest
-    /// entries dropped first) so a long offline session can't grow
-    /// `state.json` without bound.
-    #[serde(default)]
-    pub telemetry_log: Vec<UserActionLogEntry>,
     /// Persisted MLS group state snapshots, keyed by `realm_id`. Each
     /// entry is the encrypted envelope produced by
     /// [`crate::mls::persistence::encrypt_state`]; the boot path
@@ -1152,38 +1141,8 @@ pub struct DpopDeviceKeyRecord {
     pub created_at: DateTime<Utc>,
 }
 
-/// Hard cap on the number of buffered telemetry entries kept in
-/// `ClientLocalState::telemetry_log`. When the cap is reached the
-/// oldest entry is dropped to make room for the new one. 256 is
-/// roughly two minutes of aggressive interaction at 2 actions/sec —
-/// enough to survive a network blip, well below the size at which
-/// `state.json` becomes painful to round-trip.
-pub const TELEMETRY_BUFFER_CAP: usize = 256;
 pub(crate) const MEMBER_HANDLE_CACHE_TTL_SECONDS: i64 = 60 * 60;
 pub(crate) const MEMBER_HANDLE_NEGATIVE_CACHE_TTL_SECONDS: i64 = 5 * 60;
-
-/// Structured client-side telemetry record produced by
-/// [`crate::telemetry::emit_user_action_log`]. Mirrors sodmin's
-/// `utils/audit.rs` line shape but keeps the fields typed so the
-/// flush path can serialise straight to JSON.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UserActionLogEntry {
-    /// Who took the action. For inkson this is typically the local
-    /// device DID (or `did:anon` when the user hasn't logged in yet).
-    pub actor: String,
-    /// Verb-style action name (e.g. `message.create`,
-    /// `session.refresh`, `device.revoke.confirm`).
-    pub action: String,
-    /// Result of the action; mirrors sodmin's `AdminAuditOutcome`.
-    pub outcome: String,
-    /// Optional free-form context (operator note, error short text).
-    /// Stripped of newlines + clamped to 120 chars before persistence.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
-    /// RFC 3339 timestamp at which the action was recorded. Set by
-    /// the helper, not by the caller.
-    pub recorded_at: DateTime<Utc>,
-}
 
 /// Persisted `ak.session.grant` issued by the Account Authority during login.
 ///
@@ -1265,7 +1224,6 @@ impl Default for ClientLocalState {
             session_grant: None,
             pending_principal_registration: None,
             pending_account_handoff: None,
-            telemetry_log: Vec::new(),
             mls_snapshots: BTreeMap::new(),
             mls_receive_recovery_snapshots: BTreeMap::new(),
             mls_genesis_emitted: BTreeSet::new(),
