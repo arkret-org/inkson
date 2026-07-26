@@ -322,7 +322,7 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
         json!({
             "__kind": "realm",
             "owner": actor,
-            "content_scheme": "mls-rfc9420",
+            "content_scheme": "mls_rfc9420",
             "members_limited": false,
             "members": [{ "actor_id": actor, "membership": "join" }],
             "summary": {
@@ -414,7 +414,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
         realm,
         json!({
             "active_profiles": [arkret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE],
-            "content_scheme": "mls-rfc9420",
+            "content_scheme": "mls_rfc9420",
             "members_limited": false,
             "members": [{ "actor_id": actor, "membership": "join" }]
         }),

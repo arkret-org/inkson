@@ -55,8 +55,8 @@ pub fn build_account_data_tombstone(
 
 pub fn private_account_data_key_prefix(key: &str) -> Option<&'static str> {
     if let Some(prefix) = [
-        arkret_sdk::ACCOUNT_DATA_TYPE_CONTACTS_ACTOR,
-        arkret_sdk::ACCOUNT_DATA_TYPE_CONTACTS_REALM,
+        arkret_sdk::ACCOUNT_DATA_KEY_CONTACTS_ACTOR,
+        arkret_sdk::ACCOUNT_DATA_KEY_CONTACTS_REALM,
     ]
     .into_iter()
     .find(|prefix| {
@@ -67,13 +67,13 @@ pub fn private_account_data_key_prefix(key: &str) -> Option<&'static str> {
     }
 
     [
-        arkret_sdk::ACCOUNT_DATA_TYPE_REMINDER,
-        arkret_sdk::ACCOUNT_DATA_TYPE_SCHEDULED_SEND,
-        arkret_sdk::ACCOUNT_DATA_TYPE_SNOOZE,
-        arkret_sdk::ACCOUNT_DATA_TYPE_SAVED,
-        arkret_sdk::ACCOUNT_DATA_TYPE_DRAFT,
-        arkret_sdk::ACCOUNT_DATA_TYPE_FILE_TRANSFER,
-        arkret_sdk::ACCOUNT_DATA_TYPE_SEARCH_INDEX_MANIFEST,
+        arkret_sdk::ACCOUNT_DATA_KEY_REMINDER,
+        arkret_sdk::ACCOUNT_DATA_KEY_SCHEDULED_SEND,
+        arkret_sdk::ACCOUNT_DATA_KEY_SNOOZE,
+        arkret_sdk::ACCOUNT_DATA_KEY_SAVED,
+        arkret_sdk::ACCOUNT_DATA_KEY_DRAFT,
+        arkret_sdk::ACCOUNT_DATA_KEY_FILE_TRANSFER,
+        arkret_sdk::ACCOUNT_DATA_KEY_SEARCH_INDEX_MANIFEST,
     ]
     .into_iter()
     .find(|prefix| {

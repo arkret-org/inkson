@@ -42,7 +42,7 @@
 
 use arkret_models_discovery::TargetKind;
 use arkret_wire::{
-    AddressAction, LinkType, ParsedAddress, RealmRef, TargetDescriptor, build_address,
+    AddressAction, AddressLinkKind, ParsedAddress, RealmRef, TargetDescriptor, build_address,
     build_https_landing, parse_address, target_digest,
 };
 
@@ -122,7 +122,7 @@ impl ShareTarget {
         &self,
         _via: &[String],
         action: AddressAction,
-        link_type: LinkType,
+        address_link_kind: AddressLinkKind,
         token: Option<String>,
     ) -> ParsedAddress {
         ParsedAddress {
@@ -131,8 +131,11 @@ impl ShareTarget {
             message: self.message_seg().map(str::to_owned),
             action,
             // A stray token on a reference link is dropped by the SDK builder.
-            link_type,
-            token: if matches!(link_type, LinkType::Invite | LinkType::Preview) {
+            address_link_kind,
+            token: if matches!(
+                address_link_kind,
+                AddressLinkKind::Invite | AddressLinkKind::Preview
+            ) {
                 token
             } else {
                 None
@@ -151,14 +154,14 @@ impl ShareTarget {
         landing: &str,
         via: &[String],
         action: AddressAction,
-        link_type: LinkType,
+        address_link_kind: AddressLinkKind,
         token: Option<String>,
     ) -> ShareLinks {
-        let parsed = self.to_parsed_address(via, action, link_type, token);
+        let parsed = self.to_parsed_address(via, action, address_link_kind, token);
         ShareLinks {
             https_landing: build_https_landing(landing, &parsed),
             web_arkret: build_address(&parsed),
-            link_type,
+            address_link_kind,
         }
     }
 
@@ -170,7 +173,7 @@ impl ShareTarget {
         via: &[String],
         action: AddressAction,
     ) -> ShareLinks {
-        self.build_links(landing, via, action, LinkType::Reference, None)
+        self.build_links(landing, via, action, AddressLinkKind::Reference, None)
     }
 
     /// Build a `preview` link pair. Preview tokens are policy-limited by
@@ -183,12 +186,12 @@ impl ShareTarget {
         action: AddressAction,
         token: String,
     ) -> ShareLinks {
-        self.build_links(landing, via, action, LinkType::Preview, Some(token))
+        self.build_links(landing, via, action, AddressLinkKind::Preview, Some(token))
     }
 
     /// Compute the [`TargetDescriptor`] digest this target would bind into an
     /// `invite` token's signed payload. The digest covers ONLY the identity
-    /// tuple + `link_type`, never the via/action hints, so a server can mint a
+    /// tuple + `address_link_kind`, never the via/action hints, so a server can mint a
     /// token bound to this exact object.
     ///
     /// Fails closed when the realm segment is an alias (the digest is
@@ -197,18 +200,21 @@ impl ShareTarget {
     // TODO(R3.3.1): once an alias-bearing share is supported, resolve the alias
     // via the directory before digesting (TargetDescriptor::set_realm_id).
     pub fn invite_target_digest(&self) -> anyhow::Result<String> {
-        self.target_digest_for_link_type(LinkType::Invite)
+        self.target_digest_for_address_link_kind(AddressLinkKind::Invite)
     }
 
     /// Compute the target descriptor digest a `preview` token must bind.
     pub fn preview_target_digest(&self) -> anyhow::Result<String> {
-        self.target_digest_for_link_type(LinkType::Preview)
+        self.target_digest_for_address_link_kind(AddressLinkKind::Preview)
     }
 
-    fn target_digest_for_link_type(&self, link_type: LinkType) -> anyhow::Result<String> {
-        let parsed = self.to_parsed_address(&[], AddressAction::View, link_type, None);
+    fn target_digest_for_address_link_kind(
+        &self,
+        address_link_kind: AddressLinkKind,
+    ) -> anyhow::Result<String> {
+        let parsed = self.to_parsed_address(&[], AddressAction::View, address_link_kind, None);
         let mut descriptor = TargetDescriptor::from_parsed(&parsed);
-        descriptor.link_type = link_type;
+        descriptor.address_link_kind = address_link_kind;
         if !descriptor.realm_id.starts_with("ak:realm:") {
             return Err(anyhow::anyhow!(
                 "cannot bind a token to an alias realm — resolve to a canonical realm_id first"
@@ -227,7 +233,7 @@ pub struct ShareLinks {
     /// `web+arkret:` URI — the "open in app" form for OS / browser handlers.
     pub web_arkret: String,
     /// The link type both forms encode.
-    pub link_type: LinkType,
+    pub address_link_kind: AddressLinkKind,
 }
 
 /// A parsed shareable link plus the local route it resolves to. `address` is
@@ -389,7 +395,7 @@ mod tests {
         assert!(links.https_landing.contains(R));
         // The web+arkret: form is the canonical scheme.
         assert_eq!(links.web_arkret, format!("web+arkret:realm/{R}"));
-        assert_eq!(links.link_type, LinkType::Reference);
+        assert_eq!(links.address_link_kind, AddressLinkKind::Reference);
     }
 
     #[test]
@@ -416,7 +422,7 @@ mod tests {
             LANDING,
             &[VIA.to_owned()],
             AddressAction::Reply,
-            LinkType::Reference,
+            AddressLinkKind::Reference,
             None,
         );
         let opened = OpenedLink::parse(&links.web_arkret).unwrap();
@@ -451,7 +457,7 @@ mod tests {
             LANDING,
             &[VIA.to_owned()],
             AddressAction::Join,
-            LinkType::Invite,
+            AddressLinkKind::Invite,
             Some("opaque-tok-123".to_owned()),
         );
         assert!(links.web_arkret.contains("lt=invite"));
@@ -475,7 +481,7 @@ mod tests {
         assert!(links.web_arkret.contains("lt=preview"));
         assert!(links.web_arkret.contains("tok=preview-token-123"));
         let opened = OpenedLink::parse(&links.web_arkret).unwrap();
-        assert_eq!(opened.address.link_type, LinkType::Preview);
+        assert_eq!(opened.address.address_link_kind, AddressLinkKind::Preview);
         assert_eq!(opened.token.as_deref(), Some("preview-token-123"));
 
         let invite_digest = target.invite_target_digest().unwrap();
@@ -499,7 +505,7 @@ mod tests {
             LANDING,
             &[],
             AddressAction::View,
-            LinkType::Reference,
+            AddressLinkKind::Reference,
             Some("should-be-dropped".to_owned()),
         );
         assert!(!links.web_arkret.contains("tok="));

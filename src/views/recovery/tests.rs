@@ -13,7 +13,7 @@ use super::types::RecoveryState;
 fn parse_backup_summary_extracts_visible_metadata() {
     let row = parse_backup_summary(&json!({
         "backup_id": "ak:backup:01964137-0000-7000-8000-000000000000",
-        "backup_class": "secret_storage",
+        "backup_kind": "secret_storage",
         "backup_version": "kb_1",
         "created_at": "2026-05-15T00:00:00.000Z",
         "ciphertext_digest": "sha256:abc",
@@ -29,7 +29,7 @@ fn parse_backup_summary_extracts_visible_metadata() {
         row.backup_id,
         "ak:backup:01964137-0000-7000-8000-000000000000"
     );
-    assert_eq!(row.backup_class, "secret_storage");
+    assert_eq!(row.backup_kind, "secret_storage");
     assert_eq!(row.created_at, "2026-05-15T00:00:00.000Z");
 }
 
@@ -56,17 +56,17 @@ fn backup_inventory_status_counts_classes() {
         "backups": [
             {
                 "backup_id": "ak:backup:a",
-                "backup_class": "did_recovery",
+                "backup_kind": "did_recovery",
                 "encryption": {"recipient_method": "recovery_public_key"}
             },
             {
                 "backup_id": "ak:backup:b",
-                "backup_class": "secret_storage",
+                "backup_kind": "secret_storage",
                 "encryption": {"recipient_method": "recovery_public_key"}
             },
             {
                 "backup_id": "ak:backup:c",
-                "backup_class": "mls_history",
+                "backup_kind": "mls_history",
                 "encryption": {"recipient_method": "secret_storage_key"}
             }
         ]

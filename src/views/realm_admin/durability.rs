@@ -199,7 +199,7 @@ pub fn DurabilityPolicyEditor(
         store
             .realm_content_scheme(&realm_id)
             .map(|scheme| scheme.trim().to_ascii_lowercase().replace('_', "-"))
-            .is_some_and(|scheme| scheme == "mls-exporter-aead-v1")
+            .is_some_and(|scheme| scheme == "mls_exporter_aead_v1")
     };
 
     // Pre-fill from the current projected policy.
@@ -259,7 +259,7 @@ pub fn DurabilityPolicyEditor(
                 span {
                     class: if scheme_ok { "badge green" } else { "badge amber" },
                     // The scheme identifier is a protocol literal, not translatable copy.
-                    if scheme_ok { "mls-exporter-aead-v1" } else { {tr("realm_admin.durability_scheme_not_eligible")} }
+                    if scheme_ok { "mls_exporter_aead_v1" } else { {tr("realm_admin.durability_scheme_not_eligible")} }
                 }
             }
             div { class: "muted",

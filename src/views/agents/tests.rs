@@ -262,9 +262,9 @@ mod personal_agent_tests {
 
         let wire = serde_json::to_value(scope).unwrap();
         let constraint = &wire["constraints"][0];
-        assert_eq!(constraint["constraint_type"], "claim_based");
+        assert_eq!(constraint["constraint_kind"], "claim_based");
         assert_eq!(constraint["effect"], "require_review");
-        assert_eq!(constraint["subtype"], "accountability");
+        assert_eq!(constraint["constraint_subkind"], "accountability");
         assert_eq!(constraint["applies_to_actions"][0], "ak.message.create");
         assert_eq!(constraint["controller_approval_required"], true);
     }
@@ -300,9 +300,9 @@ mod personal_agent_tests {
         // No realm supplied -> empty selector (controller narrows later).
         assert_eq!(grant["resources"], serde_json::json!([]));
         let constraint = &grant["constraints"][0];
-        assert_eq!(constraint["constraint_type"], "claim_based");
+        assert_eq!(constraint["constraint_kind"], "claim_based");
         assert_eq!(constraint["effect"], "require_review");
-        assert_eq!(constraint["subtype"], "accountability");
+        assert_eq!(constraint["constraint_subkind"], "accountability");
         assert_eq!(constraint["applies_to_actions"][0], "ak.message.create");
         assert_eq!(constraint["controller_approval_required"], true);
     }

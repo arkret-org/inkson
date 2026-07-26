@@ -249,10 +249,10 @@ impl LocalStateStore {
     }
 
     /// The effective `content_scheme` selector for `realm_id`. RRK durability is
-    /// only effective when this is `mls-exporter-aead-v1`
+    /// only effective when this is `mls_exporter_aead_v1`
     /// (encryption-and-audit.md §2.10.8). `None` means the authoritative
     /// security projection is incomplete; encrypted sends must remain paused
-    /// instead of guessing the `mls-rfc9420` wire scheme.
+    /// instead of guessing the `mls_rfc9420` wire scheme.
     pub fn realm_content_scheme(&self, realm_id: &str) -> Option<String> {
         self.load()
             .realm_tree_projections
@@ -271,13 +271,13 @@ impl LocalStateStore {
 
     /// True when `realm_id`'s effective durability policy is RRK-active: a
     /// projected `durability_policy.mode != none` AND
-    /// `content_scheme == mls-exporter-aead-v1` (the §2.10.8 scheme gate). Drives
+    /// `content_scheme == mls_exporter_aead_v1` (the §2.10.8 scheme gate). Drives
     /// whether the disclosure banner renders and whether the seal hook runs.
     pub fn realm_durability_is_rrk_active(&self, realm_id: &str) -> bool {
         let scheme_ok = self
             .realm_content_scheme(realm_id)
             .map(|scheme| scheme.trim().to_ascii_lowercase().replace('_', "-"))
-            .is_some_and(|scheme| scheme == "mls-exporter-aead-v1");
+            .is_some_and(|scheme| scheme == "mls_exporter_aead_v1");
         scheme_ok
             && self
                 .realm_durability_policy(realm_id)

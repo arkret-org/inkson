@@ -54,7 +54,7 @@ pub enum CrossSigningSetupStep {
     /// canonical_json(...).
     SignSubordinateBindings,
     /// Write the SSK / USK private keys into an encrypted
-    /// `ak.schema.key_backup.v1` envelope (`backup_class="secret_storage"`).
+    /// `ak.schema.key_backup.v1` envelope (`backup_kind="secret_storage"`).
     /// spec §11 + §7.1 domain separation.
     PublishSecretStorageBackup,
     /// Publish `ak.cross_signing.publish` to the principal control Realm.

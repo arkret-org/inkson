@@ -399,7 +399,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "realm_admin.durability_scheme_warning",
-        "This Realm does not use mls-exporter-aead-v1, so there is no deliverable history_secret; declaring mode != none will be rejected (durability_scheme_incompatible).",
+        "This Realm does not use mls_exporter_aead_v1, so there is no deliverable history_secret; declaring mode != none will be rejected (durability_scheme_incompatible).",
     );
     dict.set("realm_admin.durability_mode_label", "Mode");
     dict.set(

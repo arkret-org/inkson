@@ -31,7 +31,7 @@ pub(super) fn format_settings_handle_list(handles: &[String], fallback: &str) ->
 }
 
 pub(crate) fn encrypted_account_data_value(
-    data_type: &str,
+    account_data_key: &str,
     plaintext: &serde_json::Value,
 ) -> anyhow::Result<serde_json::Value> {
     let actor = crate::secure_key_store::active_device_seed_scope()
@@ -47,7 +47,10 @@ pub(crate) fn encrypted_account_data_value(
         .try_into()
         .map_err(|_| anyhow::anyhow!("account secret must be 32 bytes"))?;
     let envelope = arkret_sdk::account_data_crypto::seal_account_data_value(
-        &secret, &actor, data_type, plaintext,
+        &secret,
+        &actor,
+        account_data_key,
+        plaintext,
     )?;
     serde_json::to_value(envelope)
         .map_err(|error| anyhow::anyhow!("account-data encrypted value: {error}"))

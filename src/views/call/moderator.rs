@@ -7,7 +7,7 @@ use crate::ui::button::{Button, ButtonVariant};
 
 /// Moderator controls (kick / ban / mute-all / end-for-all). Rendered inside
 /// the active call panel. Per `webrtc-signaling.md` §3a / §6.1: kick / ban /
-/// end-for-all ride `ak.call.signal{signal_type=moderation}` with a
+/// end-for-all ride `ak.call.signal{signal_kind=moderation}` with a
 /// `data.action`; moderator-forced mute rides `mute_state{by=moderator}` (it
 /// is NOT a moderation action). All frames require `ak.call.moderate`.
 #[component]
@@ -80,7 +80,7 @@ pub(super) fn ModeratorControls(
                             emit_async(
                                 &base, &token(), &realm_id, &call_id, &actor, &device,
                                 "moderation",
-                                json!({ "signal_type": "moderation", "data": { "action": "end_for_all" } }),
+                                json!({ "signal_kind": "moderation", "data": { "action": "end_for_all" } }),
                                 call_seq,
                             );
                         }
@@ -120,7 +120,7 @@ pub(super) fn ModeratorControls(
                                             &base, &token(), &realm_id, &call_id, &actor, &device,
                                             "moderation",
                                             json!({
-                                                "signal_type": "moderation",
+                                                "signal_kind": "moderation",
                                                 "data": {
                                                     "action": "kick",
                                                     "target_actor_id": target.clone(),
@@ -152,7 +152,7 @@ pub(super) fn ModeratorControls(
                                             &base, &token(), &realm_id, &call_id, &actor, &device,
                                             "moderation",
                                             json!({
-                                                "signal_type": "moderation",
+                                                "signal_kind": "moderation",
                                                 "data": {
                                                     "action": "ban",
                                                     "target_actor_id": target.clone(),

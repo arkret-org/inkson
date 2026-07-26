@@ -2,16 +2,16 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
-use super::{BackupClass, KEY_BACKUP_SCHEMA, key_backup_hkdf_info};
+use super::{BackupKind, KEY_BACKUP_SCHEMA, key_backup_hkdf_info};
 
-pub fn attach_key_backup_domain_separation(body: &mut Value, class: BackupClass, subdomain: &str) {
-    let item_types = body
+pub fn attach_key_backup_domain_separation(body: &mut Value, class: BackupKind, subdomain: &str) {
+    let item_kinds = body
         .get("contents")
         .and_then(Value::as_array)
         .map(|contents| {
             contents
                 .iter()
-                .filter_map(|item| item.get("item_type").and_then(Value::as_str))
+                .filter_map(|item| item.get("item_kind").and_then(Value::as_str))
                 .map(ToOwned::to_owned)
                 .collect::<Vec<_>>()
         })
@@ -61,10 +61,10 @@ pub fn attach_key_backup_domain_separation(body: &mut Value, class: BackupClass,
             "schema": KEY_BACKUP_SCHEMA,
             "actor_id": body.get("actor_id").cloned().unwrap_or(Value::Null),
             "device_id": device_id,
-            "backup_class": class.as_str(),
+            "backup_kind": class.as_str(),
             "backup_version": body.get("backup_version").cloned().unwrap_or(Value::Null),
             "created_at": body.get("created_at").cloned().unwrap_or(Value::Null),
-            "item_types": item_types,
+            "item_kinds": item_kinds,
             "recipient_method": recipient_method,
             "recipient_key_ref": recipient_key_ref,
         }

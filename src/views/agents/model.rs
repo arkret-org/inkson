@@ -15,7 +15,7 @@ use arkret_sdk::{
     AgentKeyAuthorizePayloadRuntimeAttestation, AgentKeyPairRequestBody, AgentKeySupersession,
     AgentPairingBootstrap, AgentProvisionEvents, AgentRequestedScopeDisclosure,
     AgentSigningKeyBinding, AgentSigningPublicKey, Did, DidUrl, Event, EventId, GrantConstraint,
-    GrantConstraintEffect, GrantConstraintSubtype, GrantConstraintType, Hash, NonEmptyJsonObject,
+    GrantConstraintEffect, GrantConstraintKind, GrantConstraintSubkind, Hash, NonEmptyJsonObject,
     NonEmptyString, Proof, PublicKey, RealmId, RequestId,
 };
 use chrono::Utc;
@@ -340,10 +340,10 @@ pub fn requested_scope_for_presets(
         .collect();
     let constraints = if content_presets.contains(&AgentGrantPreset::ActOnBehalf) {
         let mut constraint = GrantConstraint::new(
-            GrantConstraintType::ClaimBased,
+            GrantConstraintKind::ClaimBased,
             GrantConstraintEffect::RequireReview,
         );
-        constraint.subtype = Some(GrantConstraintSubtype::Accountability);
+        constraint.constraint_subkind = Some(GrantConstraintSubkind::Accountability);
         constraint.applies_to_actions = vec!["ak.message.create".to_owned()];
         constraint.controller_approval_required = Some(true);
         vec![constraint]
@@ -834,9 +834,9 @@ pub fn expand_preset_grant(
     if preset == AgentGrantPreset::ActOnBehalf {
         grant["constraints"] = json!([
             {
-                "constraint_type": "claim_based",
+                "constraint_kind": "claim_based",
                 "effect": "require_review",
-                "subtype": "accountability",
+                "constraint_subkind": "accountability",
                 "applies_to_actions": ["ak.message.create"],
                 "controller_approval_required": true,
             }

@@ -2,15 +2,15 @@
 //!
 //! Edits the actor `invite_receive_policy` (spec `invite-addressing.md` §5,
 //! authoritative `arkret_sdk::InviteReceivePolicy`):
-//! - `allowed_introduction_kinds` — which introduction-evidence kinds are accepted at all
-//!   (consent_grant / locator_ref / shared_realm / same_principal_server / explicit_address).
+//! - `holder_allowed_introduction_kinds` — which introduction-evidence kinds are accepted at
+//!   all (consent_grant / locator_ref / shared_realm / same_principal_server / explicit_address).
 //! - `explicit_address_behavior` — drop / quarantine / notify for raw-address invites.
 //! - `disclosure.high_trust` — whether contacts learn the invite outcome.
-//! - `blocked_subjects` — list of subjects barred from inviting, with removal.
+//! - `denied_subjects` — list of subjects barred from inviting, with removal.
 //!
 //! YOU-01-006: the form edits a `arkret_sdk::InviteReceivePolicy` held whole in
 //! a signal. On GET we keep the *entire* server policy (including the
-//! `trusted_*` / `blocked_principal_services` lists this form does not surface);
+//! `trusted_*` / `denied_principal_services` lists this form does not surface);
 //! on SET we stamp the required `schema` constant and `subject_id = account_did`
 //! and post the same object back, so server-stored lists survive the round-trip
 //! and the body satisfies the soland handler (which deserialises the SDK type
@@ -118,13 +118,13 @@ fn parse_list(value: &str) -> Vec<String> {
 
 fn constraints_lines(constraints: &arkret_wire::ReceivePolicyConstraints) -> Vec<String> {
     let mut lines = Vec::new();
-    if let Some(kinds) = constraints.permitted_introduction_kinds.as_ref() {
+    if let Some(kinds) = constraints.deployment_allowed_introduction_kinds.as_ref() {
         lines.push(format!("permitted: {}", kinds.join(", ")));
     }
-    if !constraints.forbidden_introduction_kinds.is_empty() {
+    if !constraints.deployment_denied_introduction_kinds.is_empty() {
         lines.push(format!(
             "forbidden: {}",
-            constraints.forbidden_introduction_kinds.join(", ")
+            constraints.deployment_denied_introduction_kinds.join(", ")
         ));
     }
     if let Some(action) = constraints.handle_claim_max_behavior.as_ref() {
@@ -220,7 +220,7 @@ pub fn InvitePolicySettingsCard(token: Signal<String>, account_did: Signal<Strin
     let high_trust_outcome = high_trust_is_outcome(&current);
     let discovery_trust_outcome = discovery_trust_is_outcome(&current);
     let allowed_handle_domains = list_to_text(&current.allowed_handle_domains);
-    let blocked_handle_domains = list_to_text(&current.blocked_handle_domains);
+    let denied_handle_domains = list_to_text(&current.denied_handle_domains);
 
     rsx! {
         div { class: "event", "data-testid": "invite-policy-panel",
@@ -230,13 +230,13 @@ pub fn InvitePolicySettingsCard(token: Signal<String>, account_did: Signal<Strin
             }
             div { class: "muted", {tr("invite_policy.intro")} }
 
-            // ── allowed_introduction_kinds ───────────────────────────────
+            // ── holder_allowed_introduction_kinds ──────────────────────────────────────
             div { class: "settings-subsection",
                 strong { class: "settings-subsection-title", {tr("invite_policy.kinds_title")} }
                 div { class: "settings-list",
                     for (kind, label_key) in INTRODUCTION_KINDS.iter().copied() {
                         {
-                            let checked = current.allowed_introduction_kinds.iter().any(|k| k == kind);
+                            let checked = current.holder_allowed_introduction_kinds.iter().any(|k| k == kind);
                             rsx! {
                                 label { class: "metric invite-policy-kind-row",
                                     Checkbox {
@@ -245,9 +245,9 @@ pub fn InvitePolicySettingsCard(token: Signal<String>, account_did: Signal<Strin
                                         on_checked_change: move |state: CheckboxState| {
                                             let enabled = bool::from(state);
                                             let mut next = policy.read().clone();
-                                            next.allowed_introduction_kinds.retain(|k| k != kind);
+                                            next.holder_allowed_introduction_kinds.retain(|k| k != kind);
                                             if enabled {
-                                                next.allowed_introduction_kinds.push(kind.to_owned());
+                                                next.holder_allowed_introduction_kinds.push(kind.to_owned());
                                             }
                                             policy.set(next);
                                         },
@@ -296,11 +296,11 @@ pub fn InvitePolicySettingsCard(token: Signal<String>, account_did: Signal<Strin
                         span { {tr("invite_policy.handle_blocked_domains")} }
                         input {
                             "data-testid": "invite-policy-handle-blocked-domains",
-                            value: "{blocked_handle_domains}",
+                            value: "{denied_handle_domains}",
                             placeholder: "spam.example",
                             oninput: move |event: FormEvent| {
                                 let mut next = policy.read().clone();
-                                next.blocked_handle_domains = parse_list(&event.value());
+                                next.denied_handle_domains = parse_list(&event.value());
                                 policy.set(next);
                             },
                         }
@@ -383,7 +383,7 @@ pub fn InvitePolicySettingsCard(token: Signal<String>, account_did: Signal<Strin
                 div { class: "muted", {tr("invite_policy.disclosure_hint")} }
             }
 
-            // ── blocked_subjects ─────────────────────────────────────────
+            // ── denied_subjects ─────────────────────────────────────────
             if let Some(server_constraints) = constraints.read().as_ref() {
                 div { class: "settings-subsection", "data-testid": "invite-policy-server-caps",
                     strong { class: "settings-subsection-title", {tr("invite_policy.server_caps_title")} }
@@ -406,11 +406,11 @@ pub fn InvitePolicySettingsCard(token: Signal<String>, account_did: Signal<Strin
 
             div { class: "settings-subsection",
                 strong { class: "settings-subsection-title", {tr("invite_policy.blocked_title")} }
-                if current.blocked_subjects.is_empty() {
+                if current.denied_subjects.is_empty() {
                     div { class: "muted", "data-testid": "invite-policy-blocked-empty", {tr("invite_policy.blocked_empty")} }
                 } else {
                     div { class: "settings-list",
-                        for subject in current.blocked_subjects.iter().map(|d| d.as_str().to_owned()) {
+                        for subject in current.denied_subjects.iter().map(|d| d.as_str().to_owned()) {
                             div {
                                 class: "metric invite-policy-blocked-row",
                                 "data-testid": "invite-policy-blocked-row",
@@ -423,7 +423,7 @@ pub fn InvitePolicySettingsCard(token: Signal<String>, account_did: Signal<Strin
                                         let subject = subject.clone();
                                         move |_| {
                                             let mut next = policy.read().clone();
-                                            next.blocked_subjects.retain(|s| s.as_str() != subject);
+                                            next.denied_subjects.retain(|s| s.as_str() != subject);
                                             policy.set(next);
                                             status.set(tr("invite_policy.unblocked_hint"));
                                         }

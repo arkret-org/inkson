@@ -443,7 +443,7 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set(
         "realm_admin.durability_scheme_warning",
-        "本 Realm 未使用 mls-exporter-aead-v1，无可交付的 history_secret；声明 mode != none 将被拒绝（durability_scheme_incompatible）。",
+        "本 Realm 未使用 mls_exporter_aead_v1，无可交付的 history_secret；声明 mode != none 将被拒绝（durability_scheme_incompatible）。",
     );
     dict.set("realm_admin.durability_mode_label", "模式");
     dict.set(

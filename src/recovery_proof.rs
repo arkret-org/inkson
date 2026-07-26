@@ -40,7 +40,7 @@ pub fn principal_signing_proof_transcript(session: &Value) -> anyhow::Result<Val
         }
     };
     let transcript = arkret_sdk::PrincipalSigningTranscript {
-        r#type: "ak.identity.recovery_proof.v1".to_owned(),
+        schema: "ak.identity.recovery_proof.v1".to_owned(),
         kind: arkret_sdk::RecoveryProofKind::PrincipalSigning,
         principal_id: state.principal_id,
         requesting_device_id: state.requesting_device_id,

@@ -224,7 +224,7 @@ fn notification_from_value(
     let client_state = local_state.notification_client_state.get(&id).cloned();
     let kind = value_string(
         &value,
-        &["notification_type", "notification_kind", "type", "kind"],
+        &["notification_kind", "notification_kind", "type", "kind"],
     )
     .unwrap_or_else(|| "message".to_owned());
     let title = value_string(&value, &["title"])
@@ -484,13 +484,13 @@ fn value_u32(value: &Value, key: &str) -> Option<u32> {
 }
 
 pub(crate) fn notification_eval_context(value: &Value) -> NotificationEvalContext {
-    let notification_type = value_string(
+    let notification_kind = value_string(
         value,
-        &["notification_type", "notification_kind", "type", "kind"],
+        &["notification_kind", "notification_kind", "type", "kind"],
     )
     .unwrap_or_else(|| "message".to_owned());
     let event_kind = value_string(value, &["event_kind", "source_event_kind", "kind", "type"])
-        .unwrap_or_else(|| notification_type.clone());
+        .unwrap_or_else(|| notification_kind.clone());
     let is_e2ee = value_bool(value, "is_e2ee")
         .or_else(|| value_bool(value, "encrypted"))
         .unwrap_or_else(|| value.get("encrypted_content").is_some());
@@ -503,7 +503,7 @@ pub(crate) fn notification_eval_context(value: &Value) -> NotificationEvalContex
     });
     NotificationEvalContext {
         event_kind,
-        notification_type,
+        notification_kind,
         realm_id: value_string(value, &["realm_id"]).unwrap_or_default(),
         strand_id: value_string(value, &["strand_id"]),
         strand_track: value_string(value, &["strand_track", "track_name"]),
@@ -543,7 +543,7 @@ fn realm_watch_override(local_state: &ClientLocalState, realm_id: &str) -> Optio
 }
 
 fn eval_context_overrides_realm_mute(ctx: &NotificationEvalContext) -> bool {
-    matches!(ctx.notification_type.as_str(), "invite")
+    matches!(ctx.notification_kind.as_str(), "invite")
 }
 
 pub(crate) fn realm_is_muted(local_state: &ClientLocalState, realm_id: &str) -> bool {

@@ -61,7 +61,7 @@ pub(crate) fn proof_request(
     mls_group_id: impl Into<String>,
     previous_epoch: u64,
     next_epoch: u64,
-) -> Result<arkret_sdk::MlsGovernanceProofRequest, String> {
+) -> Result<arkret_sdk::MlsGovernanceProofRequestBodyBody, String> {
     let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
         .map_err(|error| format!("invalid MLS governance proof Realm id: {error}"))?;
     let effective_scope = match circle_id
@@ -77,7 +77,7 @@ pub(crate) fn proof_request(
             realm_id: realm_id.clone(),
         },
     };
-    let request = arkret_sdk::MlsGovernanceProofRequest {
+    let request = arkret_sdk::MlsGovernanceProofRequestBodyBody {
         realm_id: realm_id.clone(),
         effective_scope,
         mls_group_id: mls_group_id.into(),
@@ -111,7 +111,7 @@ pub(crate) fn proof_request(
 async fn fetch_proof_bundle<S: GovernanceProofStateStore>(
     api: &crate::transport::TransportClient,
     state_store: S,
-    request: &arkret_sdk::MlsGovernanceProofRequest,
+    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
 ) -> Result<arkret_sdk::MaterializedMlsGovernanceProofBundle, String> {
     let http = api
         .sdk_http_client()
@@ -175,7 +175,7 @@ async fn fetch_proof_bundle<S: GovernanceProofStateStore>(
 
 async fn fetch_proof_chunk_with_retry(
     http: &arkret_sdk::Client,
-    request: &arkret_sdk::MlsGovernanceProofRequest,
+    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
 ) -> Result<arkret_sdk::MlsGovernanceProofBundle, String> {
     const MAX_PROJECTION_ATTEMPTS: u32 = 8;
     for attempt in 0..MAX_PROJECTION_ATTEMPTS {
@@ -206,7 +206,7 @@ fn governance_projection_pending(error: &arkret_sdk::http_client::Error) -> bool
 pub(crate) fn welcome_proof_requests(
     state_store: &crate::state::LocalStateStore,
     messages: &serde_json::Value,
-) -> Result<Vec<arkret_sdk::MlsGovernanceProofRequest>, String> {
+) -> Result<Vec<arkret_sdk::MlsGovernanceProofRequestBodyBody>, String> {
     let Some(entries) = messages
         .get("messages")
         .or_else(|| messages.get("events"))
@@ -249,7 +249,7 @@ pub(crate) fn welcome_proof_requests(
 pub(crate) async fn fetch_verify_and_cache_proof<S: GovernanceProofStateStore>(
     api: &crate::transport::TransportClient,
     state_store: S,
-    request: &arkret_sdk::MlsGovernanceProofRequest,
+    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
 ) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
     Ok(
         fetch_verify_and_cache_proof_bundle(api, state_store, request)
@@ -261,7 +261,7 @@ pub(crate) async fn fetch_verify_and_cache_proof<S: GovernanceProofStateStore>(
 pub(crate) async fn fetch_verify_and_cache_proof_bundle<S: GovernanceProofStateStore>(
     api: &crate::transport::TransportClient,
     state_store: S,
-    request: &arkret_sdk::MlsGovernanceProofRequest,
+    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
 ) -> Result<arkret_sdk::MaterializedMlsGovernanceProofBundle, String> {
     let bundle = fetch_proof_bundle(api, state_store.clone(), request).await?;
     let existing_pin = state_store
@@ -624,7 +624,7 @@ fn delegated_device_verification_method_pair(
 }
 
 pub(crate) fn verify_proof_bundle<R>(
-    request: &arkret_sdk::MlsGovernanceProofRequest,
+    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
     bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
     trusted_anchor: &arkret_sdk::SealId,
     resolver: &R,
@@ -713,7 +713,7 @@ where
 
 pub(crate) fn cached_verified_binding(
     state_store: &crate::state::LocalStateStore,
-    request: &arkret_sdk::MlsGovernanceProofRequest,
+    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
 ) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
     let bundle = state_store
         .cached_mls_governance_proof(request, chrono::Utc::now())?
@@ -823,7 +823,7 @@ pub(crate) fn seed_test_governance_proof(
 }
 
 fn verify_request_binding(
-    request: &arkret_sdk::MlsGovernanceProofRequest,
+    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
     binding: &arkret_sdk::MlsGovernanceBindingPayload,
 ) -> Result<(), String> {
     request

@@ -25,7 +25,7 @@ pub mod did_resolution_health_banner;
 pub mod dismissible_popup;
 /// encryption-and-audit.md §2.10.8 — Realm Recovery Key (RRK) durability
 /// disclosure banner. Renders when a Realm's `durability_policy.mode != none`
-/// (and `content_scheme=mls-exporter-aead-v1`), disclosing the verified recovery
+/// (and `content_scheme=mls_exporter_aead_v1`), disclosing the verified recovery
 /// holder identity + mode. Never phrases the holder as "listening in real time".
 pub mod durability_banner;
 pub mod empty_state;

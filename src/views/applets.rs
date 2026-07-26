@@ -81,14 +81,14 @@ pub fn applet_effective_scope(
 /// The admin escalates these in the wizard's approval step before commit.
 fn approval_request(
     approve_actions: Vec<String>,
-    allow_ghost_actors: bool,
+    ghost_actors_allowed: bool,
 ) -> AppletApprovalRequest {
     AppletApprovalRequest {
         approve_actions,
-        allow_ghost_actors,
-        allow_delegated_native_actors: false,
-        allow_e2ee_join: false,
-        allow_widget: false,
+        ghost_actors_allowed,
+        delegated_native_actors_allowed: false,
+        e2ee_join_allowed: false,
+        widget_allowed: false,
     }
 }
 
@@ -194,7 +194,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
     let mut install_approved_scopes = use_signal(|| 0usize);
     let mut install_approved_scope_values = use_signal(Vec::<ScopeGrant>::new);
     let mut install_approve_actions = use_signal(String::new);
-    let mut install_allow_ghost_actors = use_signal(|| false);
+    let mut install_ghost_actors_allowed = use_signal(|| false);
     // Optional Circle scope for the install. Blank = Realm-wide; a `ak:circle:…`
     // id scopes the install to that Circle only (spec §4b effective_scope).
     let mut install_circle_id = use_signal(String::new);
@@ -430,9 +430,9 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                         label { class: "metric", "data-testid": "applet-install-ghost-row",
                             Checkbox {
                                 "data-testid": "applet-install-allow-ghost",
-                                checked: if install_allow_ghost_actors() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                checked: if install_ghost_actors_allowed() { CheckboxState::Checked } else { CheckboxState::Unchecked },
                                 on_checked_change: move |state: CheckboxState| {
-                                    install_allow_ghost_actors.set(bool::from(state));
+                                    install_ghost_actors_allowed.set(bool::from(state));
                                     install_verified.set(false);
                                     install_plan_digest.set(String::new());
                                     install_approved_scope_values.set(Vec::new());
@@ -466,7 +466,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                         let api_token = token();
                                         let circle = install_circle_id();
                                         let approve_actions = install_approve_actions();
-                                        let allow_ghost_actors = install_allow_ghost_actors();
+                                        let ghost_actors_allowed = install_ghost_actors_allowed();
                                         install_status.set("previewing install plan…".to_owned());
                                         spawn(async move {
                                             let effective_scope = match applet_effective_scope(
@@ -484,7 +484,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                 effective_scope,
                                                 approval_request: approval_request(
                                                     parse_applet_approval_actions(&approve_actions),
-                                                    allow_ghost_actors,
+                                                    ghost_actors_allowed,
                                                 ),
                                             };
                                             let result = with_authed_sdk_client(&base, api_token, |http| async move {
@@ -553,7 +553,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                         let api_token = token();
                                         let circle = install_circle_id();
                                         let approved_scopes = install_approved_scope_values();
-                                        let allow_ghost_actors = install_allow_ghost_actors();
+                                        let ghost_actors_allowed = install_ghost_actors_allowed();
                                         install_status.set("installing applet…".to_owned());
                                         spawn(async move {
                                             let digest_typed = match arkret_sdk::Hash::new(digest.clone()) {
@@ -580,7 +580,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                 approved_scopes,
                                                 actor_policy: Some(AppletActorPolicy {
                                                     bot_membership: Some(AppletBotMembership::Join),
-                                                    ghost_actor_mode: Some(if allow_ghost_actors {
+                                                    ghost_actor_mode: Some(if ghost_actors_allowed {
                                                         AppletGhostActorMode::PolicyDeclared
                                                     } else {
                                                         AppletGhostActorMode::Disallowed
@@ -623,7 +623,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                         install_manifest.set(String::new());
                                                         install_circle_id.set(String::new());
                                                         install_approve_actions.set(String::new());
-                                                        install_allow_ghost_actors.set(false);
+                                                        install_ghost_actors_allowed.set(false);
                                                         install_verified.set(false);
                                                         install_plan_digest.set(String::new());
                                                         install_approved_scope_values.set(Vec::new());

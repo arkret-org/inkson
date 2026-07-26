@@ -112,7 +112,7 @@ storage rather than an OS keychain.
 
 Encrypted realm / kanban history recovery uses one account-level MLS snapshot
 secret. The secret is wrapped into a `secret_storage` key-backup item with
-`item_type = "mls_account_secret"`; the wrapping key is derived from the
+`item_kind = "mls_account_secret"`; the wrapping key is derived from the
 user's recovery passphrase with Argon2id and XChaCha20-Poly1305. A fresh device
 can fetch that server-side ciphertext, unwrap it locally after the user enters
 the passphrase, and then decrypt every `mls_history` backup sealed with the

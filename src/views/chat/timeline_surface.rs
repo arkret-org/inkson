@@ -660,7 +660,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                 {
                                     let sender_blocked = blocked_did_set.contains(&msg.sender)
                                         && !blocked_show_anyway.read().contains(&msg.id);
-                                    let content_class = if msg.redacted {
+                                    let content_kind = if msg.redacted {
                                         "msg-content redacted"
                                     } else if sender_blocked {
                                         "msg-content muted"
@@ -679,7 +679,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                         // Replacing the entire conditional node could leave the
                                         // live body mounted when a remote redaction arrived.
                                         div {
-                                            class: "{content_class}",
+                                            class: "{content_kind}",
                                             "data-testid": "{content_test_id}",
                                             if msg.redacted {
                                                 "[Message redacted]"

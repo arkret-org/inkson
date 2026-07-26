@@ -559,7 +559,7 @@ pub struct SnapshotSyncStatus {
 /// cache, while the typed binding and Seal ids keep lookup/invalidation exact.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CachedMlsGovernanceProof {
-    pub request: arkret_sdk::MlsGovernanceProofRequest,
+    pub request: arkret_sdk::MlsGovernanceProofRequestBodyBody,
     pub governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
     pub trusted_anchor_seal_id: arkret_sdk::SealId,
     pub accepted_seal_id: arkret_sdk::SealId,
@@ -676,7 +676,7 @@ pub struct CachedAgentSignerEvidence {
 pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
     /// Highest verified `ak.key_backup.active_series` pointer observed per
-    /// `(actor_id, backup_class)`. This is rollback protection, not a cache:
+    /// `(actor_id, backup_kind)`. This is rollback protection, not a cache:
     /// a complete server response below this floor must fail closed.
     #[serde(default)]
     pub key_backup_active_series_highest_seen: BTreeMap<String, u64>,
@@ -937,7 +937,7 @@ pub struct ClientLocalState {
     /// Per-(realm, epoch) MLS `history_secret`s installed from an inbound
     /// `ak.realm_key.share` (encryption-and-audit.md history-sharing). Each
     /// value is a 32-byte exporter-derived secret that lets this device
-    /// decrypt `mls-exporter-aead-v1` content authored at that epoch — even
+    /// decrypt `mls_exporter_aead_v1` content authored at that epoch — even
     /// epochs that predate this device's join (tier-3 history decrypt).
     ///
     /// Keyed `realm_id -> epoch -> secret`. Durable persistence must go through
@@ -955,7 +955,7 @@ pub struct ClientLocalState {
     /// Actor-private Realm remarks per
     /// `discovery/client-preferences.md` §3.7. Hydrated from the soland
     /// `/sync` `account_data[]` projection (entries with
-    /// `data_type == "ak.contacts.realm.<realm_id>"`) and from user edits
+    /// `account_data_key == "ak.contacts.realm.<realm_id>"`) and from user edits
     /// in settings. Keyed by Realm id so the sidebar / dashboard can join
     /// it against the public `RealmTreeNode.name` at render time and prefer
     /// `local_name` when set.

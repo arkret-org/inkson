@@ -10,7 +10,7 @@
 //! (epoch advance) so a fresh device can recover up-to-date epoch material.
 //!
 //! Wire shape (soland-audited):
-//! - `PUT /_arkret/self/keys/backups/{backup_id}`, `backup_class="mls_history"`, wrapped under the
+//! - `PUT /_arkret/self/keys/backups/{backup_id}`, `backup_kind="mls_history"`, wrapped under the
 //!   named `secret_storage` key `mls_group_secrets_backup_key` (built by
 //!   [`crate::mls::persistence::MlsSnapshotEnvelope::to_key_backup_body`]).
 //! - One SERIES per Realm, extended via the successor chain (`series_seq` strictly +1, `supersedes`

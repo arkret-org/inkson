@@ -141,7 +141,7 @@ pub fn account_recovery_state_from_payloads(
 
 fn count_backups_by_class_and_method(
     list_payload: &Value,
-    backup_class: &str,
+    backup_kind: &str,
     recipient_method: &str,
 ) -> usize {
     list_payload
@@ -150,7 +150,7 @@ fn count_backups_by_class_and_method(
         .into_iter()
         .flatten()
         .filter(|backup| {
-            backup.get("backup_class").and_then(Value::as_str) == Some(backup_class)
+            backup.get("backup_kind").and_then(Value::as_str) == Some(backup_kind)
                 && backup
                     .get("encryption")
                     .and_then(|encryption| encryption.get("recipient_method"))
@@ -582,7 +582,7 @@ fn did_recovery_backup_matches_active_policy(
     backup: &Value,
     policy: &ActiveRecoveryPolicy,
 ) -> bool {
-    backup.get("backup_class").and_then(Value::as_str) == Some("did_recovery")
+    backup.get("backup_kind").and_then(Value::as_str) == Some("did_recovery")
         && backup
             .get("encryption")
             .and_then(|encryption| encryption.get("recipient_method"))
@@ -1075,7 +1075,7 @@ mod tests {
             &policy,
             &json!({
                 "backups": [{
-                    "backup_class": "did_recovery",
+                    "backup_kind": "did_recovery",
                     "encryption": { "recipient_method": "recovery_public_key" }
                 }]
             }),
@@ -1087,7 +1087,7 @@ mod tests {
             &policy,
             &json!({
                 "backups": [{
-                    "backup_class": "did_recovery",
+                    "backup_kind": "did_recovery",
                     "encryption": { "recipient_method": "recovery_public_key" },
                     "recovery_policy_ref": {
                         "policy_id": "ak:policy:019a6aa0-0000-7000-8000-0000000000bb",
@@ -1104,7 +1104,7 @@ mod tests {
             &policy,
             &json!({
                 "backups": [{
-                    "backup_class": "did_recovery",
+                    "backup_kind": "did_recovery",
                     "encryption": { "recipient_method": "recovery_public_key" },
                     "recovery_policy_ref": {
                         "policy_id": "ak:policy:019a6aa0-0000-7000-8000-000000000000",
@@ -1125,7 +1125,7 @@ mod tests {
             "backups": [
                 {
                     "backup_id": "ak:backup:019a6aa0-0000-7000-8000-000000000001",
-                    "backup_class": "did_recovery",
+                    "backup_kind": "did_recovery",
                     "encryption": { "recipient_method": "recovery_public_key" },
                     "recovery_policy_ref": {
                         "policy_id": "ak:policy:019a6aa0-0000-7000-8000-000000000000",
@@ -1134,7 +1134,7 @@ mod tests {
                 },
                 {
                     "backup_id": "ak:backup:019a6aa0-0000-7000-8000-000000000002",
-                    "backup_class": "did_recovery",
+                    "backup_kind": "did_recovery",
                     "encryption": { "recipient_method": "recovery_public_key" },
                     "recovery_policy_ref": {
                         "policy_id": "ak:policy:019a6aa0-0000-7000-8000-0000000000bb",
@@ -1156,7 +1156,7 @@ mod tests {
         let payload = json!({
             "backups": [{
                 "backup_id": "ak:backup:019a6aa0-0000-7000-8000-000000000002",
-                "backup_class": "did_recovery",
+                "backup_kind": "did_recovery",
                 "encryption": { "recipient_method": "recovery_public_key" },
                 "recovery_policy_ref": {
                     "policy_id": "ak:policy:019a6aa0-0000-7000-8000-0000000000bb",
@@ -1206,7 +1206,7 @@ mod tests {
                 &json!({
                     "backups": [{
                         "backup_id": "ak:backup:019a6aa0-0000-7000-8000-000000000002",
-                        "backup_class": "did_recovery",
+                        "backup_kind": "did_recovery",
                         "encryption": { "recipient_method": "recovery_public_key" },
                         "recovery_policy_ref": {
                             "policy_id": "ak:policy:019a6aa0-0000-7000-8000-0000000000bb",

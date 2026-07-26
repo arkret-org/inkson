@@ -33,7 +33,7 @@ fn strand_body_display_text_reads_composite_parts() {
 fn value_is_mls_envelope_detects_encrypted_patch_values() {
     // Full envelope shape written by encrypt_values_with_device_snapshot.
     assert!(value_is_mls_envelope(&json!({
-        "scheme": "mls-rfc9420",
+        "scheme": "mls_rfc9420",
         "ciphertext": "AAAA",
         "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         "group_id": "g",
@@ -54,7 +54,7 @@ fn value_is_mls_envelope_detects_encrypted_patch_values() {
     assert!(value_is_mls_envelope(&json!({
         "$op": "set",
         "value": {
-            "scheme": "mls-rfc9420",
+            "scheme": "mls_rfc9420",
             "ciphertext": "AAAA",
             "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         }
@@ -83,7 +83,7 @@ fn private_strand_display_text_passes_plaintext_through_without_ctx() {
 #[test]
 fn private_strand_display_text_blanks_undecryptable_envelope() {
     let envelope = json!({
-        "scheme": "mls-rfc9420",
+        "scheme": "mls_rfc9420",
         "ciphertext": "AAAA",
         "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         "group_id": "g",
@@ -125,7 +125,7 @@ fn private_strand_field_text_prefers_local_sidecar_plaintext() {
     // Even when the projection value is an un-decryptable envelope, the
     // sidecar wins (tier 1) with zero decryption.
     let envelope = json!({
-        "scheme": "mls-rfc9420",
+        "scheme": "mls_rfc9420",
         "ciphertext": "AAAA",
         "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
     });
@@ -160,7 +160,7 @@ fn private_strand_empty_sidecar_does_not_mask_encrypted_locked_state() {
         circle_id: None,
     };
     let envelope = json!({
-        "scheme": "mls-rfc9420",
+        "scheme": "mls_rfc9420",
         "ciphertext": "AAAA",
         "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
     });
@@ -201,7 +201,7 @@ fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
         title: "Encrypted card".to_owned(),
         summary: Some("public summary".to_owned()),
         body: Some(json!({
-            "scheme": "mls-rfc9420",
+            "scheme": "mls_rfc9420",
             "ciphertext": "AAAA",
             "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         })),

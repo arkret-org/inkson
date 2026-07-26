@@ -343,7 +343,7 @@ impl MlsSnapshotEnvelope {
         let mut body = json!({
             "backup_id": backup_id,
             "actor_id": actor_id,
-            "backup_class": "mls_history",
+            "backup_kind": "mls_history",
             "backup_version": "kb_mls_snapshot_v1",
             "created_at": arkret_sdk::canonical::format_timestamp_canonical(self.recorded_at),
             "encryption": {
@@ -360,7 +360,7 @@ impl MlsSnapshotEnvelope {
                 }
             },
             "contents": [{
-                "item_type": "mls_group_state",
+                "item_kind": "mls_group_state",
                 "mls_group_id": self.group_id,
                 "epoch": self.epoch,
                 "secret_id": "inkson_mls_snapshot",
@@ -380,7 +380,7 @@ impl MlsSnapshotEnvelope {
         crate::key_backup::attach_key_backup_genesis_series(&mut body);
         crate::key_backup::attach_key_backup_domain_separation(
             &mut body,
-            crate::key_backup::BackupClass::MlsHistory,
+            crate::key_backup::BackupKind::MlsHistory,
             "mls_snapshot",
         );
         let aead_aad = serde_json::from_value(
@@ -644,7 +644,7 @@ mod tests {
             body["device_id"],
             "ak:device:01964137-0000-7000-8000-000000000001"
         );
-        assert_eq!(body["backup_class"], "mls_history");
+        assert_eq!(body["backup_kind"], "mls_history");
         assert_eq!(body["backup_version"], "kb_mls_snapshot_v1");
         assert!(
             body["series_id"]
@@ -658,7 +658,7 @@ mod tests {
             "mls_group_secrets_backup_key"
         );
         assert!(body["encryption"].get("kdf").is_none());
-        assert_eq!(body["contents"][0]["item_type"], "mls_group_state");
+        assert_eq!(body["contents"][0]["item_kind"], "mls_group_state");
         assert_eq!(body["contents"][0]["realm_id"], "ak:realm:demo");
         assert_eq!(body["contents"][0]["mls_group_id"], "aaaa");
         assert_eq!(body["contents"][0]["epoch"], 42);
@@ -668,7 +668,7 @@ mod tests {
         );
         crate::key_backup::validate_key_backup_envelope(
             &body,
-            Some(crate::key_backup::BackupClass::MlsHistory),
+            Some(crate::key_backup::BackupKind::MlsHistory),
         )
         .expect("MLS history backup envelope should validate");
         assert!(body.get("envelope_meta").is_none());

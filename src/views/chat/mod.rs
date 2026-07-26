@@ -556,7 +556,8 @@ async fn reconcile_sidecar_mls_access(
         .pending_access_reconciliations
         .iter()
         .filter(|pending| {
-            pending.stage == arkret_sdk::PendingSidecarAccessReconciliationStage::MlsWelcome
+            pending.provisioning_phase
+                == arkret_sdk::PendingSidecarAccessReconciliationStage::MlsWelcome
                 && matches!(
                     pending.reason.as_str(),
                     "mls_welcome_or_epoch_commit_pending" | "mls_group_or_welcome_pending"
@@ -567,7 +568,8 @@ async fn reconcile_sidecar_mls_access(
     let pending_key = pending_sidecar_mls_admission_key(&view.sidecar.id);
     if missing.is_empty() {
         if view.pending_access_reconciliations.iter().any(|pending| {
-            pending.stage == arkret_sdk::PendingSidecarAccessReconciliationStage::DeviceKeyMaterial
+            pending.provisioning_phase
+                == arkret_sdk::PendingSidecarAccessReconciliationStage::DeviceKeyMaterial
         }) {
             state_store.write().remove_private_data(&pending_key);
         }
@@ -742,7 +744,8 @@ async fn reconcile_sidecar_mls_removals(
         .pending_access_reconciliations
         .iter()
         .filter(|pending| {
-            pending.stage == arkret_sdk::PendingSidecarAccessReconciliationStage::MlsRemove
+            pending.provisioning_phase
+                == arkret_sdk::PendingSidecarAccessReconciliationStage::MlsRemove
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -1187,7 +1190,8 @@ async fn ensure_sidecar_mls_bootstrap(
     }
 
     if view.pending_access_reconciliations.iter().any(|item| {
-        item.stage == arkret_sdk::PendingSidecarAccessReconciliationStage::BackingScopeMembership
+        item.provisioning_phase
+            == arkret_sdk::PendingSidecarAccessReconciliationStage::BackingScopeMembership
     }) {
         return Ok(view);
     }
@@ -1454,7 +1458,7 @@ fn composer_mention_nodes(
     mentions
 }
 
-fn apply_mention_sidecar_hashes(
+fn apply_mention_sidecar_digestes(
     event: &mut arkret_sdk::Event,
     realm_id: &str,
     mentions: &[MentionNode],
@@ -1469,14 +1473,14 @@ fn apply_mention_sidecar_hashes(
     if mention_dids.is_empty() {
         return;
     }
-    let hashes = crate::messaging::mentions::mention_sidecar_hashes(realm_id, &mention_dids);
+    let hashes = crate::messaging::mentions::mention_sidecar_digestes(realm_id, &mention_dids);
     if let Some(content) = event
         .payload
         .get_mut("content")
         .and_then(Value::as_object_mut)
     {
         content.insert(
-            "mention_sidecar_hash".to_owned(),
+            "mention_sidecar_digest".to_owned(),
             Value::Array(hashes.into_iter().map(Value::String).collect()),
         );
     }

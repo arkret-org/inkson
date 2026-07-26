@@ -22,7 +22,7 @@ pub(super) async fn relay_local_signals(
     for signal in signals {
         let seq = call_seq() + 1;
         call_seq.set(seq);
-        let (signal_type, data) = match signal {
+        let (signal_kind, data) = match signal {
             LocalSignal::Offer { sdp } => (
                 "renegotiate",
                 json!({ "offer": { "sdp_type": "offer", "sdp": sdp } }),
@@ -47,7 +47,7 @@ pub(super) async fn relay_local_signals(
             call_id,
             actor,
             device,
-            signal_type,
+            signal_kind,
             seq,
             data,
         )
@@ -58,7 +58,7 @@ pub(super) async fn relay_local_signals(
 /// Apply a batch of inbound `ak.call.signal` items (the receive side) to the
 /// transport and the call FSM.
 ///
-/// Routing per `signal_type` (`data` shapes mirror the sender side —
+/// Routing per `signal_kind` (`data` shapes mirror the sender side —
 /// `submit_call_signal_v1` / `relay_local_signals`):
 ///   * `answer`               — call-accept ack (`{accepted:true}`); the SDP answer itself rides
 ///     `renegotiate{answer}`. A bare ack only nudges the FSM toward `Active`.
@@ -94,7 +94,7 @@ pub(super) fn apply_inbox_items(
     // we never hold a transport borrow across an `.await`.
     let mut relay_after = false;
     for item in items {
-        match item.signal_type.as_str() {
+        match item.signal_kind.as_str() {
             "answer" => {
                 // Call-accept ack — the SDP answer itself arrives as
                 // `renegotiate{answer}`. Promote a still-ringing/connecting
@@ -165,7 +165,7 @@ pub(super) fn apply_inbox_items(
                     .data
                     .get("reason")
                     .and_then(|v| v.as_str())
-                    .unwrap_or(item.signal_type.as_str());
+                    .unwrap_or(item.signal_kind.as_str());
                 status.set(format!("call ended: {reason}"));
             }
             "mute_state" | "media_state" | "speaking" => {
@@ -222,7 +222,7 @@ pub(super) fn apply_inbox_items(
             }
             other => {
                 tracing::debug!(
-                    signal_type = other,
+                    signal_kind = other,
                     "ignoring unhandled inbound call signal"
                 );
             }
@@ -289,7 +289,7 @@ fn apply_peer_state(participants: &mut Signal<Vec<CallParticipant>>, item: &Call
         if p.actor_id != target {
             continue;
         }
-        match item.signal_type.as_str() {
+        match item.signal_kind.as_str() {
             "mute_state" => {
                 if let Some(muted) = item.data.get("audio_muted").and_then(|v| v.as_bool()) {
                     p.muted = muted;
@@ -326,7 +326,7 @@ fn moderator_mute_targets_this_device(
     actor: &str,
     device: &str,
 ) -> bool {
-    item.signal_type == "mute_state"
+    item.signal_kind == "mute_state"
         && item.data.get("by").and_then(|v| v.as_str()) == Some("moderator")
         && item
             .data
@@ -349,7 +349,7 @@ pub(super) fn emit_async(
     call_id: &str,
     actor: &str,
     device: &str,
-    signal_type: &str,
+    signal_kind: &str,
     data: serde_json::Value,
     mut call_seq: Signal<u64>,
 ) {
@@ -358,14 +358,14 @@ pub(super) fn emit_async(
     }
     let seq = call_seq() + 1;
     call_seq.set(seq);
-    let (base, api_token, realm_id, call_id, actor, device, signal_type) = (
+    let (base, api_token, realm_id, call_id, actor, device, signal_kind) = (
         base.to_owned(),
         api_token.to_owned(),
         realm_id.to_owned(),
         call_id.to_owned(),
         actor.to_owned(),
         device.to_owned(),
-        signal_type.to_owned(),
+        signal_kind.to_owned(),
     );
     spawn(async move {
         let _ = emit_signal(
@@ -375,7 +375,7 @@ pub(super) fn emit_async(
             &call_id,
             &actor,
             &device,
-            &signal_type,
+            &signal_kind,
             seq,
             data,
         )
@@ -392,16 +392,16 @@ pub(super) async fn emit_signal(
     call_id: &str,
     actor: &str,
     device: &str,
-    signal_type: &str,
+    signal_kind: &str,
     seq: u64,
     data: serde_json::Value,
 ) -> Result<(), String> {
-    let (realm_id, call_id, actor, device, signal_type) = (
+    let (realm_id, call_id, actor, device, signal_kind) = (
         realm_id.to_owned(),
         call_id.to_owned(),
         actor.to_owned(),
         device.to_owned(),
-        signal_type.to_owned(),
+        signal_kind.to_owned(),
     );
     with_event_submitter(base, api_token.to_owned(), |sub| async move {
         crate::transport::media::submit_call_signal_v1(
@@ -410,7 +410,7 @@ pub(super) async fn emit_signal(
             &actor,
             &device,
             &call_id,
-            &signal_type,
+            &signal_kind,
             seq,
             data,
         )
@@ -482,7 +482,7 @@ mod tests {
         CallSignalInboxItem {
             realm_id: "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
             call_id: "ak:call:01904100-0000-7000-8000-000000000002".to_owned(),
-            signal_type: "mute_state".to_owned(),
+            signal_kind: "mute_state".to_owned(),
             seq: 1,
             sender_actor: "did:web:moderator.example".to_owned(),
             sender_device: "ak:device:01904100-0000-7000-8000-000000000003".to_owned(),

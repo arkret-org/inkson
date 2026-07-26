@@ -784,7 +784,7 @@ fn apply_card_detail_draft_marks_card_queued() {
 #[test]
 fn locate_strand_position_finds_present_strand_with_rank() {
     use crate::state::projection_views::{
-        CollectionProjectionGroupView, CollectionProjectionView, ProjectionItemView,
+        CollectionProjectionGroupView, CollectionProjectionView, ProjectionRowView,
         StateFrontierView,
     };
     let projection = CollectionProjectionView {
@@ -798,7 +798,7 @@ fn locate_strand_position_finds_present_strand_with_rank() {
             title: "Review".to_owned(),
             rank: Some("U".to_owned()),
             source: None,
-            items: vec![ProjectionItemView {
+            items: vec![ProjectionRowView {
                 object: serde_json::json!({
                     "id": "ak:strand:01wanted",
                     "title": "Find me",

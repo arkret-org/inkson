@@ -363,7 +363,7 @@ pub fn CallPanel(
                                 )
                                 .await;
                                 stage.set(CallStage::Active);
-                                status.set(format!("joined SFU room ({})", session.backend_type));
+                                status.set(format!("joined SFU room ({})", session.backend_kind));
                             }
                             CallMode::P2p => {
                                 if let Err(err) = shared.borrow_mut().begin_offer() {

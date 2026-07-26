@@ -462,7 +462,7 @@ fn local_state_store_dismisses_answered_realm_key_request_by_message_id() {
             "recipient_principal_id": "did:webvh:z6mkfixture:bob.example",
             "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
             "recipient_hpke_public_key": "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
-            "requested_source_class": "verified_member_device",
+            "requested_source_kind": "verified_member_device",
             "target_source_ref": {
                 "kind": "device",
                 "device_id": "ak:device:0196419b-0000-7000-8000-000000000001"

@@ -396,7 +396,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     assert_eq!(events[2].payload["value"]["policy_revision"], 1);
     assert_eq!(
         events[2].payload["value"]["content_scheme"],
-        "mls-exporter-aead-v1"
+        "mls_exporter_aead_v1"
     );
     assert_eq!(events[3].payload["value"], "invite");
     assert_eq!(events[4].payload["value"], "shared");
@@ -406,7 +406,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     );
     assert_eq!(
         events[5].payload["value"]["pre_join_history"],
-        "allow_if_visibility_allows"
+        "visibility_condition_allowed"
     );
     assert_eq!(
         events[5].payload["value"]["allowed_key_sources"],
@@ -492,7 +492,7 @@ fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
         &[],
         &[],
         None,
-        Some("mls-rfc9420"),
+        Some("mls_rfc9420"),
     )
     .expect_err("pre-join history requires the history-capable content scheme");
 
@@ -521,11 +521,11 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
         &[],
         &[],
         None,
-        Some("mls-rfc9420"),
+        Some("mls_rfc9420"),
     )
     .expect("joined history is valid with the strict MLS content scheme");
 
-    assert_eq!(events[2].payload["value"]["content_scheme"], "mls-rfc9420");
+    assert_eq!(events[2].payload["value"]["content_scheme"], "mls_rfc9420");
 }
 
 #[test]
@@ -533,7 +533,7 @@ fn default_history_sharing_policy_matches_prejoin_visibility() {
     let shared = recommended_history_sharing_policy_for_visibility("shared")
         .expect("shared visibility should install a key sharing policy");
     assert_eq!(shared["default_key_share"], "event_time_visibility");
-    assert_eq!(shared["pre_join_history"], "allow_if_visibility_allows");
+    assert_eq!(shared["pre_join_history"], "visibility_condition_allowed");
     assert_eq!(
         shared["allowed_key_sources"],
         json!(["verified_member_device"])

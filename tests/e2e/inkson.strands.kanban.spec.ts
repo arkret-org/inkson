@@ -358,7 +358,7 @@ test("card detail embeds discussion directly without discussion chrome", async (
   expect(chatBody.payload.content.kind).toBe("ak.content.text");
   expect(chatBody.payload.content.body).toBe("hello @did:web:bob.example about #ak:task:123");
   expect(chatBody.payload.mentions).toBeUndefined();
-  expect(Array.isArray(chatBody.payload.content.mention_sidecar_hash)).toBeTruthy();
+  expect(Array.isArray(chatBody.payload.content.mention_sidecar_digest)).toBeTruthy();
   await expect(page.getByTestId("chat-message").last()).toContainText("hello @did:web:bob.example about #ak:task:123");
   await page.getByTestId("card-detail-tab-description").click();
   await expect(page.getByTestId("card-description-panel")).toBeVisible();

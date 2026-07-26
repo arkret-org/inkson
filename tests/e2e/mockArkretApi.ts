@@ -739,7 +739,7 @@ export async function mockArkretApi(
       if (url.hostname === "auth.local.host") {
         return json(route, {
           service_id: "did:web:auth.local.host",
-          service_type: "auth_server",
+          service_kind: "auth_server",
           protocol_version: "1.0",
           auth_metadata: {
             did_binding_methods: ["did_controller_key", "device_key"],
@@ -771,7 +771,7 @@ export async function mockArkretApi(
       return json(route, {
         service_id: "did:web:server.local",
         trust_domain: "ak:trust_domain:server.local",
-        service_type: "principal_server",
+        service_kind: "principal_server",
         protocol_version: "1.0",
         supported_profiles: [
           "ak.profile.minimal_client.v1",
@@ -1124,7 +1124,7 @@ export async function mockArkretApi(
       return json(route, {
         service_id: "did:web:server.local",
         trust_domain: "ak:trust_domain:server.local",
-        service_type: "principal_server",
+        service_kind: "principal_server",
         protocol_version: "1.0",
         supported_profiles: ["ak.profile.core_event_store.v1"],
         supported_operations: [
@@ -1921,7 +1921,7 @@ export async function mockArkretApi(
         "did:web:server.local";
       const memberDeliveryBinding = {
         recipient_service_id: "did:web:server.local",
-        recipient_service_type: "principal_server",
+        recipient_service_kind: "principal_server",
         binding_source: "explicit",
         delivery_modes: ["events", "sync", "to_device", "push", "key_packages"],
       };
@@ -2003,7 +2003,7 @@ export async function mockArkretApi(
       return json(route, {
         service_id: "did:web:server.local",
         trust_domain: "ak:trust_domain:server.local",
-        service_type: "directory_service",
+        service_kind: "directory_service",
         protocol_version: "1.0",
         supported_profiles: ["ak.profile.directory_service.v1"],
         supported_operations: ["ak.find.directory.query.describe"],
@@ -2019,7 +2019,7 @@ export async function mockArkretApi(
         experimental_features: [],
         compat_surfaces: [],
         development_mode: false,
-        resource_types: ["realm", "organization", "actor"],
+        resource_kinds: ["realm", "organization", "actor"],
         discovery_profiles: ["ak.profile.directory_service.v1"],
         restricted_query_proof: false,
         ingest_modes: ["push"],
@@ -2121,9 +2121,9 @@ export async function mockArkretApi(
             constraints: [
               { type: "temporal", not_after: "2026-12-31T00:00:00.000Z" },
               {
-                type: "type_restriction",
+                type: "kind_restriction",
                 params: {
-                  allowed_object_types: ["space"],
+                  allowed_object_kinds: ["space"],
                   allowed_facets: ["renderable", "stateful"],
                 },
               },
@@ -2287,14 +2287,14 @@ export async function mockArkretApi(
       return json(route, {
         schema: "ak.schema.invite_receive_policy.v1",
         subject_id: "did:web:alice.example",
-        allowed_introduction_kinds: [
+        holder_allowed_introduction_kinds: [
           "consent_grant",
           "locator_ref",
           "shared_realm",
         ],
         explicit_address_behavior: "quarantine",
         unknown_invites: "quarantine",
-        blocked_subjects: ["did:web:spammer.example"],
+        denied_subjects: ["did:web:spammer.example"],
         disclosure: { high_trust: "outcome", low_trust: "opaque" },
       });
     }
@@ -2464,7 +2464,7 @@ export async function mockArkretApi(
             ? "ready"
             : "access_reconciliation_pending",
         pending_access_reconciliations: sidecarPendingMemberReconciliations.map(
-          (item) => ({ stage: "backing_scope_membership", ...item }),
+          (item) => ({ provisioning_phase: "backing_scope_membership", ...item }),
         ),
       });
     }
@@ -2494,7 +2494,7 @@ export async function mockArkretApi(
             ? "ready"
             : "access_reconciliation_pending",
         pending_access_reconciliations: sidecarPendingMemberReconciliations.map(
-          (item) => ({ stage: "backing_scope_membership", ...item }),
+          (item) => ({ provisioning_phase: "backing_scope_membership", ...item }),
         ),
       });
     }
@@ -3200,9 +3200,9 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/keys/backups" &&
       route.request().method() === "GET"
     ) {
-      const backupClass = url.searchParams.get("backup_class");
+      const backupClass = url.searchParams.get("backup_kind");
       const backups = Array.from(keyBackups.values()).filter((backup) =>
-        backupClass ? backup.backup_class === backupClass : true,
+        backupClass ? backup.backup_kind === backupClass : true,
       );
       return json(route, { backups, has_more: false });
     }
@@ -3266,7 +3266,7 @@ function joinCandidate() {
   return {
     realm_id: DEMO_REALM,
     service_id: "did:web:server.local",
-    service_type: "principal_server",
+    service_kind: "principal_server",
     role: "primary",
     endpoint: null,
     operations: ["ak.self.events.command.submit"],
@@ -3292,7 +3292,7 @@ function mimiProviderDirectory() {
     providers: [
       {
         service_id: "did:web:mimi.example.com",
-        service_type: "mimi_provider_facade",
+        service_kind: "mimi_provider_facade",
         provider_id: "mimi://mimi.example.com",
         base_url: "https://mimi.example.com/_arkret/open/mimi",
         supported_profiles: ["ak.profile.mimi_interop.v1"],

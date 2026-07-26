@@ -233,7 +233,7 @@ fn mls_history_backup_body_decodes_to_snapshot_envelope() {
     assert_eq!(decoded.realm_id, envelope.realm_id);
     assert_eq!(decoded.group_id, envelope.group_id);
     assert_eq!(decoded.epoch, envelope.epoch);
-    assert_eq!(body["backup_class"], "mls_history");
+    assert_eq!(body["backup_kind"], "mls_history");
     assert_eq!(body["encryption"]["recipient_method"], "secret_storage_key");
     assert!(body["encryption"].get("kdf").is_none());
     assert!(body.get("plaintext").is_none());

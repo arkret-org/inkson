@@ -11,7 +11,7 @@
 //! `chat-advanced.md` spec — the server must be able to route a
 //! notification to the mentioned actor without learning that actor's
 //! DID in plaintext. We compute `SHA256(salt || did)` and surface it
-//! as `content.mention_sidecar_hash` inside the outgoing
+//! as `content.mention_sidecar_digest` inside the outgoing
 //! `ak.message.create` payload.
 
 use serde::{Deserialize, Serialize};
@@ -225,7 +225,7 @@ pub fn replace_active_mention_token(
 /// Per `discovery/push-notifications.md §4.5`, when the Realm is
 /// encrypted the client MUST NOT put `mentions: [did, ...]` on the
 /// outer event in plaintext — the server only sees a list of opaque
-/// hashes (`content.mention_sidecar_hash`) it can match against per-actor
+/// hashes (`content.mention_sidecar_digest`) it can match against per-actor
 /// inbox subscriptions without learning the mentioned DID.
 ///
 /// `salt` is the per-Realm mention salt issued by soland; until that
@@ -234,7 +234,7 @@ pub fn replace_active_mention_token(
 /// guarantee just degrades to "server already knew the realm_id").
 ///
 /// Returns lowercase hex.
-pub fn mention_sidecar_hash(salt: &str, did: &str) -> String {
+pub fn mention_sidecar_digest(salt: &str, did: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(salt.as_bytes());
     hasher.update(b"|");
@@ -246,10 +246,10 @@ pub fn mention_sidecar_hash(salt: &str, did: &str) -> String {
 /// Build the full sidecar hash list for a `ak.message.create` payload.
 /// The output is `["hash1", "hash2", ...]` matching the wire shape
 /// expected by the notification routing layer.
-pub fn mention_sidecar_hashes(salt: &str, mentioned_dids: &[String]) -> Vec<String> {
+pub fn mention_sidecar_digestes(salt: &str, mentioned_dids: &[String]) -> Vec<String> {
     mentioned_dids
         .iter()
-        .map(|did| mention_sidecar_hash(salt, did))
+        .map(|did| mention_sidecar_digest(salt, did))
         .collect()
 }
 
@@ -404,8 +404,8 @@ mod tests {
 
     #[test]
     fn sidecar_hash_is_deterministic_and_hex() {
-        let hash_a = mention_sidecar_hash("salt", "did:web:alice.example");
-        let hash_b = mention_sidecar_hash("salt", "did:web:alice.example");
+        let hash_a = mention_sidecar_digest("salt", "did:web:alice.example");
+        let hash_b = mention_sidecar_digest("salt", "did:web:alice.example");
         assert_eq!(hash_a, hash_b);
         assert_eq!(hash_a.len(), 64); // SHA-256 hex
         assert!(hash_a.chars().all(|c| c.is_ascii_hexdigit()));
@@ -413,8 +413,8 @@ mod tests {
 
     #[test]
     fn sidecar_hash_changes_with_salt() {
-        let a = mention_sidecar_hash("salt-1", "did:web:alice.example");
-        let b = mention_sidecar_hash("salt-2", "did:web:alice.example");
+        let a = mention_sidecar_digest("salt-1", "did:web:alice.example");
+        let b = mention_sidecar_digest("salt-2", "did:web:alice.example");
         assert_ne!(a, b);
     }
 
@@ -423,7 +423,7 @@ mod tests {
         // Even with a known salt, the hash output must not contain the
         // raw DID — that's the whole point of the sidecar.
         let did = "did:web:alice.example";
-        let hash = mention_sidecar_hash("salt", did);
+        let hash = mention_sidecar_digest("salt", did);
         assert!(!hash.contains("alice"));
     }
 }

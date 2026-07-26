@@ -35,7 +35,7 @@
 ### M2 标签库 + 卡面升级（1-2 个 PR，含数据落点决策）
 
 1. **板级标签库**：`{ id, name, color }` 列表。**数据落点需协议确认**，两个候选：
-   - **方案 A（推荐）**：作为 board Space 的 component（如 `ak.component.board.labels.v1`）随 `ak.space.update` 写——板内共享、随板归档、联邦语义与现有 component 一致；需在 spec 注册 schema（走 contract-catalog 流程）。
+   - **方案 A（推荐）**：作为 board Space 的 component（如 `ak.component.board.labels.v1`）随 `ak.space.update` 写——板内共享、随板归档、联邦语义与现有 component 一致；需在 spec 注册 schema（走 contract-registry 流程）。
    - **方案 B**：account_data（`ak.board_labels.v1:<board_id>`）——零 spec 变更但**仅本人可见**，违背"团队共享标签"目标，仅作 fallback。
 2. **卡片标签结构化**：卡 component 的 labels 从自由文本改为 label id 数组（兼容读旧文本值，写新格式）；详情侧栏 Labels 提升到与负责人/截止同层，改多选下拉（选库内 + 就地新建）。
 3. **卡面升级**：标签色条（顶部 3 条上限 +N）、负责人头像（复用聊天侧 DID 哈希色 + 备注名优先级）、due pill（逾期红）、同步状态 pill 沿用现有 write-state。
@@ -56,7 +56,7 @@
 
 ## 5. 未决问题（评审时定）
 
-1. **标签库落点方案 A 是否立项 spec 注册**（`ak.component.board.labels.v1` schema + contract-catalog）？这是 M2 的硬前置。
+1. **标签库落点方案 A 是否立项 spec 注册**（`ak.component.board.labels.v1` schema + contract-registry）？这是 M2 的硬前置。
 2. 批量操作的权限边界：选择集内含无权操作的卡时，跳过并 toast 汇总，还是整体拒绝？（倾向跳过+汇总。）
 3. 模板是否需要服务端概念（团队自定义模板）？首期仅客户端预设。
 4. M2 卡面头像依赖"显示名优先级（备注>handle>DID）"公共函数——与聊天侧共用，落点建议 `views/helpers.rs`（与审计 H5 的 DID 显示治理共线）。

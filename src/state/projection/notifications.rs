@@ -94,7 +94,7 @@ fn invite_notification_from_value(invite: &Value) -> Option<Value> {
         "invite_id": invite_id,
         "invite_token": invite_token,
         "notification_kind": "invite",
-        "notification_type": "invite",
+        "notification_kind": "invite",
         "kind": "invite",
         // i18n key — translated at render via `tr()` (see
         // `default_notification_title`).
@@ -144,7 +144,7 @@ pub(crate) fn realm_title_hints_from_values(values: &[Value]) -> BTreeMap<String
 }
 
 fn notification_is_invite(value: &Value) -> bool {
-    ["notification_kind", "notification_type", "type", "kind"]
+    ["notification_kind", "notification_kind", "type", "kind"]
         .iter()
         .filter_map(|key| value.get(*key).and_then(Value::as_str))
         .any(|kind| matches!(kind, "invite" | "ak.invite" | "ak.invite.create"))

@@ -228,7 +228,7 @@ pub(crate) fn collection_projection_to_columns(
 /// opaque hash; `lazy_link=true` is surfaced via `history_visibility`
 /// without leaking room contents.
 pub(crate) fn card_from_projection_item(
-    item: &crate::state::projection_views::ProjectionItemView,
+    item: &crate::state::projection_views::ProjectionRowView,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> KanbanCard {
     let id = item

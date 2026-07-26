@@ -82,7 +82,7 @@ struct WelcomeMessageEntry {
 }
 
 /// Canonical exporter-aead `aad_bytes` for `(realm_id, epoch)`, bound into the
-/// `mls-exporter-aead-v1` content AEAD AAD on both the provider encrypt and the
+/// `mls_exporter_aead_v1` content AEAD AAD on both the provider encrypt and the
 /// receiver tier-3 decrypt paths (`encryption-and-audit.md` history sharing,
 /// constraint ①: the epoch MUST be encoded so a key from epoch N can only open
 /// content authored at epoch N). MUST be reconstructed byte-identically on both
@@ -97,9 +97,9 @@ pub fn history_content_aad_bytes(realm_id: &str, epoch: u64) -> anyhow::Result<V
         .map_err(|err| anyhow::anyhow!("history content AAD canonicalization failed: {err:?}"))
 }
 
-/// True when `realm_id` declares the §2.10 `mls-exporter-aead-v1` content scheme
+/// True when `realm_id` declares the §2.10 `mls_exporter_aead_v1` content scheme
 /// (capability axis), so authored content uses the history-shareable exporter
-/// AEAD path instead of forward-secret `mls-rfc9420`. Normalizes case + `_`/`-`
+/// AEAD path instead of forward-secret `mls_rfc9420`. Normalizes case + `_`/`-`
 /// so both the canonical kebab token and a `mls_exporter_aead_v1` spelling
 /// match. See [[content-scheme-capability-vs-toggle]].
 pub(crate) fn realm_content_scheme_is_exporter_aead(
@@ -109,7 +109,7 @@ pub(crate) fn realm_content_scheme_is_exporter_aead(
     state_store
         .realm_content_scheme(realm_id)
         .map(|scheme| scheme.trim().to_ascii_lowercase().replace('_', "-"))
-        .is_some_and(|scheme| scheme == "mls-exporter-aead-v1")
+        .is_some_and(|scheme| scheme == "mls_exporter_aead_v1")
 }
 
 fn realm_content_scheme_is_exporter_aead_for_send(
@@ -127,8 +127,8 @@ fn realm_content_scheme_is_exporter_aead_for_send(
         .to_ascii_lowercase()
         .replace('_', "-");
     match scheme.as_str() {
-        "mls-exporter-aead-v1" => Ok(true),
-        "mls-rfc9420" => Ok(false),
+        "mls_exporter_aead_v1" => Ok(true),
+        "mls_rfc9420" => Ok(false),
         unsupported => Err(MlsRuntimeError::Encrypt(format!(
             "unsupported Realm content scheme: {unsupported}"
         ))),
@@ -262,7 +262,7 @@ pub fn decrypt_application_payload_for_effective_scope(
             // Tier-3 history decrypt: the live receive ratchet cannot open this
             // (pre-join epoch, or another device's content this group can't
             // ratchet to). Fall back to any granted `history_secret` for the
-            // payload's epoch and decrypt it as `mls-exporter-aead-v1` content.
+            // payload's epoch and decrypt it as `mls_exporter_aead_v1` content.
             // This is group-free, so it works whether or not the snapshot could
             // ratchet to the payload's epoch.
             let plaintext = circle
@@ -412,7 +412,7 @@ pub fn ordinary_agent_mls_author_view(
 }
 
 /// Tier-3 history decrypt: try every granted `history_secret` for this Realm
-/// against `payload`, decrypting the ciphertext as `mls-exporter-aead-v1`
+/// against `payload`, decrypting the ciphertext as `mls_exporter_aead_v1`
 /// content (`encryption-and-audit.md` history sharing). The provider that
 /// authored the content bound `history_content_aad_bytes(realm_id, epoch)` into
 /// the AEAD AAD, so the receiver reconstructs the same value here. Returns the
@@ -518,7 +518,7 @@ fn realm_key_share_payload_candidate(value: &serde_json::Value) -> Option<&serde
         .filter(|candidate| {
             candidate.get("recipient_principal_id").is_some()
                 || candidate.get("ciphertext").is_some()
-                || candidate.get("share_class").is_some()
+                || candidate.get("share_kind").is_some()
         })
 }
 
@@ -681,7 +681,7 @@ pub(crate) fn ingest_realm_key_share(
     }
     // Only consume member_device shares addressed to THIS device (the seal opens
     // only with this device's HPKE private key anyway, but check the routing
-    // first). RRK shares (share_class=realm_recovery_key) carry no
+    // first). RRK shares (share_kind=realm_recovery_key) carry no
     // recipient_device_id and are not consumed here.
     let arkret_sdk::RealmKeyShareTarget::MemberDevice {
         ref recipient_device_id,
@@ -1647,10 +1647,10 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
         None
     };
     // §2.10 content scheme dispatch (capability axis): when this Realm declares
-    // `content_scheme=mls-exporter-aead-v1`, author content under the
+    // `content_scheme=mls_exporter_aead_v1`, author content under the
     // history-shareable exporter-aead scheme so a late joiner granted the
     // epoch's `history_secret` can decrypt it. Otherwise keep the default
-    // forward-secret `mls-rfc9420` PrivateMessage path. The epoch is read AFTER
+    // forward-secret `mls_rfc9420` PrivateMessage path. The epoch is read AFTER
     // any forced commit above, so the AEAD aad binds the epoch the content
     // actually rides; it MUST match the decrypt-side `history_content_aad_bytes`.
     let mut encrypted_values = Vec::with_capacity(plaintext_values.len());

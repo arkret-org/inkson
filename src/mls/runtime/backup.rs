@@ -68,7 +68,7 @@ pub fn decode_mls_history_backup_envelope(
 ) -> Result<crate::mls::persistence::MlsSnapshotEnvelope, MlsRuntimeError> {
     crate::key_backup::validate_key_backup_envelope(
         body,
-        Some(crate::key_backup::BackupClass::MlsHistory),
+        Some(crate::key_backup::BackupKind::MlsHistory),
     )
     .map_err(MlsRuntimeError::BackupDecode)?;
     let wrap_key = derive_mls_history_backup_key(account_secret)
@@ -127,7 +127,7 @@ pub fn decode_mls_history_backup_envelope(
         .ok_or_else(|| MlsRuntimeError::BackupDecode("contents must be an array".to_owned()))?;
     let Some(group_state) = contents
         .iter()
-        .find(|item| item.get("item_type").and_then(Value::as_str) == Some("mls_group_state"))
+        .find(|item| item.get("item_kind").and_then(Value::as_str) == Some("mls_group_state"))
     else {
         return Err(MlsRuntimeError::BackupDecode(
             "contents must include mls_group_state".to_owned(),

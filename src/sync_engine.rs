@@ -2770,13 +2770,13 @@ pub(crate) fn apply_account_data_entries(
 ) -> Option<String> {
     let mut synced_theme = None;
     for entry in entries {
-        let Some(data_type) = entry.payload.get("key").and_then(Value::as_str) else {
+        let Some(account_data_key) = entry.payload.get("key").and_then(Value::as_str) else {
             continue;
         };
         match crate::sidecar::ingest_sidecar_view_state_account_data(
             store,
             account_did,
-            data_type,
+            account_data_key,
             &entry.payload,
         ) {
             Ok(true) => continue,
@@ -2789,10 +2789,10 @@ pub(crate) fn apply_account_data_entries(
             }
         }
         // ak.client.ui_state — theme + avatar pointer.
-        if data_type == "ak.client.ui_state" {
+        if account_data_key == "ak.client.ui_state" {
             match crate::account_data::decrypt_account_data_entry(
                 account_did,
-                data_type,
+                account_data_key,
                 &entry.payload,
             ) {
                 Ok(content) => {
@@ -2822,10 +2822,10 @@ pub(crate) fn apply_account_data_entries(
             continue;
         }
         // ak.account.blocklist — personal block list.
-        if data_type == "ak.presence.visibility" {
+        if account_data_key == "ak.presence.visibility" {
             let Some(visibility) = crate::account_data::decrypt_account_data_entry(
                 account_did,
-                data_type,
+                account_data_key,
                 &entry.payload,
             )
             .ok()
@@ -2844,10 +2844,10 @@ pub(crate) fn apply_account_data_entries(
         // ak.presence.preference — manual presence preference
         // (profiles-presence.md §3.6). The server stores only the standard
         // account-data AEAD envelope; decrypt before applying it locally.
-        if data_type == "ak.presence.preference" {
+        if account_data_key == "ak.presence.preference" {
             match crate::account_data::decrypt_account_data_entry(
                 account_did,
-                data_type,
+                account_data_key,
                 &entry.payload,
             )
             .and_then(|content| serde_json::from_value(content).map_err(Into::into))
@@ -2859,10 +2859,10 @@ pub(crate) fn apply_account_data_entries(
             }
             continue;
         }
-        if data_type == "ak.dnd_schedule" {
+        if account_data_key == "ak.dnd_schedule" {
             match crate::account_data::decrypt_account_data_entry(
                 account_did,
-                data_type,
+                account_data_key,
                 &entry.payload,
             ) {
                 Ok(content) => store.set_notification_dnd_settings(
@@ -2874,10 +2874,10 @@ pub(crate) fn apply_account_data_entries(
             }
             continue;
         }
-        if data_type == "ak.account.blocklist" {
+        if account_data_key == "ak.account.blocklist" {
             match crate::account_data::decrypt_account_data_entry(
                 account_did,
-                data_type,
+                account_data_key,
                 &entry.payload,
             )
             .and_then(|content| {
@@ -2894,10 +2894,12 @@ pub(crate) fn apply_account_data_entries(
             continue;
         }
         // ak.contacts.actor.<did> — actor-private contact remarks.
-        if let Some(actor_id) = crate::account_data::actor_id_from_contact_remark_key(data_type) {
+        if let Some(actor_id) =
+            crate::account_data::actor_id_from_contact_remark_key(account_data_key)
+        {
             match crate::account_data::decrypt_account_data_entry(
                 account_did,
-                data_type,
+                account_data_key,
                 &entry.payload,
             )
             .and_then(|content| serde_json::from_value(content).map_err(Into::into))
@@ -2912,12 +2914,13 @@ pub(crate) fn apply_account_data_entries(
             continue;
         }
         // ak.contacts.realm.<realm_id> — actor-private Realm remarks.
-        let Some(realm_id) = crate::account_data::realm_id_from_realm_remark_key(data_type) else {
+        let Some(realm_id) = crate::account_data::realm_id_from_realm_remark_key(account_data_key)
+        else {
             continue;
         };
         match crate::account_data::decrypt_account_data_entry(
             account_did,
-            data_type,
+            account_data_key,
             &entry.payload,
         )
         .and_then(|content| serde_json::from_value(content).map_err(Into::into))
@@ -3114,7 +3117,7 @@ mod tests {
     fn incremental_realm_delta_preserves_omitted_policy_state() {
         let cached = json!({
             "__kind": "realm",
-            "content_scheme": "mls-exporter-aead-v1",
+            "content_scheme": "mls_exporter_aead_v1",
             "history_visibility": "shared",
             "summary": {"title": "Shared history"},
             "state": {"events": [
@@ -3127,7 +3130,7 @@ mod tests {
                     "event_id": "ak:event:policy",
                     "kind": "ak.realm.policy_components",
                     "effects": [{"cell": "ak:cell:realm.policy_components"}],
-                    "payload": {"value": {"content_scheme": "mls-exporter-aead-v1"}}
+                    "payload": {"value": {"content_scheme": "mls_exporter_aead_v1"}}
                 }
             ]},
             "timeline": {"events": [{"event_id": "ak:event:one"}]}
@@ -3143,7 +3146,7 @@ mod tests {
 
         let merged = merge_incremental_realm_projection(Some(&cached), &incoming);
 
-        assert_eq!(merged["content_scheme"], "mls-exporter-aead-v1");
+        assert_eq!(merged["content_scheme"], "mls_exporter_aead_v1");
         assert_eq!(merged["summary"]["title"], "Shared history");
         assert_eq!(merged["summary"]["joined_member_count"], 1);
         assert_eq!(merged["state"]["events"].as_array().unwrap().len(), 3);
@@ -3157,13 +3160,13 @@ mod tests {
                 "event_id": "ak:event:old-policy",
                 "kind": "ak.realm.policy_components",
                 "effects": [{"cell": "ak:cell:realm.policy_components"}],
-                "payload": {"value": {"content_scheme": "mls-rfc9420"}}
+                "payload": {"value": {"content_scheme": "mls_rfc9420"}}
             }]},
             "state_after": {"events": [{
                 "event_id": "ak:event:old-policy-after",
                 "kind": "ak.realm.policy_components",
                 "effects": [{"cell": "ak:cell:realm.policy_components"}],
-                "payload": {"value": {"content_scheme": "mls-rfc9420"}}
+                "payload": {"value": {"content_scheme": "mls_rfc9420"}}
             }]}
         });
         let incoming = json!({
@@ -3171,7 +3174,7 @@ mod tests {
                 "event_id": "ak:event:new-policy",
                 "kind": "ak.realm.policy_components",
                 "effects": [{"cell": "ak:cell:realm.policy_components"}],
-                "payload": {"value": {"content_scheme": "mls-exporter-aead-v1"}}
+                "payload": {"value": {"content_scheme": "mls_exporter_aead_v1"}}
             }]}
         });
 
@@ -3195,7 +3198,7 @@ mod tests {
                 "event_id": "ak:event:old-policy",
                 "kind": "ak.realm.policy_components",
                 "effects": [{"cell": "ak:cell:realm.policy_components"}],
-                "payload": {"value": {"content_scheme": "mls-rfc9420"}}
+                "payload": {"value": {"content_scheme": "mls_rfc9420"}}
             }]}
         });
         let incoming = json!({
@@ -3203,7 +3206,7 @@ mod tests {
                 "event_id": "ak:event:new-policy",
                 "kind": "ak.realm.policy_components",
                 "effects": [{"cell": "ak:cell:realm.policy_components"}],
-                "payload": {"value": {"content_scheme": "mls-exporter-aead-v1"}}
+                "payload": {"value": {"content_scheme": "mls_exporter_aead_v1"}}
             }]}
         });
 

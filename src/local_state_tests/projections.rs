@@ -202,14 +202,14 @@ fn apply_snapshot_chunks_imports_projection_status_and_encrypted_payload() {
     let realm_id = "ak:realm:01904100-0000-7000-8000-0000000000aa";
     let encrypted_message = json!({
         "schema": "ak.schema.encrypted_envelope.v1",
-        "scheme": "mls-rfc9420",
+        "scheme": "mls_rfc9420",
         "group_id": realm_id,
         "epoch": 1,
         "content_type": "application/vnd.arkret.message+json",
         "ciphertext": "AA",
         "payload_digest": format!("sha256:{}", "ab".repeat(32)),
         "key_ref": {
-            "algorithm": "mls-rfc9420",
+            "algorithm": "mls_rfc9420",
             "group_state_ref": format!("{realm_id}:1")
         }
     });

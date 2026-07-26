@@ -41,7 +41,7 @@ pub(crate) struct RealmProjectionInput {
     /// Effective Realm content capability selected at creation time. The
     /// optimistic projection is authoritative for local writes until account
     /// sync replaces it, so omitting this field would silently downgrade
-    /// shared-history content to the `mls-rfc9420` scheme.
+    /// shared-history content to the `mls_rfc9420` scheme.
     pub content_scheme: String,
     /// Initial history visibility selected at creation time.
     pub history_visibility: String,
@@ -383,7 +383,7 @@ pub(crate) fn realm_projection_content_scheme(body: &Value) -> Option<String> {
                 .and_then(Value::as_str)
                 == Some(arkret_sdk::events::EventKind::REALM_CREATE)
         })
-        .then(|| "mls-rfc9420".to_owned())
+        .then(|| "mls_rfc9420".to_owned())
 }
 
 fn nested_string_field(value: &Value, parent: &str, keys: &[&str]) -> Option<String> {
@@ -1105,22 +1105,22 @@ mod tests {
     #[test]
     fn content_scheme_prefers_current_policy_components_over_create_snapshot() {
         let projection = json!({
-            "object": {"content_scheme": "mls-rfc9420"},
+            "object": {"content_scheme": "mls_rfc9420"},
             "state_after": {"events": [
                 {
                     "kind": "ak.realm.create",
-                    "payload": {"object": {"content_scheme": "mls-rfc9420"}}
+                    "payload": {"object": {"content_scheme": "mls_rfc9420"}}
                 },
                 {
                     "kind": "ak.realm.policy_components",
-                    "payload": {"value": {"content_scheme": "mls-exporter-aead-v1"}}
+                    "payload": {"value": {"content_scheme": "mls_exporter_aead_v1"}}
                 }
             ]}
         });
 
         assert_eq!(
             realm_projection_content_scheme(&projection).as_deref(),
-            Some("mls-exporter-aead-v1")
+            Some("mls_exporter_aead_v1")
         );
     }
 
@@ -1129,13 +1129,13 @@ mod tests {
         let projection = json!({
             "state": {"events": [{
                 "kind": "ak.realm.create",
-                "payload": {"object": {"content_scheme": "mls-exporter-aead-v1"}}
+                "payload": {"object": {"content_scheme": "mls_exporter_aead_v1"}}
             }]}
         });
 
         assert_eq!(
             realm_projection_content_scheme(&projection).as_deref(),
-            Some("mls-exporter-aead-v1")
+            Some("mls_exporter_aead_v1")
         );
     }
 
@@ -1154,7 +1154,7 @@ mod tests {
 
         assert_eq!(
             realm_projection_content_scheme(&accepted_default).as_deref(),
-            Some("mls-rfc9420")
+            Some("mls_rfc9420")
         );
         assert_eq!(
             realm_projection_content_scheme(&transient_projection),
@@ -1204,7 +1204,7 @@ mod tests {
             summary: "Launch planning".to_owned(),
             discoverability: "restricted".to_owned(),
             encryption_profile: "mls_rfc9420".to_owned(),
-            content_scheme: "mls-exporter-aead-v1".to_owned(),
+            content_scheme: "mls_exporter_aead_v1".to_owned(),
             history_visibility: "shared".to_owned(),
             plaintext_visible_services: vec!["directory".to_owned()],
             encryption_floor: Some("e2ee_required".to_owned()),
@@ -1220,8 +1220,8 @@ mod tests {
             body["summary"]["metadata_encryption_floor"],
             "e2ee_required"
         );
-        assert_eq!(body["content_scheme"], "mls-exporter-aead-v1");
-        assert_eq!(body["summary"]["content_scheme"], "mls-exporter-aead-v1");
+        assert_eq!(body["content_scheme"], "mls_exporter_aead_v1");
+        assert_eq!(body["summary"]["content_scheme"], "mls_exporter_aead_v1");
         assert_eq!(body["history_visibility"], "shared");
         assert_eq!(body["summary"]["history_visibility"], "shared");
         assert_eq!(body["timeline"]["events"], json!([]));
@@ -1237,7 +1237,7 @@ mod tests {
             summary: String::new(),
             discoverability: "public".to_owned(),
             encryption_profile: "none".to_owned(),
-            content_scheme: "mls-rfc9420".to_owned(),
+            content_scheme: "mls_rfc9420".to_owned(),
             history_visibility: "joined".to_owned(),
             plaintext_visible_services: Vec::new(),
             encryption_floor: None,
@@ -1769,7 +1769,7 @@ mod tests {
                 "ak:realm:optimistic".to_owned(),
                 json!({
                     "__kind": "realm",
-                    "content_scheme": "mls-exporter-aead-v1",
+                    "content_scheme": "mls_exporter_aead_v1",
                     "history_visibility": "shared"
                 }),
             ),

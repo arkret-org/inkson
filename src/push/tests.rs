@@ -82,7 +82,7 @@ fn summarizes_push_bridge_contract() {
         examples: Default::default(),
         provider_capabilities_version: None,
         provider_capabilities: Vec::new(),
-        failure_codes: Vec::new(),
+        failure_reason_codes: Vec::new(),
         todos: vec!["TODO(push-bridge)".to_owned()],
         spec_version: None,
     });

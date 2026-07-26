@@ -3,7 +3,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde_json::Value;
 
 use super::{
-    BackupClass, KEY_BACKUP_SCHEMA, is_base64url_token, is_protocol_backup_id,
+    BackupKind, KEY_BACKUP_SCHEMA, is_base64url_token, is_protocol_backup_id,
     is_protocol_backup_series_id, is_protocol_device_id, is_sha_digest, key_backup_hkdf_info,
     required_str, required_u64,
 };
@@ -30,7 +30,7 @@ pub fn validate_key_backup_plaintext_binding(
     {
         return Err("key-backup plaintext schema mismatch".to_owned());
     }
-    for field in ["backup_id", "backup_class", "series_id", "series_seq"] {
+    for field in ["backup_id", "backup_kind", "series_id", "series_seq"] {
         if body.get(field) != plaintext.get(field) {
             return Err(format!(
                 "key-backup plaintext {field} does not match its envelope"
@@ -50,7 +50,7 @@ pub fn validate_key_backup_plaintext_binding(
     }
     for (public, secret) in public_items.iter().zip(plaintext_items) {
         for field in [
-            "item_type",
+            "item_kind",
             "realm_id",
             "managed_principal_binding",
             "mls_group_id",
@@ -96,7 +96,7 @@ pub fn validate_key_backup_plaintext_binding(
 
 pub fn validate_key_backup_envelope(
     body: &Value,
-    expected_class: Option<BackupClass>,
+    expected_class: Option<BackupKind>,
 ) -> Result<(), String> {
     let backup_id = required_str(body, "backup_id")?;
     if !is_protocol_backup_id(backup_id) {
@@ -113,12 +113,12 @@ pub fn validate_key_backup_envelope(
     if !actor_id.starts_with("did:") {
         return Err("actor_id must be a DID".to_owned());
     }
-    let class = BackupClass::try_from(required_str(body, "backup_class")?)?;
+    let class = BackupKind::try_from(required_str(body, "backup_kind")?)?;
     if let Some(expected) = expected_class
         && expected != class
     {
         return Err(format!(
-            "backup_class mismatch: expected {} got {}",
+            "backup_kind mismatch: expected {} got {}",
             expected.as_str(),
             class.as_str()
         ));
@@ -139,7 +139,7 @@ pub fn validate_key_backup_envelope(
 
     validate_contents(body, class)?;
     validate_encryption(body, class)?;
-    if class == BackupClass::MlsHistory {
+    if class == BackupKind::MlsHistory {
         validate_mls_history_opaque_only(body)?;
     }
     validate_domain_separation(body, class)?;
@@ -155,7 +155,7 @@ pub fn validate_key_backup_envelope(
     Ok(())
 }
 
-fn validate_contents(body: &Value, class: BackupClass) -> Result<(), String> {
+fn validate_contents(body: &Value, class: BackupKind) -> Result<(), String> {
     let contents = body
         .get("contents")
         .and_then(Value::as_array)
@@ -164,10 +164,10 @@ fn validate_contents(body: &Value, class: BackupClass) -> Result<(), String> {
         return Err("contents must be a non-empty array".to_owned());
     }
     for item in contents {
-        let item_type = required_str(item, "item_type")?;
-        if !item_type_allowed_for_class(class, item_type) {
+        let item_kind = required_str(item, "item_kind")?;
+        if !item_kind_allowed_for_class(class, item_kind) {
             return Err(format!(
-                "item_type {item_type} is not allowed in backup_class {}",
+                "item_kind {item_kind} is not allowed in backup_kind {}",
                 class.as_str()
             ));
         }
@@ -175,7 +175,7 @@ fn validate_contents(body: &Value, class: BackupClass) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_encryption(body: &Value, class: BackupClass) -> Result<(), String> {
+fn validate_encryption(body: &Value, class: BackupKind) -> Result<(), String> {
     let encryption = body
         .get("encryption")
         .ok_or_else(|| "encryption is required".to_owned())?;
@@ -207,13 +207,13 @@ fn validate_encryption(body: &Value, class: BackupClass) -> Result<(), String> {
             // in the recovery policy proof layer. passphrase_kdf alone is
             // forbidden because a single passphrase must not control DID
             // recovery.
-            if class == BackupClass::DidRecovery {
+            if class == BackupKind::DidRecovery {
                 return Err(
                     "did_recovery backups must not use passphrase_kdf alone; use recovery_public_key or satisfy threshold/hardware factors in the recovery policy proof layer"
                         .to_owned(),
                 );
             }
-            if class == BackupClass::MlsHistory {
+            if class == BackupKind::MlsHistory {
                 return Err(
                     "mls_history backups must use secret_storage_key or recovery_public_key"
                         .to_owned(),
@@ -246,7 +246,7 @@ fn validate_encryption(body: &Value, class: BackupClass) -> Result<(), String> {
             // secret_storage key; recovered after the secret_storage root is
             // unlocked. recipient_key_ref names that key id (NOT a device id),
             // and no passphrase KDF travels on the wire.
-            if !matches!(class, BackupClass::MlsHistory | BackupClass::SecretStorage) {
+            if !matches!(class, BackupKind::MlsHistory | BackupKind::SecretStorage) {
                 return Err(
                     "secret_storage_key is only valid for mls_history or secret_storage backups"
                         .to_owned(),
@@ -327,19 +327,19 @@ fn validate_kdf(kdf: &Value, mixed_secret_storage: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_domain_separation(body: &Value, class: BackupClass) -> Result<(), String> {
+fn validate_domain_separation(body: &Value, class: BackupKind) -> Result<(), String> {
     let domain = body
         .get("domain_separation")
         .ok_or_else(|| "domain_separation metadata is required".to_owned())?;
     let subdomain = required_str(domain, "subdomain")?;
     let expected_info = key_backup_hkdf_info(class, subdomain);
     if required_str(domain, "hkdf_info")? != expected_info {
-        return Err("domain_separation.hkdf_info does not match backup_class".to_owned());
+        return Err("domain_separation.hkdf_info does not match backup_kind".to_owned());
     }
     let aad = domain
         .get("aead_aad")
         .ok_or_else(|| "domain_separation.aead_aad is required".to_owned())?;
-    for key in ["actor_id", "backup_class", "backup_version", "created_at"] {
+    for key in ["actor_id", "backup_kind", "backup_version", "created_at"] {
         if aad.get(key) != body.get(key) {
             return Err(format!("domain_separation.aead_aad.{key} mismatch"));
         }
@@ -381,19 +381,19 @@ fn validate_domain_separation(body: &Value, class: BackupClass) -> Result<(), St
     {
         return Err("domain_separation.aead_aad.recipient_key_ref mismatch".to_owned());
     }
-    let expected_item_types = body
+    let expected_item_kinds = body
         .get("contents")
         .and_then(Value::as_array)
         .map(|contents| {
             contents
                 .iter()
-                .filter_map(|item| item.get("item_type").and_then(Value::as_str))
+                .filter_map(|item| item.get("item_kind").and_then(Value::as_str))
                 .map(|item| Value::String(item.to_owned()))
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    if aad.get("item_types").and_then(Value::as_array) != Some(&expected_item_types) {
-        return Err("domain_separation.aead_aad.item_types mismatch".to_owned());
+    if aad.get("item_kinds").and_then(Value::as_array) != Some(&expected_item_kinds) {
+        return Err("domain_separation.aead_aad.item_kinds mismatch".to_owned());
     }
     let expected_managed_bindings = body
         .get("contents")
@@ -463,11 +463,11 @@ fn validate_mls_history_opaque_only(body: &Value) -> Result<(), String> {
     scan(body, "")
 }
 
-fn item_type_allowed_for_class(class: BackupClass, item_type: &str) -> bool {
+fn item_kind_allowed_for_class(class: BackupKind, item_kind: &str) -> bool {
     match class {
-        BackupClass::DidRecovery => matches!(item_type, "recovery_key_share"),
-        BackupClass::SecretStorage => matches!(
-            item_type,
+        BackupKind::DidRecovery => matches!(item_kind, "recovery_key_share"),
+        BackupKind::SecretStorage => matches!(
+            item_kind,
             "self_signing_key"
                 | "user_signing_key"
                 | "recovery_secret"
@@ -476,8 +476,8 @@ fn item_type_allowed_for_class(class: BackupClass, item_type: &str) -> bool {
                 | "mls_group_secrets_backup_key"
                 | "private_account_state"
         ),
-        BackupClass::MlsHistory => matches!(
-            item_type,
+        BackupKind::MlsHistory => matches!(
+            item_kind,
             "mls_group_state" | "mls_epoch_secret" | "pending_welcome"
         ),
     }

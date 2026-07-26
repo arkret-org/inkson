@@ -107,7 +107,7 @@ pub struct CollectionProjectionView {
     /// Flat item list for group-less renderers (schema `anyOf` requires
     /// `groups` or `items`).
     #[serde(default)]
-    pub items: Vec<ProjectionItemView>,
+    pub items: Vec<ProjectionRowView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -138,7 +138,7 @@ pub struct CollectionProjectionGroupView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<Value>,
     #[serde(default)]
-    pub items: Vec<ProjectionItemView>,
+    pub items: Vec<ProjectionRowView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
     /// Required by the registered schema: whether this group's item list
@@ -152,8 +152,8 @@ pub struct CollectionProjectionGroupView {
 
 /// Registered `view.schema.json#/$defs/projection_item`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct ProjectionItemView {
-    /// Registered `projection_object` (`{id, type, morph_type?, facets?,
+pub struct ProjectionRowView {
+    /// Registered `projection_object` (`{id, type, morph_kind?, facets?,
     /// title?, fields?}`). Kept as a `Value` — readers fall back through
     /// `title`/`fields.*` leniently.
     pub object: Value,
@@ -172,7 +172,7 @@ pub struct ProjectionItemView {
     pub state: Option<Value>,
 }
 
-impl ProjectionItemView {
+impl ProjectionRowView {
     /// Rank from the registered `collection_position` variants: the
     /// `field_value` / `relation` models carry `rank`; the `time_bucket`
     /// model carries `sort_key`.
@@ -214,8 +214,8 @@ impl From<arkret_sdk::StateFrontier> for StateFrontierView {
     }
 }
 
-impl From<arkret_sdk::ProjectionItem> for ProjectionItemView {
-    fn from(item: arkret_sdk::ProjectionItem) -> Self {
+impl From<arkret_sdk::ProjectionRow> for ProjectionRowView {
+    fn from(item: arkret_sdk::ProjectionRow) -> Self {
         Self {
             object: serde_json::to_value(item.object).unwrap_or(Value::Null),
             render: item.render.as_ref().and_then(sdk_wire_string),

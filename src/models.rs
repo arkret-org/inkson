@@ -85,7 +85,7 @@ pub fn contact_grants_me_invite(contact: &ContactListRow) -> bool {
 /// fail closed against the real soland handler (it deserialises
 /// `arkret_sdk::InviteReceivePolicy`, `deny_unknown_fields`, with both
 /// fields required and `subject_id == session.actor` enforced) and dropped
-/// the server-stored `trusted_*` / `blocked_principal_services` lists on
+/// the server-stored `trusted_*` / `denied_principal_services` lists on
 /// every round-trip. We now use the SDK authoritative type, which carries
 /// the required `schema`/`subject_id`, typed enums, and the trust lists, so
 /// a GET→edit→SET cycle preserves fields the U4 form does not touch.
@@ -107,7 +107,7 @@ pub fn default_invite_receive_policy(subject_id: &str) -> InviteReceivePolicy {
         subject_id: arkret_sdk::Did::new(subject_id).unwrap_or_else(|_| {
             arkret_sdk::Did::new("did:web:unknown").expect("valid placeholder did")
         }),
-        allowed_introduction_kinds: vec![
+        holder_allowed_introduction_kinds: vec![
             "consent_grant".to_owned(),
             "locator_ref".to_owned(),
             "shared_realm".to_owned(),
@@ -116,13 +116,13 @@ pub fn default_invite_receive_policy(subject_id: &str) -> InviteReceivePolicy {
         handle_claim_behavior: Some(InviteReceiveAction::Quarantine),
         unknown_invites: UnknownInviteAction::Quarantine,
         allowed_handle_domains: Vec::new(),
-        blocked_handle_domains: Vec::new(),
+        denied_handle_domains: Vec::new(),
         trusted_handle_issuers: Vec::new(),
         trusted_directory_services: Vec::new(),
         trusted_realm_ids: Vec::new(),
         trusted_principal_services: Vec::new(),
-        blocked_principal_services: Vec::new(),
-        blocked_subjects: Vec::new(),
+        denied_principal_services: Vec::new(),
+        denied_subjects: Vec::new(),
         disclosure: Some(InviteDisclosurePolicy {
             high_trust: Some(DisclosureLevel::Outcome),
             discovery_trust: Some(DisclosureLevel::Opaque),
@@ -212,8 +212,8 @@ pub fn missing_v1_principal_server_requirements(
     description: &ServiceDescribe,
 ) -> Vec<&'static str> {
     let mut missing = Vec::new();
-    if description.service_type != arkret_sdk::ServiceType::PrincipalServer {
-        missing.push("service_type=principal_server");
+    if description.service_kind != arkret_sdk::ServiceKind::PrincipalServer {
+        missing.push("service_kind=principal_server");
     }
     if description.protocol_version != "1.0" {
         missing.push("protocol_version=1.0");
@@ -651,17 +651,17 @@ mod tests {
     fn invite_receive_policy_round_trips_sdk_wire_with_trust_lists() {
         // YOU-01-006 — the bare SDK wire body (schema + subject_id required,
         // typed enums, trust lists) must decode and re-encode without losing
-        // the `trusted_*` / `blocked_principal_services` lists the U4 form
+        // the `trusted_*` / `denied_principal_services` lists the U4 form
         // never touches.
         let value = serde_json::json!({
             "schema": super::INVITE_RECEIVE_POLICY_SCHEMA,
             "subject_id": "did:web:me.example",
-            "allowed_introduction_kinds": ["consent_grant", "locator_ref"],
+            "holder_allowed_introduction_kinds": ["consent_grant", "locator_ref"],
             "explicit_address_behavior": "drop",
             "unknown_invites": "quarantine",
             "trusted_realm_ids": ["ak:realm:01904100-0000-7000-8000-000000000001"],
             "trusted_principal_services": ["did:web:ps.example"],
-            "blocked_subjects": ["did:web:spammer.example"],
+            "denied_subjects": ["did:web:spammer.example"],
             "disclosure": {"high_trust": "opaque", "low_trust": "opaque"},
         });
         let policy: super::InviteReceivePolicy =
@@ -1064,7 +1064,7 @@ impl<'de> Deserialize<'de> for SubmitEventResult {
 
 // YOU-05-004: the hand-rolled `IceConfigOutcome` / `IceServer` /
 // `IceConfigRequestBody` mirrors drifted from the SDK wire types (missing
-// `expires_at` / `force_turn`, `ttl_seconds: u64` vs the authoritative
+// `expires_at` / `turn_required`, `ttl_seconds: u64` vs the authoritative
 // `u32`) and bypassed the TURN credential privacy guard. Re-export the
 // SDK's authoritative types instead. When the WebRTC surface is wired up,
 // each `ice_servers` entry MUST be parsed through `arkret_sdk::IceServer`

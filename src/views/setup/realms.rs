@@ -342,7 +342,7 @@ pub(super) fn RealmsSection(
                                                     )
                                                 {
                                                     realm_content_scheme.set(
-                                                        "mls-exporter-aead-v1".to_owned(),
+                                                        "mls_exporter_aead_v1".to_owned(),
                                                     );
                                                 }
                                                 realm_policy_history_visibility.set(v);
@@ -381,7 +381,7 @@ pub(super) fn RealmsSection(
                                                     )
                                                 {
                                                     realm_content_scheme.set(
-                                                        "mls-exporter-aead-v1".to_owned(),
+                                                        "mls_exporter_aead_v1".to_owned(),
                                                     );
                                                 }
                                                 realm_encryption_profile.set(v);
@@ -418,7 +418,7 @@ pub(super) fn RealmsSection(
                                             value: Some(realm_content_scheme_selected.into()),
                                             on_value_change: move |v: Option<String>| {
                                                 if let Some(v) = v {
-                                                    if v == "mls-rfc9420"
+                                                    if v == "mls_rfc9420"
                                                         && history_visibility_admits_prejoin(
                                                             &realm_policy_history_visibility(),
                                                         )
@@ -435,7 +435,7 @@ pub(super) fn RealmsSection(
                                                     value: option_value.to_string(),
                                                     text_value: "{label}",
                                                     disabled: history_requires_exporter_aead
-                                                        && *option_value == "mls-rfc9420",
+                                                        && *option_value == "mls_rfc9420",
                                                     "{label}"
                                                 }
                                             }
@@ -445,7 +445,7 @@ pub(super) fn RealmsSection(
                                         }
                                         if history_requires_exporter_aead {
                                             div { class: "muted",
-                                                "Pre-join history uses content_scheme=mls-exporter-aead-v1."
+                                                "Pre-join history uses content_scheme=mls_exporter_aead_v1."
                                             }
                                         }
                                         if let Some(hint) = content_scheme_warning {

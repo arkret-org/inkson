@@ -330,7 +330,7 @@ pub async fn set_realm_policy_events(
     }
     if let Some(join_policy) = join_policy {
         let mut policy_components = if preserve_recommended_encryption_floor {
-            // None ⇒ the history-capable `mls-exporter-aead-v1` default. soland
+            // None ⇒ the history-capable `mls_exporter_aead_v1` default. soland
             // applies a one-way content_scheme ratchet, so a policy_components
             // write MUST re-assert a scheme of rank ≥ the projected one;
             // omitting it would be rejected for exporter-aead realms.
@@ -372,8 +372,8 @@ pub async fn set_realm_policy_events(
 /// an MLS commit / self-update afterward.
 ///
 /// Pre-condition (caller-enforced): RRK durability is only effective when the
-/// Realm uses `content_scheme=mls-exporter-aead-v1`; declaring `mode != none`
-/// on a plain `mls-rfc9420` Realm is rejected server-side
+/// Realm uses `content_scheme=mls_exporter_aead_v1`; declaring `mode != none`
+/// on a plain `mls_rfc9420` Realm is rejected server-side
 /// (`durability_scheme_incompatible`).
 pub async fn set_realm_durability_policy(
     submitter: &EventSubmitter,

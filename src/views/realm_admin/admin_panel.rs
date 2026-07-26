@@ -196,7 +196,7 @@ pub fn RealmAdminPanel(
         + usize::from(covered_seals_alert);
     let projected_member_count =
         projected_members_for_realm(&state_store.read(), &selected_realm_id).len();
-    // RRK durability active (mode != none + mls-exporter-aead-v1) gates the
+    // RRK durability active (mode != none + mls_exporter_aead_v1) gates the
     // Realm-level recovery panel in the Security section.
     let durability_rrk_active = state_store
         .read()
@@ -301,7 +301,7 @@ pub fn RealmAdminPanel(
             // encryption-and-audit.md §2.10.8 disclosure obligation — RRK
             // durability banner. Renders only when this Realm's effective
             // durability_policy.mode != none AND content_scheme is
-            // mls-exporter-aead-v1; otherwise it is a no-op. Members MUST see
+            // mls_exporter_aead_v1; otherwise it is a no-op. Members MUST see
             // that history is continuously sealed to a verifiable recovery
             // holder who can decrypt all history (never "real-time listening").
             crate::components::DurabilityDisclosureBanner {
@@ -1279,7 +1279,7 @@ pub fn RealmAdminPanel(
                                 }
                                 // Pull the active constraint from the editor
                                 // signals into the canonical `grant-constraint`
-                                // shape (`{constraint_type, effect, …}`). Empty
+                                // shape (`{constraint_kind, effect, …}`). Empty
                                 // input yields no constraint. `expires_at` is the
                                 // grant's own validity bound, so it is threaded
                                 // through the builder directly (not as a
@@ -1301,7 +1301,7 @@ pub fn RealmAdminPanel(
                                         } else {
                                             let mut constraint = serde_json::Map::new();
                                             constraint.insert(
-                                                "constraint_type".into(),
+                                                "constraint_kind".into(),
                                                 serde_json::Value::String("temporal".to_owned()),
                                             );
                                             constraint.insert(

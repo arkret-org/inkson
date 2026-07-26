@@ -3,7 +3,7 @@
 //! soland delivers inbound call signaling inline on each Realm sync body as
 //! canonical `body.ephemeral.events[]` envelopes. Each item is the full signed
 //! `{kind, realm_id, actor_id, device_id, sent_at, expires_at,
-//!   payload:{call_id, signal_type, seq, data}, proof}` shape submitted by the
+//!   payload:{call_id, signal_kind, seq, data}, proof}` shape submitted by the
 //! sender side (`submit_call_signal_v1`).
 //!
 //! This module owns the cross-component plumbing that turns those envelopes
@@ -44,7 +44,7 @@ pub struct IncomingCallInfo {
 pub struct CallSignalInboxItem {
     pub realm_id: String,
     pub call_id: String,
-    pub signal_type: String,
+    pub signal_kind: String,
     pub seq: u64,
     /// Sender actor DID (`envelope.actor_id`).
     pub sender_actor: String,
@@ -151,7 +151,7 @@ impl Default for CallSignalHub {
 pub struct DecodedCallSignal {
     pub realm_id: String,
     pub call_id: String,
-    pub signal_type: String,
+    pub signal_kind: String,
     pub seq: u64,
     pub sender_actor: String,
     pub sender_device: String,
@@ -181,7 +181,7 @@ pub fn decode_realm_call_signals(realm_id: &str, body: &Value) -> Vec<DecodedCal
 
 /// Decode a single signed `ak.call.signal` envelope. Returns `None` when the
 /// envelope is structurally invalid (wrong kind, missing
-/// `payload.{call_id,signal_type,seq}` / `actor_id`).
+/// `payload.{call_id,signal_kind,seq}` / `actor_id`).
 fn decode_call_signal_envelope(realm_id: &str, envelope: &Value) -> Option<DecodedCallSignal> {
     let kind = envelope.get("kind").and_then(Value::as_str)?;
     if kind != "ak.call.signal" {
@@ -195,8 +195,8 @@ fn decode_call_signal_envelope(realm_id: &str, envelope: &Value) -> Option<Decod
         .to_owned();
     let payload = envelope.get("payload")?;
     let call_id = payload.get("call_id").and_then(Value::as_str)?.to_owned();
-    let signal_type = payload
-        .get("signal_type")
+    let signal_kind = payload
+        .get("signal_kind")
         .and_then(Value::as_str)?
         .to_owned();
     let seq = payload.get("seq").and_then(Value::as_u64).unwrap_or(0);
@@ -205,7 +205,7 @@ fn decode_call_signal_envelope(realm_id: &str, envelope: &Value) -> Option<Decod
     Some(DecodedCallSignal {
         realm_id: realm_id.to_owned(),
         call_id,
-        signal_type,
+        signal_kind,
         seq,
         sender_actor,
         sender_device,
@@ -318,7 +318,7 @@ async fn moderator_signal_authorized(
             realm_id = %decoded.realm_id,
             call_id = %decoded.call_id,
             sender = %decoded.sender_actor,
-            signal_type = %decoded.signal_type,
+            signal_kind = %decoded.signal_kind,
             "dropping malformed moderator call signal"
         );
         return false;
@@ -328,7 +328,7 @@ async fn moderator_signal_authorized(
             realm_id = %decoded.realm_id,
             call_id = %decoded.call_id,
             sender = %decoded.sender_actor,
-            signal_type = %decoded.signal_type,
+            signal_kind = %decoded.signal_kind,
             "dropping moderator call signal without authz client"
         );
         return false;
@@ -354,7 +354,7 @@ async fn moderator_signal_authorized(
                 realm_id = %decoded.realm_id,
                 call_id = %decoded.call_id,
                 sender = %decoded.sender_actor,
-                signal_type = %decoded.signal_type,
+                signal_kind = %decoded.signal_kind,
                 ?outcome,
                 "dropping unauthorised moderator call signal"
             );
@@ -365,7 +365,7 @@ async fn moderator_signal_authorized(
                 realm_id = %decoded.realm_id,
                 call_id = %decoded.call_id,
                 sender = %decoded.sender_actor,
-                signal_type = %decoded.signal_type,
+                signal_kind = %decoded.signal_kind,
                 ?error,
                 "dropping moderator call signal after authz check failure"
             );
@@ -375,13 +375,13 @@ async fn moderator_signal_authorized(
 }
 
 fn requires_call_moderate(decoded: &DecodedCallSignal) -> bool {
-    decoded.signal_type == "moderation"
-        || (decoded.signal_type == "mute_state"
+    decoded.signal_kind == "moderation"
+        || (decoded.signal_kind == "mute_state"
             && decoded.data.get("by").and_then(Value::as_str) == Some("moderator"))
 }
 
 fn moderator_payload_shape_is_valid(decoded: &DecodedCallSignal) -> bool {
-    match decoded.signal_type.as_str() {
+    match decoded.signal_kind.as_str() {
         "moderation" => match moderation_action(decoded) {
             Some("kick" | "ban") => {
                 !moderation_target_actor(decoded).unwrap_or("").is_empty()
@@ -492,7 +492,7 @@ pub fn decide_route(
         return RouteDecision::Drop;
     }
 
-    if decoded.signal_type == "invite" {
+    if decoded.signal_kind == "invite" {
         let already_ringing = state.ringing_call.as_deref() == Some(decoded.call_id.as_str());
         // `ringing_answered_here` covers the active-session case the caller
         // folds in (a call this device owns is surfaced as answered-here).
@@ -514,9 +514,9 @@ pub fn decide_route(
     let still_ringing_here = state.ringing_call.as_deref() == Some(decoded.call_id.as_str())
         && !state.ringing_answered_here;
     if still_ringing_here {
-        let call_already_answered = decoded.signal_type == "answer"
-            || decoded.signal_type == "hangup"
-            || (decoded.signal_type == "reject"
+        let call_already_answered = decoded.signal_kind == "answer"
+            || decoded.signal_kind == "hangup"
+            || (decoded.signal_kind == "reject"
                 && decoded
                     .data
                     .get("reason")
@@ -531,7 +531,7 @@ pub fn decide_route(
     RouteDecision::Enqueue(CallSignalInboxItem {
         realm_id: decoded.realm_id.clone(),
         call_id: decoded.call_id.clone(),
-        signal_type: decoded.signal_type.clone(),
+        signal_kind: decoded.signal_kind.clone(),
         seq: decoded.seq,
         sender_actor: decoded.sender_actor.clone(),
         sender_device: decoded.sender_device.clone(),
@@ -631,7 +631,7 @@ mod tests {
         actor: &str,
         device: &str,
         call: &str,
-        signal_type: &str,
+        signal_kind: &str,
         seq: u64,
         data: Value,
     ) -> Value {
@@ -644,7 +644,7 @@ mod tests {
             "expires_at": 2,
             "payload": {
                 "call_id": call,
-                "signal_type": signal_type,
+                "signal_kind": signal_kind,
                 "seq": seq,
                 "data": data,
             },
@@ -673,7 +673,7 @@ mod tests {
         )]);
         let decoded = decode_realm_call_signals("ak:realm:r", &body);
         assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].signal_type, "invite");
+        assert_eq!(decoded[0].signal_kind, "invite");
         assert_eq!(decoded[0].call_id, "ak:call:1");
         assert_eq!(decoded[0].sender_actor, "did:web:bob");
         assert_eq!(decoded[0].sender_device, "dev-b");
@@ -695,7 +695,7 @@ mod tests {
         let decoded = decode_realm_call_signals("ak:realm:r", &body);
 
         assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].signal_type, "candidate");
+        assert_eq!(decoded[0].signal_kind, "candidate");
         assert_eq!(decoded[0].seq, 2);
     }
 
@@ -710,11 +710,11 @@ mod tests {
         assert!(decode_realm_call_signals("ak:realm:r", &body).is_empty());
     }
 
-    fn decoded(signal_type: &str, seq: u64, data: Value) -> DecodedCallSignal {
+    fn decoded(signal_kind: &str, seq: u64, data: Value) -> DecodedCallSignal {
         DecodedCallSignal {
             realm_id: "ak:realm:r".into(),
             call_id: "ak:call:1".into(),
-            signal_type: signal_type.into(),
+            signal_kind: signal_kind.into(),
             seq,
             sender_actor: "did:web:bob".into(),
             sender_device: "dev-b".into(),
@@ -748,7 +748,7 @@ mod tests {
         let d = decoded("candidate", 2, json!({ "candidate": "cand" }));
         match decide_route(&d, "did:web:alice", false, &RouteState::default()) {
             RouteDecision::Enqueue(item) => {
-                assert_eq!(item.signal_type, "candidate");
+                assert_eq!(item.signal_kind, "candidate");
                 assert_eq!(item.call_id, "ak:call:1");
             }
             other => panic!("expected Enqueue, got {other:?}"),
@@ -887,7 +887,7 @@ mod tests {
             "expires_at": "2026-06-16T00:01:00.000Z",
             "payload": {
                 "call_id": "ak:call:01964200-0000-7000-8000-000000000001",
-                "signal_type": "invite",
+                "signal_kind": "invite",
                 "seq": 1,
                 "data": { "media": { "audio": true, "video": true, "screen": false } }
             }

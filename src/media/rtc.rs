@@ -59,8 +59,8 @@ pub enum RtcClientError {
     /// Server-reported focus disagrees with the call-state commit.
     FocusMismatch,
     /// `ak.realm.media_service.foci[].type` not one of the five
-    /// canonical enums (`livekit | mediasoup | janus | arkret-native
-    /// | moq-relay`).
+    /// canonical enums (`livekit | mediasoup | janus | arkret_native
+    /// | moq_relay`).
     UnknownFocusType,
     /// Token issuer kid does not resolve to the current
     /// `ak.realm.media_service.service_id`.
@@ -188,8 +188,8 @@ pub const ALLOWED_FOCUS_TYPES: &[&str] = &[
     "livekit",
     "mediasoup",
     "janus",
-    "arkret-native",
-    "moq-relay",
+    "arkret_native",
+    "moq_relay",
 ];
 
 /// Returns `true` iff `focus_type` is one of the canonical backend
@@ -536,7 +536,7 @@ struct TypedJoinIds {
 pub struct JoinedMediaSession {
     /// SFU backend type (`livekit` / `mediasoup` / …) — already checked
     /// against [`ALLOWED_FOCUS_TYPES`].
-    pub backend_type: String,
+    pub backend_kind: String,
     /// Authoritative focus id echoed by the token issuer.
     pub focus_id: String,
     /// Backend WebSocket connect URL (e.g. LiveKit `wss://…`).
@@ -550,7 +550,7 @@ pub struct JoinedMediaSession {
     /// controller joins this into `ak.component.call.roster.v1` before
     /// connecting the SFU so remote streams have a durable roster to check.
     pub participant_binding: CallMediaParticipantBinding,
-    /// Verified ICE configuration (STUN/TURN + force_turn + ttl).
+    /// Verified ICE configuration (STUN/TURN + turn_required + ttl).
     pub ice_config: IceConfig,
     /// 32-byte SFrame frame key derived from the MLS exporter
     /// (`ak-rtc-frame-key/v1`). Installed as the E2EE keyprovider seed.
@@ -683,7 +683,7 @@ pub async fn join_call_media(
     .await
     .map_err(|err| RtcClientError::from_api_error(&err))?;
 
-    if !is_known_focus_type(&outcome.backend_type) {
+    if !is_known_focus_type(&outcome.backend_kind) {
         return Err(RtcClientError::UnknownFocusType);
     }
 
@@ -726,7 +726,7 @@ pub async fn join_call_media(
         .map_err(|_| RtcClientError::E2eeKeySourceUnauthorised)?;
 
     Ok(JoinedMediaSession {
-        backend_type: outcome.backend_type,
+        backend_kind: outcome.backend_kind,
         focus_id: outcome.focus_id,
         connect_url: outcome.connect_url,
         backend_token: outcome.backend_token,
@@ -889,8 +889,8 @@ mod tests {
         assert!(is_known_focus_type("livekit"));
         assert!(is_known_focus_type("mediasoup"));
         assert!(is_known_focus_type("janus"));
-        assert!(is_known_focus_type("arkret-native"));
-        assert!(is_known_focus_type("moq-relay"));
+        assert!(is_known_focus_type("arkret_native"));
+        assert!(is_known_focus_type("moq_relay"));
         assert!(!is_known_focus_type("LiveKit")); // case-sensitive
         assert!(!is_known_focus_type("zoom"));
     }

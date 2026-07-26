@@ -6,25 +6,25 @@ use serde_json::Value;
 
 use super::selection::mls_account_secret_backup_version;
 use crate::key_backup::{
-    BackupClass, build_passphrase_kdf_backup_body, open_passphrase_kdf_backup_body,
+    BackupKind, build_passphrase_kdf_backup_body, open_passphrase_kdf_backup_body,
 };
 use crate::recovery_crypto::VaultKek;
 
-/// `item_type` carried by the account MLS snapshot secret backup.
+/// `item_kind` carried by the account MLS snapshot secret backup.
 ///
 /// Both soland's validator
 /// (`soland/src/routing/identity/key_backup.rs::KEY_BACKUP_CONTENT_TYPES`)
 /// and the inkson client validator
-/// (`key_backup::item_type_allowed_for_class`) allowlist this dedicated
+/// (`key_backup::item_kind_allowed_for_class`) allowlist this dedicated
 /// content type under the `secret_storage` class, so it is the primary
 /// discriminator for the recovery import path. `secret_id` is still carried
 /// for human-readable disambiguation.
-pub const MLS_ACCOUNT_SECRET_ITEM_TYPE: &str = "mls_account_secret";
+pub const MLS_ACCOUNT_SECRET_ITEM_KIND: &str = "mls_account_secret";
 /// `secret_id` carried by the account MLS snapshot secret backup. This is the
 /// stable discriminator the recovery import path matches against.
 pub const MLS_ACCOUNT_SECRET_SECRET_ID: &str = "inkson_mls_account_secret";
 
-/// X5.3 — `item_type` carried by the encrypted local-plaintext sidecar backup.
+/// X5.3 — `item_kind` carried by the encrypted local-plaintext sidecar backup.
 ///
 /// The sidecar (`LocalStateStore::mls_private_plaintext`, the author's own
 /// plaintext for their encrypted private strand fields) MUST cross devices: a new
@@ -36,7 +36,7 @@ pub const MLS_ACCOUNT_SECRET_SECRET_ID: &str = "inkson_mls_account_secret";
 /// account secret first — can decrypt it with NO second passphrase prompt. Both
 /// soland's validator and the inkson client validator allowlist this content
 /// type under the `secret_storage` class.
-pub const MLS_PRIVATE_PLAINTEXT_ITEM_TYPE: &str = "mls_private_plaintext";
+pub const MLS_PRIVATE_PLAINTEXT_ITEM_KIND: &str = "mls_private_plaintext";
 /// `secret_id` carried by the encrypted local-plaintext sidecar backup.
 pub const MLS_PRIVATE_PLAINTEXT_SECRET_ID: &str = "inkson_mls_private_plaintext";
 
@@ -47,7 +47,7 @@ pub const MLS_PRIVATE_PLAINTEXT_SECRET_ID: &str = "inkson_mls_private_plaintext"
 /// (the `secret_storage` / `passphrase_kdf` / argon2id+xchacha20poly1305 shape
 /// that soland already validates). The plaintext account secret is encrypted
 /// with the supplied KEK; only the ciphertext, salt and nonce travel on the
-/// wire. The `item_type` / `secret_id` are the MLS-secret identifiers.
+/// wire. The `item_kind` / `secret_id` are the MLS-secret identifiers.
 ///
 /// NOTE: the KEK MUST be derived from the user's Recovery Key (the same
 /// source `decrypt_mls_account_secret_backup` stretches on restore), never from
@@ -84,7 +84,7 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
     account_secret_version: u32,
 ) -> Result<Value> {
     // Spec §7.5: the item identifiers are set BEFORE sealing so the AEAD AAD
-    // (`domain_separation.aead_aad.item_types`) binds the real
+    // (`domain_separation.aead_aad.item_kinds`) binds the real
     // `mls_account_secret` item — no post-seal relabel (which would desync the
     // AAD from the ciphertext).
     build_passphrase_kdf_backup_body(
@@ -93,10 +93,10 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
         device_id,
         kek,
         account_secret.as_bytes(),
-        BackupClass::SecretStorage,
+        BackupKind::SecretStorage,
         "recovery_vault",
         &KeyBackupContentItem {
-            item_type: MLS_ACCOUNT_SECRET_ITEM_TYPE.to_owned(),
+            item_kind: MLS_ACCOUNT_SECRET_ITEM_KIND.to_owned(),
             secret_id: Some(MLS_ACCOUNT_SECRET_SECRET_ID.to_owned()),
             secret_version: Some(account_secret_version),
             ..Default::default()
@@ -120,9 +120,9 @@ pub fn is_mls_account_secret_backup(body: &Value) -> bool {
     body.get("contents")
         .and_then(Value::as_array)
         .and_then(|c| c.first())
-        .and_then(|item| item.get("item_type"))
+        .and_then(|item| item.get("item_kind"))
         .and_then(Value::as_str)
-        == Some(MLS_ACCOUNT_SECRET_ITEM_TYPE)
+        == Some(MLS_ACCOUNT_SECRET_ITEM_KIND)
 }
 
 /// The `encryption.recipient_method` of a backup envelope.
@@ -134,7 +134,7 @@ fn backup_recipient_method(body: &Value) -> Option<&str> {
 /// True when `body` is the **passphrase-recoverable** account-secret backup
 /// (`recipient_method=passphrase_kdf`). The account secret now has TWO backups —
 /// this passphrase one and an HPKE `recovery_public_key` one — sharing the same
-/// `item_type`, so the passphrase restore path MUST only pick this variant
+/// `item_kind`, so the passphrase restore path MUST only pick this variant
 /// (else it would try to passphrase-decrypt an HPKE envelope).
 pub fn is_passphrase_account_secret_backup(body: &Value) -> bool {
     is_mls_account_secret_backup(body) && backup_recipient_method(body) == Some("passphrase_kdf")
@@ -159,7 +159,7 @@ pub fn is_recovery_public_key_account_secret_backup(body: &Value) -> bool {
 /// the account secret (`derive_vault_kek(account_secret.as_bytes())`), so the
 /// restore path — which imports the account secret first — can decrypt with no
 /// second passphrase prompt. base64url-clean; domain separation re-attached so
-/// the AAD's `item_types` matches the rewritten contents.
+/// the AAD's `item_kinds` matches the rewritten contents.
 pub fn build_mls_private_plaintext_backup_body_with_kek(
     backup_id: &str,
     actor_id: &str,
@@ -173,10 +173,10 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
         device_id,
         kek,
         sidecar_json,
-        BackupClass::SecretStorage,
+        BackupKind::SecretStorage,
         "recovery_vault",
         &KeyBackupContentItem {
-            item_type: MLS_PRIVATE_PLAINTEXT_ITEM_TYPE.to_owned(),
+            item_kind: MLS_PRIVATE_PLAINTEXT_ITEM_KIND.to_owned(),
             secret_id: Some(MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned()),
             ..Default::default()
         },
@@ -204,9 +204,9 @@ pub fn is_mls_private_plaintext_backup(body: &Value) -> bool {
     body.get("contents")
         .and_then(Value::as_array)
         .and_then(|c| c.first())
-        .and_then(|item| item.get("item_type"))
+        .and_then(|item| item.get("item_kind"))
         .and_then(Value::as_str)
-        == Some(MLS_PRIVATE_PLAINTEXT_ITEM_TYPE)
+        == Some(MLS_PRIVATE_PLAINTEXT_ITEM_KIND)
 }
 
 /// Build the HPKE `recovery_public_key` account-secret backup: the account
@@ -266,10 +266,10 @@ pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
         device_id,
         recovery_public_key,
         recovery_key_ref,
-        crate::key_backup::BackupClass::SecretStorage,
+        crate::key_backup::BackupKind::SecretStorage,
         "recovery_vault",
         &KeyBackupContentItem {
-            item_type: MLS_ACCOUNT_SECRET_ITEM_TYPE.to_owned(),
+            item_kind: MLS_ACCOUNT_SECRET_ITEM_KIND.to_owned(),
             secret_id: Some(MLS_ACCOUNT_SECRET_SECRET_ID.to_owned()),
             secret_version: Some(account_secret_version),
             ..Default::default()

@@ -4,7 +4,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde_json::{Value, json};
 
 use super::{
-    BackupClass, attach_key_backup_domain_separation, attach_key_backup_genesis_series,
+    BackupKind, attach_key_backup_domain_separation, attach_key_backup_genesis_series,
     is_protocol_device_id, sign_key_backup_with_active_device,
 };
 use crate::recovery_crypto::VaultKek;
@@ -32,7 +32,7 @@ pub fn build_passphrase_kdf_backup_body(
     device_id: &str,
     root: &VaultKek,
     plaintext: &[u8],
-    class: BackupClass,
+    class: BackupKind,
     subdomain: &str,
     item: &KeyBackupContentItem,
 ) -> anyhow::Result<Value> {
@@ -53,7 +53,7 @@ pub fn build_passphrase_kdf_backup_body(
         subdomain,
         root,
         plaintext,
-        &[(item.item_type.as_str(), item.secret_id.as_deref())],
+        &[(item.item_kind.as_str(), item.secret_id.as_deref())],
     )
     .map_err(|error| anyhow::anyhow!("build key backup: {error}"))?;
     envelope.contents = vec![item.clone()];
@@ -97,10 +97,10 @@ pub fn build_did_recovery_backup_body(
         device_id,
         recovery_public_key,
         recovery_key_ref,
-        BackupClass::DidRecovery,
+        BackupKind::DidRecovery,
         "recovery_policy",
         &KeyBackupContentItem {
-            item_type: "recovery_key_share".to_owned(),
+            item_kind: "recovery_key_share".to_owned(),
             secret_id: Some("inkson_did_recovery_share".to_owned()),
             ..Default::default()
         },
@@ -132,7 +132,7 @@ fn recovery_public_key_info(body: &Value) -> anyhow::Result<Vec<u8>> {
         "series_id": body.get("series_id").cloned().unwrap_or(Value::Null),
         "series_seq": body.get("series_seq").cloned().unwrap_or(Value::Null),
         "actor_id": body.get("actor_id").cloned().unwrap_or(Value::Null),
-        "backup_class": body.get("backup_class").cloned().unwrap_or(Value::Null),
+        "backup_kind": body.get("backup_kind").cloned().unwrap_or(Value::Null),
         "backup_version": body.get("backup_version").cloned().unwrap_or(Value::Null),
         "created_at": body.get("created_at").cloned().unwrap_or(Value::Null),
         "recipient_method": encryption
@@ -159,7 +159,7 @@ pub fn build_recovery_public_key_backup_body(
     device_id: &str,
     recovery_public_key: &[u8],
     recovery_key_ref: &str,
-    class: BackupClass,
+    class: BackupKind,
     subdomain: &str,
     item: &KeyBackupContentItem,
     plaintext: &[u8],
@@ -195,7 +195,7 @@ pub fn build_recovery_public_key_backup_body_in_series(
     device_id: &str,
     recovery_public_key: &[u8],
     recovery_key_ref: &str,
-    class: BackupClass,
+    class: BackupKind,
     subdomain: &str,
     item: &KeyBackupContentItem,
     plaintext: &[u8],
@@ -228,7 +228,7 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
     device_id: &str,
     recovery_public_key: &[u8],
     recovery_key_ref: &str,
-    class: BackupClass,
+    class: BackupKind,
     subdomain: &str,
     items: &[KeyBackupContentItem],
     plaintext: &[u8],
@@ -246,7 +246,7 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
     let mut body = json!({
         "backup_id": backup_id,
         "actor_id": actor_id,
-        "backup_class": class.as_str(),
+        "backup_kind": class.as_str(),
         "backup_version": "kb_1",
         "created_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
         "encryption": {

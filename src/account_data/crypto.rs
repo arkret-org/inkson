@@ -5,7 +5,7 @@ use serde_json::Value;
 
 pub fn decrypt_account_data_value(
     actor_id: &str,
-    data_type: &str,
+    account_data_key: &str,
     value: &Value,
 ) -> anyhow::Result<Value> {
     let envelope: arkret_sdk::account_data_crypto::AccountDataEncryptedValue =
@@ -21,14 +21,17 @@ pub fn decrypt_account_data_value(
         .try_into()
         .map_err(|_| anyhow::anyhow!("account secret must be 32 bytes"))?;
     arkret_sdk::account_data_crypto::open_account_data_value(
-        &secret, actor_id, data_type, &envelope,
+        &secret,
+        actor_id,
+        account_data_key,
+        &envelope,
     )
     .map_err(Into::into)
 }
 
 pub fn decrypt_account_data_entry<T: Serialize>(
     actor_id: &str,
-    data_type: &str,
+    account_data_key: &str,
     entry: &T,
 ) -> anyhow::Result<Value> {
     let entry = serde_json::to_value(entry)?;
@@ -38,7 +41,7 @@ pub fn decrypt_account_data_entry<T: Serialize>(
         .or_else(|| entry.get("encrypted_payload"))
         .or_else(|| entry.get("encrypted_content"))
         .ok_or_else(|| anyhow::anyhow!("account_data entry has no encrypted value"))?;
-    decrypt_account_data_value(actor_id, data_type, value)
+    decrypt_account_data_value(actor_id, account_data_key, value)
 }
 
 #[cfg(test)]

@@ -750,7 +750,7 @@ impl EventSubmitter {
                 .http
                 .list_key_backups(&arkret_sdk::KeyBackupsListQuery {
                     series_id: None,
-                    backup_class: Some(arkret_sdk::BackupClass::DidRecovery),
+                    backup_kind: Some(arkret_sdk::BackupKind::DidRecovery),
                     cursor: None,
                     limit: None,
                 })
@@ -904,13 +904,13 @@ impl EventSubmitter {
         device_id: &str,
         strand_id: &str,
         event_id: &str,
-        receipt_type: &str,
+        receipt_kind: &str,
     ) -> anyhow::Result<ReceiptResult> {
         // Only `ak.receipt.read` is an ephemeral receipt; other receipt
         // types (delivered/franking/etc.) stay on their own paths. Guard
         // the kind here so we don't accidentally widen the contract.
-        if receipt_type != "ak.receipt.read" {
-            anyhow::bail!("unsupported ephemeral receipt_type {receipt_type:?}");
+        if receipt_kind != "ak.receipt.read" {
+            anyhow::bail!("unsupported ephemeral receipt_kind {receipt_kind:?}");
         }
         let mut envelope =
             build_receipt_read_envelope(realm_id, actor, device_id, strand_id, event_id)?;
@@ -2573,7 +2573,7 @@ mod tests {
             arkret_sdk::canonical::DigestSuite::Sha256,
         )
         .unwrap();
-        let details = arkret_sdk::EventsActorCasConflictDetails {
+        let details = arkret_sdk::EventsActorCasConflictProblem {
             accepted: false,
             current_frontier,
         };

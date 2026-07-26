@@ -79,7 +79,7 @@ fn restore_managed_agent_pcr_history_with_recovery_key(
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow!("managed Agent PCR plaintext items are missing"))?
     {
-        if item.get("item_type").and_then(Value::as_str) != Some("mls_group_state") {
+        if item.get("item_kind").and_then(Value::as_str) != Some("mls_group_state") {
             continue;
         }
         let realm_id = item
@@ -337,7 +337,7 @@ fn attach_bootstrap_active_series(payload: &mut Value) {
     for class in ["secret_storage", "mls_history", "did_recovery"] {
         let selected = backups
             .iter()
-            .filter(|body| body.get("backup_class").and_then(Value::as_str) == Some(class))
+            .filter(|body| body.get("backup_kind").and_then(Value::as_str) == Some(class))
             .filter(|body| class != "secret_storage" || is_mls_account_secret_backup(body))
             .max_by(|a, b| {
                 (
@@ -358,7 +358,7 @@ fn attach_bootstrap_active_series(payload: &mut Value) {
         {
             records.push(json!({
                 "schema": crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA,
-                "backup_class": class,
+                "backup_kind": class,
                 "active_series_id": series_id,
             }));
         }
@@ -408,12 +408,12 @@ pub async fn fetch_mls_restore_payload_with_unlock_proof(
             full_backups.push(entry);
             continue;
         }
-        let backup_class = entry
-            .get("backup_class")
+        let backup_kind = entry
+            .get("backup_kind")
             .and_then(Value::as_str)
             .unwrap_or_default();
         if !matches!(
-            backup_class,
+            backup_kind,
             "secret_storage" | "mls_history" | "did_recovery"
         ) {
             full_backups.push(entry);

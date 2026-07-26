@@ -187,7 +187,7 @@ impl crate::transport::TransportClient {
     pub async fn list_key_backups(&self) -> anyhow::Result<arkret_sdk::KeysBackupsList> {
         let query = arkret_sdk::KeyBackupsListQuery {
             series_id: None,
-            backup_class: None,
+            backup_kind: None,
             cursor: None,
             limit: None,
         };
@@ -279,10 +279,10 @@ impl crate::transport::TransportClient {
 
     /// AKP B-C / spec head 37ce729 — `LIST?series_id=` query path the
     /// recovery strand uses to rebuild a backup series by sequence. When
-    /// `series_id` is `None` and `backup_class` is `None`, this lists all
+    /// `series_id` is `None` and `backup_kind` is `None`, this lists all
     /// key backups.
     ///
-    /// Soland P2 (aa76b91) added the `?series_id=` + `?backup_class=`
+    /// Soland P2 (aa76b91) added the `?series_id=` + `?backup_kind=`
     /// query parameters; the chain reconstruction MUST decrypt only
     /// from the tail and surface `backup_frontier_stale` /
     /// `backup_post_reset_stale` errors per AKP B-C §3.3.
@@ -293,7 +293,7 @@ impl crate::transport::TransportClient {
     pub async fn list_key_backups_by_series(
         &self,
         series_id: Option<&str>,
-        backup_class: Option<&str>,
+        backup_kind: Option<&str>,
     ) -> anyhow::Result<arkret_sdk::KeysBackupsList> {
         let series_id = series_id
             .map(str::trim)
@@ -301,19 +301,19 @@ impl crate::transport::TransportClient {
             .map(|value| arkret_sdk::BackupSeriesId::new(value.to_owned()))
             .transpose()
             .map_err(|err| anyhow::anyhow!("invalid backup series id: {err}"))?;
-        let backup_class = backup_class
+        let backup_kind = backup_kind
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(|value| match value {
-                "did_recovery" => Ok(arkret_sdk::BackupClass::DidRecovery),
-                "secret_storage" => Ok(arkret_sdk::BackupClass::SecretStorage),
-                "mls_history" => Ok(arkret_sdk::BackupClass::MlsHistory),
-                other => Err(anyhow::anyhow!("unknown backup_class `{other}`")),
+                "did_recovery" => Ok(arkret_sdk::BackupKind::DidRecovery),
+                "secret_storage" => Ok(arkret_sdk::BackupKind::SecretStorage),
+                "mls_history" => Ok(arkret_sdk::BackupKind::MlsHistory),
+                other => Err(anyhow::anyhow!("unknown backup_kind `{other}`")),
             })
             .transpose()?;
         let query = arkret_sdk::KeyBackupsListQuery {
             series_id,
-            backup_class,
+            backup_kind,
             cursor: None,
             limit: None,
         };

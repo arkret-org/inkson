@@ -16,7 +16,7 @@ fn seed_complete_rfc9420_projection(
     state.save_realm_tree_projection(
         realm,
         json!({
-            "content_scheme": "mls-rfc9420",
+            "content_scheme": "mls_rfc9420",
             "members_limited": false,
             "members": [{ "actor_id": actor, "membership": "join" }]
         }),
@@ -84,7 +84,7 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
     state.save_realm_tree_projection(
         realm,
         json!({
-            "content_scheme": "mls-rfc9420",
+            "content_scheme": "mls_rfc9420",
             "members_limited": false,
             "members": [{ "actor_id": actor, "membership": "join" }]
         }),
@@ -267,7 +267,7 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
     assert_eq!(state.mls_snapshot_for(realm).unwrap().epoch, 0);
 }
 
-/// §2.10 history sharing: authoring `mls-exporter-aead-v1` content MUST retain
+/// §2.10 history sharing: authoring `mls_exporter_aead_v1` content MUST retain
 /// the authoring epoch's `history_secret` locally. The author never decrypts
 /// its own ciphertext, so if the encrypt path does not retain here, the secret
 /// is lost once the epoch advances (forward secrecy) and
@@ -306,7 +306,7 @@ async fn authoring_exporter_aead_content_retains_history_secret() {
             summary: String::new(),
             discoverability: "restricted".to_owned(),
             encryption_profile: "mls_rfc9420".to_owned(),
-            content_scheme: "mls-exporter-aead-v1".to_owned(),
+            content_scheme: "mls_exporter_aead_v1".to_owned(),
             history_visibility: "shared".to_owned(),
             plaintext_visible_services: Vec::new(),
             encryption_floor: Some("e2ee_required".to_owned()),
@@ -342,7 +342,7 @@ async fn authoring_exporter_aead_content_retains_history_secret() {
         .expect("exporter-aead authoring must prepare history secret");
     assert_eq!(
         encrypted.2[0]["scheme"],
-        serde_json::Value::String("mls-exporter-aead-v1".to_owned())
+        serde_json::Value::String("mls_exporter_aead_v1".to_owned())
     );
     pending.persist(&secure).await.unwrap();
     state.publish_history_secrets(pending);
@@ -839,7 +839,7 @@ fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
         realm,
         json!({
             "active_profiles": [arkret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE],
-            "content_scheme": "mls-rfc9420",
+            "content_scheme": "mls_rfc9420",
             "members_limited": false,
             "members": [{ "actor_id": actor, "membership": "join" }]
         }),
@@ -1436,7 +1436,7 @@ async fn history_secrets_do_not_land_in_account_state_json() {
 #[tokio::test]
 async fn tier3_history_decrypt_reads_provider_exporter_aead_content() {
     // End-to-end tier-3: the provider (alice) encrypts content under the
-    // `mls-exporter-aead-v1` scheme and shares the epoch's `history_secret`;
+    // `mls_exporter_aead_v1` scheme and shares the epoch's `history_secret`;
     // bob installs it and `decrypt_application_payload` opens the pre-join
     // content the live receive ratchet cannot.
     let mut state = temp_state_store("history-share-tier3");

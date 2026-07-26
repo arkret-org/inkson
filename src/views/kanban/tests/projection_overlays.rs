@@ -8,7 +8,7 @@ use super::*;
 #[test]
 fn collection_projection_maps_to_kanban_columns() {
     use crate::state::projection_views::{
-        CollectionProjectionGroupView, CollectionProjectionView, ProjectionItemView,
+        CollectionProjectionGroupView, CollectionProjectionView, ProjectionRowView,
         StateFrontierView,
     };
     let projection = CollectionProjectionView {
@@ -28,7 +28,7 @@ fn collection_projection_maps_to_kanban_columns() {
                 title: "Review".to_owned(),
                 rank: Some("mV".to_owned()),
                 source: None,
-                items: vec![ProjectionItemView {
+                items: vec![ProjectionRowView {
                     object: serde_json::json!({
                         "id": "ak:strand:01d2b330-0000-7000-8000-000000000000",
                         "type": "strand",
@@ -102,7 +102,7 @@ fn collection_projection_maps_to_kanban_columns() {
 #[test]
 fn collection_projection_overlay_applies_remote_encrypted_strand_updates() {
     use crate::state::projection_views::{
-        CollectionProjectionGroupView, CollectionProjectionView, ProjectionItemView,
+        CollectionProjectionGroupView, CollectionProjectionView, ProjectionRowView,
         StateFrontierView,
     };
     let board_id = "ak:space:0196419b-0000-7000-8000-000000000001";
@@ -118,7 +118,7 @@ fn collection_projection_overlay_applies_remote_encrypted_strand_updates() {
             title: "Todo".to_owned(),
             rank: Some("U".to_owned()),
             source: None,
-            items: vec![ProjectionItemView {
+            items: vec![ProjectionRowView {
                 object: json!({
                     "id": strand_id,
                     "type": "strand",
@@ -140,7 +140,7 @@ fn collection_projection_overlay_applies_remote_encrypted_strand_updates() {
         stale: None,
     };
     let envelope = json!({
-        "scheme": "mls-rfc9420",
+        "scheme": "mls_rfc9420",
         "ciphertext": "AAAA",
         "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         "group_id": "g",
@@ -191,8 +191,8 @@ fn collection_projection_overlay_applies_remote_encrypted_strand_updates() {
 /// without a locked_strand.
 #[test]
 fn projection_item_without_discussion_renders_synthesis_only() {
-    use crate::state::projection_views::ProjectionItemView;
-    let item = ProjectionItemView {
+    use crate::state::projection_views::ProjectionRowView;
+    let item = ProjectionRowView {
         object: serde_json::json!({
             "id": "ak:strand:01doc",
             "title": "DID method allowlist",
@@ -517,7 +517,7 @@ fn remote_encrypted_strand_update_overlay_marks_private_fields_locked() {
         state: SpaceContainerLifecycleState::Active,
     }];
     let envelope = json!({
-        "scheme": "mls-rfc9420",
+        "scheme": "mls_rfc9420",
         "ciphertext": "AAAA",
         "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         "group_id": "g",

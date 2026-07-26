@@ -4,8 +4,8 @@ use super::types::{BackupClassCounts, BackupSummaryRow};
 
 pub(crate) fn parse_backup_summary(v: &serde_json::Value) -> Option<BackupSummaryRow> {
     let backup_id = v.get("backup_id")?.as_str()?.to_owned();
-    let backup_class = v
-        .get("backup_class")
+    let backup_kind = v
+        .get("backup_kind")
         .and_then(|c| c.as_str())
         .unwrap_or("")
         .to_owned();
@@ -16,7 +16,7 @@ pub(crate) fn parse_backup_summary(v: &serde_json::Value) -> Option<BackupSummar
         .to_owned();
     Some(BackupSummaryRow {
         backup_id,
-        backup_class,
+        backup_kind,
         created_at,
     })
 }
@@ -34,7 +34,7 @@ pub(crate) fn parse_backup_list(payload: &serde_json::Value) -> Vec<BackupSummar
 pub(crate) fn backup_class_counts(rows: &[BackupSummaryRow]) -> BackupClassCounts {
     let mut counts = BackupClassCounts::default();
     for row in rows {
-        match row.backup_class.as_str() {
+        match row.backup_kind.as_str() {
             "did_recovery" => counts.did_recovery += 1,
             "secret_storage" => counts.secret_storage += 1,
             "mls_history" => counts.mls_history += 1,

@@ -7,7 +7,7 @@ use arkret_sdk::signatures::agent_evidence::{
 };
 use arkret_sdk::signatures::{Ed25519DetachedJwsVerifier, PublicKeyMaterial};
 use arkret_sdk::{
-    AgentAuthorizationAdmission, AgentSignerEvidence, AgentSignerEvidenceQueryRequest,
+    AgentAuthorizationAdmission, AgentSignerEvidence, AgentSignerEvidenceQueryRequestBodyBody,
     AgentSignerEvidenceQuerySelector, Did, DidUrl, NotarySig, RealmId,
 };
 use serde_json::Value;
@@ -107,7 +107,7 @@ pub(crate) async fn prefetch_from_realm_projections(
                 event_accepted_frontier: Some(selector.admission.accepted_frontier.clone()),
             })
             .collect();
-        let request = AgentSignerEvidenceQueryRequest { realm_id, queries };
+        let request = AgentSignerEvidenceQueryRequestBodyBody { realm_id, queries };
         let mut outcome = None;
         for attempt in 0..4 {
             match http.agent_signer_evidence_query(&request).await {

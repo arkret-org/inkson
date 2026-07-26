@@ -294,7 +294,7 @@ fn did_recovery_public_key_backup_present(list_payload: &Value) -> bool {
         .into_iter()
         .flatten()
         .any(|backup| {
-            backup.get("backup_class").and_then(Value::as_str) == Some("did_recovery")
+            backup.get("backup_kind").and_then(Value::as_str) == Some("did_recovery")
                 && backup
                     .get("encryption")
                     .and_then(|encryption| encryption.get("recipient_method"))

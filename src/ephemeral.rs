@@ -177,7 +177,7 @@ pub fn build_receipt_read_envelope(
     let event = arkret_sdk::EventId::new(event_id.trim().to_owned())
         .map_err(|err| anyhow::anyhow!("invalid event_id for ak.receipt.read: {err}"))?;
     let receipt = arkret_sdk::ReadReceipt {
-        receipt_type: "read".to_owned(),
+        receipt_kind: "read".to_owned(),
         schema: arkret_sdk::READ_RECEIPT_SCHEMA.to_owned(),
         realm_id: realm.clone(),
         actor_id: actor.clone(),
@@ -275,8 +275,8 @@ fn bucket_presence_timestamp(ts: chrono::DateTime<chrono::Utc>) -> String {
 ///
 /// Wire-breaking vs. the round R2/R3 form: the payload shape moved from
 /// `{call_id, kind, payload}` to the canonical
-/// [`arkret_sdk::CallSignalPayload`] `{call_id, signal_type, seq, data}`
-/// where `signal_type` MUST be one of [`arkret_sdk::CALL_SIGNAL_TYPES`]
+/// [`arkret_sdk::CallSignalPayload`] `{call_id, signal_kind, seq, data}`
+/// where `signal_kind` MUST be one of [`arkret_sdk::CALL_SIGNAL_KINDS`]
 /// (13 values: `invite`, `answer`, `candidate`, `renegotiate`, `hangup`,
 /// `ack`, `reject`, `mute_state`, `media_state`, `speaking`, `focus_join`,
 /// `focus_leave`, `error`). `device_id` + `proof` are REQUIRED on the
@@ -294,7 +294,7 @@ pub fn build_call_signal_envelope_v1(
     actor_id: &str,
     device_id: &str,
     call_id: &str,
-    signal_type: &str,
+    signal_kind: &str,
     seq: u64,
     data: Value,
 ) -> anyhow::Result<arkret_sdk::EphemeralEnvelope> {
@@ -309,22 +309,22 @@ pub fn build_call_signal_envelope_v1(
     }
     let device = arkret_sdk::DeviceId::new(device_id)
         .map_err(|err| anyhow::anyhow!("invalid device_id for ak.call.signal: {err}"))?;
-    if !arkret_sdk::CALL_SIGNAL_TYPES.contains(&signal_type) {
-        anyhow::bail!("ak.call.signal signal_type {signal_type:?} not in canonical 13-value enum");
+    if !arkret_sdk::CALL_SIGNAL_KINDS.contains(&signal_kind) {
+        anyhow::bail!("ak.call.signal signal_kind {signal_kind:?} not in canonical 13-value enum");
     }
     let call = arkret_sdk::CallId::new(call_id)
         .map_err(|err| anyhow::anyhow!("invalid call_id for ak.call.signal: {err}"))?;
     let payload =
         arkret_sdk::CallSignalPayload {
             call_id: call,
-            signal_type: signal_type.to_owned(),
+            signal_kind: signal_kind.to_owned(),
             seq,
             data: Some(serde_json::from_value(data).map_err(|error| {
                 anyhow::anyhow!("ak.call.signal data must be an object: {error}")
             })?),
         };
     payload
-        .validate_signal_type()
+        .validate_signal_kind()
         .map_err(|err| anyhow::anyhow!("ak.call.signal payload rejected: {err}"))?;
     let proof = pending_ephemeral_proof(&actor, &device)?;
     arkret_sdk::EphemeralEnvelope::new(

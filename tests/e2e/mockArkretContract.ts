@@ -15,7 +15,7 @@ export function mockArkretContract(req) {
     return json({
       service_id: "did:web:server.local",
       trust_domain: "ak:trust_domain:server.local",
-      service_type: "principal_server",
+      service_kind: "principal_server",
       protocol_version: "1.0",
       supported_profiles: [
         "ak.profile.minimal_client.v1",
@@ -85,7 +85,7 @@ export function mockArkretContract(req) {
     return json({
       service_id: "did:web:server.local",
       trust_domain: "ak:trust_domain:server.local",
-      service_type: "directory_service",
+      service_kind: "directory_service",
       protocol_version: "1.0",
       supported_profiles: ["ak.profile.directory_service.v1"],
       supported_operations: ["ak.find.directory.query.describe"],
@@ -101,7 +101,7 @@ export function mockArkretContract(req) {
       experimental_features: [],
       compat_surfaces: [],
       development_mode: false,
-      resource_types: ["realm", "organization", "actor"],
+      resource_kinds: ["realm", "organization", "actor"],
       discovery_profiles: ["ak.profile.directory_service.v1"],
       restricted_query_proof: false,
       ingest_modes: ["push"],
@@ -124,10 +124,10 @@ export function mockArkretContract(req) {
 
   if (method === "GET" && path === "/_arkret/self/keys/backups") {
     const backups = [];
-    const backupClass = query.backup_class;
+    const backupClass = query.backup_kind;
     return json({
       backups: backupClass
-        ? backups.filter((backup) => backup.backup_class === backupClass)
+        ? backups.filter((backup) => backup.backup_kind === backupClass)
         : backups,
       has_more: false,
     });

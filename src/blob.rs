@@ -75,10 +75,10 @@ impl EncryptedClientAsset {
     }
 
     #[cfg(test)]
-    fn segment_size(&self) -> Option<u64> {
+    fn segment_bytes(&self) -> Option<u64> {
         match &self.envelope {
             EncryptedAttachment::WholeFile(_) => None,
-            EncryptedAttachment::Stream(envelope) => Some(envelope.segment_size),
+            EncryptedAttachment::Stream(envelope) => Some(envelope.segment_bytes),
         }
     }
 
@@ -149,7 +149,7 @@ fn encrypt_asset(
                 key_ref: key_ref.clone(),
                 epoch,
                 media_type: media_type.to_owned(),
-                segment_size: DEFAULT_SEGMENT_SIZE,
+                segment_bytes: DEFAULT_SEGMENT_SIZE,
             };
             blob_aead::encrypt_stream(plaintext, content_key, &params)
                 .map_err(|err| anyhow::anyhow!("stream attachment encrypt: {err}"))?
@@ -326,7 +326,7 @@ mod tests {
         let asset = encrypt_mls_asset(&plaintext, &key, 9, test_key_ref(), "video/mp4").unwrap();
 
         assert_eq!(asset.scheme(), SCHEME_STREAM);
-        assert_eq!(asset.segment_size(), Some(u64::from(DEFAULT_SEGMENT_SIZE)));
+        assert_eq!(asset.segment_bytes(), Some(u64::from(DEFAULT_SEGMENT_SIZE)));
         assert!(asset.segment_count().unwrap() >= 2);
         assert_eq!(asset.blob_ref(), blob_typed_id(&asset.ciphertext));
 

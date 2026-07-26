@@ -905,7 +905,7 @@ fn save_direct_conversation_realm_projection(
             summary: String::new(),
             discoverability: "invite_only".to_owned(),
             encryption_profile: "mls_rfc9420".to_owned(),
-            content_scheme: "mls-rfc9420".to_owned(),
+            content_scheme: "mls_rfc9420".to_owned(),
             history_visibility: "joined".to_owned(),
             plaintext_visible_services: Vec::new(),
             encryption_floor: Some(
@@ -986,7 +986,7 @@ async fn sign_peer_keypackage_claim_authorization(
         timeout_ms: request.timeout_ms,
         strand_id: request.strand_id.clone(),
         pair_key: request.pair_key.clone(),
-        allow_last_resort: request.allow_last_resort,
+        last_resort_allowed: request.last_resort_allowed,
         requester_authorization: authorization,
         requester_signing_key_evidence: None,
     };

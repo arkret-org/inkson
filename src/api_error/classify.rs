@@ -145,7 +145,7 @@ pub fn is_actor_seq_cas_conflict_error(error: &anyhow::Error) -> bool {
 /// proves that the submitted immutable Event was not accepted.
 pub fn actor_seq_cas_conflict_details(
     error: &anyhow::Error,
-) -> Option<arkret_sdk::EventsActorCasConflictDetails> {
+) -> Option<arkret_sdk::EventsActorCasConflictProblem> {
     api_error_status_and_envelope(error)
         .is_some_and(|(status, envelope)| {
             status == StatusCode::CONFLICT
@@ -160,7 +160,7 @@ pub fn actor_seq_cas_conflict_details(
             )
             .ok()
             .and_then(|value| serde_json::from_value(value).ok())
-            .filter(|details: &arkret_sdk::EventsActorCasConflictDetails| {
+            .filter(|details: &arkret_sdk::EventsActorCasConflictProblem| {
                 details.validate().is_ok()
             })
         })?

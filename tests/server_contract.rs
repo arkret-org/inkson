@@ -95,7 +95,7 @@ fn inkson_accepts_server_contract_payloads() {
     let describe = parse_server_description(json!({
         "service_id": "did:web:server.local",
         "trust_domain": "ak:trust_domain:server.local",
-        "service_type": "principal_server",
+        "service_kind": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": ["ak.schema.core.v1"],
         "supported_features": [
@@ -141,8 +141,8 @@ fn inkson_accepts_server_contract_payloads() {
     }))
     .unwrap();
     assert_eq!(
-        describe.service_type,
-        arkret_sdk::ServiceType::PrincipalServer
+        describe.service_kind,
+        arkret_sdk::ServiceKind::PrincipalServer
     );
     assert!(
         describe
@@ -181,7 +181,7 @@ fn inkson_accepts_server_contract_payloads() {
     let sync_describe: arkret_sdk::ServiceDescribe = serde_json::from_value(json!({
         "service_id": "did:web:server.local",
         "trust_domain": "ak:trust_domain:server.local",
-        "service_type": "principal_server",
+        "service_kind": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": ["ak.profile.minimal_client.v1"],
         "supported_features": [],
@@ -227,7 +227,7 @@ fn inkson_accepts_server_contract_payloads() {
     let directory: inkson::models::ServiceDescribe = serde_json::from_value(json!({
         "service_id": "did:web:server.local",
         "trust_domain": "ak:trust_domain:server.local",
-        "service_type": "directory_service",
+        "service_kind": "directory_service",
         "protocol_version": "1.0",
         "supported_profiles": ["ak.profile.directory_service.v1"],
         "supported_operations": ["ak.find.directory.query.describe"],
@@ -243,7 +243,7 @@ fn inkson_accepts_server_contract_payloads() {
         "experimental_features": [],
         "compat_surfaces": [],
         "development_mode": false,
-        "resource_types": ["realm", "organization", "actor"],
+        "resource_kinds": ["realm", "organization", "actor"],
         "discovery_profiles": ["ak.profile.directory_service.v1"],
         "restricted_query_proof": false,
         "ingest_modes": ["push"],
@@ -278,7 +278,7 @@ fn inkson_accepts_server_contract_payloads() {
         "join_candidates": [{
             "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
             "service_id": "did:web:server.local",
-            "service_type": "principal_server",
+            "service_kind": "principal_server",
             "role": "primary",
             "endpoint": "http://server",
             "operations": ["ak.self.events.command.submit"],
@@ -493,7 +493,7 @@ fn server_description_gates_event_envelope_write_plane() {
     let events_ready = parse_server_description(json!({
         "service_id": "did:web:soland.local",
         "trust_domain": "ak:trust_domain:soland.local",
-        "service_type": "principal_server",
+        "service_kind": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": [
             "ak.profile.core_event_store.v1",
@@ -531,7 +531,7 @@ fn server_description_gates_event_envelope_write_plane() {
     let described_with_external_compat_surface = parse_server_description(json!({
         "service_id": "did:web:local.host",
         "trust_domain": "ak:trust_domain:local.host",
-        "service_type": "principal_server",
+        "service_kind": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": [
             "ak.profile.core_event_store.v1",
@@ -571,7 +571,7 @@ fn server_description_gates_event_envelope_write_plane() {
     assert!(
         parse_server_description(json!({
             "service_id": "did:web:minimal.local",
-            "service_type": "principal_server",
+            "service_kind": "principal_server",
             "protocol_version": "1.0",
             "supported_profiles": [],
             "supported_operations": ["ak.self.account.stream.subscribe"],
@@ -585,7 +585,7 @@ fn server_description_gates_event_envelope_write_plane() {
     let events_missing = parse_server_description(json!({
         "service_id": "did:web:minimal.local",
         "trust_domain": "ak:trust_domain:minimal.local",
-        "service_type": "principal_server",
+        "service_kind": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": [],
         "supported_operations": ["ak.self.account.stream.subscribe"],
@@ -838,7 +838,7 @@ fn inkson_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
             br#"{"content":{"kind":"ak.content.text","body":"hello via MLS"}}"#,
         )
         .unwrap();
-    assert_eq!(encrypted.payload.scheme.as_str(), "mls-rfc9420");
+    assert_eq!(encrypted.payload.scheme.as_str(), "mls_rfc9420");
     assert_eq!(
         encrypted.payload.content_type,
         "application/vnd.arkret.message+json"

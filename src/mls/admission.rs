@@ -243,7 +243,7 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
 
 /// Build a `ak.realm_key.share` event carrying a HPKE-sealed bundle of
 /// retained `history_secret`s so `recipient` can decrypt pre-join
-/// `mls-exporter-aead-v1` content (`encryption-and-audit.md` history sharing).
+/// `mls_exporter_aead_v1` content (`encryption-and-audit.md` history sharing).
 ///
 /// `sealed_ciphertext` is the `base64url(eph_pub || ct)` blob produced by
 /// [`crate::mls::secret_share::seal_history_secret_to_device_pubkey`] for the
@@ -301,7 +301,7 @@ pub(crate) fn build_realm_key_share_event(
         history_visibility: None,
     };
     let mut payload = arkret_sdk::RealmKeySharePayload {
-        share_class: arkret_sdk::RealmKeyShareClass::MemberDevice,
+        share_kind: arkret_sdk::RealmKeyShareClass::MemberDevice,
         recipient_principal_id: recipient_did,
         target: arkret_sdk::RealmKeyShareTarget::MemberDevice {
             recipient_device_id: arkret_sdk::DeviceId::new(recipient_device_id.trim().to_owned())

@@ -17,7 +17,7 @@ const PCR_RECOVERY_PROJECTION_WAIT_ATTEMPTS: usize = 18;
 const ACTIVE_SERIES_SIGNED_FIELDS: &[&str] = &[
     "schema",
     "actor_id",
-    "backup_class",
+    "backup_kind",
     "active_series_id",
     "series_pointer_version",
     "previous_series_ids",
@@ -205,7 +205,7 @@ async fn current_mls_history_active_series(
         )
         .map_err(|error| anyhow::anyhow!("accepted active-series Event is invalid: {error}"))?;
         if record.actor_id.as_str() != controller_id
-            || record.backup_class != crate::key_backup::BackupClass::MlsHistory
+            || record.backup_kind != crate::key_backup::BackupKind::MlsHistory
         {
             continue;
         }
@@ -292,7 +292,7 @@ async fn resolve_mls_history_series_target(
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter(|body| body.get("backup_class").and_then(Value::as_str) == Some("mls_history"))
+        .filter(|body| body.get("backup_kind").and_then(Value::as_str) == Some("mls_history"))
         .collect::<Vec<_>>();
     let known_series_ids = mls_backups
         .iter()
@@ -492,7 +492,7 @@ fn build_managed_pcr_backup_body(
         .iter()
         .map(|item| {
             let mut plaintext_item = json!({
-                "item_type": "mls_group_state",
+                "item_kind": "mls_group_state",
                 "secret_id": "inkson_managed_agent_pcr_snapshot",
                 "secret_b64u": B64.encode(&item.state_bytes),
                 "realm_id": item.snapshot.realm_id,
@@ -508,7 +508,7 @@ fn build_managed_pcr_backup_body(
     let plaintext = json!({
         "schema": crate::key_backup::KEY_BACKUP_PLAINTEXT_SCHEMA,
         "backup_id": backup_id,
-        "backup_class": "mls_history",
+        "backup_kind": "mls_history",
         "series_id": series_id,
         "series_seq": series_seq,
         "items": plaintext_items
@@ -518,7 +518,7 @@ fn build_managed_pcr_backup_body(
         .iter()
         .map(|item| {
             Ok(KeyBackupContentItem {
-                item_type: "mls_group_state".to_owned(),
+                item_kind: "mls_group_state".to_owned(),
                 realm_id: Some(arkret_sdk::RealmId::new(item.snapshot.realm_id.clone())?),
                 managed_principal_binding: item.binding.clone(),
                 mls_group_id: Some(item.snapshot.group_id.clone()),
@@ -533,7 +533,7 @@ fn build_managed_pcr_backup_body(
         device_id,
         recovery_public_key,
         recovery_key_ref,
-        crate::key_backup::BackupClass::MlsHistory,
+        crate::key_backup::BackupKind::MlsHistory,
         "managed_agent_pcr",
         &contents,
         &plaintext_bytes,
@@ -634,7 +634,7 @@ fn build_active_mls_history_series_event(
     let mut payload = json!({
         "schema": crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA,
         "actor_id": controller_id,
-        "backup_class": "mls_history",
+        "backup_kind": "mls_history",
         "active_series_id": series_id,
         "series_pointer_version": pointer_version,
         "previous_series_ids": previous_series_ids,
@@ -1861,12 +1861,12 @@ mod tests {
             "active_series": [
                 {
                     "schema": crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA,
-                    "backup_class": "secret_storage",
+                    "backup_kind": "secret_storage",
                     "active_series_id": account_series_id
                 },
                 {
                     "schema": crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA,
-                    "backup_class": "mls_history",
+                    "backup_kind": "mls_history",
                     "active_series_id": history_series_id
                 }
             ],

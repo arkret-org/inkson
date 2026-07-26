@@ -265,12 +265,12 @@ pub fn build_realm_bootstrap_events(
     events.push(delivery_binding_policy_event);
 
     use arkret_sdk::{
-        BindingScope, BindingSource, DeliveryMode, MemberDeliveryBinding, RecipientServiceType,
+        BindingScope, BindingSource, DeliveryMode, MemberDeliveryBinding, RecipientServiceKind,
     };
     let creator_delivery_binding = MemberDeliveryBinding {
         recipient_service_id: arkret_sdk::Did::new(notary_did.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid creator service DID: {err}"))?,
-        recipient_service_type: RecipientServiceType::PrincipalServer,
+        recipient_service_kind: RecipientServiceKind::PrincipalServer,
         binding_scope: BindingScope::Realm,
         binding_source: BindingSource::RealmPolicy,
         delivery_modes: [
@@ -336,7 +336,7 @@ pub(crate) fn recommended_history_sharing_policy_for_visibility(
     Some(json!({
         "version": 1,
         "default_key_share": "event_time_visibility",
-        "pre_join_history": "allow_if_visibility_allows",
+        "pre_join_history": "visibility_condition_allowed",
         "allowed_key_sources": ["verified_member_device"],
         "allowed_receiver_states": ["active_member"],
         "audit": {
@@ -401,12 +401,12 @@ pub fn build_realm_create_event(
         "created_at": payload_timestamp_wire(created_at_for_object),
     });
     // §2.10 content scheme (capability axis): MLS-backed realms default to the
-    // history-shareable `mls-exporter-aead-v1` scheme so a late joiner CAN be
+    // history-shareable `mls_exporter_aead_v1` scheme so a late joiner CAN be
     // granted pre-join content (forward secrecy degrades to per-epoch, §2.10.5).
     // Orthogonal to `history_visibility` (the runtime delivery toggle); plaintext
     // realms carry no content scheme. An extreme-confidentiality realm may
-    // instead pin `mls-rfc9420` (per-message FS, history structurally
-    // unshareable) by passing `content_scheme=Some("mls-rfc9420")` — see
+    // instead pin `mls_rfc9420` (per-message FS, history structurally
+    // unshareable) by passing `content_scheme=Some("mls_rfc9420")` — see
     // [[content-scheme-capability-vs-toggle]].
     if encryption_profile.trim() == RECOMMENDED_REALM_ENCRYPTION_PROFILE {
         // Informational declaration on the realm object; soland's *authoritative*
@@ -494,7 +494,7 @@ pub fn build_managed_agent_pcr_create_event(
         trust_domain,
         &[],
         None,
-        Some("mls-rfc9420"),
+        Some("mls_rfc9420"),
     )?;
 
     let patch_object = |object: &mut Value| {
@@ -567,12 +567,12 @@ pub fn encryption_profile_uses_recommended_floor(profile: &str) -> bool {
 
 /// Resolve the effective §2.10 content scheme (capability axis) from the
 /// optional caller selection: `None` or any history-capable choice ⇒ the
-/// history-shareable `mls-exporter-aead-v1` default; an explicit `mls-rfc9420`
+/// history-shareable `mls_exporter_aead_v1` default; an explicit `mls_rfc9420`
 /// pins the forward-secret-only scheme. See [[content-scheme-capability-vs-toggle]].
 pub fn resolve_realm_content_scheme(content_scheme: Option<&str>) -> &'static str {
     match content_scheme.map(str::trim) {
-        Some("mls-rfc9420") => "mls-rfc9420",
-        _ => "mls-exporter-aead-v1",
+        Some("mls_rfc9420") => "mls_rfc9420",
+        _ => "mls_exporter_aead_v1",
     }
 }
 

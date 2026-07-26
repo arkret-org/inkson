@@ -249,7 +249,7 @@ pub fn build_key_backup_unlock_proof_active(
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active signer is required for key backup unlock proof"))?;
     let backup_id = required_str_anyhow(backup, "backup_id")?;
-    let backup_class = required_str_anyhow(backup, "backup_class")?;
+    let backup_kind = required_str_anyhow(backup, "backup_kind")?;
     let series_id = required_str_anyhow(backup, "series_id")?;
     let ciphertext_digest = required_str_anyhow(backup, "ciphertext_digest")?;
     let issued_at = arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now());
@@ -280,7 +280,7 @@ pub fn build_key_backup_unlock_proof_active(
             "principal_id": principal_id,
             "requesting_device_id": requesting_device_id,
             "backup_id": backup_id,
-            "backup_class": backup_class,
+            "backup_kind": backup_kind,
             "series_id": series_id,
             "ciphertext_digest": ciphertext_digest,
             "issued_at": issued_at,
@@ -293,7 +293,7 @@ pub fn build_key_backup_unlock_proof_active(
         "principal_id",
         "requesting_device_id",
         "backup_id",
-        "backup_class",
+        "backup_kind",
         "series_id",
         "ciphertext_digest",
         "proof_kind",
@@ -306,7 +306,7 @@ pub fn build_key_backup_unlock_proof_active(
         "principal_id": principal_id,
         "requesting_device_id": requesting_device_id,
         "backup_id": backup_id,
-        "backup_class": backup_class,
+        "backup_kind": backup_kind,
         "series_id": series_id,
         "ciphertext_digest": ciphertext_digest,
         "proof_kind": proof_kind,
@@ -397,11 +397,11 @@ fn unlocked_key_backup_cache_key(
 ) -> anyhow::Result<String> {
     let endpoint = api.endpoint("_arkret/self/keys/backups")?;
     let backup_id = required_str_anyhow(backup_metadata, "backup_id")?;
-    let backup_class = required_str_anyhow(backup_metadata, "backup_class")?;
+    let backup_kind = required_str_anyhow(backup_metadata, "backup_kind")?;
     let series_id = required_str_anyhow(backup_metadata, "series_id")?;
     let ciphertext_digest = required_str_anyhow(backup_metadata, "ciphertext_digest")?;
     Ok(format!(
-        "{}|principal={}|device={}|backup={backup_id}|class={backup_class}|series={series_id}|digest={ciphertext_digest}",
+        "{}|principal={}|device={}|backup={backup_id}|class={backup_kind}|series={series_id}|digest={ciphertext_digest}",
         endpoint.as_str(),
         principal_id.trim(),
         requesting_device_id.trim()
@@ -464,7 +464,7 @@ mod tests {
         let _ = replace_active_signer(Some(signer));
         let backup = json!({
             "backup_id": "ak:backup:0196419b-0000-7000-8000-000000000001",
-            "backup_class": "mls_history",
+            "backup_kind": "mls_history",
             "series_id": "ak:backup_series:0196419b-0000-7000-8000-000000000002",
             "ciphertext_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         });

@@ -41,7 +41,7 @@ pub fn durability_mode_label(policy: &DurabilityPolicy) -> Option<&'static str> 
 
 /// True when the durability policy is effective (`mode != none`). The §2.10.8
 /// sealing + disclosure obligations only apply when this holds AND the Realm uses
-/// `content_scheme=mls-exporter-aead-v1` (the caller checks the scheme).
+/// `content_scheme=mls_exporter_aead_v1` (the caller checks the scheme).
 pub fn durability_is_effective(policy: &DurabilityPolicy) -> bool {
     !matches!(policy.mode, DurabilityMode::None)
 }
@@ -163,7 +163,7 @@ pub fn seal_history_secrets(
         history_visibility: None,
     };
     Ok(arkret_sdk::RealmKeySharePayload {
-        share_class: arkret_sdk::RealmKeyShareClass::RealmRecoveryKey,
+        share_kind: arkret_sdk::RealmKeyShareClass::RealmRecoveryKey,
         recipient_principal_id: recovery_key.principal_id.clone(),
         target: arkret_sdk::RealmKeyShareTarget::RealmRecoveryKey {
             recipient_verification_method: arkret_sdk::DidUrl::new(

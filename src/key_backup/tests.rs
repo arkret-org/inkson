@@ -32,10 +32,10 @@ fn build_recovery_vault_backup_body(
         device_id,
         root,
         plaintext,
-        BackupClass::SecretStorage,
+        BackupKind::SecretStorage,
         "recovery_vault",
         &KeyBackupContentItem {
-            item_type: "recovery_secret".to_owned(),
+            item_kind: "recovery_secret".to_owned(),
             secret_id: Some("inkson_recovery_vault_payload".to_owned()),
             ..Default::default()
         },
@@ -72,10 +72,10 @@ fn managed_agent_pcr_binding_is_bound_into_hpke_aad() {
         DEVICE,
         &recovery_public_key,
         "did:web:alice.example#recovery",
-        BackupClass::MlsHistory,
+        BackupKind::MlsHistory,
         "managed_agent_pcr",
         &KeyBackupContentItem {
-            item_type: "mls_group_state".to_owned(),
+            item_kind: "mls_group_state".to_owned(),
             realm_id: Some(binding.principal_control_realm_id.clone()),
             managed_principal_binding: Some(binding.clone()),
             mls_group_id: Some("YWdlbnQtcGNy".to_owned()),
@@ -98,7 +98,7 @@ fn build_recovery_vault_backup_body_seals_per_spec() {
     let root = test_root();
     let body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"vault payload")
         .unwrap();
-    assert_eq!(body["backup_class"], "secret_storage");
+    assert_eq!(body["backup_kind"], "secret_storage");
     assert!(
         body["series_id"]
             .as_str()
@@ -132,7 +132,7 @@ fn build_recovery_vault_backup_body_seals_per_spec() {
     assert!(is_sha_digest(
         body["encryption"]["key_commitment"].as_str().unwrap()
     ));
-    assert_eq!(body["contents"][0]["item_type"], "recovery_secret");
+    assert_eq!(body["contents"][0]["item_kind"], "recovery_secret");
     assert!(is_base64url_token(body["ciphertext"].as_str().unwrap()));
     assert_eq!(body["device_id"], DEVICE);
     assert_eq!(
@@ -289,9 +289,9 @@ fn key_backup_auth_data_rejects_tamper_and_wrong_key() {
     .unwrap();
 
     // Tamper a signed field (ciphertext is covered via ciphertext_digest, but
-    // mutate backup_class which is in signed_fields) → verify fails.
+    // mutate backup_kind which is in signed_fields) → verify fails.
     let mut tampered = body.clone();
-    tampered["backup_class"] = json!("did_recovery");
+    tampered["backup_kind"] = json!("did_recovery");
     assert!(verify_key_backup_auth_data(&tampered, &signing_key.verifying_key()).is_err());
 
     // Wrong verifying key → fails.
@@ -360,7 +360,7 @@ fn did_recovery_backup_uses_separate_domain_and_hpke() {
     )
     .unwrap();
 
-    assert_eq!(body["backup_class"], "did_recovery");
+    assert_eq!(body["backup_kind"], "did_recovery");
     assert_eq!(
         body["encryption"]["recipient_method"],
         "recovery_public_key"
@@ -377,12 +377,12 @@ fn did_recovery_backup_uses_separate_domain_and_hpke() {
             .is_some_and(is_protocol_backup_series_id)
     );
     assert_eq!(body["series_seq"], 0);
-    assert_eq!(body["contents"][0]["item_type"], "recovery_key_share");
+    assert_eq!(body["contents"][0]["item_kind"], "recovery_key_share");
     assert_eq!(
         body["domain_separation"]["hkdf_info"],
         "arkret-key-backup/did_recovery/recovery_policy/v1"
     );
-    validate_key_backup_envelope(&body, Some(BackupClass::DidRecovery))
+    validate_key_backup_envelope(&body, Some(BackupKind::DidRecovery))
         .expect("did_recovery HPKE envelope should validate");
     // Round-trips with the recovery private key.
     assert_eq!(
@@ -396,10 +396,10 @@ fn did_recovery_passphrase_kdf_is_rejected() {
     // Spec §5.0.1 first-backup gate: passphrase_kdf-only did_recovery forbidden.
     let root = test_root();
     let mut body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();
-    body["backup_class"] = json!("did_recovery");
-    body["contents"][0]["item_type"] = json!("recovery_key_share");
-    attach_key_backup_domain_separation(&mut body, BackupClass::DidRecovery, "recovery_policy");
-    let err = validate_key_backup_envelope(&body, Some(BackupClass::DidRecovery))
+    body["backup_kind"] = json!("did_recovery");
+    body["contents"][0]["item_kind"] = json!("recovery_key_share");
+    attach_key_backup_domain_separation(&mut body, BackupKind::DidRecovery, "recovery_policy");
+    let err = validate_key_backup_envelope(&body, Some(BackupKind::DidRecovery))
         .expect_err("passphrase_kdf did_recovery must be rejected");
     assert!(err.contains("did_recovery"), "{err}");
 }
@@ -408,10 +408,10 @@ fn did_recovery_passphrase_kdf_is_rejected() {
 fn key_backup_validator_rejects_cross_domain_item_mix() {
     let root = test_root();
     let mut body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();
-    body["contents"][0]["item_type"] = json!("mls_group_state");
-    attach_key_backup_domain_separation(&mut body, BackupClass::SecretStorage, "recovery_vault");
+    body["contents"][0]["item_kind"] = json!("mls_group_state");
+    attach_key_backup_domain_separation(&mut body, BackupKind::SecretStorage, "recovery_vault");
 
-    let err = validate_key_backup_envelope(&body, Some(BackupClass::SecretStorage))
+    let err = validate_key_backup_envelope(&body, Some(BackupKind::SecretStorage))
         .expect_err("secret_storage must not carry MLS history items");
     assert!(err.contains("not allowed"));
 }
@@ -424,7 +424,7 @@ fn key_backup_validator_rejects_recipient_method_aad_mismatch() {
     let root = test_root();
     let mut body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();
     // Sanity: as-built (passphrase_kdf) it validates and its AAD pins the method.
-    validate_key_backup_envelope(&body, Some(BackupClass::SecretStorage))
+    validate_key_backup_envelope(&body, Some(BackupKind::SecretStorage))
         .expect("freshly built recovery vault backup validates");
     assert_eq!(
         body["domain_separation"]["aead_aad"]["recipient_method"],
@@ -434,7 +434,7 @@ fn key_backup_validator_rejects_recipient_method_aad_mismatch() {
     // Tamper the AAD's recipient_method so it disagrees with
     // encryption.recipient_method → the SEC-04 cross-check must reject it.
     body["domain_separation"]["aead_aad"]["recipient_method"] = json!("recovery_public_key");
-    let err = validate_key_backup_envelope(&body, Some(BackupClass::SecretStorage))
+    let err = validate_key_backup_envelope(&body, Some(BackupKind::SecretStorage))
         .expect_err("recipient_method/AAD mismatch must be rejected");
     assert!(err.contains("recipient_method"), "{err}");
 }
@@ -445,7 +445,7 @@ fn key_backup_validator_rejects_missing_domain_separation() {
     let mut body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();
     body.as_object_mut().unwrap().remove("domain_separation");
 
-    let err = validate_key_backup_envelope(&body, Some(BackupClass::SecretStorage))
+    let err = validate_key_backup_envelope(&body, Some(BackupKind::SecretStorage))
         .expect_err("domain separation metadata is required");
     assert!(err.contains("domain_separation"));
 }
@@ -456,7 +456,7 @@ fn key_backup_validator_rejects_missing_series_fields() {
     let mut body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();
     body.as_object_mut().unwrap().remove("series_id");
 
-    let err = validate_key_backup_envelope(&body, Some(BackupClass::SecretStorage))
+    let err = validate_key_backup_envelope(&body, Some(BackupKind::SecretStorage))
         .expect_err("series_id is mandatory");
     assert!(err.contains("series_id"));
 }
@@ -465,11 +465,11 @@ fn key_backup_validator_rejects_missing_series_fields() {
 fn mls_history_rejects_passphrase_kdf() {
     let root = test_root();
     let mut body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();
-    body["backup_class"] = json!("mls_history");
-    body["contents"][0]["item_type"] = json!("mls_group_state");
-    attach_key_backup_domain_separation(&mut body, BackupClass::MlsHistory, "mls_snapshot");
+    body["backup_kind"] = json!("mls_history");
+    body["contents"][0]["item_kind"] = json!("mls_group_state");
+    attach_key_backup_domain_separation(&mut body, BackupKind::MlsHistory, "mls_snapshot");
 
-    let err = validate_key_backup_envelope(&body, Some(BackupClass::MlsHistory))
+    let err = validate_key_backup_envelope(&body, Some(BackupKind::MlsHistory))
         .expect_err("MLS history passphrase KDF backup must be rejected");
     assert!(err.contains("secret_storage_key"));
 }
@@ -497,7 +497,7 @@ fn mls_history_accepts_secret_storage_key() {
         body["encryption"]["recipient_key_ref"],
         "mls_group_secrets_backup_key"
     );
-    validate_key_backup_envelope(&body, Some(BackupClass::MlsHistory))
+    validate_key_backup_envelope(&body, Some(BackupKind::MlsHistory))
         .expect("mls_history secret_storage_key envelope should validate");
 }
 
@@ -510,10 +510,10 @@ fn recovery_public_key_backup_round_trips_and_validates() {
         DEVICE,
         &pk,
         "did:web:alice.example#recovery",
-        BackupClass::MlsHistory,
+        BackupKind::MlsHistory,
         "mls_snapshot",
         &KeyBackupContentItem {
-            item_type: "mls_group_state".to_owned(),
+            item_kind: "mls_group_state".to_owned(),
             secret_id: Some("inkson_mls_snapshot".to_owned()),
             ..Default::default()
         },
@@ -534,7 +534,7 @@ fn recovery_public_key_backup_round_trips_and_validates() {
         body["encryption"]["aead"]["enc"].as_str().unwrap()
     ));
     assert!(body["encryption"]["aead"].get("nonce").is_none());
-    validate_key_backup_envelope(&body, Some(BackupClass::MlsHistory))
+    validate_key_backup_envelope(&body, Some(BackupKind::MlsHistory))
         .expect("recovery_public_key mls_history envelope should validate");
 
     // The recovery private key opens it (the fresh-device restore path);
@@ -565,7 +565,7 @@ fn mls_history_rejects_obvious_plaintext_fields() {
         .unwrap();
     body["serialized_state"] = json!("plaintext sdk bytes");
 
-    let err = validate_key_backup_envelope(&body, Some(BackupClass::MlsHistory))
+    let err = validate_key_backup_envelope(&body, Some(BackupKind::MlsHistory))
         .expect_err("MLS history backups must stay opaque");
     assert!(err.contains("plaintext field"));
 }
@@ -580,7 +580,7 @@ fn key_backup_validator_rejects_weak_argon2id() {
     body["encryption"]["kdf"]["params"]["memory_kib"] = json!(1);
     body["encryption"]["kdf"]["params"]["iterations"] = json!(1);
 
-    let err = validate_key_backup_envelope(&body, Some(BackupClass::SecretStorage))
+    let err = validate_key_backup_envelope(&body, Some(BackupKind::SecretStorage))
         .expect_err("weak KDF parameters must be rejected");
     assert!(err.contains("argon2id"));
 }

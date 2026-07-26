@@ -1439,7 +1439,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     // G3.Y2 — keep online sends and offline
                                     // replay on the same E2EE-safe notification
                                     // routing path.
-                                    apply_mention_sidecar_hashes(&mut op, &realm, &mentions);
+                                    apply_mention_sidecar_digestes(&mut op, &realm, &mentions);
                                     let mention_values_for_store = mention_nodes_to_values(&mentions);
                                     match submit_chat_operation_with_auth_refresh(
                                         &base,

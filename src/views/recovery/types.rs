@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BackupSummaryRow {
     pub(crate) backup_id: String,
-    pub(crate) backup_class: String,
+    pub(crate) backup_kind: String,
     pub(crate) created_at: String,
 }
 

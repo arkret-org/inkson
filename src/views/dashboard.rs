@@ -540,7 +540,7 @@ pub fn DashboardPanel(
                                                 |api| async move {
                                                     let mut rows = Vec::new();
                                                     match api.describe().await {
-                                                        Ok(d) => rows.push(("Describe".to_owned(), format!("{} v{}", d.service_type, d.protocol_version))),
+                                                        Ok(d) => rows.push(("Describe".to_owned(), format!("{} v{}", d.service_kind, d.protocol_version))),
                                                         Err(e) => rows.push(("Describe".to_owned(), format!("Error: {e}"))),
                                                     }
                                                     match async { crate::transport::account::sync_describe(&api.sdk_http_client()?).await }.await {
@@ -615,7 +615,7 @@ fn dashboard_notification_summaries(
             }
             let kind = value_string(
                 value,
-                &["notification_type", "notification_kind", "type", "kind"],
+                &["notification_kind", "notification_kind", "type", "kind"],
             )
             .unwrap_or_else(|| "message".to_owned());
             Some(DashboardNotificationSummary {

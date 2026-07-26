@@ -881,16 +881,16 @@ fn mls_recovery_setup_missing_stays_false_when_account_backup_exists() {
         "active_series": [{
             "schema": crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA,
             "actor_id": "did:web:alice.example",
-            "backup_class": "secret_storage",
+            "backup_kind": "secret_storage",
             "active_series_id": "ak:backup_series:01964137-1000-7000-8000-0000000000a1",
         }],
         "backups": [{
             "backup_id": "ak:backup:passphrase",
-            "backup_class": "secret_storage",
+            "backup_kind": "secret_storage",
             "series_id": "ak:backup_series:01964137-1000-7000-8000-0000000000a1",
             "encryption": { "recipient_method": "passphrase_kdf" },
             "contents": [{
-                "item_type": crate::mls::account_recovery::MLS_ACCOUNT_SECRET_ITEM_TYPE,
+                "item_kind": crate::mls::account_recovery::MLS_ACCOUNT_SECRET_ITEM_KIND,
                 "secret_id": crate::mls::account_recovery::MLS_ACCOUNT_SECRET_SECRET_ID,
             }],
         }]
@@ -957,7 +957,7 @@ fn mls_recovery_setup_missing_stays_false_for_local_recovery_key_and_did_backup(
     let payload = serde_json::json!({
         "backups": [{
             "backup_id": "ak:backup:did-recovery",
-            "backup_class": "did_recovery",
+            "backup_kind": "did_recovery",
             "encryption": { "recipient_method": "recovery_public_key" },
         }]
     });

@@ -749,32 +749,32 @@ fn file_transfer_item_from_account_data(
     entry: &Value,
     crypto: &FileTransferCryptoContext,
 ) -> anyhow::Result<FileTransferItem> {
-    let data_type = entry
-        .get("data_type")
+    let account_data_key = entry
+        .get("account_data_key")
         .or_else(|| entry.get("type"))
         .and_then(Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("account_data entry missing data_type"))?;
-    if !data_type
-        .strip_prefix(arkret_sdk::ACCOUNT_DATA_TYPE_FILE_TRANSFER)
+        .ok_or_else(|| anyhow::anyhow!("account_data entry missing account_data_key"))?;
+    if !account_data_key
+        .strip_prefix(arkret_sdk::ACCOUNT_DATA_KEY_FILE_TRANSFER)
         .is_some_and(|rest| rest.starts_with(':'))
     {
         anyhow::bail!("not a file-transfer account_data entry");
     }
-    crate::account_data::validate_private_account_data_key(data_type)?;
+    crate::account_data::validate_private_account_data_key(account_data_key)?;
     let content = entry
         .get("content")
         .or_else(|| entry.get("encrypted_payload"))
         .ok_or_else(|| anyhow::anyhow!("file-transfer account_data content missing"))?;
-    let record = open_record_envelope(content, crypto, data_type)?;
+    let record = open_record_envelope(content, crypto, account_data_key)?;
     if record.kind != FILE_TRANSFER_RECORD_KIND {
         anyhow::bail!("file-transfer record kind mismatch");
     }
     let derived_key = record_account_key(&record, crypto)?;
-    if derived_key != data_type {
+    if derived_key != account_data_key {
         anyhow::bail!("file-transfer account_data key mismatch");
     }
     Ok(FileTransferItem {
-        account_data_key: data_type.to_owned(),
+        account_data_key: account_data_key.to_owned(),
         record,
         updated_at: entry
             .get("updated_at")
@@ -1146,7 +1146,7 @@ mod tests {
         let key = record_account_key(&record, &crypto).unwrap();
         let envelope = seal_record_envelope(&record, &crypto, &key, ACTOR).unwrap();
         let entry = json!({
-            "data_type": key,
+            "account_data_key": key,
             "content": envelope,
             "updated_at": "2026-06-07T00:00:00.000Z",
         });
@@ -1282,7 +1282,7 @@ mod tests {
         )
         .unwrap();
         let entry = json!({
-            "data_type": wrong_key,
+            "account_data_key": wrong_key,
             "content": envelope,
         });
 

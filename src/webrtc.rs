@@ -7,7 +7,7 @@
 //!
 //! - `ak.call.signal` — ephemeral SDP / ICE candidate exchange (classified `ephemeral_event`;
 //!   reducers MUST NOT use it as state input). Round 4 wire shape; carries `device_id` + `proof`
-//!   + `payload.{call_id, signal_type, seq}`. Receivers use [`CallSignalReceiver`] to reject
+//!   + `payload.{call_id, signal_kind, seq}`. Receivers use [`CallSignalReceiver`] to reject
 //!     replay/rollback per `(realm, call, actor, device)` and SHOULD emit `hangup` for that call on
 //!     a rollback.
 //! - `ak.call.state` — durable call state transitions (start / answer / end).
@@ -21,7 +21,7 @@ use crate::operation::OperationBuilder;
 // `EphemeralEnvelope` (`ak.schema.ephemeral_envelope.v1`), NOT through
 // `ak.self.events.command.submit`. The canonical builder lives in
 // `crate::ephemeral::build_call_signal_envelope_v1` and accepts the v1
-// canonical signal_type values (`invite`, `answer`, `candidate`,
+// canonical signal_kind values (`invite`, `answer`, `candidate`,
 // `renegotiate`, `hangup`, `ack`, `reject`, `mute_state`, `media_state`,
 // `speaking`, `focus_join`, `focus_leave`, `error`). Do
 // NOT re-introduce a durable `OperationBuilder`-based helper or a parallel
@@ -94,7 +94,7 @@ pub enum CallSignalIngestOutcome {
     /// `seq` field carries the offending value for telemetry.
     SeqRollback { call_id: String, seq: u64 },
     /// Envelope failed Round 4 validation (missing device_id / proof,
-    /// non-canonical signal_type, malformed payload). The receiver drops
+    /// non-canonical signal_kind, malformed payload). The receiver drops
     /// the signal; UI MAY surface a "remote sent malformed signal" toast.
     Rejected { reason: String },
 }
@@ -276,13 +276,13 @@ mod tests {
         );
     }
 
-    fn make_v1_envelope(seq: u64, signal_type: &str) -> arkret_sdk::EphemeralEnvelope {
+    fn make_v1_envelope(seq: u64, signal_kind: &str) -> arkret_sdk::EphemeralEnvelope {
         crate::ephemeral::build_call_signal_envelope_v1(
             "ak:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "ak:device:01904100-0000-7000-8000-000000000002",
             "ak:call:01904100-0000-7000-8000-000000000003",
-            signal_type,
+            signal_kind,
             seq,
             serde_json::json!({}),
         )
@@ -290,8 +290,8 @@ mod tests {
     }
 
     #[test]
-    fn v1_builder_accepts_canonical_signal_types() {
-        for st in arkret_sdk::CALL_SIGNAL_TYPES {
+    fn v1_builder_accepts_canonical_signal_kinds() {
+        for st in arkret_sdk::CALL_SIGNAL_KINDS {
             let env = make_v1_envelope(1, st);
             assert_eq!(env.kind, "ak.call.signal");
             assert!(!env.device_id.as_str().is_empty());
@@ -299,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn v1_builder_rejects_unknown_signal_type() {
+    fn v1_builder_rejects_unknown_signal_kind() {
         let err = crate::ephemeral::build_call_signal_envelope_v1(
             "ak:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
@@ -309,8 +309,8 @@ mod tests {
             1,
             serde_json::json!({}),
         )
-        .expect_err("non-canonical signal_type must be rejected");
-        assert!(err.to_string().contains("signal_type"));
+        .expect_err("non-canonical signal_kind must be rejected");
+        assert!(err.to_string().contains("signal_kind"));
     }
 
     #[test]

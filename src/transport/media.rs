@@ -43,7 +43,7 @@ pub async fn submit_call_signal_v1(
     actor_id: &str,
     device_id: &str,
     call_id: &str,
-    signal_type: &str,
+    signal_kind: &str,
     seq: u64,
     data: Value,
 ) -> anyhow::Result<arkret_sdk::EphemeralSubmitOutcome> {
@@ -52,7 +52,7 @@ pub async fn submit_call_signal_v1(
         actor_id,
         device_id,
         call_id,
-        signal_type,
+        signal_kind,
         seq,
         data,
     )?;

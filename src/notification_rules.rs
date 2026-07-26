@@ -26,15 +26,19 @@ pub fn dnd_settings_from_account_data(
 fn encrypted_account_data_content(
     actor_id: &str,
     entries: &[arkret_sdk::Event],
-    data_type: &str,
+    account_data_key: &str,
 ) -> Option<Value> {
     let entry = entries
         .iter()
-        .find(|entry| entry.payload.get("key").and_then(Value::as_str) == Some(data_type))?;
-    match crate::account_data::decrypt_account_data_entry(actor_id, data_type, &entry.payload) {
+        .find(|entry| entry.payload.get("key").and_then(Value::as_str) == Some(account_data_key))?;
+    match crate::account_data::decrypt_account_data_entry(
+        actor_id,
+        account_data_key,
+        &entry.payload,
+    ) {
         Ok(value) => Some(value),
         Err(error) => {
-            tracing::warn!(%error, %data_type, "ignoring undecryptable notification account_data");
+            tracing::warn!(%error, %account_data_key, "ignoring undecryptable notification account_data");
             None
         }
     }

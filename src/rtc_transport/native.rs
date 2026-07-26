@@ -423,7 +423,7 @@ mod tests {
 
     fn session() -> JoinedMediaSession {
         JoinedMediaSession {
-            backend_type: "livekit".to_owned(),
+            backend_kind: "livekit".to_owned(),
             focus_id: "fra-1".to_owned(),
             connect_url: "wss://livekit.example".to_owned(),
             backend_token: "jwt".to_owned(),
@@ -469,7 +469,7 @@ mod tests {
             ice_servers: Vec::new(),
             ttl_seconds: 300,
             refresh_lead_seconds: 60,
-            force_turn: false,
+            turn_required: false,
             issuer_did: arkret_sdk::Did::new("did:web:media.example").unwrap(),
         }
     }

@@ -97,7 +97,7 @@ fn delivered_exchange_projection_fixture(
         private_request_event_id: request_event.clone(),
         user_facing_response_event_ids: Vec::new(),
         status: arkret_sdk::AgentSidecarExchangeStatus::Delivered,
-        failure_code: None,
+        failure_reason_code: None,
         terminal_event_id: None,
         folded_frontier: arkret_sdk::AgentSidecarExchangeFoldedFrontier {
             event_ids: vec![request_event.clone()],
@@ -796,7 +796,7 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
 }
 
 #[test]
-fn mention_sidecar_hashes_are_applied_to_replayed_events() {
+fn mention_sidecar_digestes_are_applied_to_replayed_events() {
     let realm = "ak:realm:01904100-0000-7000-8000-000000000010";
     let mentions = vec![MentionNode::mention(arkret_sdk::Mention::new(
         arkret_sdk::Did::new("did:web:agent.example".to_owned()).unwrap(),
@@ -813,9 +813,9 @@ fn mention_sidecar_hashes_are_applied_to_replayed_events() {
     )
     .expect("builds");
 
-    apply_mention_sidecar_hashes(&mut event, realm, &mentions);
+    apply_mention_sidecar_digestes(&mut event, realm, &mentions);
 
-    let hashes = event.payload["content"]["mention_sidecar_hash"]
+    let hashes = event.payload["content"]["mention_sidecar_digest"]
         .as_array()
         .expect("mention sidecar hashes");
     assert_eq!(hashes.len(), 1);
@@ -4280,7 +4280,7 @@ fn decrypt_chat_encrypted_content_soft_fails_without_snapshot() {
     ));
     let store = LocalStateStore::with_path(temp);
     let envelope = json!({
-        "scheme": "mls-rfc9420",
+        "scheme": "mls_rfc9420",
         "group_id": "group-x",
         "epoch": 1,
         "content_type": "application/vnd.arkret.message+json",
@@ -4348,7 +4348,7 @@ fn chat_message_from_event_keeps_bodyless_encrypted_payload_visible() {
             "strand_id": "ak:strand:1",
             "message_id": "ak:message:1",
             "encrypted_content": {
-                "scheme": "mls-rfc9420",
+                "scheme": "mls_rfc9420",
                 "version": "1.0",
                 "group_id": "ak:mls:test",
                 "epoch": 1,
@@ -4380,7 +4380,7 @@ fn chat_message_from_event_marks_failed_local_decrypt_as_key_missing() {
             "strand_id": "ak:strand:1",
             "message_id": "ak:message:1",
             "encrypted_content": {
-                "scheme": "mls-rfc9420",
+                "scheme": "mls_rfc9420",
                 "version": "1.0",
                 "group_id": "ak:mls:test",
                 "epoch": 1,

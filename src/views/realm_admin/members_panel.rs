@@ -1519,7 +1519,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         )
         .await?;
     // Eager RRK seal (encryption-and-audit.md §2.10.8): if this Realm declares an
-    // effective `durability_policy` (mode != none + mls-exporter-aead-v1), seal
+    // effective `durability_policy` (mode != none + mls_exporter_aead_v1), seal
     // the retained history_secret(s) to every recovery recipient right after the
     // admission commit advances the epoch and before any (future) GC. inkson
     // never GCs history_secrets, so this only needs to be eager, not blocking.
@@ -2024,7 +2024,7 @@ pub(crate) async fn share_history_to_requester(
 /// provider-initiated `ak.realm_key.share` Events.
 ///
 /// MUST run only when the Realm's effective durability is RRK-active
-/// (`mode != none` AND `content_scheme == mls-exporter-aead-v1`); the caller
+/// (`mode != none` AND `content_scheme == mls_exporter_aead_v1`); the caller
 /// gates on [`LocalStateStore::realm_durability_is_rrk_active`].
 ///
 /// **RYW guard (§2.10.8 eager timing)**: inkson never GCs `history_secret`s
@@ -5586,7 +5586,7 @@ mod tests {
                         "payload": {"object": {
                             "history_visibility": "joined",
                             "encryption_profile": "mls_rfc9420",
-                            "content_scheme": "mls-exporter-aead-v1"
+                            "content_scheme": "mls_exporter_aead_v1"
                         }}
                     },
                     {
@@ -5645,7 +5645,7 @@ mod tests {
                 "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
             )
             .unwrap(),
-            requested_source_class: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
+            requested_source_kind: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
             target_source_ref: arkret_sdk::RealmKeySourceRef::Device(
                 arkret_sdk::DeviceId::new(PROVIDER_DEVICE).unwrap(),
             ),
@@ -5695,7 +5695,7 @@ mod tests {
                 "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
             )
             .unwrap(),
-            requested_source_class: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
+            requested_source_kind: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
             target_source_ref: arkret_sdk::RealmKeySourceRef::Device(
                 arkret_sdk::DeviceId::new(PROVIDER_DEVICE).unwrap(),
             ),
@@ -5740,7 +5740,7 @@ mod tests {
                 "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
             )
             .unwrap(),
-            requested_source_class: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
+            requested_source_kind: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
             target_source_ref: arkret_sdk::RealmKeySourceRef::Device(
                 arkret_sdk::DeviceId::new(PROVIDER_DEVICE).unwrap(),
             ),
@@ -5783,7 +5783,7 @@ mod tests {
                 "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
             )
             .unwrap(),
-            requested_source_class: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
+            requested_source_kind: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
             target_source_ref: arkret_sdk::RealmKeySourceRef::Device(
                 arkret_sdk::DeviceId::new(PROVIDER_DEVICE).unwrap(),
             ),
@@ -5826,7 +5826,7 @@ mod tests {
                 "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
             )
             .unwrap(),
-            requested_source_class: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
+            requested_source_kind: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
             target_source_ref: arkret_sdk::RealmKeySourceRef::Device(
                 arkret_sdk::DeviceId::new(PROVIDER_DEVICE).unwrap(),
             ),

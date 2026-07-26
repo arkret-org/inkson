@@ -378,7 +378,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(encrypted.message_id, "ak:message:local-2");
-        assert_eq!(encrypted.payload.scheme.as_str(), "mls-rfc9420");
+        assert_eq!(encrypted.payload.scheme.as_str(), "mls_rfc9420");
         assert_eq!(
             encrypted.payload.content_type,
             "application/vnd.arkret.message+json"

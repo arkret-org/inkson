@@ -75,7 +75,7 @@ pub fn build_session_grant_introspection_proof(
     }
     let now = chrono::Utc::now();
     let claims = arkret_sdk::SessionGrantIntrospectionProofClaims {
-        kind: arkret_sdk::SESSION_GRANT_INTROSPECTION_PROOF_CLAIMS_TYPE.to_owned(),
+        kind: arkret_sdk::SESSION_GRANT_INTROSPECTION_PROOF_CLAIMS_KIND.to_owned(),
         grant_id: grant_id.to_owned(),
         grant_jwt_hash: session_grant_jwt_hash(grant_jwt),
         audience,

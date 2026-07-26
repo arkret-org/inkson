@@ -445,7 +445,7 @@ fn principal_description_with_enrollment_pin(
         arkret_sdk::Did::new("did:webvh:z6mkfixture:principal.example".to_owned()).unwrap(),
         arkret_sdk::TypedTrustDomainId::new("ak:trust_domain:principal.example".to_owned())
             .unwrap(),
-        arkret_sdk::ServiceType::PrincipalServer,
+        arkret_sdk::ServiceKind::PrincipalServer,
     );
     description.auth_metadata.account_authority = Some(arkret_sdk::AccountAuthority {
         origin: "https://auth.example".to_owned(),

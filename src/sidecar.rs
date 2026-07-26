@@ -118,16 +118,16 @@ fn cache_sidecar_view_state(
 pub fn ingest_sidecar_view_state_account_data(
     store: &mut crate::state::LocalStateStore,
     account_did: &str,
-    data_type: &str,
+    account_data_key: &str,
     entry: &impl serde::Serialize,
 ) -> anyhow::Result<bool> {
-    if !data_type.starts_with("ak.agent.sidecar_view_state.v1:") {
+    if !account_data_key.starts_with("ak.agent.sidecar_view_state.v1:") {
         return Ok(false);
     }
     let view_state: arkret_sdk::AgentSidecarViewState = serde_json::from_value(
-        crate::account_data::decrypt_account_data_entry(account_did, data_type, entry)?,
+        crate::account_data::decrypt_account_data_entry(account_did, account_data_key, entry)?,
     )?;
-    view_state.validate_account_data_type(data_type)?;
+    view_state.validate_account_data_key(account_data_key)?;
     if view_state.controller_id.as_str() != account_did {
         anyhow::bail!("Sidecar view-state controller does not match the account holder");
     }
@@ -1139,7 +1139,7 @@ pub fn push_sidecar_display_mode(
         updated_hlc,
         origin_device_id: context_ref.3,
     };
-    let data_type = view_state.account_data_type();
+    let account_data_key = view_state.account_data_key();
     if let Err(error) = cache_sidecar_view_state(store, &controller_id, &view_state) {
         tracing::warn!(%error, "Sidecar view-state local cache failed");
     }
@@ -1151,7 +1151,8 @@ pub fn push_sidecar_display_mode(
         }
     };
     let body = match crate::views::settings::account_data::encrypted_account_data_value(
-        &data_type, &plaintext,
+        &account_data_key,
+        &plaintext,
     ) {
         Ok(body) => body,
         Err(error) => {
@@ -1164,7 +1165,8 @@ pub fn push_sidecar_display_mode(
             &base_url,
             api_token,
             |submitter| async move {
-                crate::transport::account::set_account_data(&submitter, &data_type, body).await
+                crate::transport::account::set_account_data(&submitter, &account_data_key, body)
+                    .await
             },
         )
         .await
@@ -1231,7 +1233,8 @@ mod tests {
     fn pending_reconciliation_is_not_ready() {
         let session = session(vec![arkret_sdk::PendingSidecarAccessReconciliationItem {
             agent_id: arkret_sdk::Did::new("did:web:agents.example:assistant").unwrap(),
-            stage: arkret_sdk::PendingSidecarAccessReconciliationStage::BackingScopeMembership,
+            provisioning_phase:
+                arkret_sdk::PendingSidecarAccessReconciliationStage::BackingScopeMembership,
             reason: arkret_sdk::NonEmptyString::new("membership_projection_pending").unwrap(),
             membership_frontier: None,
         }]);

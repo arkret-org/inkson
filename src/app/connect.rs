@@ -521,13 +521,13 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         status.set(format!(
                             "{}: {} / {}",
                             ConnectionState::Online.label(),
-                            description.service_type,
+                            description.service_kind,
                             description.protocol_version
                         ));
                         network_state.set("online".to_owned());
                         server_probe_status.set(format!(
                             "server describe loaded: {} / {}",
-                            description.service_type, description.protocol_version
+                            description.service_kind, description.protocol_version
                         ));
                         // Round 4 — cache the advertised trust_domain so
                         // downstream signing strands (cross_signing.publish,
@@ -594,7 +594,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     | crate::runtime::session::CurrentSessionRefresh::LoginRequired { reason } => {
                         let probe_label = description
                             .as_ref()
-                            .map(|d| format!("{} / {}", d.service_type, d.protocol_version))
+                            .map(|d| format!("{} / {}", d.service_kind, d.protocol_version))
                             .unwrap_or_else(|| "server probe unavailable".to_owned());
                         status.set(format!("Refreshed: {probe_label}; sign-in required"));
                         network_state.set("online".to_owned());
@@ -1287,7 +1287,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             let mut blocklist_snapshot_seen = false;
                             for event in &sync.updates.account_data {
                                 let entry = &event.payload;
-                                let Some(data_type) =
+                                let Some(account_data_key) =
                                     entry.get("key").and_then(serde_json::Value::as_str)
                                 else {
                                     continue;
@@ -1295,7 +1295,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 match crate::sidecar::ingest_sidecar_view_state_account_data(
                                     &mut store,
                                     &account_did(),
-                                    data_type,
+                                    account_data_key,
                                     entry,
                                 ) {
                                     Ok(true) => continue,
@@ -1314,10 +1314,10 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 // differs from the local cached value
                                 // we update the UI Signal +
                                 // LocalConfigStore synchronously.
-                                if data_type == "ak.client.ui_state" {
+                                if account_data_key == "ak.client.ui_state" {
                                     match crate::account_data::decrypt_account_data_entry(
                                         &account_did(),
-                                        data_type,
+                                        account_data_key,
                                         entry,
                                     ) {
                                         Ok(content) => {
@@ -1359,11 +1359,11 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     }
                                     continue;
                                 }
-                                if data_type == "ak.presence.visibility" {
+                                if account_data_key == "ak.presence.visibility" {
                                     let Some(visibility) =
                                         crate::account_data::decrypt_account_data_entry(
                                             &account_did(),
-                                            data_type,
+                                            account_data_key,
                                             entry,
                                         )
                                         .ok()
@@ -1384,10 +1384,10 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 // preference (profiles-presence.md §3.6).
                                 // Decrypt the standard holder-private envelope
                                 // before applying it to local state.
-                                if data_type == "ak.presence.preference" {
+                                if account_data_key == "ak.presence.preference" {
                                     match crate::account_data::decrypt_account_data_entry(
                                         &account_did(),
-                                        data_type,
+                                        account_data_key,
                                         entry,
                                     )
                                     .and_then(|content| {
@@ -1400,10 +1400,10 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     }
                                     continue;
                                 }
-                                if data_type == "ak.dnd_schedule" {
+                                if account_data_key == "ak.dnd_schedule" {
                                     match crate::account_data::decrypt_account_data_entry(
                                         &account_did(),
-                                        data_type,
+                                        account_data_key,
                                         entry,
                                     ) {
                                         Ok(content) => store.set_notification_dnd_settings(
@@ -1415,11 +1415,11 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     }
                                     continue;
                                 }
-                                if data_type == "ak.account.blocklist" {
+                                if account_data_key == "ak.account.blocklist" {
                                     blocklist_snapshot_seen = true;
                                     match crate::account_data::decrypt_account_data_entry(
                                         &account_did(),
-                                        data_type,
+                                        account_data_key,
                                         entry,
                                     )
                                     .and_then(|content| {
@@ -1439,24 +1439,30 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     }
                                     continue;
                                 }
-                                if crate::account_data::private_account_data_key_prefix(data_type)
-                                    == Some(arkret_sdk::ACCOUNT_DATA_TYPE_SAVED)
+                                if crate::account_data::private_account_data_key_prefix(
+                                    account_data_key,
+                                ) == Some(arkret_sdk::ACCOUNT_DATA_KEY_SAVED)
                                 {
                                     if let Some(content) = entry
                                         .get("content")
                                         .or_else(|| entry.get("encrypted_payload"))
                                         .cloned()
                                     {
-                                        store.stage_saved_account_data_entry(data_type, content);
+                                        store.stage_saved_account_data_entry(
+                                            account_data_key,
+                                            content,
+                                        );
                                     }
                                     continue;
                                 }
                                 if let Some(actor_id) =
-                                    crate::account_data::actor_id_from_contact_remark_key(data_type)
+                                    crate::account_data::actor_id_from_contact_remark_key(
+                                        account_data_key,
+                                    )
                                 {
                                     match crate::account_data::decrypt_account_data_entry(
                                         &account_did(),
-                                        data_type,
+                                        account_data_key,
                                         entry,
                                     )
                                     .and_then(|content| {
@@ -1474,13 +1480,15 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     continue;
                                 }
                                 let Some(realm_id) =
-                                    crate::account_data::realm_id_from_realm_remark_key(data_type)
+                                    crate::account_data::realm_id_from_realm_remark_key(
+                                        account_data_key,
+                                    )
                                 else {
                                     continue;
                                 };
                                 match crate::account_data::decrypt_account_data_entry(
                                     &account_did(),
-                                    data_type,
+                                    account_data_key,
                                     entry,
                                 )
                                 .and_then(|content| {

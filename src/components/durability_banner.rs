@@ -4,7 +4,7 @@
 //! `models/realm-and-space.md` §2.3.1, `identity/identity-did.md` §8.3.
 //!
 //! When a Realm's effective `durability_policy.mode != none` (and it uses
-//! `content_scheme=mls-exporter-aead-v1`), members MUST be shown a persistent
+//! `content_scheme=mls_exporter_aead_v1`), members MUST be shown a persistent
 //! disclosure that the Realm's history is continuously sealed to a recovery
 //! holder who can decrypt **all** history, with the mode marked
 //! (`org_recovery_key` single / `threshold` k-of-n).

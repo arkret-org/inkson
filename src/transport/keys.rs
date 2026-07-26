@@ -116,7 +116,7 @@ pub async fn submit_realm_key_request(
             recipient_hpke_public_key.trim(),
         )
         .map_err(anyhow::Error::msg)?,
-        requested_source_class: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
+        requested_source_kind: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
         target_source_ref: arkret_sdk::RealmKeySourceRef::Device(arkret_sdk::DeviceId::new(
             provider_device_ref.trim().to_owned(),
         )?),

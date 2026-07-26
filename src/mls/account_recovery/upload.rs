@@ -54,7 +54,7 @@ pub fn select_superseded_backup_ids(
 ) -> Vec<String> {
     let keep: std::collections::BTreeSet<&str> =
         keep_backup_ids.iter().map(String::as_str).collect();
-    let mls_history = crate::key_backup::BackupClass::MlsHistory.as_str();
+    let mls_history = crate::key_backup::BackupKind::MlsHistory.as_str();
     let mut selected: Vec<(String, std::cmp::Reverse<u64>, String)> =
         iter_backup_bodies(list_payload)
             .filter(|body| {
@@ -66,7 +66,7 @@ pub fn select_superseded_backup_ids(
                     return false;
                 }
                 is_mls_account_secret_backup(body)
-                    || body.get("backup_class").and_then(Value::as_str) == Some(mls_history)
+                    || body.get("backup_kind").and_then(Value::as_str) == Some(mls_history)
             })
             .filter_map(|body| {
                 let id = body.get("backup_id").and_then(Value::as_str)?;

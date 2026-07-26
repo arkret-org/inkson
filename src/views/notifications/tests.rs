@@ -33,7 +33,7 @@ mod tests {
         let raw = vec![json!({
             "notification_id": "n1",
             "schema": "ak.schema.notification.v1",
-            "notification_type": "message",
+            "notification_kind": "message",
             "realm_id": "ak:realm:quiet",
             "body": "hello"
         })];
@@ -118,7 +118,7 @@ mod tests {
             vec![json!({
                 "notification_id": "n1",
                 "schema": "ak.schema.notification.v1",
-                "notification_type": "mention",
+                "notification_kind": "mention",
                 "realm_id": "ak:realm:quiet",
                 "body": "hello",
                 "read": false
@@ -164,7 +164,7 @@ mod tests {
             vec![
                 json!({
                     "notification_id": "old",
-                    "notification_type": "mention",
+                    "notification_kind": "mention",
                     "realm_id": realm_id,
                     "strand_id": strand_id,
                     "source_event_id": old_event,
@@ -174,7 +174,7 @@ mod tests {
                 }),
                 json!({
                     "notification_id": "cursor",
-                    "notification_type": "mention",
+                    "notification_kind": "mention",
                     "realm_id": realm_id,
                     "strand_id": strand_id,
                     "source_event_id": cursor_event,
@@ -246,13 +246,13 @@ mod tests {
         let raw = vec![
             json!({
                 "notification_id": "normal",
-                "notification_type": "message",
+                "notification_kind": "message",
                 "realm_id": realm_id,
                 "body": "muted normal message",
             }),
             json!({
                 "notification_id": "mention",
-                "notification_type": "mention",
+                "notification_kind": "mention",
                 "realm_id": realm_id,
                 "body": "@bob muted mention override",
                 "mentions_actor": true,
@@ -277,14 +277,14 @@ mod tests {
         let raw = vec![
             json!({
                 "notification_id": "assignment",
-                "notification_type": "assignment",
+                "notification_kind": "assignment",
                 "realm_id": realm_id,
                 "body": "You were assigned to a Strand.",
                 "assigned_to_actor": true,
             }),
             json!({
                 "notification_id": "schedule",
-                "notification_type": "schedule",
+                "notification_kind": "schedule",
                 "realm_id": realm_id,
                 "body": "A due date or calendar schedule changed.",
                 "schedule_target": true,
@@ -343,7 +343,7 @@ mod tests {
         let ctx = notification_eval_context(&json!({
             "notification_id": "n1",
             "event_kind": "ak.message.create",
-            "notification_type": "mention",
+            "notification_kind": "mention",
             "actor_id": "did:web:alice.example",
             "realm_id": "ak:realm:e2ee",
             "strand_id": "ak:strand:1",
@@ -355,7 +355,7 @@ mod tests {
         }));
 
         assert_eq!(ctx.event_kind, "ak.message.create");
-        assert_eq!(ctx.notification_type, "mention");
+        assert_eq!(ctx.notification_kind, "mention");
         assert_eq!(ctx.strand_track.as_deref(), Some("discussion"));
         assert_eq!(ctx.watch_level, Some(WatchLevel::Participating));
         assert!(ctx.is_e2ee);
@@ -369,11 +369,11 @@ mod tests {
         let ctx = notification_eval_context(&json!({
             "notification_id": "n1",
             "event_kind": "ak.strand.update",
-            "notification_type": "schedule",
+            "notification_kind": "schedule",
             "schedule_target": true,
         }));
 
-        assert_eq!(ctx.notification_type, "schedule");
+        assert_eq!(ctx.notification_kind, "schedule");
         assert!(ctx.schedule_target);
     }
 
@@ -382,7 +382,7 @@ mod tests {
         let ctx = notification_eval_context(&json!({
             "notification_id": "n1",
             "event_kind": "ak.message.create",
-            "notification_type": "mention",
+            "notification_kind": "mention",
             "sender": "did:web:removed.example",
             "sender_did": "did:web:removed-did.example",
             "sender_actor_id": "did:web:removed-actor.example"
@@ -399,7 +399,7 @@ mod tests {
         let raw = vec![
             json!({
                 "notification_id": "old-a",
-                "notification_type": "message",
+                "notification_kind": "message",
                 "realm_id": realm_a,
                 "strand_id": strand_a,
                 "source_event_id": "ak:event:01904100-0000-7000-8000-000000000005",
@@ -407,7 +407,7 @@ mod tests {
             }),
             json!({
                 "notification_id": "new-a",
-                "notification_type": "message",
+                "notification_kind": "message",
                 "realm_id": realm_a,
                 "strand_id": strand_a,
                 "event_id": "ak:event:01904100-0000-7000-8000-000000000006",
@@ -415,13 +415,13 @@ mod tests {
             }),
             json!({
                 "notification_id": "no-position",
-                "notification_type": "message",
+                "notification_kind": "message",
                 "realm_id": realm_a,
                 "timestamp": "2026-05-29T00:00:02.000Z",
             }),
             json!({
                 "notification_id": "new-b",
-                "notification_type": "mention",
+                "notification_kind": "mention",
                 "realm_id": realm_b,
                 "source_event_id": "ak:event:01904100-0000-7000-8000-000000000007",
                 "timestamp": "2026-05-29T00:00:03.000Z",
@@ -480,7 +480,7 @@ mod tests {
                 "ak:notification:01964137-0000-7000-8000-000000000004",
             )
             .unwrap(),
-            notification_type: arkret_sdk::NotificationType::Agent,
+            notification_kind: arkret_sdk::NotificationKind::Agent,
             action: arkret_sdk::NotificationDeltaAction::Remove,
             data: None,
         }];

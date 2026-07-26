@@ -59,7 +59,7 @@ pub fn SetupPanel(
     let realm_encryption_profile = use_signal(|| "mls_rfc9420".to_owned());
     // §2.10 content-scheme capability axis: default to history-capable
     // (exporter-aead) so collaboration realms can share pre-join history.
-    let realm_content_scheme = use_signal(|| "mls-exporter-aead-v1".to_owned());
+    let realm_content_scheme = use_signal(|| "mls_exporter_aead_v1".to_owned());
     let realm_security_class = use_signal(|| "standard".to_owned());
     // Spec realm-and-space.md §2.3 advanced create-locked fields; safe defaults
     // `restricted` / `single_did` / `sha256`.

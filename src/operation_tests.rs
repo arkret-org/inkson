@@ -760,7 +760,7 @@ fn invite_helpers_emit_canonical_kinds() {
     let invite_id = "ak:invite:01904100-0000-7000-8000-000000000001";
     let invite_delivery_target = arkret_sdk::InviteDeliveryTarget {
         recipient_service_id: arkret_sdk::Did::new("did:web:server.example").unwrap(),
-        recipient_service_type: Some("principal_server".to_owned()),
+        recipient_service_kind: Some("principal_server".to_owned()),
     };
     let introduction_evidence_digest =
         crate::canonical::canonical_sha256(&json!({"kind": "explicit_address"})).unwrap();

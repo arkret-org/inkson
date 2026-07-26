@@ -21,7 +21,7 @@ pub(crate) fn value_is_raw_mls_envelope(value: &Value) -> bool {
     let Some(object) = value.as_object() else {
         return false;
     };
-    if object.get("scheme").and_then(Value::as_str) == Some("mls-rfc9420") {
+    if object.get("scheme").and_then(Value::as_str) == Some("mls_rfc9420") {
         return true;
     }
     object.contains_key("ciphertext") && object.contains_key("content_type")
