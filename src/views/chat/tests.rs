@@ -2342,6 +2342,93 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
 }
 
 #[test]
+fn rebuild_restores_authors_own_encrypted_poll_from_content_sidecar() {
+    let temp = std::env::temp_dir().join(format!("inkson-poll-content-sidecar-{}", uuid_v7()));
+    let mut store = LocalStateStore::with_path(temp);
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000010";
+    let strand = "ak:strand:01904100-0000-7000-8000-000000000011";
+    let message_id = "ak:message:01904100-0000-7000-8000-000000000012";
+    let content = json!({
+        "kind": "ak.content.poll",
+        "body": "Deploy now?",
+        "poll": {
+            "kind": "disclosed",
+            "max_selections": 1,
+            "answers": [
+                {
+                    "id": "opt-0",
+                    "text": {
+                        "kind": "ak.content.text",
+                        "body": "Now"
+                    }
+                },
+                {
+                    "id": "opt-1",
+                    "text": {
+                        "kind": "ak.content.text",
+                        "body": "After backup"
+                    }
+                }
+            ]
+        }
+    });
+    store.save_private_plaintext(
+        realm,
+        strand,
+        &format!("message:{message_id}"),
+        "Deploy now?",
+    );
+    store.save_private_plaintext(
+        realm,
+        strand,
+        &format!("message-content:{message_id}"),
+        &serde_json::to_string(&content).expect("content serializes"),
+    );
+    let mut event = json!({
+        "event_id": "ak:event:01904100-0000-7000-8000-000000000013",
+        "kind": "ak.message.create",
+        "actor_id": "did:web:alice.example",
+        "realm_id": realm,
+        "strand_id": strand,
+        "message_id": message_id,
+        "encrypted_content": true,
+        "status": "accepted"
+    });
+    sign_chat_fixture(&mut event);
+
+    let cards = poll_cards_from_events_with_sidecar(realm, &[event], Some(&store), None);
+
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].poll_id, message_id);
+    assert_eq!(cards[0].question, "Deploy now?");
+    assert_eq!(cards[0].options.len(), 2);
+    assert_eq!(cards[0].options[1].label, "After backup");
+}
+
+#[test]
+fn poll_projection_merge_preserves_optimistic_message_render_id() {
+    let mut draft = crate::messaging::polls::PollDraft::new();
+    draft.set_question("Deploy now?".to_owned());
+    draft.set_option(0, "Now".to_owned());
+    draft.set_option(1, "After backup".to_owned());
+    let wire_poll_id = "ak:message:01904100-0000-7000-8000-000000000012";
+    let mut optimistic =
+        crate::messaging::polls::PollCard::from_draft("poll-local".to_owned(), &draft);
+    optimistic.poll_id = wire_poll_id.to_owned();
+    let mut projected =
+        crate::messaging::polls::PollCard::from_draft("ak:event:accepted".to_owned(), &draft);
+    projected.poll_id = wire_poll_id.to_owned();
+    projected.vote("did:web:bob.example", 1);
+    let mut cards = vec![optimistic];
+
+    merge_poll_cards(&mut cards, vec![projected]);
+
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].message_id, "poll-local");
+    assert_eq!(cards[0].votes_for(1), 1);
+}
+
+#[test]
 fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
     let temp = std::env::temp_dir().join(format!("inkson-pending-sidecar-refresh-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);

@@ -556,6 +556,21 @@ pub async fn prefetch_device_keys(
     }
 }
 
+/// Refresh keys for proof-bearing persistent Events even when a short-lived
+/// negative cache entry exists. Federation can make a previously absent
+/// remote authorization available immediately before the Event arrives; a
+/// stale negative must not keep that accepted Event unresolved until some
+/// unrelated later sync happens.
+pub async fn refresh_device_keys(
+    api: &TransportClient,
+    anchor: &dyn DidAnchor,
+    pairs: &[(String, String)],
+) {
+    for (actor, device) in pairs {
+        let _ = resolve_device_signing_key(api, anchor, actor, device).await;
+    }
+}
+
 // ── Receiver-side proof verification ───────────────────────────────────────
 
 /// Strip the fragment / query from a `{actor}#device` verification-method DID

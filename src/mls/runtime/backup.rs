@@ -136,6 +136,17 @@ pub fn decode_mls_history_backup_envelope(
     require_backup_str(group_state, "realm_id", &envelope.realm_id)?;
     require_backup_str(group_state, "mls_group_id", &envelope.group_id)?;
     require_backup_u64(group_state, "epoch", envelope.epoch)?;
+    let public_group_state_event_id = group_state.get("last_event_id").and_then(Value::as_str);
+    let encrypted_group_state_event_id = envelope
+        .group_state_event_id
+        .as_ref()
+        .map(ToString::to_string);
+    if public_group_state_event_id != encrypted_group_state_event_id.as_deref() {
+        return Err(MlsRuntimeError::BackupDecode(
+            "contents.last_event_id does not match encrypted group-state Event reference"
+                .to_owned(),
+        ));
+    }
 
     Ok(envelope)
 }
@@ -192,6 +203,17 @@ pub fn restore_mls_history_backup_with_device_snapshot(
         envelope_epoch: envelope.epoch,
         epoch_floor,
     };
+    if let Some(group_state_event_id) = envelope.group_state_event_id.clone() {
+        state_store
+            .record_mls_group_state_ref_for_effective_scope(
+                envelope.realm_id.clone(),
+                None,
+                envelope.group_id.as_str(),
+                envelope.epoch,
+                group_state_event_id,
+            )
+            .map_err(MlsRuntimeError::Backup)?;
+    }
     state_store.save_mls_snapshot(envelope.realm_id.clone(), envelope);
     Ok(summary)
 }

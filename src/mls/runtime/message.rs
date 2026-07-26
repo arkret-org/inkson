@@ -1510,6 +1510,32 @@ pub fn apply_welcome_messages_with_device_snapshot(
             &secret,
             &salt,
         );
+        if let Some(commit_ref) = welcome_value
+            .get("commit_ref")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let commit_ref = match arkret_sdk::EventId::new(commit_ref.to_owned()) {
+                Ok(commit_ref) => commit_ref,
+                Err(error) => {
+                    outcome.record_failure(format!(
+                        "welcome commit_ref is not a valid Event id: {error}"
+                    ));
+                    continue;
+                }
+            };
+            if let Err(error) = state_store.record_mls_group_state_ref_for_effective_scope(
+                realm_id,
+                None,
+                &post_state.group_id,
+                post_state.epoch,
+                commit_ref,
+            ) {
+                outcome.record_failure(format!("persist Welcome group-state reference: {error}"));
+                continue;
+            }
+        }
         state_store.save_mls_snapshot(realm_id.to_owned(), snapshot);
         if let Some(policy_root) = welcome_policy_root.as_deref() {
             state_store.record_genesis_policy_root_for_effective_scope(realm_id, None, policy_root);

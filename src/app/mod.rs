@@ -626,6 +626,14 @@ fn AppBootstrap() -> Element {
     let has_session = !token().trim().is_empty();
     let boot_state = session_boot_state();
     let auth_surface = auth_surface_for_route(&route, has_session, boot_state);
+    let authenticated_login_navigator = navigator;
+    let authenticated_login_token = token;
+    let route_is_login = matches!(&route, Route::Login);
+    use_effect(move || {
+        if route_is_login && !authenticated_login_token().trim().is_empty() {
+            let _ = authenticated_login_navigator.replace(Route::Dashboard);
+        }
+    });
     let active_server_label = normalize_server_url(&base_url());
     let account_did_value = account_did();
     let device_id_value = device_id();

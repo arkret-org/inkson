@@ -525,14 +525,13 @@ async fn materialize_direct_conversation(
                     &draft.realm_event,
                 )
                 .await?;
+                let mut bootstrap_events = vec![draft.realm_event.clone(), founding_grant_event];
+                if let Some(creator_member_event) = &draft.creator_member_event {
+                    bootstrap_events.push(creator_member_event.clone());
+                }
+                bootstrap_events.push(draft.peer_member_event.clone());
                 let pending = PendingDirectConversationBootstrap {
-                    events: submitter
-                        .prepare_sdk_events_batch(vec![
-                            draft.realm_event.clone(),
-                            founding_grant_event,
-                            draft.peer_member_event.clone(),
-                        ])
-                        .await?,
+                    events: submitter.prepare_sdk_events_batch(bootstrap_events).await?,
                 };
                 state_store.write().save_private_data(
                     &actor_id,
@@ -886,8 +885,7 @@ async fn sign_peer_keypackage_claim_authorization(
     let verification_method =
         arkret_sdk::NonEmptyString::new(format!("{}#{}", requester, device_id))
             .map_err(anyhow::Error::msg)?;
-    let signed_at = chrono::DateTime::from_timestamp(chrono::Utc::now().timestamp(), 0)
-        .ok_or_else(|| anyhow::anyhow!("current authorization timestamp is invalid"))?;
+    let signed_at = chrono::Utc::now();
     let mut authorization = arkret_sdk::PeerKeyPackageRequesterAuthorization {
         verification_method: verification_method.clone(),
         requester_device_id: Some(device_id),

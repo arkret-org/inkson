@@ -4624,6 +4624,7 @@ mod tests {
             realm_id: realm_id.to_owned(),
             group_id: "test-group".to_owned(),
             epoch: 0,
+            group_state_event_id: None,
             salt_hex: String::new(),
             ciphertext_hex: String::new(),
             mac_hex: String::new(),

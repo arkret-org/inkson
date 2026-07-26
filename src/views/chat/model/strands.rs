@@ -554,7 +554,13 @@ pub(crate) fn merge_poll_cards(
             .iter_mut()
             .find(|candidate| candidate.poll_id == card.poll_id)
         {
+            // The optimistic message keeps its local render id when the
+            // accepted create is merged by wire message id. Keep the poll
+            // card attached to that same message while replacing its durable
+            // tally/state projection.
+            let render_message_id = existing.message_id.clone();
             *existing = card;
+            existing.message_id = render_message_id;
         } else {
             target.push(card);
         }

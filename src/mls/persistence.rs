@@ -94,6 +94,12 @@ pub struct MlsSnapshotEnvelope {
     /// outdated-snapshot detection — a peer that paired in a fresher
     /// device sees the larger epoch on the server's seal view.
     pub epoch: u64,
+    /// Accepted `ak.mls.genesis` or `ak.mls.commit` Event that materialized
+    /// this exact `(group_id, epoch)` state. The reference is public metadata,
+    /// but keeping it inside the encrypted backup envelope lets a fresh device
+    /// restore the authoring frontier together with the executable MLS state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_state_event_id: Option<arkret_sdk::EventId>,
     /// Per-envelope salt used during device-secret stretching.
     /// Hex-encoded so the JSON form is human-debuggable.
     pub salt_hex: String,
@@ -222,6 +228,7 @@ pub fn encrypt_state(
         realm_id: realm_id.to_owned(),
         group_id: group_id.to_owned(),
         epoch,
+        group_state_event_id: None,
         salt_hex: hex_encode(salt),
         ciphertext_hex: hex_encode(&ciphertext),
         mac_hex: hex_encode(nonce.as_slice()),
@@ -362,6 +369,9 @@ impl MlsSnapshotEnvelope {
             "ciphertext": "",
             "ciphertext_digest": ""
         });
+        if let Some(group_state_event_id) = &self.group_state_event_id {
+            body["contents"][0]["last_event_id"] = Value::String(group_state_event_id.to_string());
+        }
         if is_protocol_device_id(device_id)
             && let Some(object) = body.as_object_mut()
         {

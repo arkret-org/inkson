@@ -318,6 +318,7 @@ fn accept_invite_notification(
     spawn(async move {
         let accepted_realm_for_api = accepted_realm.clone();
         let session_credential = session_credential();
+        let mut accepted_status = status_msg;
         match with_authed_api(&base_url, session_credential, |api| async move {
             let account = crate::transport::account::account_me(&api.sdk_http_client()?).await?;
             let submit = api
@@ -328,6 +329,14 @@ fn accept_invite_notification(
                     invite_token.as_deref(),
                 )
                 .await?;
+            // The accepted Event is the authoritative join boundary. Account
+            // snapshot refresh and presence-key prefetch may take longer on a
+            // large account, so acknowledge the successful join before doing
+            // that best-effort convergence work.
+            accepted_status.set(format!(
+                "Joined Realm {}.",
+                short_protocol_id(&accepted_realm_for_api)
+            ));
             // The SDK's account-subscribe surface no longer accepts a
             // per-request wait-for option (client-sync.md: X-Arkret-Wait-For
             // belongs to read endpoints); the accepted invite folds in via the

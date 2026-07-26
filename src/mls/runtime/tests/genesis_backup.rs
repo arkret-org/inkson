@@ -283,7 +283,9 @@ fn restore_mls_history_backup_saves_snapshot_when_fresh() {
     .unwrap();
     let group = identity.create_group(realm.as_bytes()).unwrap();
     let record = group.export_state_record().unwrap();
-    let envelope = crate::mls::persistence::encrypt_state(
+    let group_state_event_id =
+        arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-0000000000aa").unwrap();
+    let mut envelope = crate::mls::persistence::encrypt_state(
         realm,
         &record.group_id,
         record.epoch,
@@ -291,6 +293,7 @@ fn restore_mls_history_backup_saves_snapshot_when_fresh() {
         &secret,
         b"deterministic-salt",
     );
+    envelope.group_state_event_id = Some(group_state_event_id.clone());
     let body = envelope
         .to_key_backup_body(
             "ak:backup:01904100-0000-7000-8000-000000000002",
@@ -309,6 +312,17 @@ fn restore_mls_history_backup_saves_snapshot_when_fresh() {
     assert_eq!(restored.envelope_epoch, record.epoch);
     assert_eq!(restored.epoch_floor, 0);
     assert_eq!(state.mls_snapshot_for(realm).unwrap().epoch, record.epoch);
+    assert_eq!(
+        body.pointer("/contents/0/last_event_id")
+            .and_then(serde_json::Value::as_str),
+        Some(group_state_event_id.as_str())
+    );
+    assert_eq!(
+        state
+            .mls_group_state_ref_for_effective_scope(realm, None, &record.group_id, record.epoch,)
+            .unwrap(),
+        group_state_event_id
+    );
 }
 
 #[cfg(not(target_arch = "wasm32"))]

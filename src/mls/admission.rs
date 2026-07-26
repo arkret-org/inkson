@@ -556,8 +556,14 @@ fn sign_welcome_claim_envelope(
         None => crate::event_signer::bootstrap_default_signer("inkson")
             .map_err(|err| format!("MLS Welcome device signer bootstrap: {err}"))?,
     };
-    envelope.signature.kid = arkret_sdk::NonEmptyString::new(signer.verification_method())
-        .map_err(|err| format!("MLS Welcome device signing kid: {err}"))?;
+    // The Welcome transcript is requester-principal scoped. Its device
+    // signature therefore uses the same accepted principal/device method as
+    // the Event proof, while the underlying local key remains unchanged.
+    // Advertising the signer's local did:key method here prevents a remote
+    // Principal Server from matching the signature to requester_device_id.
+    envelope.signature.kid =
+        arkret_sdk::NonEmptyString::new(format!("{actor_id}#{sender_device_id}"))
+            .map_err(|err| format!("MLS Welcome device signing kid: {err}"))?;
     let signing_bytes = envelope
         .canonical_signing_bytes()
         .map_err(|err| format!("MLS Welcome claim canonical bytes: {err}"))?;
@@ -671,7 +677,6 @@ mod tests {
             [7u8; 32],
             "did:key:zActiveSigner",
         ));
-        let expected_kid = active_signer.verification_method().to_owned();
         let _signer_guard =
             crate::event_signer::ActiveSignerTestGuard::replace(Some(active_signer));
         let actor = "did:web:alice.example";
@@ -714,7 +719,7 @@ mod tests {
                 .map(arkret_sdk::DeviceId::as_str),
             Some(device)
         );
-        assert_eq!(envelope.signature.kid.as_str(), expected_kid);
+        assert_eq!(envelope.signature.kid.as_str(), format!("{actor}#{device}"));
         assert!(!envelope.signature.sig.is_empty());
         assert!(!envelope.signature.sig.contains(['+', '/', '=']));
         assert!(
@@ -916,7 +921,18 @@ mod tests {
 
         assert_eq!(outcome.applied, 1, "{outcome:?}");
         assert_eq!(outcome.failed, 0, "{outcome:?}");
-        assert!(bob_state.mls_snapshot_for(realm).is_some());
+        let bob_snapshot = bob_state.mls_snapshot_for(realm).unwrap();
+        assert_eq!(
+            bob_state
+                .mls_group_state_ref_for_effective_scope(
+                    realm,
+                    None,
+                    &bob_snapshot.group_id,
+                    bob_snapshot.epoch,
+                )
+                .unwrap(),
+            admission.commit.event_id
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]

@@ -792,7 +792,13 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         let mut restore_payload_cache_for_bootstrap = mls_restore_payload_cache;
         let secure_store_ready_for_bootstrap = secure_store_bootstrap_ready;
         let account_recovery_configured_for_bootstrap = account_recovery_configured;
+        let welcome_device_queue = device_queue;
         use_effect(move || {
+            // Account sync journals to-device envelopes in the shared store,
+            // then publishes the durable inbox length through `device_queue`.
+            // Subscribe explicitly so a Welcome delivered after an earlier
+            // empty bootstrap probe re-runs this realm-specific consumer.
+            let _pending_to_device_messages = welcome_device_queue();
             if !secure_store_ready_for_bootstrap() {
                 return;
             }

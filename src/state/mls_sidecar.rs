@@ -24,6 +24,24 @@ fn prune_historical_mls_author_states(state: &mut ClientLocalState) {
     }
 }
 
+fn attach_group_state_ref_to_snapshot(
+    state: &mut ClientLocalState,
+    effective_scope_key: &str,
+    record: &MlsGroupStateRefRecord,
+) -> bool {
+    let Some(snapshot) = state.mls_snapshots.get_mut(effective_scope_key) else {
+        return false;
+    };
+    if snapshot.group_id != record.group_id
+        || snapshot.epoch != record.epoch
+        || snapshot.group_state_event_id.as_ref() == Some(&record.event_id)
+    {
+        return false;
+    }
+    snapshot.group_state_event_id = Some(record.event_id.clone());
+    true
+}
+
 /// A history-secret update assembled but not yet published. The owned value
 /// survives while the durable secure-store write is in flight without making
 /// the secret observable through `LocalStateStore` prematurely.
@@ -88,7 +106,7 @@ impl LocalStateStore {
         &mut self,
         realm_id: impl Into<String>,
         circle_id: Option<&str>,
-        envelope: crate::mls::persistence::MlsSnapshotEnvelope,
+        mut envelope: crate::mls::persistence::MlsSnapshotEnvelope,
     ) {
         // YOU-02-004: order this write after any decrypt write-backs so the
         // overlay can never shadow it (overlay snapshots always derive from
@@ -96,6 +114,12 @@ impl LocalStateStore {
         self.absorb_mls_receive_overlay();
         let realm_id = realm_id.into();
         let key = mls_effective_scope_snapshot_key(&realm_id, circle_id);
+        if let Some(record) = self.cached.mls_group_state_refs.get(&key)
+            && record.group_id == envelope.group_id
+            && record.epoch == envelope.epoch
+        {
+            envelope.group_state_event_id = Some(record.event_id.clone());
+        }
         if let Some(current) = self.cached.mls_snapshots.get(&key)
             && current.group_id == envelope.group_id
             && current.epoch < envelope.epoch
@@ -561,9 +585,12 @@ impl LocalStateStore {
                 event_id: genesis_event_id.clone(),
             };
             if self.cached.mls_group_state_refs.get(&pending_key) != Some(&record) {
-                self.cached.mls_group_state_refs.insert(pending_key, record);
+                self.cached
+                    .mls_group_state_refs
+                    .insert(pending_key.clone(), record.clone());
                 changed = true;
             }
+            changed |= attach_group_state_ref_to_snapshot(&mut self.cached, &pending_key, &record);
         }
         if changed {
             let _ = self.flush();
@@ -592,6 +619,37 @@ impl LocalStateStore {
                     .mls_historical_group_state_refs
                     .get(&history_key)
                     .cloned()
+            })
+            .or_else(|| {
+                state
+                    .mls_snapshots
+                    .get(&key)
+                    .filter(|snapshot| snapshot.group_id == group_id && snapshot.epoch == epoch)
+                    .and_then(|snapshot| {
+                        snapshot.group_state_event_id.clone().map(|event_id| {
+                            MlsGroupStateRefRecord {
+                                group_id: snapshot.group_id.clone(),
+                                epoch: snapshot.epoch,
+                                event_id,
+                            }
+                        })
+                    })
+            })
+            .or_else(|| {
+                let history_key = historical_mls_state_key(&key, group_id, epoch);
+                state
+                    .mls_historical_snapshots
+                    .get(&history_key)
+                    .filter(|snapshot| snapshot.group_id == group_id && snapshot.epoch == epoch)
+                    .and_then(|snapshot| {
+                        snapshot.group_state_event_id.clone().map(|event_id| {
+                            MlsGroupStateRefRecord {
+                                group_id: snapshot.group_id.clone(),
+                                epoch: snapshot.epoch,
+                                event_id,
+                            }
+                        })
+                    })
             })
             .ok_or_else(|| {
                 format!(
@@ -639,6 +697,11 @@ impl LocalStateStore {
                         "MLS group-state fork for scope {key} epoch {epoch}"
                     ));
                 }
+                let current = current.clone();
+                if attach_group_state_ref_to_snapshot(&mut self.cached, &key, &current) {
+                    self.flush()
+                        .map_err(|error| format!("persist MLS group-state reference: {error}"))?;
+                }
                 return Ok(());
             }
             let history_key = historical_mls_state_key(&key, &current.group_id, current.epoch);
@@ -646,14 +709,15 @@ impl LocalStateStore {
                 .mls_historical_group_state_refs
                 .insert(history_key, current.clone());
         }
-        self.cached.mls_group_state_refs.insert(
-            key,
-            MlsGroupStateRefRecord {
-                group_id: group_id.to_owned(),
-                epoch,
-                event_id,
-            },
-        );
+        let record = MlsGroupStateRefRecord {
+            group_id: group_id.to_owned(),
+            epoch,
+            event_id,
+        };
+        self.cached
+            .mls_group_state_refs
+            .insert(key.clone(), record.clone());
+        attach_group_state_ref_to_snapshot(&mut self.cached, &key, &record);
         prune_historical_mls_author_states(&mut self.cached);
         self.flush()
             .map_err(|error| format!("persist MLS group-state reference: {error}"))
@@ -906,4 +970,46 @@ fn remove_private_plaintext_entry(
         plaintexts.remove(realm_id);
     }
     changed
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::LocalStateStore;
+
+    #[test]
+    fn persisted_snapshot_recovers_exact_group_state_reference_without_side_index() {
+        let path = std::env::temp_dir().join(format!(
+            "inkson-mls-snapshot-reference-{}-{}.json",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
+        let group_id = "010203";
+        let event_id =
+            arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000099").unwrap();
+        let snapshot = crate::mls::persistence::MlsSnapshotEnvelope {
+            realm_id: realm_id.to_owned(),
+            group_id: group_id.to_owned(),
+            epoch: 1,
+            group_state_event_id: Some(event_id.clone()),
+            salt_hex: "00".repeat(16),
+            ciphertext_hex: "11".repeat(32),
+            mac_hex: "22".repeat(12),
+            recorded_at: chrono::Utc::now(),
+            epoch_started_at: chrono::Utc::now(),
+            app_messages_observed: 0,
+            aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
+        };
+
+        LocalStateStore::with_path(&path).save_mls_snapshot(realm_id, snapshot);
+        let restored = LocalStateStore::with_path(&path);
+
+        assert_eq!(
+            restored
+                .mls_group_state_ref_for_effective_scope(realm_id, None, group_id, 1)
+                .unwrap(),
+            event_id
+        );
+        let _ = std::fs::remove_file(path);
+    }
 }

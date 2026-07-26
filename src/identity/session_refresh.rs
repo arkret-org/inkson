@@ -14,9 +14,7 @@
 
 #[cfg(target_arch = "wasm32")]
 use std::rc::Rc;
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::OnceLock;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use anyhow::Context as _;
 use arkret_sdk::http_client::{Auth, ClientBuilder};
@@ -452,6 +450,15 @@ async fn session_transport_provider(
         return Ok(provider);
     }
 
+    // Restoring the provider resolves the Account Authority asynchronously.
+    // Several app effects can arrive here together before the first restore
+    // reaches `runtime.replace`; serialize that cold path so every caller
+    // shares one SessionEngine and therefore one consumable-grant refresh gate.
+    let _initialization = session_provider_initialization_lock().lock().await;
+    if let Some(provider) = runtime.get(&server_key, &grant.device_id) {
+        return Ok(provider);
+    }
+
     let gate_account_base = crate::identity::account_auth::resolve_principal_gate_account_base(
         &grant.principal_server_url,
     )
@@ -504,6 +511,11 @@ async fn session_transport_provider(
     };
     runtime.replace(server_key, grant.device_id.clone(), provider.clone());
     Ok(provider)
+}
+
+fn session_provider_initialization_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
 fn persisted_session_grant_from_state(

@@ -1073,6 +1073,10 @@ pub(super) fn RealmsSection(
                                                                 }
                                                             }
                                                             if let Some(snapshot) = snapshot {
+                                                                let snapshot = state_store
+                                                                    .read()
+                                                                    .mls_snapshot_for(&realm_id)
+                                                                    .unwrap_or(snapshot);
                                                                 // §7.10: a brand-new Realm has no prior series, so
                                                                 // this resolves to a genesis envelope — and it seeds
                                                                 // the series-tail cache so post-commit continuous

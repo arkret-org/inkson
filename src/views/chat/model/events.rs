@@ -817,6 +817,25 @@ pub(crate) fn decrypt_chat_encrypted_content(
     circle_id: Option<&str>,
     encrypted_content: &Value,
 ) -> Option<String> {
+    decrypt_chat_encrypted_content_value(
+        state_store,
+        realm_id,
+        actor_id,
+        device_id,
+        circle_id,
+        encrypted_content,
+    )
+    .and_then(|content_value| text_body_from_value(&content_value).map(ToOwned::to_owned))
+}
+
+fn decrypt_chat_encrypted_content_value(
+    state_store: &LocalStateStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    circle_id: Option<&str>,
+    encrypted_content: &Value,
+) -> Option<Value> {
     let envelope =
         serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(encrypted_content.clone()).ok()?;
     let payload_value =
@@ -830,8 +849,7 @@ pub(crate) fn decrypt_chat_encrypted_content(
         &payload_value,
         circle_id,
     )?;
-    let content_value = serde_json::from_slice::<Value>(&plaintext).ok()?;
-    text_body_from_value(&content_value).map(ToOwned::to_owned)
+    serde_json::from_slice::<Value>(&plaintext).ok()
 }
 
 /// Find the proof-bearing envelope layer for a chat event and verify its
@@ -1522,16 +1540,80 @@ pub(crate) fn poll_content_from_candidates<'a>(candidates: &[&'a Value]) -> Opti
         .copied()
 }
 
-pub(crate) fn poll_cards_from_events(events: &[Value]) -> Vec<crate::messaging::polls::PollCard> {
+fn poll_content_from_private_sidecar(
+    realm_id: &str,
+    candidates: &[&Value],
+    state_store: Option<&LocalStateStore>,
+) -> Option<Value> {
+    let store = state_store?;
+    let message_id = message_protocol_message_id_from_candidates(candidates)?;
+    let strand_id = first_string_in_candidates(candidates, &["strand_id", "thread_id"])?;
+    let message_realm = first_string_in_candidates(candidates, &["realm_id"]).unwrap_or(realm_id);
+    let plaintext = store.private_plaintext_for(
+        message_realm,
+        strand_id,
+        &format!("message-content:{message_id}"),
+    )?;
+    serde_json::from_str(&plaintext).ok()
+}
+
+pub(crate) fn poll_cards_from_events_with_sidecar(
+    realm_id: &str,
+    events: &[Value],
+    state_store: Option<&LocalStateStore>,
+    decrypt_identity: Option<(&str, &str)>,
+) -> Vec<crate::messaging::polls::PollCard> {
     let mut cards = Vec::<crate::messaging::polls::PollCard>::new();
     let mut by_poll_id = std::collections::BTreeMap::<String, usize>::new();
     for event in events {
         let candidates = message_candidates(event);
-        let Some(content) = poll_content_from_candidates(&candidates) else {
+        if verify_chat_envelope_proof_for_realm(realm_id, event, state_store, decrypt_identity)
+            == ChatProofVerdict::Rejected
+        {
+            continue;
+        }
+        let direct_content = poll_content_from_candidates(&candidates).cloned();
+        let private_content = direct_content
+            .is_none()
+            .then(|| poll_content_from_private_sidecar(realm_id, &candidates, state_store))
+            .flatten();
+        let decrypted_content =
+            (direct_content.is_none() && private_content.is_none()).then(|| {
+                let message_realm =
+                    first_string_in_candidates(&candidates, &["realm_id"]).unwrap_or(realm_id);
+                let effective_scope_circle = candidates.iter().find_map(|candidate| {
+                    candidate
+                        .get("effective_scope")
+                        .and_then(|scope| scope.get("circle_id"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                });
+                let encrypted_content = candidates.iter().find_map(|candidate| {
+                    candidate.get("encrypted_content").or_else(|| {
+                        candidate
+                            .get("content")
+                            .and_then(|content| content.get("encrypted_content"))
+                    })
+                })?;
+                let (store, (actor_id, device_id)) = (state_store?, decrypt_identity?);
+                decrypt_chat_encrypted_content_value(
+                    store,
+                    message_realm,
+                    actor_id,
+                    device_id,
+                    effective_scope_circle,
+                    encrypted_content,
+                )
+            });
+        let Some(content) = direct_content
+            .or(private_content)
+            .or(decrypted_content.flatten())
+        else {
             continue;
         };
         if let Some((poll_ref, selections)) =
-            crate::messaging::polls::poll_response_from_content(content)
+            crate::messaging::polls::poll_response_from_content(&content)
         {
             let actor = message_actor_from_candidates(&candidates).unwrap_or("did:web:unknown");
             if let Some(index) = by_poll_id.get(&poll_ref).copied() {
@@ -1539,7 +1621,9 @@ pub(crate) fn poll_cards_from_events(events: &[Value]) -> Vec<crate::messaging::
             }
             continue;
         }
-        let Some(message) = chat_message_from_event("", event) else {
+        let Some(message) =
+            chat_message_from_event_with_sidecar(realm_id, event, state_store, decrypt_identity)
+        else {
             continue;
         };
         // The card's tally identity is the wire message id (`ak:message:…`,
@@ -1548,7 +1632,7 @@ pub(crate) fn poll_cards_from_events(events: &[Value]) -> Vec<crate::messaging::
         if let Some(card) = crate::messaging::polls::PollCard::from_content(
             message.id.clone(),
             message.protocol_message_id.as_deref(),
-            content,
+            &content,
         ) {
             by_poll_id.insert(card.poll_id.clone(), cards.len());
             cards.push(card);
@@ -1815,11 +1899,13 @@ pub(crate) fn moderation_appeal_prompts_from_sync_realms(
     prompts
 }
 
-pub(crate) fn poll_cards_from_sync_realms(
+pub(crate) fn poll_cards_from_sync_realms_with_sidecar(
     realms: &std::collections::BTreeMap<String, Value>,
+    state_store: Option<&LocalStateStore>,
+    decrypt_identity: Option<(&str, &str)>,
 ) -> Vec<crate::messaging::polls::PollCard> {
     let mut cards = Vec::new();
-    for body in realms.values() {
+    for (realm_id, body) in realms {
         let Some(wire_events) = body
             .get("timeline")
             .and_then(|projection| projection.get("events"))
@@ -1827,7 +1913,12 @@ pub(crate) fn poll_cards_from_sync_realms(
         else {
             continue;
         };
-        cards.extend(poll_cards_from_events(wire_events));
+        cards.extend(poll_cards_from_events_with_sidecar(
+            realm_id,
+            wire_events,
+            state_store,
+            decrypt_identity,
+        ));
     }
     cards
 }
@@ -2144,15 +2235,17 @@ pub(crate) fn fold_local_state_into_chat_messages_with_sidecar(
     fold_event_list_into_chat_messages(seed, "", &events, state_store, decrypt_identity)
 }
 
-pub(crate) fn poll_cards_from_local_state(
+pub(crate) fn poll_cards_from_local_state_with_sidecar(
     state: &ClientLocalState,
+    state_store: Option<&LocalStateStore>,
+    decrypt_identity: Option<(&str, &str)>,
 ) -> Vec<crate::messaging::polls::PollCard> {
     let events = state
         .raw_operations
         .iter()
         .map(|record| record.payload.clone())
         .collect::<Vec<_>>();
-    poll_cards_from_events(&events)
+    poll_cards_from_events_with_sidecar("", &events, state_store, decrypt_identity)
 }
 
 pub(crate) fn bool_at_path(value: &Value, path: &[&str]) -> Option<bool> {

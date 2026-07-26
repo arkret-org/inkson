@@ -1680,9 +1680,9 @@ async fn prefetch_persistent_event_sender_key_pairs(
     let missing: Vec<(String, String)> = pairs
         .into_iter()
         .filter(|(actor, device)| {
-            matches!(
+            !matches!(
                 crate::identity::device_directory::cached_device_signing_key(actor, device),
-                crate::identity::device_directory::CacheLookup::Miss
+                crate::identity::device_directory::CacheLookup::Hit(_)
             )
         })
         .collect();
@@ -1695,7 +1695,7 @@ async fn prefetch_persistent_event_sender_key_pairs(
         crate::identity::did_resolver::DeploymentProfile::PersonalNode,
         did_cache.get(),
     );
-    crate::identity::device_directory::prefetch_device_keys(api, &anchor, &missing).await;
+    crate::identity::device_directory::refresh_device_keys(api, &anchor, &missing).await;
     did_cache.set(anchor.into_cache());
     true
 }
@@ -2075,6 +2075,7 @@ async fn process_to_device_delivery(
         .read(|store| store.persist_error().is_none());
     if durable_prefix
         && !response.updates.to_device.is_empty()
+        && to_device_batch_safe_for_ingest_ack(&response.updates.to_device)
         && let Some(ack_token) = response.updates.to_device_ack_token.as_deref()
     {
         await_account_state_durable(ctx, "account to-device batch before ACK").await?;
@@ -2103,6 +2104,7 @@ async fn process_to_device_delivery(
         }
         if durable_prefix
             && !messages.is_empty()
+            && to_device_batch_safe_for_ingest_ack(&messages)
             && let Some(ack_token) = page.ack_token.as_deref()
         {
             await_account_state_durable(ctx, "paginated to-device batch before ACK").await?;
@@ -2123,6 +2125,21 @@ async fn process_to_device_delivery(
                 .read(|store| store.load().to_device_inbox.len()),
         });
     Ok(())
+}
+
+/// Raw inbox durability is enough for ordinary device messages, but an MLS
+/// Welcome is destructive-consumer state: acknowledging it before the MLS
+/// runtime imports and durably snapshots the group makes the only join secret
+/// disappear from the server queue. The Welcome bootstrap owns that ACK after
+/// successful apply (or an explicitly verified stale replay).
+fn to_device_batch_safe_for_ingest_ack(messages: &[arkret_sdk::DeviceMessageEnvelope]) -> bool {
+    !messages.iter().any(|message| {
+        serde_json::to_value(message)
+            .ok()
+            .and_then(|value| value.get("kind").and_then(Value::as_str).map(str::to_owned))
+            .as_deref()
+            == Some("ak.mls.welcome")
+    })
 }
 
 fn to_device_batch_allows_cursor_advance(
@@ -3575,6 +3592,20 @@ mod tests {
             &[to_device_message("ak.future.secret.material")],
             false,
         ));
+    }
+
+    #[test]
+    fn mls_welcome_requires_consumer_ack_after_group_state_is_durable() {
+        assert!(!to_device_batch_safe_for_ingest_ack(&[to_device_message(
+            "ak.mls.welcome"
+        )]));
+        assert!(!to_device_batch_safe_for_ingest_ack(&[
+            to_device_message("ak.key.verification.request"),
+            to_device_message("ak.mls.welcome"),
+        ]));
+        assert!(to_device_batch_safe_for_ingest_ack(&[to_device_message(
+            "ak.key.verification.request"
+        )]));
     }
 
     #[test]

@@ -494,7 +494,11 @@ pub(super) fn ChatEffects(
                         Some(&store),
                         local_decrypt_identity,
                     ),
-                    poll_cards_from_local_state(&snapshot),
+                    poll_cards_from_local_state_with_sidecar(
+                        &snapshot,
+                        Some(&store),
+                        local_decrypt_identity,
+                    ),
                     channels_from_local_state(&snapshot),
                 )
             };
@@ -583,7 +587,11 @@ pub(super) fn ChatEffects(
                         Some(&state_store.read()),
                         decrypt_identity,
                     ));
-                    loaded_poll_cards.extend(poll_cards_from_sync_realms(&sync.realm_projections));
+                    loaded_poll_cards.extend(poll_cards_from_sync_realms_with_sidecar(
+                        &sync.realm_projections,
+                        Some(&state_store.read()),
+                        decrypt_identity,
+                    ));
                     loaded_moderation_appeal_prompts.extend(
                         moderation_appeal_prompts_from_sync_realms(
                             &sync.realm_projections,
@@ -627,7 +635,12 @@ pub(super) fn ChatEffects(
                         Some(&state_store.read()),
                         decrypt_identity,
                     ));
-                    loaded_poll_cards.extend(poll_cards_from_events(&backfill_events));
+                    loaded_poll_cards.extend(poll_cards_from_events_with_sidecar(
+                        &selected_realm_for_load,
+                        &backfill_events,
+                        Some(&state_store.read()),
+                        decrypt_identity,
+                    ));
                     loaded_moderation_appeal_prompts.extend(moderation_appeal_prompts_from_events(
                         &selected_realm_for_load,
                         &backfill_events,
@@ -686,35 +699,45 @@ pub(super) fn ChatEffects(
                 return;
             }
             local_timeline_sync_key_seen.set(sync_key);
-            let (next_messages, next_moderation_appeal_prompts) = {
+            let (next_messages, next_poll_cards, next_moderation_appeal_prompts) = {
                 let store = state_store.read();
                 let snapshot = store.load();
+                let decrypt_identity = Some((
+                    account_did_for_local_timeline.as_str(),
+                    device_id_for_local_timeline.as_str(),
+                ));
                 let messages = chat_messages_from_local_state_with_sidecar(
                     &snapshot,
                     Some(&store),
-                    Some((
-                        account_did_for_local_timeline.as_str(),
-                        device_id_for_local_timeline.as_str(),
-                    )),
+                    decrypt_identity,
                 )
                 .into_iter()
                 .filter(|message| message.realm_id == realm)
                 .collect::<Vec<_>>();
-                let moderation_events = snapshot
+                let realm_events = snapshot
                     .raw_operations
                     .iter()
                     .filter(|record| record.realm_id.as_deref() == Some(realm.as_str()))
                     .map(|record| record.payload.clone())
                     .collect::<Vec<_>>();
+                let poll_cards = poll_cards_from_events_with_sidecar(
+                    &realm,
+                    &realm_events,
+                    Some(&store),
+                    decrypt_identity,
+                );
                 let prompts = moderation_appeal_prompts_from_events(
                     &realm,
-                    &moderation_events,
+                    &realm_events,
                     &account_did_for_local_timeline,
                 );
-                (messages, prompts)
+                (messages, poll_cards, prompts)
             };
             if !next_messages.is_empty() {
                 event_sink.emit(ChatProjectionEvent::MergeMessages(next_messages));
+            }
+            if !next_poll_cards.is_empty() {
+                event_sink.emit(ChatProjectionEvent::MergePollCards(next_poll_cards));
             }
             event_sink.emit(ChatProjectionEvent::ReplaceModerationPrompts(
                 next_moderation_appeal_prompts,

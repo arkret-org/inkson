@@ -859,6 +859,14 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             }
                                         };
                                         let message_ref = crate::messaging::polls::poll_message_ref(&op);
+                                        let poll_content_sidecar =
+                                            message_ref.clone().and_then(|message_id| {
+                                                let content = serde_json::to_string(
+                                                    op.payload.get("content")?,
+                                                )
+                                                .ok()?;
+                                                Some((message_id, content))
+                                            });
                                         let mut card = crate::messaging::polls::PollCard::from_draft(
                                             poll_id.clone(),
                                             &draft_snapshot,
@@ -897,6 +905,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         let base = base.clone();
                                         let api_token = token();
                                         let poll_id_for_status = poll_id.clone();
+                                        let realm_for_sidecar = realm.clone();
+                                        let strand_for_sidecar = selected_strand.clone();
+                                        let mut state_store_for_sidecar = state_store;
                                         spawn(async move {
                                             match crate::transport::auth::with_authed_api(
                                                 &base,
@@ -906,6 +917,20 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             .await
                                             {
                                                 Ok(_) => {
+                                                    if let Some((message_id, content)) =
+                                                        poll_content_sidecar
+                                                    {
+                                                        state_store_for_sidecar
+                                                            .write()
+                                                            .save_private_plaintext(
+                                                                &realm_for_sidecar,
+                                                                &strand_for_sidecar,
+                                                                &format!(
+                                                                    "message-content:{message_id}"
+                                                                ),
+                                                                &content,
+                                                            );
+                                                    }
                                                     if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == poll_id_for_status) {
                                                         found.pending = false;
                                                         found.failed = false;
@@ -963,6 +988,14 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             }
                                         };
                                         let message_ref = crate::messaging::polls::poll_message_ref(&op);
+                                        let poll_content_sidecar =
+                                            message_ref.clone().and_then(|message_id| {
+                                                let content = serde_json::to_string(
+                                                    op.payload.get("content")?,
+                                                )
+                                                .ok()?;
+                                                Some((message_id, content))
+                                            });
                                         let mut card = crate::messaging::polls::PollCard::from_draft(
                                             poll_id.clone(),
                                             &draft_snapshot,
@@ -997,6 +1030,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         let base = base.clone();
                                         let api_token = token();
                                         let poll_id_for_status = poll_id.clone();
+                                        let realm_for_sidecar = realm.clone();
+                                        let strand_for_sidecar = selected_strand.clone();
+                                        let mut state_store_for_sidecar = state_store;
                                         spawn(async move {
                                             match crate::transport::auth::with_authed_api(
                                                 &base,
@@ -1006,6 +1042,20 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             .await
                                             {
                                                 Ok(_) => {
+                                                    if let Some((message_id, content)) =
+                                                        poll_content_sidecar
+                                                    {
+                                                        state_store_for_sidecar
+                                                            .write()
+                                                            .save_private_plaintext(
+                                                                &realm_for_sidecar,
+                                                                &strand_for_sidecar,
+                                                                &format!(
+                                                                    "message-content:{message_id}"
+                                                                ),
+                                                                &content,
+                                                            );
+                                                    }
                                                     if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == poll_id_for_status) {
                                                         found.pending = false;
                                                         found.failed = false;
