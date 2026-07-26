@@ -169,7 +169,6 @@ dependencies = [
  "arkret-keystore",
  "arkret-lattice-registry",
  "arkret-mls",
- "arkret-models",
  "arkret-models-collaboration",
  "arkret-models-crypto",
  "arkret-models-discovery",
@@ -181,11 +180,8 @@ dependencies = [
  "arkret-signatures",
  "arkret-state",
  "arkret-wire",
- "chrono",
- "reqwest 0.13.4",
  "serde_json",
  "thiserror 2.0.18",
- "tokio",
  "url",
 ]
 
@@ -409,17 +405,6 @@ dependencies = [
  "tls_codec",
  "uuid",
  "zeroize",
-]
-
-[[package]]
-name = "arkret-models"
-version = "0.3.0"
-dependencies = [
- "arkret-models-collaboration",
- "arkret-models-crypto",
- "arkret-models-discovery",
- "arkret-models-identity",
- "arkret-models-integration",
 ]
 
 [[package]]
