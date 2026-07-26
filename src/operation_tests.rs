@@ -805,6 +805,8 @@ fn invite_helpers_emit_canonical_kinds() {
     assert!(create.payload.get("state").is_none());
     assert!(create.payload.get("x_member_delivery_binding").is_none());
     assert_registered_payload_valid(&create);
+    arkret_sdk::schema::validate_registered_cell_writes(&create)
+        .expect("direct invite create must carry both registered FSM writes");
 
     let accept = ak_ops::invite_accept(
         "ak:realm:01904100-0000-7000-8000-000000000010",
@@ -817,6 +819,8 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(accept.payload["invite_id"], invite_id);
     assert!(accept.payload.get("state").is_none());
     assert_registered_payload_valid(&accept);
+    arkret_sdk::schema::validate_registered_cell_writes(&accept)
+        .expect("invite accept must atomically advance invite and member FSMs");
 
     let cancel = ak_ops::invite_cancel(
         "ak:realm:01904100-0000-7000-8000-000000000010",

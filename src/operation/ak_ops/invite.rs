@@ -4,6 +4,26 @@ use serde_json::json;
 
 use super::{OperationBuilder, invite_ref_payload_value};
 
+fn fsm_transition_effect(
+    cell: String,
+    from: serde_json::Value,
+    to: serde_json::Value,
+) -> anyhow::Result<arkret_sdk::Effect> {
+    Ok(arkret_sdk::Effect {
+        cell: arkret_sdk::CellRef::new(cell)
+            .map_err(|error| anyhow::anyhow!("invalid invite effect cell: {error}"))?,
+        op: arkret_sdk::LatticeOp {
+            op_type: arkret_sdk::LatticeOpType::Transition,
+            tag: None,
+            value: None,
+            from: Some(from),
+            to: Some(to),
+            reason: None,
+            issuer_seq: None,
+        },
+    })
+}
+
 pub fn invite_create_structured(
     realm_id: &str,
     actor: &str,
@@ -39,12 +59,25 @@ pub fn invite_create_structured(
     let body = payload
         .to_value()
         .map_err(|err| anyhow::anyhow!("invite create payload: {err}"))?;
+    let effects = vec![
+        fsm_transition_effect(
+            format!("ak:cell:ak.component.invite.lifecycle.v1:{invite_id}"),
+            serde_json::Value::Null,
+            json!("pending"),
+        )?,
+        fsm_transition_effect(
+            format!("ak:cell:ak.component.member.state.v1:{invitee}"),
+            json!("leave"),
+            json!("invite"),
+        )?,
+    ];
     Ok(OperationBuilder::new(
         realm_id,
         actor,
         arkret_sdk::events::kinds::EventKind::InviteCreate,
     )
-    .body(body))
+    .body(body)
+    .effects(effects))
 }
 
 pub fn invite_accept(
@@ -53,13 +86,26 @@ pub fn invite_accept(
     invite_id: &str,
 ) -> anyhow::Result<OperationBuilder> {
     let body = invite_ref_payload_value(invite_id, None)?;
+    let effects = vec![
+        fsm_transition_effect(
+            format!("ak:cell:ak.component.invite.lifecycle.v1:{invite_id}"),
+            json!("pending"),
+            json!("accepted"),
+        )?,
+        fsm_transition_effect(
+            format!("ak:cell:ak.component.member.state.v1:{actor}"),
+            json!("invite"),
+            json!("join"),
+        )?,
+    ];
     Ok(OperationBuilder::new(
         realm_id,
         actor,
         arkret_sdk::events::kinds::EventKind::InviteAccept,
     )
     .target_ref(invite_id)
-    .body(body))
+    .body(body)
+    .effects(effects))
 }
 
 pub fn invite_cancel(

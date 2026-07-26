@@ -307,6 +307,8 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             "ak.realm.history_sharing_policy",
             "ak.realm.discovery",
             "ak.realm.plaintext_visible_services",
+            "ak.realm.delivery_binding_policy",
+            "ak.member.state",
             "ak.member.state",
         ]
     );
@@ -355,6 +357,25 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         arkret_bootstrap::REALM_METADATA_CELL
     );
     assert_eq!(create.effects[0].op.op_type, arkret_sdk::LatticeOpType::Set);
+    for event in &events {
+        arkret_sdk::schema::validate_registered_cell_writes(event).unwrap_or_else(|error| {
+            panic!(
+                "bootstrap Event {} ({}) violates the registry cell contract: {error}",
+                event.event_id,
+                event.kind.as_str()
+            )
+        });
+    }
+    for facet in &events[2..9] {
+        assert!(
+            facet
+                .effects
+                .iter()
+                .all(|effect| effect.cell.as_str().ends_with(":null")),
+            "Realm singleton facet {} must use the canonical null subject",
+            facet.kind.as_str()
+        );
+    }
     // seal_ref starts unset on the typed envelope. Realm genesis
     // has no snapshot head yet, so the create event relies on its
     // `head_eq null` precondition instead of a prior seal.
@@ -437,7 +458,12 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             "inbox_preview",
         ])
     );
-    assert_eq!(events[8].payload["membership"], "invite");
+    assert_eq!(
+        events[8].payload["allow_binding_sources"],
+        json!(["realm_policy"])
+    );
+    assert_eq!(events[9].payload["membership"], "join");
+    assert_eq!(events[10].payload["membership"], "invite");
 }
 
 #[test]

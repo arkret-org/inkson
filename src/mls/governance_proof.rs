@@ -1148,10 +1148,7 @@ mod tests {
 fn target_notary_value(
     bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
 ) -> Result<arkret_sdk::NotaryValue, String> {
-    let expected = format!(
-        "ak:cell:ak.component.notary.v1:{}",
-        bundle.realm_id.as_str()
-    );
+    let expected = arkret_wire::null_subject_cell("ak.component.notary.v1");
     let leaf = bundle
         .control_state
         .iter()

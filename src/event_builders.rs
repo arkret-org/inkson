@@ -307,8 +307,26 @@ pub fn build_realm_bootstrap_events(
             )?);
         }
     }
+    for followup in &events[2..] {
+        let descriptor = followup.kind.descriptor();
+        if descriptor.is_some_and(|descriptor| {
+            descriptor.reducer_input && descriptor.lattice == Some("cas_register")
+        }) {
+            arkret_sdk::schema::validate_single_target_set_event_contract_in_context(
+                followup,
+                arkret_sdk::schema::EventCellContractContext::OrdinaryRealmBootstrap,
+            )
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "bootstrap Event {} ({}) violates its registry cell contract: {error}",
+                    followup.event_id,
+                    followup.kind.as_str()
+                )
+            })?;
+        }
+    }
     arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(&events)
-        .map_err(|error| anyhow::anyhow!(error.reason_code()))?;
+        .map_err(|error| anyhow::anyhow!("{}: {error}", error.reason_code()))?;
     Ok(events)
 }
 
@@ -375,8 +393,7 @@ pub fn build_realm_create_event(
             federation_policy
         };
     let realm_object_id = trim_realm_id(realm_id);
-    let envelope_realm_id = trim_realm_id(realm_id);
-    let cell = space_cell("ak.component.realm.create.v1", &envelope_realm_id);
+    let cell = arkret_wire::null_subject_cell("ak.component.realm.create.v1");
     let created_at_for_object = event_timestamp();
     let notary = realm_genesis_notary(notary_profile, notary_did)?;
     let mut object = json!({
@@ -452,7 +469,7 @@ pub fn build_realm_create_event(
     let realm_body = arkret_sdk::ObjectCreatePayload::new(object.clone())
         .to_value()
         .map_err(|e| anyhow::anyhow!("ak.realm.create payload serialize: {e}"))?;
-    OperationBuilder::new(
+    let mut event = OperationBuilder::new(
         realm_id,
         actor_id,
         arkret_sdk::events::kinds::EventKind::RealmCreate,
@@ -463,7 +480,9 @@ pub fn build_realm_create_event(
     .effects(effects)
     .requirements(event_requirements_with_schema("ak.schema.realm.v1"))
     .created_at(created_at_for_object)
-    .build_sdk_event("inkson")
+    .build_sdk_event("inkson")?;
+    event.effects = arkret_bootstrap::realm_create_effects(&event)?;
+    Ok(event)
 }
 
 /// Build the create-locked Principal Control Realm genesis for a managed
@@ -905,8 +924,7 @@ pub fn build_realm_state_event(
         )
     })?;
     let created_at = event_timestamp();
-    let realm_id_wire = trim_realm_id(realm_id);
-    let cell = space_cell(cell_family, &realm_id_wire);
+    let cell = arkret_wire::null_subject_cell(cell_family);
     let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
     let effects = vec![set_effect(&cell, value.clone())?];
     // For the closed enum facets, route authoring through SDK strong types.
@@ -958,8 +976,7 @@ pub fn build_realm_archive_event(
     reason: Option<&str>,
 ) -> anyhow::Result<arkret_sdk::Event> {
     let created_at = event_timestamp();
-    let realm_id_wire = trim_realm_id(realm_id);
-    let cell = space_cell("ak.component.realm.archive.v1", &realm_id_wire);
+    let cell = arkret_wire::null_subject_cell("ak.component.realm.archive.v1");
     // Strong type: realm_archive_payload (additionalProperties:false).
     let mut typed = arkret_sdk::RealmArchivePayload::new(archived);
     if let Some(reason) = reason.map(str::trim).filter(|value| !value.is_empty()) {
@@ -989,8 +1006,7 @@ pub fn build_realm_destroy_event(
         return Err(anyhow::anyhow!("reason is required for ak.realm.destroy"));
     }
     let created_at = event_timestamp();
-    let realm_id_wire = trim_realm_id(realm_id);
-    let cell = space_cell("ak.component.realm.destroy.v1", &realm_id_wire);
+    let cell = arkret_wire::null_subject_cell("ak.component.realm.destroy.v1");
     // Strong type: realm_destroy_payload (reason required; verification_stub
     // _required omitted so the reducer applies its default; additionalProperties
     // :false).
@@ -1062,11 +1078,7 @@ pub fn build_plaintext_visible_services_event(
         return Ok(None);
     }
     let created_at = event_timestamp();
-    let realm_id_wire = trim_realm_id(realm_id);
-    let cell = space_cell(
-        "ak.component.realm.plaintext_visible_services.v1",
-        &realm_id_wire,
-    );
+    let cell = arkret_wire::null_subject_cell("ak.component.realm.plaintext_visible_services.v1");
     let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
     let body_value = arkret_sdk::PlaintextVisibleServicesPayload::new(services).to_value()?;
     let effects = vec![set_effect(&cell, body_value.clone())?];
