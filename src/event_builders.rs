@@ -95,17 +95,12 @@ fn event_requirements_with_schema(schema_ref: &str) -> EventRequirements {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RealmBootstrapMember {
     pub(crate) actor_id: String,
-    // Bootstrap membership accepts only already-authoritative DID input.
-    // Handle evidence belongs on signed HandleClaim / Directory resolution
-    // paths, not on a locally synthesized membership event.
-    delivery_binding: Option<arkret_sdk::MemberDeliveryBinding>,
 }
 
 impl RealmBootstrapMember {
     fn from_did(did: &str) -> Self {
         Self {
             actor_id: did.trim().to_owned(),
-            delivery_binding: None,
         }
     }
 }
@@ -177,7 +172,11 @@ pub fn build_realm_bootstrap_events(
         history_visibility,
         content_scheme,
     )?;
-    let invitees = parse_realm_bootstrap_members(invitees)?;
+    // Validate seed invitees here, but do not include their membership
+    // transitions in the atomic genesis unit. Realm invite state can only be
+    // entered through an ordinary `ak.invite.create` Control Move after the
+    // creator's bootstrap has been accepted.
+    let _invitees = parse_realm_bootstrap_members(invitees)?;
     events.push(build_realm_create_event(
         realm_id,
         actor_id,
@@ -300,13 +299,6 @@ pub fn build_realm_bootstrap_events(
         Some(creator_delivery_binding),
     )?);
 
-    for invitee in invitees.iter() {
-        if invitee.actor_id != actor_id {
-            events.push(build_member_state_event(
-                realm_id, actor_id, invitee, "invite",
-            )?);
-        }
-    }
     for followup in &events[2..] {
         let descriptor = followup.kind.descriptor();
         if descriptor.is_some_and(|descriptor| {
@@ -1095,23 +1087,6 @@ pub fn build_plaintext_visible_services_event(
     .created_at(created_at)
     .build_sdk_event("inkson")?;
     Ok(Some(event))
-}
-
-fn build_member_state_event(
-    realm_id: &str,
-    actor_id: &str,
-    member: &RealmBootstrapMember,
-    membership: &str,
-) -> anyhow::Result<arkret_sdk::Event> {
-    build_member_state_transition_event_with_binding(
-        realm_id,
-        actor_id,
-        &member.actor_id,
-        None,
-        membership,
-        "space_create",
-        member.delivery_binding.clone(),
-    )
 }
 
 /// Build a generic `ak.member.state` event on `ak.component.member.state.v1`,

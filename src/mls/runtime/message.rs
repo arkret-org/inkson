@@ -99,16 +99,16 @@ pub fn history_content_aad_bytes(realm_id: &str, epoch: u64) -> anyhow::Result<V
 
 /// True when `realm_id` declares the §2.10 `mls_exporter_aead_v1` content scheme
 /// (capability axis), so authored content uses the history-shareable exporter
-/// AEAD path instead of forward-secret `mls_rfc9420`. Normalizes case + `_`/`-`
-/// so both the canonical kebab token and a `mls_exporter_aead_v1` spelling
-/// match. See [[content-scheme-capability-vs-toggle]].
+/// AEAD path instead of forward-secret `mls_rfc9420`. Normalizes case and
+/// hyphen aliases to the canonical underscore spelling. See
+/// [[content-scheme-capability-vs-toggle]].
 pub(crate) fn realm_content_scheme_is_exporter_aead(
     state_store: &crate::state::LocalStateStore,
     realm_id: &str,
 ) -> bool {
     state_store
         .realm_content_scheme(realm_id)
-        .map(|scheme| scheme.trim().to_ascii_lowercase().replace('_', "-"))
+        .map(|scheme| scheme.trim().to_ascii_lowercase().replace('-', "_"))
         .is_some_and(|scheme| scheme == "mls_exporter_aead_v1")
 }
 
@@ -125,7 +125,7 @@ fn realm_content_scheme_is_exporter_aead_for_send(
         .ok_or(MlsRuntimeError::EncryptionPolicyPending)?
         .trim()
         .to_ascii_lowercase()
-        .replace('_', "-");
+        .replace('-', "_");
     match scheme.as_str() {
         "mls_exporter_aead_v1" => Ok(true),
         "mls_rfc9420" => Ok(false),

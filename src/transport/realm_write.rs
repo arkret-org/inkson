@@ -33,8 +33,11 @@ use crate::realm_helpers::{patch_touches_create_locked_encryption_profile, valid
 /// metadata, so the same actor's per-facet follow-ups
 /// (`ak.realm.join_rule` / `ak.realm.history_visibility` /
 /// `ak.realm.discovery` / `ak.realm.plaintext_visible_services` /
-/// invitee `ak.member.state` invites) all pass the regular
+/// creator delivery binding) all pass the regular
 /// `realm_has_member` authz check naturally.
+/// Seed invitees are submitted afterwards as ordinary directed
+/// `ak.invite.create` Control Moves because membership may only enter
+/// `invite` through that lifecycle.
 ///
 /// All five create-locked fields per spec §2.3 (`encryption_profile`,
 /// `security_class`, `federation_policy`, `notary_profile`,
@@ -75,6 +78,7 @@ pub async fn create_realm(
     let realm_id = format!("ak:realm:{}", uuid_v7());
     let join_rule = validate_join_rule_v1(join_rule)?;
     let notary_did = submitter.service_id().await?;
+    let resolved_invitees = parse_realm_bootstrap_members(&invitees)?;
     let events = build_realm_bootstrap_events(
         &realm_id,
         actor_id,
@@ -104,7 +108,30 @@ pub async fn create_realm(
         .submit_sdk_events_batch(&realm_id, events, Some(&idempotency_key))
         .await?;
 
-    let resolved_invitees = parse_realm_bootstrap_members(&invitees)?;
+    let introduction_evidence_digest =
+        crate::canonical::canonical_sha256(&json!({"kind": "explicit_address"}))?;
+    for invitee in &resolved_invitees {
+        if invitee.actor_id == actor_id {
+            continue;
+        }
+        let invite_id = format!("ak:invite:{}", uuid_v7());
+        let delivery_target = arkret_sdk::InviteDeliveryTarget::principal_server(
+            arkret_sdk::Did::new(notary_did.clone())
+                .map_err(|error| anyhow::anyhow!("invalid notary service DID: {error}"))?,
+        );
+        let event = ak_ops::invite_create_structured(
+            &realm_id,
+            actor_id,
+            &invite_id,
+            &invitee.actor_id,
+            None,
+            delivery_target,
+            &introduction_evidence_digest,
+        )?
+        .build_sdk_event("inkson")?;
+        submitter.submit_sdk_event(&event).await?;
+    }
+
     let mut members = Vec::new();
     members.push(actor_id.to_owned());
     for invitee in resolved_invitees {

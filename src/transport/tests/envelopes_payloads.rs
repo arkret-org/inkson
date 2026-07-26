@@ -583,8 +583,7 @@ fn default_history_sharing_policy_matches_prejoin_visibility() {
 /// absent materialized cell. An earlier `Option<Value>` field on the SDK
 /// `Predicate` collapsed that explicit `null` to `None` on deserialize and
 /// dropped it on re-serialize, so the SDK digest no longer matched the
-/// locally-signed one. Membership effects themselves start from the
-/// normative logical FSM initial state `leave`.
+/// locally-signed one.
 #[test]
 fn bootstrap_envelopes_have_no_sdk_digest_drift() {
     let events = build_realm_bootstrap_events(
@@ -602,11 +601,9 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
         "single_did",
         "sha256",
         "ak:trust_domain:server.example",
-        // an invitee exercises the `ak.member.state` `leave → invite`
-        // transition. Its CAS precondition still carries explicit null for
-        // the absent materialized cell. Bootstrap
-        // accepts only authoritative DID input; handle strings require
-        // Directory-resolved invite/address evidence.
+        // Seed invitees are validated as authoritative DIDs here, but their
+        // directed `ak.invite.create` events are deliberately submitted only
+        // after this genesis unit is accepted.
         &["did:webvh:z2dmjBobScidVnosYTzHAMbzYDRZkVrD32ea9Sr2XNs8NkgMB5mn:bob.example".to_owned()],
         &["did:web:server.example".to_owned()],
         None,
@@ -614,16 +611,14 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
     )
     .unwrap();
 
-    let invitee = "did:webvh:z2dmjBobScidVnosYTzHAMbzYDRZkVrD32ea9Sr2XNs8NkgMB5mn:bob.example";
-    let invite = events
-        .iter()
-        .find(|event| {
-            event.kind.as_str() == "ak.member.state" && event.payload["actor_id"] == invitee
-        })
-        .expect("bootstrap invite event");
-    assert_eq!(invite.preconditions[0].predicate.value, Some(json!(null)));
-    assert_eq!(invite.effects[0].op.from, Some(json!("leave")));
-    assert_eq!(invite.effects[0].op.to, Some(json!("invite")));
+    assert!(
+        events
+            .iter()
+            .all(|event| event.kind.as_str() != "ak.invite.create"
+                && !(event.kind.as_str() == "ak.member.state"
+                    && event.payload["membership"] == "invite")),
+        "Realm genesis must not contain seed invite membership transitions"
+    );
 
     for event in events {
         let kind = event.kind.as_str().to_owned();

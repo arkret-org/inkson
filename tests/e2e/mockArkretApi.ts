@@ -2952,6 +2952,8 @@ export async function mockArkretApi(
         device_pairing_request_id:
           "device_pairing_request:01964137-0000-7000-8000-0000000000c1",
         pairing_code: "7H2K9M4Q",
+        gate_audience: url.origin,
+        server_nonce: "Y290ZXN0LXNlcnZlci1wYWlyaW5nLW5vbmNl",
         expires_at: "2099-01-01T00:00:00.000Z",
       });
     }
@@ -2971,7 +2973,9 @@ export async function mockArkretApi(
           alg: "EdDSA",
           key: "z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
         },
-        challenge_signature: "Q0hBTExFTkdF",
+        client_nonce: "Y290ZXN0LWRldmljZS1wYWlyaW5nLW5vbmNl",
+        gate_audience: url.origin,
+        server_nonce: "Y290ZXN0LXNlcnZlci1wYWlyaW5nLW5vbmNl",
         display_name: "New device",
         device_metadata: { platform: "browser" },
         expires_at: "2099-01-01T00:00:00.000Z",

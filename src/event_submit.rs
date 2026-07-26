@@ -1143,7 +1143,13 @@ impl EventSubmitter {
         intent.prev_refs.clear();
         intent.proofs.clear();
         intent.seal_ref = None;
-        intent.seal_basis = None;
+        // A pre-join invitee cannot read the membership-gated Realm Seal
+        // view. `accept_realm_invite` therefore resolves and stamps the
+        // current join-candidate basis before enqueueing; preserve that basis
+        // while all ordinary member-authored events continue to re-author it.
+        if intent.kind.as_str() != "ak.invite.accept" {
+            intent.seal_basis = None;
+        }
         intent.auth_context = None;
         let local_operation_id = intent
             .unsigned
