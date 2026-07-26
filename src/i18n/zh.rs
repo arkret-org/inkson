@@ -526,7 +526,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.section.encryption", "安全");
     dict.set("settings.section.recovery", "恢复");
     dict.set("settings.section.mimi", "集成");
-    dict.set("settings.section.connections", "外部连接");
     dict.set("settings.section.notifications", "通知");
     dict.set("settings.section.privacy", "隐私与分享");
     dict.set("settings.section.invite_policy", "谁能邀请我");

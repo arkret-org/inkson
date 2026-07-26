@@ -64,10 +64,6 @@ pub(crate) fn save_generated_recovery_key_metadata(
 
 pub(crate) fn recovery_state_has_user_material(state: &RecoveryState) -> bool {
     !state.recovery_key_fingerprint.trim().is_empty()
-        || state
-            .guardians
-            .iter()
-            .any(|guardian| !guardian.did.trim().is_empty() || !guardian.label.trim().is_empty())
 }
 
 pub(crate) fn recovery_options_configured(

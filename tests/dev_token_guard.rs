@@ -15,38 +15,27 @@
 //! or removed the predicate — these tests fail loudly.
 
 use inkson::push::{
-    PLACEHOLDER_PUSH_KEY_MARKERS, build_register_request, build_register_request_for_actor,
-    ensure_production_register_request, is_placeholder_push_key,
+    PLACEHOLDER_PUSH_KEY_MARKERS, ensure_production_register_request, is_placeholder_push_key,
 };
+
+fn request_with_push_key(push_key: &str) -> chime::ChimePushRegisterDeviceRequest {
+    let mut request = chime::ChimePushRegisterDeviceRequest::default();
+    request.device_id = "dev_inkson".to_owned();
+    request.push_key = push_key.to_owned();
+    request
+}
 
 #[test]
 fn placeholder_marker_set_is_non_empty() {
-    assert!(
-        !PLACEHOLDER_PUSH_KEY_MARKERS.is_empty(),
-        "the placeholder marker set must include at least one literal — \
-         removing it would silently let a dev token reach the push gateway."
-    );
+    assert!(!PLACEHOLDER_PUSH_KEY_MARKERS.is_empty());
 }
 
 #[test]
-fn default_scaffold_push_key_is_recognised_as_placeholder() {
-    let request = build_register_request("dev_inkson").expect("scaffold register request builds");
-    assert!(
-        is_placeholder_push_key(&request.push_key),
-        "default-build push key `{}` must still be flagged as a development placeholder; \
-         either keep the dev marker (`inkson-dev-`/`placeholder`) or wire a real OS push \
-         token before changing this assertion.",
-        request.push_key
-    );
-}
-
-#[test]
-fn ensure_production_register_request_blocks_default_scaffold() {
-    let request =
-        build_register_request_for_actor("dev_inkson", Some("did:web:alice.example")).unwrap();
+fn ensure_production_register_request_blocks_placeholder() {
+    let request = request_with_push_key("desktop:inkson-dev-placeholder-token");
 
     let err = ensure_production_register_request(&request)
-        .expect_err("default-build register request must NOT be accepted by the production guard");
+        .expect_err("placeholder register request must not pass the production guard");
 
     let message = err.to_string();
     assert!(
@@ -61,8 +50,7 @@ fn ensure_production_register_request_blocks_default_scaffold() {
 
 #[test]
 fn ensure_production_register_request_passes_real_token() {
-    let mut request = build_register_request("dev_inkson").unwrap();
-    request.push_key = "apns:0123456789abcdef0123456789abcdef".to_owned();
+    let request = request_with_push_key("apns:0123456789abcdef0123456789abcdef");
     ensure_production_register_request(&request)
         .expect("a real platform push token must clear the production guard");
 }

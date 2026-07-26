@@ -1078,28 +1078,6 @@ pub fn DirectoryPanel(
                                 }
                             }
                             {
-                                // TSP is an interop extension profile: external
-                                // VID endpoints can be reached over a TSP
-                                // relationship managed under /settings/connections.
-                                let actor_id = actor
-                                    .get("did")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_owned();
-                                rsx! {
-                                    Link {
-                                        class: "secondary",
-                                        "data-testid": "establish-tsp-button",
-                                        "data-remote-vid": "{actor_id}",
-                                        to: Route::SettingsSection {
-                                            section: "connections".to_owned(),
-                                            filter: String::new(),
-                                        },
-                                        "Establish TSP"
-                                    }
-                                }
-                            }
-                            {
                                 let actor_id = actor
                                     .get("did")
                                     .and_then(|v| v.as_str())

@@ -1,5 +1,4 @@
-//! Recovery surface — Recovery Key (24 words) + restore-from-backup, with
-//! Social Recovery tucked behind an "Advanced" fold.
+//! Recovery surface — Recovery Key (24 words) + restore-from-backup.
 //!
 //! - **Recovery Key (24 words)**: 256 bits of entropy, formatted as a 24-word BIP-39 mnemonic. This
 //!   is the ONLY user-visible recovery credential — `normalize_recovery_key_input` (and therefore
@@ -12,14 +11,8 @@
 //! - **Backup history**: summarizes the server-side `ak.schema.key_backup.v1` ciphertext envelopes
 //!   by creation time, emphasizing the latest encrypted backup without exposing per-backup
 //!   controls.
-//! - **Social Recovery** (advanced, local bookkeeping only): guardian list + Shamir threshold +
-//!   last-rehearsal timestamp persisted as JSON under the same private_data store.
-//!
-//! Everything writeable goes through `private_data`, which is XOR-obfuscated
-//! (NOT encrypted) at rest under the public account DID via
-//! `obfuscate_nonsensitive` (and on wasm32 mirrored to localStorage) — it holds
-//! only non-sensitive markers such as a last-rehearsal timestamp. The Recovery
-//! view never persists the Recovery Key itself in plaintext, encrypted form, or via this path.
+//! The Recovery view never persists the Recovery Key itself in plaintext,
+//! encrypted form, or via the private-data path.
 //!
 //! Split by responsibility into:
 //!   - [`types`]: serialized state + backup-summary data types;

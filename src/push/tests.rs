@@ -1,6 +1,31 @@
 use super::binding::push_token_entry_key;
-use super::token_source::current_platform;
+use super::token_source::{current_platform, default_gateway_binding, push_preferences};
 use super::*;
+
+fn build_register_request(
+    device_id: &str,
+) -> anyhow::Result<chime::ChimePushRegisterDeviceRequest> {
+    let push_key = "apns:0123456789abcdef0123456789abcdef";
+    let idempotency_key = format!("inkson-push-register-{device_id}");
+    let config = chime::PushDeviceConfig {
+        principal_id: None,
+        device_id,
+        push_key: Some(push_key),
+        platform: Some(current_platform()),
+        app_id: Some(APP_ID),
+        domestic_app_id: None,
+        registration_id: None,
+        display_name: Some("inkson"),
+        idempotency_key: Some(&idempotency_key),
+        request_id: None,
+        proof: None,
+    };
+    Ok(chime::build_register_device_request(
+        &config,
+        &default_gateway_binding(),
+        &push_preferences(),
+    )?)
+}
 
 #[test]
 fn builds_chime_register_request() {
@@ -9,18 +34,6 @@ fn builds_chime_register_request() {
     assert_eq!(request.app_id.as_deref(), Some("inkson"));
     assert_eq!(request.platform.as_deref(), Some(current_platform()));
     assert!(!request.push_key.is_empty());
-}
-
-#[test]
-fn dev_placeholder_token_source_returns_pinned_markers() {
-    let source = DevPlaceholderTokenSource;
-    let desktop = source.current_token("desktop").unwrap();
-    let web = source.current_token("web").unwrap();
-    assert_eq!(desktop, "desktop:inkson-dev-placeholder-token");
-    assert_eq!(web, "webpush:inkson-dev-placeholder-token");
-    assert!(is_placeholder_push_key(&desktop));
-    assert!(is_placeholder_push_key(&web));
-    assert!(source.rotate_token("desktop").is_none());
 }
 
 #[test]
@@ -383,26 +396,4 @@ fn push_token_binding_delete_is_idempotent() {
     binding.delete_token().expect("delete");
     assert!(binding.load_token().unwrap().is_none());
     binding.delete_token().expect("idempotent second delete");
-}
-
-/// `build_register_request_with_secure_store` persists the
-/// resolved push token through the binding so a retry path can
-/// recover it. The on-wire request is unaffected: same
-/// `push_key` / `device_id` shape as the non-binding helper.
-#[test]
-fn build_register_request_with_secure_store_persists_token() {
-    let store: Arc<dyn SecureKeyStore> = Arc::new(MemorySecureKeyStore::new());
-    let request = build_register_request_with_secure_store("dev_inkson", None, &store).unwrap();
-    assert_eq!(request.device_id, "dev_inkson");
-    assert!(!request.push_key.is_empty());
-
-    let binding = PushTokenBinding::new(store.clone(), "dev_inkson");
-    let loaded = binding.load_token().unwrap().expect("token persisted");
-    // Compare via hash to avoid printing the token if the test
-    // logs are leaked anywhere — sha256_hex is also used for the
-    // `push_key_hash` field in the registration state.
-    assert_eq!(
-        crate::canonical::sha256_hex(loaded.as_bytes()),
-        crate::canonical::sha256_hex(request.push_key.as_bytes())
-    );
 }

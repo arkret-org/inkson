@@ -27,9 +27,7 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
-use chime::ChimePushRegisterDeviceRequest;
 
-use super::request::build_register_request_for_actor;
 use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError, unwrap_secret, wrap_secret};
 
 /// SecureKeyStore key under which the AEAD wrapping seed for push tokens
@@ -210,29 +208,4 @@ impl std::fmt::Debug for PushTokenBinding {
             .field("store", &self.store.backend_name())
             .finish()
     }
-}
-
-/// Build a chime [`ChimePushRegisterDeviceRequest`] for `device_id`, persisting
-/// the resolved push token through [`PushTokenBinding`] for future
-/// idempotency / rotation. The returned request is wire-identical to
-/// [`build_register_request_for_actor`] — the binding effect is purely
-/// on the at-rest secret storage side.
-///
-/// Use this in the login / settings strand when you already have an
-/// [`Arc<dyn SecureKeyStore>`] from
-/// [`crate::secure_key_store::default_secure_key_store`].
-pub fn build_register_request_with_secure_store(
-    device_id: &str,
-    principal_id: Option<&str>,
-    store: &Arc<dyn SecureKeyStore>,
-) -> anyhow::Result<ChimePushRegisterDeviceRequest> {
-    let request = build_register_request_for_actor(device_id, principal_id)?;
-    let binding = PushTokenBinding::new(store.clone(), device_id);
-    // Best-effort persist. A backend failure here should not block
-    // registration — log and continue. The persisted token is only
-    // load-bearing for retry/rotation paths.
-    if let Err(err) = binding.store_token(&request.push_key) {
-        tracing::warn!(?err, %device_id, "PushTokenBinding::store_token failed");
-    }
-    Ok(request)
 }

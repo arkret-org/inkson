@@ -7,8 +7,8 @@ use super::backup_summary::{
     backup_inventory_status, fmt_backup_timestamp, parse_backup_list, sorted_backups_latest_first,
 };
 use super::helpers::copy_recovery_text_to_clipboard;
-use super::state::{fmt_relative, load_state, save_generated_recovery_key_metadata, save_state};
-use super::types::{BackupSummaryRow, Guardian, RecoveryState};
+use super::state::{fmt_relative, load_state, save_generated_recovery_key_metadata};
+use super::types::BackupSummaryRow;
 use super::upload::{RecoveryKeyBackupOutcome, upload_recovery_key_account_backup};
 use crate::components::HelpTip;
 // SyncBadge / SyncBadgeState are shared in `crate::components::sync_badge`.
@@ -21,10 +21,8 @@ use crate::recovery_crypto::{
 };
 use crate::transport::auth::with_authed_api;
 use crate::ui::button::{Button, ButtonVariant};
-use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::actor_display_label;
 
 const RESTORE_BACKUP_TIME_LIMIT: usize = 5;
 
@@ -67,16 +65,6 @@ pub fn RecoveryPanel(
     let mut device_unauthorized = use_signal(|| false);
     let navigator = use_navigator();
 
-    // Social recovery state
-    let mut threshold = use_signal(|| initial.sss_threshold);
-    let mut total = use_signal(|| initial.sss_total);
-    let mut guardians = use_signal(|| initial.guardians.clone());
-    let mut new_guardian_label = use_signal(String::new);
-    let mut new_guardian_did = use_signal(String::new);
-    let mut new_guardian_note = use_signal(String::new);
-    let mut last_rehearsed = use_signal(|| initial.last_rehearsed_at.clone());
-    let mut social_status = use_signal(String::new);
-
     // Backup history state — the panel shows server-side ciphertext inventory
     // only by time, without exposing raw backup IDs or destructive row actions.
     let mut restore_status = use_signal(String::new);
@@ -105,16 +93,6 @@ pub fn RecoveryPanel(
             }
         });
     }
-
-    let snapshot_state = move || RecoveryState {
-        recovery_key_fingerprint: recovery_key_fp(),
-        backup_hpke_public_key_multibase: backup_hpke_public_key_multibase(),
-        recovery_key_rotated_at: recovery_key_rotated_at(),
-        sss_threshold: threshold(),
-        sss_total: total(),
-        guardians: guardians(),
-        last_rehearsed_at: last_rehearsed(),
-    };
 
     rsx! {
         div { class: "timeline recovery-panel", "data-testid": "recovery-panel", role: "region", "aria-label": "Recovery and key backup",
@@ -493,217 +471,6 @@ pub fn RecoveryPanel(
                             }
                         },
                         "Confirm custody and publish"
-                    }
-                }
-            }
-
-            // Social recovery — key-management.md §7.4. Advanced, collapsed by
-            // default: the Recovery Key (24 words) is the primary credential;
-            // guardian bookkeeping here is local-only.
-            details { class: "event", "data-testid": "social-recovery-section",
-                summary { class: "event-head",
-                    span { "Advanced · Social Recovery (Shamir's Secret Sharing)" }
-                    span { "{threshold} of {total} threshold" }
-                    HelpTip { text: "The recovery secret is split into N shares; any T of them can reconstruct it. Guardians can be individuals, organizations' IT, family members, or trusted HSMs. Rotating the polynomial invalidates every prior share. Guardian tracking is local bookkeeping only; server-side outreach is a future feature." }
-                }
-                div { class: "workflow-form",
-                    Label { html_for: "sss-threshold", "Threshold (T)" }
-                    Input {
-                        id: "sss-threshold",
-                        "data-testid": "sss-threshold",
-                        r#type: "number",
-                        min: "2",
-                        max: "10",
-                        value: "{threshold}",
-                        oninput: {
-                            let actor_key = actor_key.clone();
-                            let mut store = state_store;
-                            move |event: FormEvent| {
-                                if let Ok(v) = event.value().parse::<u32>() {
-                                    threshold.set(v.clamp(2, 10));
-                                    save_state(&mut store, &actor_key, &snapshot_state());
-                                }
-                            }
-                        },
-                    }
-                    Label { html_for: "sss-total", "Total shares (N)" }
-                    Input {
-                        id: "sss-total",
-                        "data-testid": "sss-total",
-                        r#type: "number",
-                        min: "2",
-                        max: "10",
-                        value: "{total}",
-                        oninput: {
-                            let actor_key = actor_key.clone();
-                            let mut store = state_store;
-                            move |event: FormEvent| {
-                                if let Ok(v) = event.value().parse::<u32>() {
-                                    total.set(v.clamp(2, 10));
-                                    save_state(&mut store, &actor_key, &snapshot_state());
-                                }
-                            }
-                        },
-                    }
-                }
-                div { class: "muted", "data-testid": "sss-progress",
-                    {
-                        let have = guardians().len() as u32;
-                        let need = threshold();
-                        if have >= need {
-                            format!("{have} guardian(s) added — the {need}-guardian threshold is met.")
-                        } else {
-                            format!("{have} of {need} guardians added — add {} more to enable social recovery.", need - have)
-                        }
-                    }
-                }
-                if guardians().is_empty() {
-                    div { class: "muted", "data-testid": "no-guardians", "No guardians added yet. Add at least {threshold} to enable social recovery." }
-                } else {
-                    div { class: "metric-grid", "data-testid": "guardian-list",
-                        for (idx , g) in guardians().iter().enumerate() {
-                            div { class: "metric", "data-testid": "guardian-row",
-                                strong { "{g.label}" }
-                                {
-                                    let guardian_did_label =
-                                        actor_display_label(&state_store.read(), &g.did);
-                                    rsx! { span { title: "{g.did}", "{guardian_did_label}" } }
-                                }
-                                div { class: "muted",
-                                    if g.note.is_empty() {
-                                        if g.confirmed { "share confirmed" } else { "share pending" }
-                                    } else {
-                                        "{g.note}"
-                                    }
-                                }
-                                div { class: "actions",
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        "data-testid": "guardian-toggle-confirm",
-                                        onclick: {
-                                            let actor_key = actor_key.clone();
-                                            let mut store = state_store;
-                                            move |_| {
-                                                let mut next = guardians();
-                                                if let Some(slot) = next.get_mut(idx) {
-                                                    slot.confirmed = !slot.confirmed;
-                                                }
-                                                guardians.set(next);
-                                                save_state(&mut store, &actor_key, &snapshot_state());
-                                            }
-                                        },
-                                        if g.confirmed { "Mark pending" } else { "Mark confirmed" }
-                                    }
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        "data-testid": "guardian-remove",
-                                        onclick: {
-                                            let actor_key = actor_key.clone();
-                                            let mut store = state_store;
-                                            move |_| {
-                                                let mut next = guardians();
-                                                if idx < next.len() {
-                                                    next.remove(idx);
-                                                }
-                                                guardians.set(next);
-                                                save_state(&mut store, &actor_key, &snapshot_state());
-                                            }
-                                        },
-                                        "Remove"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                div { class: "workflow-form", "data-testid": "guardian-add-form",
-                    Label { html_for: "guardian-label", "Guardian label" }
-                    Input {
-                        id: "guardian-label",
-                        "data-testid": "guardian-label",
-                        value: "{new_guardian_label}",
-                        placeholder: "e.g. Mei / Backup HSM",
-                        oninput: move |event: FormEvent| new_guardian_label.set(event.value()),
-                    }
-                    Label { html_for: "guardian-did", "Handle or DID" }
-                    Input {
-                        id: "guardian-did",
-                        "data-testid": "guardian-did",
-                        value: "{new_guardian_did}",
-                        placeholder: "alice:example.com or did:web:...",
-                        oninput: move |event: FormEvent| new_guardian_did.set(event.value()),
-                    }
-                    Label { html_for: "guardian-note", "Note (optional)" }
-                    Input {
-                        id: "guardian-note",
-                        "data-testid": "guardian-note",
-                        value: "{new_guardian_note}",
-                        placeholder: "Person · Organization · Family · HSM",
-                        oninput: move |event: FormEvent| new_guardian_note.set(event.value()),
-                    }
-                }
-                if !social_status().is_empty() {
-                    div { class: "muted", "data-testid": "social-status", "{social_status}" }
-                }
-                div { class: "actions",
-                    Button {
-                        variant: ButtonVariant::Primary,
-                        "data-testid": "social-add-guardian",
-                        disabled: new_guardian_label().trim().is_empty() || new_guardian_did().trim().is_empty(),
-                        onclick: {
-                            let actor_key = actor_key.clone();
-                            let mut store = state_store;
-                            move |_| {
-                                let raw_guardian = new_guardian_did();
-                                let guardian_did =
-                                    crate::identity::handle::principal_did_from_identifier(
-                                        &raw_guardian,
-                                    )
-                                    .unwrap_or_else(|| raw_guardian.trim().to_owned());
-                                let mut next = guardians();
-                                next.push(Guardian {
-                                    label: new_guardian_label().trim().to_owned(),
-                                    did: guardian_did,
-                                    note: new_guardian_note().trim().to_owned(),
-                                    confirmed: false,
-                                });
-                                let added_label = new_guardian_label();
-                                guardians.set(next);
-                                new_guardian_label.set(String::new());
-                                new_guardian_did.set(String::new());
-                                new_guardian_note.set(String::new());
-                                save_state(&mut store, &actor_key, &snapshot_state());
-                                social_status.set(format!("Added guardian \"{added_label}\". Share confirmation is tracked locally."));
-                            }
-                        },
-                        "+ Add guardian"
-                    }
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "social-recover-now",
-                        disabled: guardians().len() < threshold() as usize,
-                        title: {
-                            let have = guardians().len() as u32;
-                            let need = threshold();
-                            if have < need {
-                                format!("Add {} more guardian(s) to meet the {need}-guardian threshold before rehearsing.", need - have)
-                            } else {
-                                "Records a Last rehearsed timestamp; integrate with guardian outreach when wired to the server.".to_owned()
-                            }
-                        },
-                        onclick: {
-                            let actor_key = actor_key.clone();
-                            let mut store = state_store;
-                            move |_| {
-                                let now = arkret_sdk::canonical::format_timestamp_canonical(
-                                    chrono::Utc::now(),
-                                );
-                                last_rehearsed.set(now);
-                                save_state(&mut store, &actor_key, &snapshot_state());
-                                social_status.set("Rehearsal logged. Outreach to guardians is a future server-side feature.".to_owned());
-                            }
-                        },
-                        "Rehearse social recovery"
                     }
                 }
             }
