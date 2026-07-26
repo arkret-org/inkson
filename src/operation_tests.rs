@@ -977,7 +977,7 @@ fn message_revise_builder_uses_content_payload_schema() {
 // client-side counterparts of the SDK statement verifier tests; the helper
 // produces real `ak.realm.organization` events that cotest can reuse.
 mod realm_organization_builder_tests {
-    use arkret_models_collaboration::events_payloads::preview_realm_reaction::{
+    use arkret_models_collaboration::events_payloads::{
         RealmOrganizationControlScope, RealmOrganizationIssuerRole, RealmOrganizationRelationship,
         RealmOrganizationStatus, SignatureMaterial,
     };

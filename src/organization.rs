@@ -13,7 +13,7 @@
 //! this module only orchestrates RNG sourcing, secure-key persistence, and the
 //! payload assembly the SDK signs.
 
-use arkret_models_collaboration::events_payloads::preview_realm_reaction::{
+use arkret_models_collaboration::events_payloads::{
     RealmOrganizationAuthorization, RealmOrganizationControlScope, RealmOrganizationIssuerRole,
     RealmOrganizationPayload, RealmOrganizationRelationship, RealmOrganizationStatus,
     SignatureMaterial,
@@ -348,7 +348,7 @@ mod tests {
             .decode(proof.as_bytes())
             .expect("base64url decode");
         let signature = ed25519_dalek::Signature::from_slice(&sig_bytes).expect("64-byte sig");
-        let signing_bytes = arkret_models_collaboration::events_payloads::preview_realm_reaction::realm_organization_statement_signing_bytes(&signed)
+        let signing_bytes = arkret_models_collaboration::events_payloads::realm_organization_statement_signing_bytes(&signed)
             .expect("signing bytes");
         use ed25519_dalek::Verifier;
         control_key

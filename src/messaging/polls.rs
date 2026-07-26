@@ -311,21 +311,20 @@ pub fn build_poll_create_op(
     strand_id: &str,
     draft: &PollDraft,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    let answers: Vec<arkret_models_collaboration::events_payloads::content_block_poll::PollAnswer> =
-        draft
-            .options
-            .iter()
-            .filter(|opt| !opt.trim().is_empty())
-            .enumerate()
-            .map(|(idx, label)| {
-                arkret_models_collaboration::events_payloads::content_block_poll::PollAnswer {
-                    id: format!("opt-{idx}"),
-                    text: arkret_sdk::ContentBlock::text(label.trim()),
-                }
-            })
-            .collect();
-    let block = arkret_models_collaboration::events_payloads::content_block_poll::PollBlock {
-        kind: arkret_models_collaboration::events_payloads::content_block_poll::PollBlockKind::Poll,
+    let answers: Vec<arkret_models_collaboration::events_payloads::PollAnswer> = draft
+        .options
+        .iter()
+        .filter(|opt| !opt.trim().is_empty())
+        .enumerate()
+        .map(
+            |(idx, label)| arkret_models_collaboration::events_payloads::PollAnswer {
+                id: format!("opt-{idx}"),
+                text: arkret_sdk::ContentBlock::text(label.trim()),
+            },
+        )
+        .collect();
+    let block = arkret_models_collaboration::events_payloads::PollBlock {
+        kind: arkret_models_collaboration::events_payloads::PollBlockKind::Poll,
         // `body` is the fallback text for clients without poll rendering;
         // `poll.question` is omitted so the question is read from `body`
         // (content-types.md §4.9).
@@ -333,8 +332,8 @@ pub fn build_poll_create_op(
         format: None,
         formatted_body: None,
         reply_context: None,
-        poll: arkret_models_collaboration::events_payloads::content_block_poll::PollBody {
-            kind: arkret_models_collaboration::events_payloads::content_block_poll::PollDisclosureKind::Disclosed,
+        poll: arkret_models_collaboration::events_payloads::PollBody {
+            kind: arkret_models_collaboration::events_payloads::PollDisclosureKind::Disclosed,
             max_selections: u64::from(draft.max_selections.max(1)),
             question: None,
             answers,
@@ -397,13 +396,13 @@ pub fn build_poll_vote_op(
     }
     let poll_ref = arkret_sdk::MessageId::new(poll_ref.trim().to_owned())
         .map_err(|err| anyhow::anyhow!("invalid poll_ref {poll_ref:?}: {err:?}"))?;
-    let block = arkret_models_collaboration::events_payloads::content_block_poll::PollResponseBlock {
-        kind: arkret_models_collaboration::events_payloads::content_block_poll::PollResponseBlockKind::PollResponse,
+    let block = arkret_models_collaboration::events_payloads::PollResponseBlock {
+        kind: arkret_models_collaboration::events_payloads::PollResponseBlockKind::PollResponse,
         body: "poll response".to_owned(),
         format: None,
         formatted_body: None,
         reply_context: None,
-        poll_response: arkret_models_collaboration::events_payloads::content_block_poll::PollResponseBody {
+        poll_response: arkret_models_collaboration::events_payloads::PollResponseBody {
             poll_ref,
             selections: selections.to_vec(),
         },
