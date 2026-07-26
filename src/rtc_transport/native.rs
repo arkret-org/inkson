@@ -21,7 +21,7 @@
 //! `ExternalE2EEKeyProvider`, publishes mic/cam, and forwards each real
 //! `RoomEvent.ParticipantConnected` identity back over the bridge. A spawned
 //! task cross-checks every reported identity against the durable
-//! `ak.call.state.participants[]` roster (MEDIA-2) before surfacing it, and
+//! `ak.component.call.roster.v1` effective OR-Set (MEDIA-2) before surfacing it, and
 //! only flips the FSM to [`TransportState::Connected`] when the driver reports
 //! a real `room.connect` success. A rejected connect emits `failed`, so the
 //! transport stays out of `Connected` (fail-closed) — it never fabricates a
@@ -97,7 +97,7 @@ pub struct NativeRtcTransport {
     local_identity: String,
     /// Per-sender remote frame-key deriver (retains the live MLS exporter) plus
     /// the `participant_identity → device_id` map from the verified
-    /// `ak.call.state.participants[]` roster. Moved into the driver event loop
+    /// `ak.component.call.roster.v1` effective OR-Set. Moved into the driver event loop
     /// so each remote sender's recomputed key is injected into the webview
     /// LiveKit provider under the remote identity.
     remote_keys: Option<Rc<PerSenderFrameKeys>>,
@@ -105,7 +105,7 @@ pub struct NativeRtcTransport {
     local: LocalMediaState,
     state: Rc<RefCell<TransportState>>,
     remotes: Rc<RefCell<Vec<RemoteParticipant>>>,
-    /// Expected `ak.call.state.participants[]` SFU-local identities, seeded by
+    /// Expected effective call-roster SFU-local identities, seeded by
     /// the controller before `connect_sfu` and read inside the event loop for
     /// the MEDIA-2 cross-check.
     expected_participants: Rc<RefCell<BTreeSet<String>>>,
@@ -431,7 +431,7 @@ mod tests {
             participant_binding: arkret_sdk::CallMediaParticipantBinding {
                 scheme: arkret_sdk::PARTICIPANT_BINDING_SCHEMA.to_owned(),
                 sig: "sig".to_owned(),
-                issuer_kid: "did:web:media.example#key-1".to_owned(),
+                issuer_kid: arkret_sdk::DidUrl::new("did:web:media.example#key-1").unwrap(),
                 realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-9b64700c6ee8")
                     .unwrap(),
                 call_id: arkret_sdk::CallId::new("ak:call:0196441c-0000-7000-8000-000000000000")

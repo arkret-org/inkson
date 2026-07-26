@@ -516,24 +516,6 @@ async fn materialize_direct_conversation(
             anyhow::anyhow!("direct conversation founding grant omitted payload.grant_id")
         })?
         .to_owned();
-    let mut main_strand_grant_event = draft.main_strand_grant_event.clone();
-    crate::event_submit::attach_capability_grant_payload_proof_with_signer(
-        &mut main_strand_grant_event,
-        &signer,
-    )?;
-    arkret_sdk::schema::materialize_capability_grant_event_contract(&mut main_strand_grant_event)
-        .map_err(|error| {
-        anyhow::anyhow!("materialize direct conversation main Strand grant effect: {error}")
-    })?;
-    let main_strand_grant_id = main_strand_grant_event
-        .payload
-        .get("grant_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            anyhow::anyhow!("direct conversation main Strand grant omitted payload.grant_id")
-        })?
-        .to_owned();
-
     let bootstrap_key =
         pending_direct_conversation_bootstrap_key(draft.materialization_id.as_str());
     let mut accepted = accepted_direct_materialization_events(&submitter, &realm_id).await;
@@ -593,33 +575,9 @@ async fn materialize_direct_conversation(
     save_direct_conversation_realm_projection(&mut state_store, &realm_id, &actor_id, peer);
     refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id, None).await?;
 
-    let pre_strand_grant_seal_frontier = state_store.read().seal_view_for_realm(&realm_id).frontier;
-    if !accepted.contains(draft.main_strand_grant_event.event_id.as_str()) {
-        main_strand_grant_event.authorization_ref = Some(founding_grant_id);
-        submitter
-            .submit_sdk_event(&main_strand_grant_event)
-            .await
-            .map_err(|error| {
-                anyhow::anyhow!("submit direct conversation main Strand grant: {error}")
-            })?;
-        accepted = wait_for_direct_materialization_events(
-            &submitter,
-            &realm_id,
-            [draft.main_strand_grant_event.event_id.as_str()],
-        )
-        .await?;
-    }
-    refresh_direct_conversation_seal(
-        &submitter,
-        &mut state_store,
-        &realm_id,
-        Some(&pre_strand_grant_seal_frontier),
-    )
-    .await?;
-
     if !accepted.contains(draft.main_strand_event.event_id.as_str()) {
         let mut main_strand_event = draft.main_strand_event.clone();
-        main_strand_event.authorization_ref = Some(main_strand_grant_id);
+        main_strand_event.authorization_ref = Some(founding_grant_id);
         submitter
             .submit_sdk_event(&main_strand_event)
             .await

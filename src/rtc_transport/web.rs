@@ -67,7 +67,7 @@ pub struct WebRtcTransport {
     /// Shared remote roster (cross-checked SFU participants on the LiveKit
     /// path; populated synchronously on the P2P path).
     remotes: Rc<RefCell<Vec<RemoteParticipant>>>,
-    /// Expected `ak.call.state.participants[]` SFU-local identities, seeded by
+    /// Expected effective call-roster SFU-local identities, seeded by
     /// the controller before `connect_sfu` and read inside the LiveKit
     /// `ParticipantConnected` callback for the MEDIA-2 cross-check.
     expected_participants: Rc<RefCell<BTreeSet<String>>>,
@@ -76,7 +76,7 @@ pub struct WebRtcTransport {
     local_identity: String,
     /// Per-sender remote frame-key deriver (retains the live MLS exporter) plus
     /// the `participant_identity → device_id` map from the verified
-    /// `ak.call.state.participants[]` roster. Shared into the LiveKit
+    /// `ak.component.call.roster.v1` OR-Set. Shared into the LiveKit
     /// `ParticipantConnected` callback so each remote sender's key is derived
     /// (same group exporter + epoch, the remote's own context) and installed.
     remote_keys: Rc<RefCell<Option<Rc<PerSenderFrameKeys>>>>,

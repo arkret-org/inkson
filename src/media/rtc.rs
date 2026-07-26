@@ -67,8 +67,8 @@ pub enum RtcClientError {
     TokenIssuerUnauthorised,
     /// `participant_binding` failed signature / TTL / tuple validation.
     ParticipantBindingInvalid,
-    /// SFU reported a `ParticipantConnected` whose identity is NOT in
-    /// `ak.call.state.participants[]`. Receiver MUST fail closed.
+    /// SFU reported a `ParticipantConnected` whose identity is not in the
+    /// effective `ak.component.call.roster.v1` OR-Set. Receiver MUST fail closed.
     ParticipantIdentityUnrecognised,
     /// Frame key source was not the MLS Exporter. Any backend-supplied
     /// key (e.g. LiveKit-side key vault) is rejected.
@@ -543,11 +543,11 @@ pub struct JoinedMediaSession {
     pub connect_url: String,
     /// Opaque backend join token (LiveKit JWT, etc.).
     pub backend_token: String,
-    /// SFU-local participant identity, cross-checked against
-    /// `ak.call.state.participants[]` on `ParticipantConnected`.
+    /// SFU-local participant identity, cross-checked against the effective
+    /// `ak.component.call.roster.v1` OR-Set on `ParticipantConnected`.
     pub participant_identity: String,
     /// Token issuer's signed tuple for the local participant. The call
-    /// controller writes this into `ak.call.state.participants[]` before
+    /// controller joins this into `ak.component.call.roster.v1` before
     /// connecting the SFU so remote streams have a durable roster to check.
     pub participant_binding: CallMediaParticipantBinding,
     /// Verified ICE configuration (STUN/TURN + force_turn + ttl).
@@ -621,8 +621,8 @@ impl PerSenderFrameKeys {
     }
 
     /// Derive the SFrame frame key for one *remote* sender, identified by its
-    /// `(participant_identity, device_id)` from the verified
-    /// `ak.call.state.participants[]` roster.
+    /// `(participant_identity, device_id)` from the verified effective
+    /// `ak.component.call.roster.v1` OR-Set.
     ///
     /// Fail-closed (`Err`) when the ids are malformed or the exporter rejects
     /// the context; the caller skips installing that one remote's key (its
@@ -743,7 +743,7 @@ pub async fn join_call_media(
 }
 
 /// MEDIA-2 — cross-check an SFU-reported `ParticipantConnected` identity
-/// against the `ak.call.state.participants[]` projection. A mismatch is
+/// against the effective `ak.component.call.roster.v1` projection. A mismatch is
 /// fail-closed; the transport MUST drop the connection.
 pub fn cross_check_participant_identity(
     reported_identity: &str,

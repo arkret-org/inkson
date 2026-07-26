@@ -20,7 +20,9 @@ fn call_state_recording_artifact_boundary(
     if !body_mentions_recording_artifact(body) {
         return Ok(());
     }
-    if let Some(result) = body.get("recording_result")
+    if let Some(result) = body
+        .get("recording_transition")
+        .and_then(|transition| transition.get("result"))
         && value_has_backend_direct_recording_ref(result)
     {
         return Err(crate::media::rtc::RtcClientError::RecordingArtifactPipelineBypassed);
@@ -38,7 +40,9 @@ fn call_state_transcript_artifact_boundary(
     if !body_mentions_transcript_artifact(body) {
         return Ok(());
     }
-    if let Some(result) = body.get("transcript_result")
+    if let Some(result) = body
+        .get("transcript_transition")
+        .and_then(|transition| transition.get("result"))
         && value_has_backend_direct_transcript_ref(result)
     {
         return Err(crate::media::rtc::RtcClientError::TranscriptionArtifactPipelineBypassed);
@@ -58,17 +62,25 @@ fn call_state_media_artifact_boundary(
 }
 
 fn body_mentions_recording_artifact(body: &Value) -> bool {
-    body.get("recording_result").is_some()
+    body.get("recording_transition")
+        .and_then(|transition| transition.get("result"))
+        .is_some()
         || matches!(
-            body.get("recording_state").and_then(Value::as_str),
+            body.get("recording_transition")
+                .and_then(|transition| transition.get("to"))
+                .and_then(Value::as_str),
             Some("ready" | "failed")
         )
 }
 
 fn body_mentions_transcript_artifact(body: &Value) -> bool {
-    body.get("transcript_result").is_some()
+    body.get("transcript_transition")
+        .and_then(|transition| transition.get("result"))
+        .is_some()
         || matches!(
-            body.get("transcript_state").and_then(Value::as_str),
+            body.get("transcript_transition")
+                .and_then(|transition| transition.get("to"))
+                .and_then(Value::as_str),
             Some("stopped" | "ready" | "failed")
         )
 }
@@ -261,7 +273,26 @@ pub(super) fn call_state_participant_identities(
     realm_id: &str,
     call_id: &str,
 ) -> BTreeSet<String> {
-    let mut identities = BTreeSet::new();
+    call_roster_participants(state, realm_id, call_id)
+        .filter_map(|participant| {
+            participant
+                .get("participant_identity")
+                .and_then(Value::as_str)
+                .filter(|identity| !identity.trim().is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .collect()
+}
+
+/// Fold the roster OR-Set from exact `roster_delta` events. A leave tombstones
+/// its observed add tag so replay order cannot resurrect a removed leg.
+fn call_roster_participants<'a>(
+    state: &'a crate::state::ClientLocalState,
+    realm_id: &str,
+    call_id: &str,
+) -> impl Iterator<Item = &'a Value> {
+    let mut participants = BTreeMap::<String, &'a Value>::new();
+    let mut removed_tags = BTreeSet::<String>::new();
     for record in &state.raw_operations {
         let kind = record
             .payload
@@ -278,24 +309,38 @@ pub(super) fn call_state_participant_identities(
         if body.get("call_id").and_then(|v| v.as_str()) != Some(call_id) {
             continue;
         }
-        let Some(participants) = body.get("participants").and_then(|v| v.as_array()) else {
+        let Some(delta) = body.get("roster_delta") else {
             continue;
         };
-        for participant in participants {
-            if let Some(identity) = participant
-                .get("participant_identity")
-                .and_then(|v| v.as_str())
-                && !identity.trim().is_empty()
-            {
-                identities.insert(identity.to_owned());
+        match delta.get("op").and_then(Value::as_str) {
+            Some("join") => {
+                let Some(participant) = delta.get("participant") else {
+                    continue;
+                };
+                let tag = record
+                    .payload
+                    .get("event_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or(record.operation_id.as_str());
+                if !removed_tags.contains(tag) {
+                    participants.insert(tag.to_owned(), participant);
+                }
             }
+            Some("leave") => {
+                let Some(tag) = delta.get("observed_tag").and_then(Value::as_str) else {
+                    continue;
+                };
+                removed_tags.insert(tag.to_owned());
+                participants.remove(tag);
+            }
+            _ => {}
         }
     }
-    identities
+    participants.into_values()
 }
 
 /// Read the `participant_identity → device_id` map from the durable
-/// `ak.call.state.participants[]` projection for this call. Used to build a
+/// call roster OR-Set projection for this call. Used to build a
 /// remote sender's SFrame [`FrameKeyContext`] (`media-service-binding.md` §8.1
 /// binds the sender's own `(participant_identity, device_id)`): when a remote
 /// connects, its `device_id` is looked up here so the receiver can recompute
@@ -308,37 +353,17 @@ pub(super) fn call_state_participant_device_map(
     call_id: &str,
 ) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
-    for record in &state.raw_operations {
-        let kind = record
-            .payload
-            .get("kind")
+    for participant in call_roster_participants(state, realm_id, call_id) {
+        let identity = participant
+            .get("participant_identity")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
-        if kind != "ak.call.state" || record.realm_id.as_deref() != Some(realm_id) {
-            continue;
-        }
-        let body = operation_body(&record.payload);
-        if call_state_media_artifact_boundary(body).is_err() {
-            continue;
-        }
-        if body.get("call_id").and_then(|v| v.as_str()) != Some(call_id) {
-            continue;
-        }
-        let Some(participants) = body.get("participants").and_then(|v| v.as_array()) else {
-            continue;
-        };
-        for participant in participants {
-            let identity = participant
-                .get("participant_identity")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            let device_id = participant
-                .get("device_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            if !identity.trim().is_empty() && !device_id.trim().is_empty() {
-                map.insert(identity.to_owned(), device_id.to_owned());
-            }
+        let device_id = participant
+            .get("device_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        if !identity.trim().is_empty() && !device_id.trim().is_empty() {
+            map.insert(identity.to_owned(), device_id.to_owned());
         }
     }
     map
@@ -353,37 +378,17 @@ pub(super) fn call_state_participant_actor_device_map(
     call_id: &str,
 ) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
-    for record in &state.raw_operations {
-        let kind = record
-            .payload
-            .get("kind")
+    for participant in call_roster_participants(state, realm_id, call_id) {
+        let actor_id = participant
+            .get("actor_id")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
-        if kind != "ak.call.state" || record.realm_id.as_deref() != Some(realm_id) {
-            continue;
-        }
-        let body = operation_body(&record.payload);
-        if call_state_media_artifact_boundary(body).is_err() {
-            continue;
-        }
-        if body.get("call_id").and_then(|v| v.as_str()) != Some(call_id) {
-            continue;
-        }
-        let Some(participants) = body.get("participants").and_then(|v| v.as_array()) else {
-            continue;
-        };
-        for participant in participants {
-            let actor_id = participant
-                .get("actor_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            let device_id = participant
-                .get("device_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            if !actor_id.trim().is_empty() && !device_id.trim().is_empty() {
-                map.insert(actor_id.to_owned(), device_id.to_owned());
-            }
+        let device_id = participant
+            .get("device_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        if !actor_id.trim().is_empty() && !device_id.trim().is_empty() {
+            map.insert(actor_id.to_owned(), device_id.to_owned());
         }
     }
     map
@@ -526,12 +531,16 @@ mod tests {
             received_at: chrono::Utc::now(),
             payload: json!({
                 "kind": "ak.call.state",
+                "event_id": "ak:event:0196441c-0000-7000-8000-000000000001",
                 "body": {
                     "call_id": "ak:call:0196441c-0000-7000-8000-000000000000",
-                    "state": "connecting",
-                    "participants": [
-                        {"actor_id": "did:web:alice.example", "participant_identity": "ak:rtc_participant:alice"}
-                    ]
+                    "roster_delta": {
+                        "op": "join",
+                        "participant": {
+                            "actor_id": "did:web:alice.example",
+                            "participant_identity": "ak:rtc_participant:alice"
+                        }
+                    }
                 }
             }),
         });
@@ -553,21 +562,17 @@ mod tests {
             received_at: chrono::Utc::now(),
             payload: json!({
                 "kind": "ak.call.state",
+                "event_id": "ak:event:0196441c-0000-7000-8000-000000000002",
                 "body": {
                     "call_id": "ak:call:0196441c-0000-7000-8000-000000000000",
-                    "state": "active",
-                    "participants": [
-                        {
+                    "roster_delta": {
+                        "op": "join",
+                        "participant": {
                             "actor_id": "did:web:alice.example",
                             "device_id": "ak:device:01904100-0000-7000-8000-00000000000a",
                             "participant_identity": "ak:rtc_participant:alice"
-                        },
-                        {
-                            // Missing device_id -> skipped (cannot derive its key).
-                            "actor_id": "did:web:carol.example",
-                            "participant_identity": "ak:rtc_participant:carol"
                         }
-                    ]
+                    }
                 }
             }),
         });
@@ -580,8 +585,6 @@ mod tests {
             map.get("ak:rtc_participant:alice").map(String::as_str),
             Some("ak:device:01904100-0000-7000-8000-00000000000a")
         );
-        // The participant with no device_id is fail-closed: not in the map.
-        assert!(!map.contains_key("ak:rtc_participant:carol"));
     }
 
     #[test]
@@ -593,16 +596,17 @@ mod tests {
             received_at: chrono::Utc::now(),
             payload: json!({
                 "kind": "ak.call.state",
+                "event_id": "ak:event:0196441c-0000-7000-8000-000000000003",
                 "body": {
                     "call_id": "ak:call:0196441c-0000-7000-8000-000000000000",
-                    "state": "active",
-                    "participants": [
-                        {
+                    "roster_delta": {
+                        "op": "join",
+                        "participant": {
                             "actor_id": "did:web:alice.example",
                             "device_id": "ak:device:01904100-0000-7000-8000-00000000000a",
                             "participant_identity": "ak:rtc_participant:alice"
                         }
-                    ]
+                    }
                 }
             }),
         });
@@ -621,11 +625,14 @@ mod tests {
     fn recording_artifact_boundary_rejects_backend_url() {
         let body = json!({
             "call_id": "ak:call:019a7360-0000-7000-8000-000000000001",
-            "state": "ended",
-            "recording_state": "ready",
-            "recording_result": {
-                "recording_start_event_id": "ak:event:019a7360-0000-7000-8000-000000000003",
-                "recording_url": "https://s3.amazonaws.com/bucket/recording.mp4"
+            "recording_transition": {
+                "recording_id": "rtc-recording-019a7360-0000-7000-8000-000000000002",
+                "from": "stopped",
+                "to": "ready",
+                "result": {
+                    "recording_start_event_id": "ak:event:019a7360-0000-7000-8000-000000000003",
+                    "recording_url": "https://s3.amazonaws.com/bucket/recording.mp4"
+                }
             }
         });
         assert_eq!(
@@ -643,11 +650,14 @@ mod tests {
     fn transcript_artifact_boundary_rejects_backend_url() {
         let body = json!({
             "call_id": "ak:call:019a7360-0000-7000-8000-000000000001",
-            "state": "ended",
-            "transcript_state": "ready",
-            "transcript_result": {
-                "transcript_start_event_id": "ak:event:019a7360-0000-7000-8000-000000000003",
-                "transcript_artifact_url": "https://backend.example/transcript.vtt"
+            "transcript_transition": {
+                "recording_id": "rtc-transcript-019a7360-0000-7000-8000-000000000002",
+                "from": "stopped",
+                "to": "ready",
+                "result": {
+                    "transcript_start_event_id": "ak:event:019a7360-0000-7000-8000-000000000003",
+                    "transcript_artifact_url": "https://backend.example/transcript.vtt"
+                }
             }
         });
         assert_eq!(
@@ -665,21 +675,26 @@ mod tests {
             received_at: chrono::Utc::now(),
             payload: json!({
                 "kind": "ak.call.state",
+                "event_id": "ak:event:019a7360-0000-7000-8000-000000000009",
                 "body": {
                     "call_id": "ak:call:019a7360-0000-7000-8000-000000000001",
-                    "state": "ended",
-                    "recording_state": "ready",
-                    "recording_result": {
-                        "recording_start_event_id": "ak:event:019a7360-0000-7000-8000-000000000003",
-                        "recording_url": "https://backend.example/egress/out.mp4"
+                    "recording_transition": {
+                        "recording_id": "rtc-recording-019a7360-0000-7000-8000-000000000002",
+                        "from": "stopped",
+                        "to": "ready",
+                        "result": {
+                            "recording_start_event_id": "ak:event:019a7360-0000-7000-8000-000000000003",
+                            "recording_url": "https://backend.example/egress/out.mp4"
+                        }
                     },
-                    "participants": [
-                        {
+                    "roster_delta": {
+                        "op": "join",
+                        "participant": {
                             "actor_id": "did:web:alice.example",
                             "device_id": "ak:device:019a7360-0000-7000-8000-000000000008",
                             "participant_identity": "ak:rtc_participant:alice"
                         }
-                    ]
+                    }
                 }
             }),
         });
@@ -700,21 +715,26 @@ mod tests {
             received_at: chrono::Utc::now(),
             payload: json!({
                 "kind": "ak.call.state",
+                "event_id": "ak:event:019a7360-0000-7000-8000-00000000000a",
                 "body": {
                     "call_id": "ak:call:019a7360-0000-7000-8000-000000000001",
-                    "state": "ended",
-                    "transcript_state": "ready",
-                    "transcript_result": {
-                        "transcript_start_event_id": "ak:event:019a7360-0000-7000-8000-000000000003",
-                        "transcript_artifact_url": "https://backend.example/transcript.vtt"
+                    "transcript_transition": {
+                        "recording_id": "rtc-transcript-019a7360-0000-7000-8000-000000000002",
+                        "from": "stopped",
+                        "to": "ready",
+                        "result": {
+                            "transcript_start_event_id": "ak:event:019a7360-0000-7000-8000-000000000003",
+                            "transcript_artifact_url": "https://backend.example/transcript.vtt"
+                        }
                     },
-                    "participants": [
-                        {
+                    "roster_delta": {
+                        "op": "join",
+                        "participant": {
                             "actor_id": "did:web:alice.example",
                             "device_id": "ak:device:019a7360-0000-7000-8000-000000000008",
                             "participant_identity": "ak:rtc_participant:alice"
                         }
-                    ]
+                    }
                 }
             }),
         });
@@ -743,9 +763,11 @@ mod tests {
         });
         json!({
             "call_id": call_id,
-            "state": "ended",
-            "recording_state": "ready",
-            "recording_result": {
+            "recording_transition": {
+                "recording_id": recording_id,
+                "from": "stopped",
+                "to": "ready",
+                "result": {
                 "content_digest": content_digest,
                 "duration_ms": 42000,
                 "media_type": "video/mp4",
@@ -790,7 +812,7 @@ mod tests {
                         "completed_at": "2026-06-20T00:00:01.000Z",
                         "erasure_receipt_ref": "ak:receipt:019a7360-0000-7000-8000-000000000007"
                     }
-                }
+                }}
             }
         })
     }

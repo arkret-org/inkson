@@ -45,7 +45,7 @@ pub enum TrackKind {
 /// A remote participant the transport has observed connecting. The
 /// `identity` is the SFU-local participant identity; before a remote is
 /// surfaced to the UI it MUST be cross-checked against
-/// `ak.call.state.participants[]` (MEDIA-2).
+/// the effective `ak.component.call.roster.v1` OR-Set (MEDIA-2).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RemoteParticipant {
     pub identity: String,
@@ -129,7 +129,7 @@ pub trait MediaTransport {
 
     /// Provide the per-sender remote frame-key deriver plus the
     /// `participant_identity → device_id` map read from the verified
-    /// `ak.call.state.participants[]` roster. When a remote sender connects, the
+    /// `ak.component.call.roster.v1` effective OR-Set. When a remote sender connects, the
     /// transport derives that sender's frame key (same MLS group exporter, same
     /// epoch, the remote's own `(participant_identity, device_id)` context) and
     /// installs it under the remote's identity — which is the only way the
@@ -142,7 +142,7 @@ pub trait MediaTransport {
     ) {
     }
 
-    /// Seed the expected `ak.call.state.participants[]` SFU-local identity
+    /// Seed the expected effective call-roster SFU-local identity
     /// set BEFORE [`Self::connect_sfu`], so the SFU's asynchronous
     /// `ParticipantConnected` events (delivered by the LiveKit SDK on the web
     /// backend) can be cross-checked fail-closed (MEDIA-2) against the durable
@@ -156,7 +156,7 @@ pub trait MediaTransport {
     fn connect_sfu(&mut self, session: &JoinedMediaSession) -> Result<(), RtcClientError>;
 
     /// Cross-check an SFU `ParticipantConnected` identity against the
-    /// durable `ak.call.state.participants[]` set, and on success register
+    /// durable `ak.component.call.roster.v1` effective set, and on success register
     /// the remote. Fail-closed on an unrecognised identity (MEDIA-2).
     fn on_participant_connected(
         &mut self,

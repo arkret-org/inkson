@@ -60,8 +60,8 @@ pub fn build_call_state(
     realm_id: &str,
     actor: &str,
     call_id: &str,
-    state: CallState,
-    reason: Option<&str>,
+    from: Option<CallState>,
+    to: CallState,
 ) -> OperationBuilder {
     OperationBuilder::new(
         realm_id,
@@ -71,8 +71,10 @@ pub fn build_call_state(
     .target_ref(call_id)
     .body(json!({
         "call_id": call_id,
-        "state": state.as_wire(),
-        "reason": reason,
+        "state_transition": {
+            "from": from.map(CallState::as_wire),
+            "to": to.as_wire()
+        }
     }))
 }
 
@@ -164,11 +166,18 @@ pub fn build_call_recording_start(
     mode: arkret_sdk::RecordingMode,
     visible_notice: bool,
 ) -> OperationBuilder {
+    let event_id = arkret_sdk::EventId::new(arkret_sdk::new_prefixed_uuid7("ak:event:"))
+        .expect("generated recording start Event id must be canonical");
+    let start_ref_field = match capture_kind {
+        arkret_sdk::RecordingCaptureKind::Recording => "recording_start_event_id",
+        arkret_sdk::RecordingCaptureKind::Transcript => "transcript_start_event_id",
+    };
     OperationBuilder::new(
         realm_id,
         actor,
         arkret_sdk::events::kinds::EventKind::CallRecordingStart,
     )
+    .event_id(event_id.clone())
     .target_ref(call_id)
     .body(json!({
         "call_id": call_id,
@@ -177,6 +186,12 @@ pub fn build_call_recording_start(
         "capture_kind": capture_kind,
         "mode": mode,
         "visible_notice": visible_notice,
+        "result": {
+            start_ref_field: event_id,
+            "retention": {
+                "consent_confirmed": true
+            }
+        }
     }))
 }
 
@@ -206,12 +221,13 @@ mod tests {
             "ak:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
             "ak:call:c1",
+            Some(CallState::Connecting),
             CallState::Active,
-            None,
         )
         .build("node");
         assert_eq!(op.kind, "ak.call.state");
-        assert_eq!(op.payload["state"], "active");
+        assert_eq!(op.payload["state_transition"]["from"], "connecting");
+        assert_eq!(op.payload["state_transition"]["to"], "active");
     }
 
     #[test]
@@ -231,6 +247,11 @@ mod tests {
         assert_eq!(op.payload["capture_kind"], "recording");
         assert_eq!(op.payload["mode"], "audio_video");
         assert_eq!(op.payload["visible_notice"], true);
+        assert_eq!(
+            op.payload["result"]["recording_start_event_id"],
+            op.event_id.as_str()
+        );
+        assert_eq!(op.payload["result"]["retention"]["consent_confirmed"], true);
         assert!(op.payload.get("consent_actors").is_none());
     }
 
@@ -249,6 +270,10 @@ mod tests {
         assert_eq!(op.kind, "ak.call.recording.start");
         assert_eq!(op.payload["capture_kind"], "transcript");
         assert_eq!(op.payload["mode"], "audio");
+        assert_eq!(
+            op.payload["result"]["transcript_start_event_id"],
+            op.event_id.as_str()
+        );
     }
 
     fn make_v1_envelope(seq: u64, signal_type: &str) -> arkret_sdk::EphemeralEnvelope {

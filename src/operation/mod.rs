@@ -103,6 +103,7 @@ pub(crate) fn trim_realm_id(value: &str) -> String {
 /// signer to attach the detached JWS proof before going on the wire.
 #[derive(Debug)]
 pub struct OperationBuilder {
+    event_id: Option<arkret_sdk::EventId>,
     realm_id: String,
     actor: String,
     op_type: EventKind,
@@ -124,6 +125,7 @@ pub struct OperationBuilder {
 impl OperationBuilder {
     pub fn new(realm_id: impl Into<String>, actor: impl Into<String>, op_type: EventKind) -> Self {
         Self {
+            event_id: None,
             realm_id: realm_id.into(),
             actor: actor.into(),
             op_type,
@@ -145,6 +147,13 @@ impl OperationBuilder {
 
     pub fn target_ref(mut self, target_ref: impl Into<String>) -> Self {
         self.target_ref = Some(target_ref.into());
+        self
+    }
+
+    /// Pin the Event identifier before envelope construction. This is required
+    /// when the payload atomically self-binds to its containing Event.
+    pub fn event_id(mut self, event_id: arkret_sdk::EventId) -> Self {
+        self.event_id = Some(event_id);
         self
     }
 
@@ -268,15 +277,28 @@ impl OperationBuilder {
         let hlc = arkret_sdk::Hlc::new("000000000000-0000-00000000")
             .map_err(|err| anyhow::anyhow!("placeholder HLC is invalid: {err}"))?;
         let created_at = self.created_at.unwrap_or_else(crate::clock::now_utc_millis);
-        let mut event = arkret_sdk::Event::new_at(
-            self.op_type.as_str(),
-            realm_id,
-            actor_id,
-            1,
-            hlc,
-            self.body,
-            created_at,
-        )
+        let mut event = if let Some(event_id) = self.event_id {
+            arkret_sdk::Event::new_with_id_at(
+                event_id,
+                self.op_type.as_str(),
+                realm_id,
+                actor_id,
+                1,
+                hlc,
+                self.body,
+                created_at,
+            )
+        } else {
+            arkret_sdk::Event::new_at(
+                self.op_type.as_str(),
+                realm_id,
+                actor_id,
+                1,
+                hlc,
+                self.body,
+                created_at,
+            )
+        }
         .map_err(|err| anyhow::anyhow!("SDK Event construction failed: {err}"))?;
         event.prev_refs = prev_refs;
         event.refs = self.refs;
@@ -303,6 +325,15 @@ impl OperationBuilder {
             arkret_sdk::schema::materialize_capability_grant_event_contract(&mut event).map_err(
                 |error| anyhow::anyhow!("capability grant effect derivation failed: {error}"),
             )?;
+        }
+        if matches!(
+            event.kind.as_str(),
+            arkret_sdk::events::EventKind::CALL_STATE
+                | arkret_sdk::events::EventKind::CALL_RECORDING_START
+        ) && event.effects.is_empty()
+        {
+            arkret_sdk::schema::materialize_registered_cell_writes(&mut event)
+                .map_err(|error| anyhow::anyhow!("call Event effect derivation failed: {error}"))?;
         }
         Ok(event)
     }
