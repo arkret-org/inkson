@@ -438,7 +438,7 @@ pub(super) fn delete_sidebar_contact(
                 direct_contact_rows.set(
                     direct_contact_rows()
                         .into_iter()
-                        .filter(|row| row.peer != peer)
+                        .filter(|row| row.peer.as_str() != peer)
                         .collect(),
                 );
                 direct_contacts_loaded.set(true);

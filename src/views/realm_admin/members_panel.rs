@@ -3031,7 +3031,7 @@ pub fn RealmMembersPanel(
                         let accepted: Vec<crate::models::ContactListRow> = response
                             .contacts
                             .into_iter()
-                            .filter(|c| c.state == "accepted")
+                            .filter(|c| c.state == arkret_sdk::ContactState::Accepted)
                             .collect();
                         let count = accepted.len();
                         invite_contacts.set(accepted);
@@ -3490,11 +3490,14 @@ pub fn RealmMembersPanel(
                                         div { class: "settings-list",
                                             for contact in invite_contacts.read().clone() {
                                                 {
-                                                    let did = contact.peer.clone();
+                                                    let did = contact.peer.to_string();
                                                     let did_label = actor_display_label(&state_store.read(), &did);
                                                     let checked = selected_contacts.read().contains(&did);
-                                                    let eligible = contact.grants_me_invite();
-                                                    let has_ref = contact.invite_consent_ref().is_some();
+                                                    let eligible =
+                                                        crate::models::contact_grants_me_invite(&contact);
+                                                    let has_ref =
+                                                        crate::models::contact_invite_consent_ref(&contact)
+                                                            .is_some();
                                                     let usable = eligible && has_ref;
                                                     // Distinguish "peer never authorised invite" (no real
                                                     // consent grant ref) from other not-yet-usable states so
@@ -3555,11 +3558,11 @@ pub fn RealmMembersPanel(
                                                         let targets: Vec<(String, Option<String>, String)> = invite_contacts
                                                             .read()
                                                             .iter()
-                                                            .filter(|c| selected_contacts.read().contains(&c.peer))
+                                                            .filter(|c| selected_contacts.read().contains(c.peer.as_str()))
                                                             .filter_map(|c| {
-                                                                c.invite_consent_ref().map(|r| (
-                                                                    c.peer.clone(),
-                                                                    c.peer_service_id.clone(),
+                                                                crate::models::contact_invite_consent_ref(c).map(|r| (
+                                                                    c.peer.to_string(),
+                                                                    c.peer_service_id.as_ref().map(ToString::to_string),
                                                                     r.to_owned(),
                                                                 ))
                                                             })

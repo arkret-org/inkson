@@ -332,11 +332,14 @@ pub(super) fn ContactsManagePage(
         .iter()
         .filter(|contact| {
             let scopes = contact_manage_scope_summary(contact);
-            let display_name =
-                crate::views::helpers::actor_display_label(&state_store.read(), &contact.peer);
+            let display_name = crate::views::helpers::actor_display_label(
+                &state_store.read(),
+                contact.peer.as_str(),
+            );
+            let state = crate::models::contact_state_wire(contact.state);
             sidebar_text_matches_query(
                 &normalized_query,
-                &[&contact.peer, &contact.state, &display_name, &scopes],
+                &[contact.peer.as_str(), state, &display_name, &scopes],
             )
         })
         .cloned()
@@ -383,7 +386,7 @@ pub(super) fn ContactsManagePage(
                                 onclick: {
                                     let peers = filtered_rows
                                         .iter()
-                                        .map(|contact| contact.peer.clone())
+                                        .map(|contact| contact.peer.to_string())
                                         .collect::<BTreeSet<_>>();
                                     move |_| selection.set(peers.clone())
                                 },
@@ -531,7 +534,7 @@ pub(super) fn ContactsManagePage(
                             div { class: "workspace-manage-list", "data-testid": "contacts-manage-list",
                                 for contact in filtered_rows {
                                     {
-                                        let peer = contact.peer.clone();
+                                        let peer = contact.peer.to_string();
                                         let checked = selected_ids.contains(&peer);
                                         let peer_label = crate::views::helpers::actor_display_label(
                                             &state_store.read(),
@@ -541,8 +544,17 @@ pub(super) fn ContactsManagePage(
                                         let direct_label = contact
                                             .direct_conversation
                                             .as_ref()
-                                            .map(|summary| format!("DM {}", summary.state))
+                                            .map(|summary| {
+                                                format!(
+                                                    "DM {}",
+                                                    crate::models::direct_conversation_binding_state_wire(
+                                                        summary.state,
+                                                    )
+                                                )
+                                            })
                                             .unwrap_or_else(|| "No DM".to_owned());
+                                        let contact_state =
+                                            crate::models::contact_state_wire(contact.state);
                                         rsx! {
                                             label {
                                                 class: "workspace-manage-row",
@@ -568,7 +580,7 @@ pub(super) fn ContactsManagePage(
                                                     span { class: "muted", title: "{scopes_label}", "{scopes_label}" }
                                                 }
                                                 div { class: "workspace-manage-row-meta",
-                                                    span { class: "pill muted xs", "{contact.state}" }
+                                                    span { class: "pill muted xs", "{contact_state}" }
                                                     span { class: "pill muted xs", "{direct_label}" }
                                                 }
                                             }

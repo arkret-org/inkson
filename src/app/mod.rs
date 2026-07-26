@@ -827,7 +827,7 @@ fn AppBootstrap() -> Element {
         .read()
         .iter()
         .filter(|contact| {
-            let display_name = actor_display_label(&state_store.read(), &contact.peer);
+            let display_name = actor_display_label(&state_store.read(), contact.peer.as_str());
             let scopes = contact
                 .bidirectional_scopes
                 .iter()
@@ -841,28 +841,34 @@ fn AppBootstrap() -> Element {
                 sidebar_text_matches_query(
                     &direct_sidebar_query_value,
                     &[
-                        &agent.agent_id,
+                        agent.agent_id.as_str(),
                         agent.display_name.as_deref().unwrap_or_default(),
-                        &agent.slug,
+                        agent.agent_slug.as_deref().unwrap_or_default(),
                     ],
                 )
             });
             agent_match
                 || sidebar_text_matches_query(
                     &direct_sidebar_query_value,
-                    &[&contact.peer, &contact.state, &display_name, &scopes],
+                    &[
+                        contact.peer.as_str(),
+                        crate::models::contact_state_wire(contact.state),
+                        &display_name,
+                        &scopes,
+                    ],
                 )
         })
         .cloned()
         .collect();
     filtered_direct_contact_rows.sort_by(|left, right| {
-        let left_remark = contact_remarks_for_sidebar.get(&left.peer);
-        let right_remark = contact_remarks_for_sidebar.get(&right.peer);
+        let left_remark = contact_remarks_for_sidebar.get(left.peer.as_str());
+        let right_remark = contact_remarks_for_sidebar.get(right.peer.as_str());
         let left_pinned = left_remark.is_some_and(|remark| remark.pinned);
         let right_pinned = right_remark.is_some_and(|remark| remark.pinned);
-        let left_label = actor_display_label(&state_store.read(), &left.peer).to_ascii_lowercase();
+        let left_label =
+            actor_display_label(&state_store.read(), left.peer.as_str()).to_ascii_lowercase();
         let right_label =
-            actor_display_label(&state_store.read(), &right.peer).to_ascii_lowercase();
+            actor_display_label(&state_store.read(), right.peer.as_str()).to_ascii_lowercase();
         right_pinned
             .cmp(&left_pinned)
             .then_with(|| left_label.cmp(&right_label))
@@ -2177,8 +2183,9 @@ fn AppBootstrap() -> Element {
                         } else {
                             for contact in filtered_direct_contact_rows.iter() {
                                 {
-                                    let peer = contact.peer.clone();
-                                    let state_label = contact.state.clone();
+                                    let peer = contact.peer.to_string();
+                                    let state_label =
+                                        crate::models::contact_state_wire(contact.state).to_owned();
                                     let scopes_label = contact.bidirectional_scopes.join(", ");
                                     let direct = contact.direct_conversation.clone();
                                     let has_direct_scope = contact
@@ -2188,9 +2195,13 @@ fn AppBootstrap() -> Element {
                                         .any(|scope| scope == "direct_message");
                                     let has_active_direct = direct
                                         .as_ref()
-                                        .is_some_and(|summary| summary.state == "active");
+                                        .is_some_and(|summary| {
+                                            summary.state
+                                                == arkret_sdk::DirectConversationBindingState::Active
+                                        });
                                     let can_resolve =
-                                        contact.state == "accepted" && (has_direct_scope || has_active_direct);
+                                        contact.state == arkret_sdk::ContactState::Accepted
+                                            && (has_direct_scope || has_active_direct);
                                     let contact_remark =
                                         contact_remarks_for_sidebar.get(&peer).cloned();
                                     let display_name = actor_display_label(&state_store.read(), &peer);
@@ -2235,9 +2246,9 @@ fn AppBootstrap() -> Element {
                                                 sidebar_text_matches_query(
                                                     &direct_sidebar_query_value,
                                                     &[
-                                                        &agent.agent_id,
+                                                        agent.agent_id.as_str(),
                                                         agent.display_name.as_deref().unwrap_or_default(),
-                                                        &agent.slug,
+                                                        agent.agent_slug.as_deref().unwrap_or_default(),
                                                     ],
                                                 )
                                             }));
@@ -2271,11 +2282,12 @@ fn AppBootstrap() -> Element {
                                                             return;
                                                         }
                                                         if let Some(summary) = direct.clone()
-                                                            && summary.state == "active"
+                                                            && summary.state
+                                                                == arkret_sdk::DirectConversationBindingState::Active
                                                         {
                                                             let _ = navigator.push(Route::DirectConversation {
-                                                                realm_id: summary.realm_id,
-                                                                strand_id: summary.main_strand_id,
+                                                                realm_id: summary.realm_id.to_string(),
+                                                                strand_id: summary.main_strand_id.to_string(),
                                                             });
                                                             return;
                                                         }
@@ -2482,9 +2494,9 @@ fn AppBootstrap() -> Element {
                                             div { class: "contact-agent-list", "data-testid": "contact-sidebar-contact-agents",
                                               for agent in contact.agents.iter() {
                                                 {
-                                                    let agent_id = agent.agent_id.clone();
+                                                    let agent_id = agent.agent_id.to_string();
                                                     let agent_label = agent.display_name.clone()
-                                                        .or_else(|| Some(agent.slug.clone()))
+                                                        .or_else(|| agent.agent_slug.clone())
                                                         .unwrap_or_else(|| short_protocol_id(&agent_id));
                                                     let agent_direct = agent.direct_conversation.clone();
                                                     let avatar_blob_ref = agent
@@ -2528,11 +2540,12 @@ fn AppBootstrap() -> Element {
                                                                         return;
                                                                     }
                                                                     if let Some(summary) = agent_direct.clone()
-                                                                        && summary.state == "active"
+                                                                        && summary.state
+                                                                            == arkret_sdk::DirectConversationBindingState::Active
                                                                     {
                                                                         let _ = navigator.push(Route::DirectConversation {
-                                                                            realm_id: summary.realm_id,
-                                                                            strand_id: summary.main_strand_id,
+                                                                            realm_id: summary.realm_id.to_string(),
+                                                                            strand_id: summary.main_strand_id.to_string(),
                                                                         });
                                                                         return;
                                                                     }

@@ -378,7 +378,13 @@ pub fn DirectoryPanel(
                                             let summary = result
                                                 .contacts
                                                 .iter()
-                                                .map(|contact| format!("{} {}", contact.peer, contact.state))
+                                                .map(|contact| {
+                                                    format!(
+                                                        "{} {}",
+                                                        contact.peer,
+                                                        crate::models::contact_state_wire(contact.state)
+                                                    )
+                                                })
                                                 .collect::<Vec<_>>()
                                                 .join(", ");
                                             contact_state.set(format!("contacts {} {}", result.contacts.len(), summary));
