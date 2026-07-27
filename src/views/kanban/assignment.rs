@@ -56,12 +56,6 @@ pub(super) fn assignment_activity_summary(
     }
 }
 
-pub(super) fn relation_id_from_event_id(event_id: &str) -> Option<String> {
-    event_id
-        .strip_prefix("ak:event:")
-        .map(|suffix| format!("ak:relation:{suffix}"))
-}
-
 pub(super) fn normalize_assignee_selection(
     selected_actor_ids: BTreeSet<String>,
 ) -> Result<BTreeSet<String>, String> {
@@ -116,13 +110,14 @@ pub(super) fn card_assignment_mutations(
         .map_err(|err| format!("cannot build assigned_to relation: {err:#}"))?
         .build_sdk_event("inkson")
         .map_err(|err| format!("cannot build assigned_to relation event: {err}"))?;
-        let relation_id =
-            relation_id_from_event_id(operation.event_id.as_str()).ok_or_else(|| {
-                format!(
-                    "internal: cannot derive assigned_to relation id from {}",
-                    operation.event_id.as_str()
-                )
-            })?;
+        let relation_id = operation
+            .payload
+            .get("relation_id")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| {
+                "internal: assigned_to relation create is missing relation_id".to_owned()
+            })?
+            .to_owned();
         mutations.push(CardAssignmentMutation::Create {
             actor_id: assignee_id.clone(),
             relation_id,

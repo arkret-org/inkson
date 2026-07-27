@@ -109,7 +109,8 @@ fn placeholder_push_key_predicate_matches_known_markers() {
 
 #[test]
 fn ensure_production_register_rejects_placeholder_keys() {
-    let request = build_register_request("dev_inkson").unwrap();
+    let mut request = build_register_request("dev_inkson").unwrap();
+    request.push_key = "desktop:inkson-dev-placeholder-token".to_owned();
     let err = ensure_production_register_request(&request)
         .expect_err("default scaffold push key must be rejected");
     let message = err.to_string();

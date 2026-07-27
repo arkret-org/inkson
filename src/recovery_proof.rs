@@ -141,7 +141,8 @@ mod tests {
     #[test]
     fn transcript_binds_every_session_field() {
         let t = principal_signing_proof_transcript(&sample_session()).unwrap();
-        assert_eq!(t["type"], "ak.identity.recovery_proof.v1");
+        assert_eq!(t["schema"], "ak.identity.recovery_proof.v1");
+        assert!(t.get("type").is_none());
         assert_eq!(t["kind"], "principal_signing");
         for f in [
             "principal_id",

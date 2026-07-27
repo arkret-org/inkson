@@ -309,7 +309,6 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             "ak.realm.plaintext_visible_services",
             "ak.realm.delivery_binding_policy",
             "ak.member.state",
-            "ak.member.state",
         ]
     );
 
@@ -405,7 +404,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
 
     // Bootstrap order: create, founding grant, encryption floor policy, join_rule,
     // history_visibility, history_sharing_policy, discovery,
-    // plaintext_visible, member-invite.
+    // plaintext_visible, delivery binding policy, creator member join.
     assert_eq!(
         events[2].payload["value"]["content_encryption_floor"],
         RECOMMENDED_REALM_ENCRYPTION_FLOOR
@@ -463,7 +462,13 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         json!(["realm_policy"])
     );
     assert_eq!(events[9].payload["membership"], "join");
-    assert_eq!(events[10].payload["membership"], "invite");
+    assert!(events.iter().all(|event| {
+        event
+            .payload
+            .get("membership")
+            .and_then(|value| value.as_str())
+            != Some("invite")
+    }));
 }
 
 #[test]

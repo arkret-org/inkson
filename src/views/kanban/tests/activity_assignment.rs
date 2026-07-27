@@ -1,4 +1,5 @@
 use super::*;
+use crate::operation::EventExt;
 
 #[test]
 fn card_activity_items_show_local_strand_and_assignment_writes() {
@@ -88,15 +89,6 @@ fn card_detail_update_patch_uses_strand_update_patch_paths() {
 }
 
 #[test]
-fn relation_id_from_event_id_retags_assignment_relation_ids() {
-    assert_eq!(
-        relation_id_from_event_id("ak:event:0196419b-0000-7000-8000-000000000004").as_deref(),
-        Some("ak:relation:0196419b-0000-7000-8000-000000000004")
-    );
-    assert!(relation_id_from_event_id("ak:message:bad").is_none());
-}
-
-#[test]
 fn card_assignment_mutations_create_and_tombstone_relation_events() {
     let mut current = test_card("ak:strand:0196419b-0000-7000-8000-000000000101", "U");
     current.assignee = "did:web:bob.example".to_owned();
@@ -127,7 +119,14 @@ fn card_assignment_mutations_create_and_tombstone_relation_events() {
         create.operation().payload["to_ref"],
         json!("did:web:alice.example")
     );
-    assert!(create.operation().payload.get("relation_id").is_none());
+    assert_eq!(
+        create.operation().payload["relation_id"],
+        json!(create.relation_id())
+    );
+    assert_eq!(
+        create.operation().local_target_ref(),
+        Some(create.relation_id())
+    );
 
     let tombstone = mutations
         .iter()
