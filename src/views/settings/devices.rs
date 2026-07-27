@@ -1143,7 +1143,7 @@ fn render_pair_strand(
                                 return;
                             }
                         };
-                        let Some(public_key_material) = signer.public_key_multibase() else {
+                        let Some(public_key_material) = signer.public_key_base64url() else {
                             pair_status.set(
                                 "This device signer cannot expose a device public key for pairing."
                                     .to_owned(),

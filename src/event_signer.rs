@@ -263,6 +263,15 @@ impl InksonEventSigner {
         })
     }
 
+    /// Local seed-backed signer's raw 32-byte Ed25519 public key as
+    /// unpadded base64url. Device-pairing `PublicKey.key` uses this encoding,
+    /// rather than the multibase encoding used by device directory records.
+    pub fn public_key_base64url(&self) -> Option<String> {
+        self.raw_signing_key
+            .as_ref()
+            .map(|key| URL_SAFE_NO_PAD.encode(key.verifying_key().as_bytes()))
+    }
+
     /// JWS algorithm name (e.g. `"EdDSA"`).
     pub fn algorithm(&self) -> &str {
         self.inner.algorithm()
@@ -1015,6 +1024,25 @@ mod tests {
         );
         assert_eq!(signer.algorithm(), "EdDSA");
         assert_eq!(signer.mode_tag(), "ed25519");
+    }
+
+    #[test]
+    fn pairing_public_key_uses_raw_ed25519_base64url() {
+        let _g = reset();
+        let seed = [7u8; 32];
+        let signer = build_ed25519_signer(seed, "did:web:alice.example");
+        let expected =
+            URL_SAFE_NO_PAD.encode(SigningKey::from_bytes(&seed).verifying_key().as_bytes());
+
+        assert_eq!(
+            signer.public_key_base64url().as_deref(),
+            Some(expected.as_str())
+        );
+        assert_ne!(
+            signer.public_key_base64url(),
+            signer.public_key_multibase(),
+            "pairing wire keys must not use device-directory multibase"
+        );
     }
 
     #[test]
