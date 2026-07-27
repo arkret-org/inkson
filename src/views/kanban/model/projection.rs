@@ -381,6 +381,19 @@ pub(crate) fn card_from_projection_item(
             .and_then(|v| v.as_str())
             .unwrap_or("—")
             .to_owned(),
+        calendar_rsvp: CalendarRsvpDisplay::default(),
+        calendar_schedule_basis_refs: item
+            .object
+            .get("schedule_revision_heads")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
         calendar: object_fields
             .and_then(Value::as_object)
             .map(|fields| calendar_fields_from_metadata(fields, decrypt_ctx, &primary_strand_id))

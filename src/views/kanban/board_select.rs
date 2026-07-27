@@ -90,6 +90,8 @@ pub(super) fn seed_columns() -> Vec<KanbanColumn> {
                 assignee: "Alice".to_owned(),
                 assigned_to_relations: Vec::new(),
                 due: "May 08".to_owned(),
+                calendar_rsvp: CalendarRsvpDisplay::default(),
+                calendar_schedule_basis_refs: Vec::new(),
                 calendar: CalendarCardFields::default(),
                 primary_strand_id: DEMO_STRAND_REVIEW_DISCUSSION_ID.to_owned(),
                 locked_strand: Some(LockedStrand {
@@ -125,6 +127,8 @@ pub(super) fn seed_columns() -> Vec<KanbanColumn> {
                 assignee: "Bob".to_owned(),
                 assigned_to_relations: Vec::new(),
                 due: "May 10".to_owned(),
+                calendar_rsvp: CalendarRsvpDisplay::default(),
+                calendar_schedule_basis_refs: Vec::new(),
                 calendar: CalendarCardFields::default(),
                 primary_strand_id: DEMO_STRAND_SUPPORT_DISCUSSION_ID.to_owned(),
                 locked_strand: None,
@@ -157,6 +161,8 @@ pub(super) fn seed_columns() -> Vec<KanbanColumn> {
                 assignee: "Carol".to_owned(),
                 assigned_to_relations: Vec::new(),
                 due: "May 01".to_owned(),
+                calendar_rsvp: CalendarRsvpDisplay::default(),
+                calendar_schedule_basis_refs: Vec::new(),
                 calendar: CalendarCardFields::default(),
                 primary_strand_id: DEMO_STRAND_SECURITY_REVIEW_ID.to_owned(),
                 locked_strand: Some(LockedStrand {

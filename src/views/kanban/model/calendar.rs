@@ -2,14 +2,28 @@ use super::*;
 
 pub(crate) const CALENDAR_PROFILE_FIELD: &str = "profile";
 pub(crate) const CALENDAR_PROFILE_REFS_FIELD: &str = "profile_refs";
-pub(crate) const CALENDAR_LOCATION_PRIVATE_PATH: &str = "metadata.fields.location";
+pub(crate) const CALENDAR_LOCATION_PRIVATE_PATH: &str = "metadata.fields.calendar.location";
+/// The single schedule namespace and its activation ref, always patched as a
+/// pair.
+pub(crate) const CALENDAR_SUBTREE_PATH: &str = "metadata.fields.calendar";
+pub(crate) const CALENDAR_SCHEMA_REFS_PATH: &str = "schema_refs";
+
+/// TZDB release new schedules pin when the editor has no explicit choice.
+/// Must be one of `calendar-timezone-registry.json` release rows.
+pub(crate) const DEFAULT_CALENDAR_TZDB_VERSION: &str = "2025a";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CalendarCardFields {
     pub(crate) start: String,
     pub(crate) end: String,
     pub(crate) timezone: String,
+    /// IANA TZDB release the schedule pins. Signed with the schedule so a
+    /// receiver never resolves the zone with its own installed release.
+    pub(crate) tzdb_version: String,
     pub(crate) all_day: bool,
+    /// `confirmed | tentative | cancelled`. Required with no implicit default,
+    /// and distinct from the Strand `stage` / `state` axes.
+    pub(crate) status: String,
     pub(crate) recurrence_frequency: String,
     pub(crate) recurrence_interval: String,
     pub(crate) recurrence_by_day: String,
@@ -69,11 +83,23 @@ impl CalendarCardFields {
     }
 }
 
+/// Reads the schedule out of Strand `metadata.fields`.
+///
+/// The subtree lives under a single `calendar` namespace, activated by
+/// `ak.schema.calendar_event.v1` in `schema_refs`. Flat schedule keys at the
+/// `metadata.fields` root are a rejected pre-closure shape, so they are not
+/// read back here — treating them as a schedule would resurrect the guess-by
+/// -field-presence activation the wire now forbids.
 pub(crate) fn calendar_fields_from_metadata(
     fields: &Map<String, Value>,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
     strand_id: &str,
 ) -> CalendarCardFields {
+    static EMPTY: std::sync::LazyLock<Map<String, Value>> = std::sync::LazyLock::new(Map::new);
+    let fields = fields
+        .get(arkret_sdk::CALENDAR_METADATA_FIELDS_NAMESPACE)
+        .and_then(Value::as_object)
+        .unwrap_or(&EMPTY);
     let recurrence = fields.get("recurrence").and_then(Value::as_object);
     let location_value = fields.get("location");
     let (location, location_locked) =
@@ -94,10 +120,20 @@ pub(crate) fn calendar_fields_from_metadata(
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned(),
+        tzdb_version: fields
+            .get("tzdb_version")
+            .and_then(Value::as_str)
+            .unwrap_or(DEFAULT_CALENDAR_TZDB_VERSION)
+            .to_owned(),
         all_day: fields
             .get("all_day")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        status: fields
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("confirmed")
+            .to_owned(),
         recurrence_frequency: recurrence
             .and_then(|value| value.get("frequency"))
             .and_then(Value::as_str)
@@ -134,42 +170,59 @@ pub(crate) fn calendar_fields_from_metadata(
     }
 }
 
+/// True when the touched `metadata.fields` carry the schedule.
+///
+/// Only the single `calendar` namespace counts. The pre-closure flat keys and
+/// the `profile` / `profile_refs` impostors are deliberately excluded: reading
+/// them back would reintroduce guess-by-field-presence activation, and a patch
+/// that still touches them is a migration unset, not a schedule.
 pub(crate) fn fields_have_calendar_keys(fields: &Map<String, Value>) -> bool {
-    [
-        CALENDAR_PROFILE_FIELD,
-        CALENDAR_PROFILE_REFS_FIELD,
-        "start",
-        "end",
-        "timezone",
-        "all_day",
-        "recurrence",
-        "location",
-    ]
-    .iter()
-    .any(|key| fields.contains_key(*key))
+    fields.contains_key(arkret_sdk::CALENDAR_METADATA_FIELDS_NAMESPACE)
 }
 
+/// Builds the `ak.strand.update` patch entries for the card's schedule.
+///
+/// Activation is one canonical pair: `schema_refs` containing
+/// `ak.schema.calendar_event.v1` and the whole schedule under
+/// `metadata.fields.calendar`. The two are always written and cleared
+/// together, because a lone ref or a lone subtree is rejected as
+/// `calendar_activation_mismatch` on the post-patch object.
+///
+/// The pre-closure shape — flat `metadata.fields.start` and friends plus
+/// `metadata.fields.profile` / `profile_refs` — is unset here, so a card
+/// authored before the closure migrates on its next schedule edit instead of
+/// carrying two schedules at once.
 pub(crate) fn calendar_patch_entries(
     patch: &mut Map<String, Value>,
     current: &CalendarCardFields,
     draft: &CalendarCardFields,
 ) -> Result<(), String> {
+    const LEGACY_PATHS: &[&str] = &[
+        "metadata.fields.profile",
+        "metadata.fields.profile_refs",
+        "metadata.fields.start",
+        "metadata.fields.end",
+        "metadata.fields.timezone",
+        "metadata.fields.all_day",
+        "metadata.fields.recurrence",
+        "metadata.fields.attendees",
+        "metadata.fields.location",
+    ];
+
     if !current.has_schedule() && !draft.has_editable_schedule() {
         return Ok(());
     }
     if !draft.has_editable_schedule() {
-        for path in [
-            "metadata.fields.profile",
-            "metadata.fields.profile_refs",
-            "metadata.fields.start",
-            "metadata.fields.end",
-            "metadata.fields.timezone",
-            "metadata.fields.all_day",
-            "metadata.fields.recurrence",
-            "metadata.fields.location",
-        ] {
-            patch.insert(path.to_owned(), json!({ "$op": "unset" }));
+        for path in LEGACY_PATHS {
+            patch.insert((*path).to_owned(), json!({ "$op": "unset" }));
         }
+        // Ref and subtree are cleared in the same patch: unsetting only one
+        // side would leave the object in the mismatch state.
+        patch.insert(CALENDAR_SUBTREE_PATH.to_owned(), json!({ "$op": "unset" }));
+        patch.insert(
+            CALENDAR_SCHEMA_REFS_PATH.to_owned(),
+            json!({ "$op": "unset" }),
+        );
         return Ok(());
     }
 
@@ -178,44 +231,28 @@ pub(crate) fn calendar_patch_entries(
         .map_err(|err| format!("calendar fields serialize failed: {err}"))?;
     validate_calendar_event_value(&event_value)?;
 
-    set_if_changed(
-        patch,
-        "metadata.fields.profile",
-        current_profile_value(current),
-        Some(json!(arkret_sdk::PROFILE_CALENDAR_EVENT)),
-    );
-    set_if_changed(
-        patch,
-        "metadata.fields.profile_refs",
-        current_profile_refs_value(current),
-        Some(json!([arkret_sdk::PROFILE_CALENDAR_EVENT])),
-    );
-    set_string_if_changed(patch, "metadata.fields.start", &current.start, &draft.start);
-    set_string_if_changed(patch, "metadata.fields.end", &current.end, &draft.end);
-    set_string_if_changed(
-        patch,
-        "metadata.fields.timezone",
-        &current.timezone,
-        &draft.timezone,
-    );
-    if current.all_day != draft.all_day {
-        patch.insert(
-            "metadata.fields.all_day".to_owned(),
-            json!({ "$op": "set", "value": draft.all_day }),
-        );
+    for path in LEGACY_PATHS {
+        patch.insert((*path).to_owned(), json!({ "$op": "unset" }));
     }
-    set_value_if_changed(
-        patch,
-        "metadata.fields.recurrence",
-        recurrence_value_from_card(current)?,
-        event_value.get("recurrence").cloned(),
+    patch.insert(
+        CALENDAR_SCHEMA_REFS_PATH.to_owned(),
+        json!({ "$op": "set", "value": [arkret_sdk::schema::CALENDAR_EVENT_SCHEMA] }),
     );
-    set_location_if_changed(
-        patch,
-        current,
-        event_value.get("location").cloned(),
-        draft.location.trim(),
+    // The subtree is validated as a whole object, so it is written as a whole
+    // object rather than field by field. `location` is split back out into its
+    // own child path: it is the one schedule member that may be encrypted, and
+    // the private-value pipeline encrypts per patch path. The child path sorts
+    // after its parent, so the parent object lands first and the encrypted
+    // envelope is written on top of it.
+    let mut subtree = event_value;
+    let location = subtree
+        .as_object_mut()
+        .and_then(|object| object.remove("location"));
+    patch.insert(
+        CALENDAR_SUBTREE_PATH.to_owned(),
+        json!({ "$op": "set", "value": subtree }),
     );
+    set_location_if_changed(patch, current, location, draft.location.trim());
     Ok(())
 }
 
@@ -226,11 +263,19 @@ pub(crate) fn calendar_event_fields_from_draft(
     let end = required_calendar_field("end", &draft.end)?;
     let timezone = required_calendar_field("timezone", &draft.timezone)?;
     validate_calendar_time_order(&start, &end, draft.all_day)?;
+    let tzdb_version = if draft.tzdb_version.trim().is_empty() {
+        DEFAULT_CALENDAR_TZDB_VERSION.to_owned()
+    } else {
+        draft.tzdb_version.trim().to_owned()
+    };
+    let status = calendar_status_from_text(&draft.status)?;
     Ok(arkret_sdk::CalendarEventFields {
         start,
         end,
         timezone,
+        tzdb_version,
         all_day: draft.all_day,
+        status,
         recurrence: recurrence_from_card(draft)?,
         location: location_value_from_text(&draft.location),
         call_id: None,
@@ -238,24 +283,61 @@ pub(crate) fn calendar_event_fields_from_draft(
     })
 }
 
+/// Builds an `ak.rsvp.set` Event for the card's calendar.
+///
+/// `schedule_basis_refs` is the schedule revision frontier this client actually
+/// observed. It is mandatory: the entry basis is part of the signed cell value,
+/// and a receiver admits it only as a subset of the envelope causal edges. When
+/// the frontier is unknown we fail closed rather than sign an RSVP that claims
+/// to have observed a schedule it did not.
 pub(crate) fn calendar_rsvp_operation(
     realm_id: &str,
     actor_id: &str,
     strand_id: &str,
     status: &str,
     occurrence: &str,
+    schedule_basis_refs: Vec<arkret_sdk::Hash>,
+    calendar: &arkret_sdk::CalendarEventFields,
 ) -> anyhow::Result<arkret_sdk::Event> {
+    if schedule_basis_refs.is_empty() {
+        anyhow::bail!(
+            "cannot send an RSVP before the observed schedule revision is known;              the calendar projection must expose schedule_revision_heads first"
+        );
+    }
+    // The projection endpoint currently exposes the canonical frontier but not
+    // schedule plaintext per head. One head is therefore decidably settled;
+    // multiple heads are conservatively treated as conflicting until the
+    // projection can prove their canonical schedule bytes are equal.
+    let schedule = arkret_sdk::CalendarScheduleProjection::from_heads(
+        &schedule_basis_refs
+            .iter()
+            .cloned()
+            .map(|digest| {
+                let bytes = digest.as_str().as_bytes().to_vec();
+                (digest, Some(bytes))
+            })
+            .collect::<Vec<_>>(),
+    );
     crate::operation::ak_ops::rsvp_set(
         realm_id,
         actor_id,
         strand_id,
         status,
         (!occurrence.trim().is_empty()).then_some(occurrence.trim()),
-        None,
+        schedule_basis_refs,
+        calendar,
+        &schedule,
     )
     .and_then(|builder| builder.build_sdk_event("inkson"))
 }
 
+/// Canonical instance key for the card's base occurrence.
+///
+/// Timed schedules now carry a whole-second `LocalDateTime` in the event
+/// timezone, so the key is that value plus the zone — no instant conversion.
+/// The pre-closure wire carried a UTC instant here, and stripping its `Z`
+/// produced a key in the wrong wall clock; that whole failure mode is gone
+/// because the schedule no longer stores an absolute instant.
 pub(crate) fn calendar_occurrence_hint(calendar: &CalendarCardFields) -> String {
     let start = calendar.start.trim();
     if start.is_empty() {
@@ -268,18 +350,16 @@ pub(crate) fn calendar_occurrence_hint(calendar: &CalendarCardFields) -> String 
     if timezone.is_empty() {
         return start.to_owned();
     }
-    let mut local_like = start.trim_end_matches('Z');
-    if let Some(index) = local_like.rfind('+')
-        && index > 10
-    {
-        local_like = &local_like[..index];
+    format!("{start}[{timezone}]")
+}
+
+fn calendar_status_from_text(value: &str) -> Result<arkret_sdk::CalendarStatus, String> {
+    match value.trim() {
+        "" | "confirmed" => Ok(arkret_sdk::CalendarStatus::Confirmed),
+        "tentative" => Ok(arkret_sdk::CalendarStatus::Tentative),
+        "cancelled" => Ok(arkret_sdk::CalendarStatus::Cancelled),
+        other => Err(format!("unknown calendar status: {other}")),
     }
-    if let Some(index) = local_like.rfind('-')
-        && index > 10
-    {
-        local_like = &local_like[..index];
-    }
-    format!("{local_like}[{timezone}]")
 }
 
 fn required_calendar_field(field: &str, value: &str) -> Result<String, String> {
@@ -297,21 +377,22 @@ fn validate_calendar_time_order(start: &str, end: &str, all_day: bool) -> Result
             .map_err(|err| format!("all-day calendar start must be YYYY-MM-DD: {err}"))?;
         let end = chrono::NaiveDate::parse_from_str(end, "%Y-%m-%d")
             .map_err(|err| format!("all-day calendar end must be YYYY-MM-DD: {err}"))?;
-        if end < start {
-            return Err("all-day calendar end must be on or after start".to_owned());
+        // The interval is half-open [start, end), so a single-day event spells
+        // end as the following date.
+        if end <= start {
+            return Err(
+                "all-day calendar end must be strictly later than start; a single-day event uses the following date"
+                    .to_owned(),
+            );
         }
         return Ok(());
     }
-    let start_dt = chrono::DateTime::parse_from_rfc3339(start)
-        .map_err(|err| format!("calendar start must be RFC3339: {err}"))?;
-    let end_dt = chrono::DateTime::parse_from_rfc3339(end)
-        .map_err(|err| format!("calendar end must be RFC3339: {err}"))?;
-    if !start.ends_with('Z') {
-        return Err("calendar start must be UTC RFC3339 ending in Z".to_owned());
-    }
-    if !end.ends_with('Z') {
-        return Err("calendar end must be UTC RFC3339 ending in Z".to_owned());
-    }
+    // Timed anchors are whole-second LocalDateTime in the event timezone; the
+    // wire no longer carries an absolute instant here.
+    let start_dt = chrono::NaiveDateTime::parse_from_str(start, "%Y-%m-%dT%H:%M:%S")
+        .map_err(|err| format!("calendar start must be YYYY-MM-DDTHH:mm:ss: {err}"))?;
+    let end_dt = chrono::NaiveDateTime::parse_from_str(end, "%Y-%m-%dT%H:%M:%S")
+        .map_err(|err| format!("calendar end must be YYYY-MM-DDTHH:mm:ss: {err}"))?;
     if end_dt <= start_dt {
         return Err("calendar end must be after start".to_owned());
     }
@@ -492,7 +573,7 @@ fn calendar_location_plaintext_label(value: &Value) -> String {
 
 fn validate_calendar_event_value(value: &Value) -> Result<(), String> {
     arkret_sdk::ProtocolSchemaRegistry::default()
-        .validate_value(arkret_sdk::CALENDAR_EVENT_SCHEMA, value)
+        .validate_value(arkret_sdk::schema::CALENDAR_EVENT_SCHEMA, value)
         .map_err(|err| format!("calendar schedule does not match schema: {err}"))
 }
 
@@ -553,4 +634,146 @@ fn current_profile_refs_value(current: &CalendarCardFields) -> Option<Value> {
     current
         .has_schedule()
         .then(|| json!([arkret_sdk::PROFILE_CALENDAR_EVENT]))
+}
+
+/// Card-level RSVP display state.
+///
+/// Built from the shared SDK projection so the client classifies heads exactly
+/// like the server and the conformance runner. Concurrent answers are surfaced
+/// as a conflict the responder must resolve; nothing here silently picks one.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CalendarRsvpDisplay {
+    /// The signed-in actor's effective answer, if it has one.
+    pub(crate) own_status: Option<String>,
+    /// The actor answered concurrently and the answers disagree.
+    pub(crate) own_conflicted: bool,
+    /// A significant schedule field moved since the actor answered.
+    pub(crate) own_needs_reconfirmation: bool,
+    /// Aggregate of every responder's effective answer.
+    pub(crate) accepted: usize,
+    pub(crate) declined: usize,
+    pub(crate) tentative: usize,
+    /// Heads that exist but do not count: orphaned by an identity-affecting
+    /// edit, unreadable, or resting on an unknown schedule basis.
+    pub(crate) excluded: usize,
+}
+
+impl CalendarRsvpDisplay {
+    pub(crate) fn has_any(&self) -> bool {
+        self.own_status.is_some()
+            || self.accepted + self.declined + self.tentative + self.excluded > 0
+    }
+}
+
+/// Folds the projected RSVP cells into the card display model.
+///
+/// `occurrence` is the instance the card is showing, or `None` for the series.
+/// Instance answers override the series fallback and the two are never unioned.
+pub(crate) fn calendar_rsvp_display(
+    cells: &[crate::state::projection_views::RsvpCellProjectionView],
+    schedule_revision_heads: &[String],
+    occurrence: Option<&str>,
+    self_actor_id: &str,
+) -> CalendarRsvpDisplay {
+    let frontier = arkret_sdk::CalendarScheduleProjection::from_heads(
+        &schedule_revision_heads
+            .iter()
+            .filter_map(|value| arkret_sdk::Hash::new(value.clone()).ok())
+            .map(|digest| (digest, Some(Vec::new())))
+            .collect::<Vec<_>>(),
+    );
+
+    let mut display = CalendarRsvpDisplay::default();
+    let mut by_actor: std::collections::BTreeMap<String, arkret_sdk::CalendarRsvpProjection> =
+        std::collections::BTreeMap::new();
+    for cell in cells {
+        let is_instance = cell.occurrence.is_some();
+        // A cell for another instance says nothing about this one.
+        if is_instance && cell.occurrence.as_deref() != occurrence {
+            continue;
+        }
+        let entry = by_actor.entry(cell.actor_id.clone()).or_insert_with(|| {
+            arkret_sdk::CalendarRsvpProjection {
+                instance_heads: Vec::new(),
+                series_heads: Vec::new(),
+            }
+        });
+        for head in &cell.heads {
+            let Some(classified) = classify_rsvp_head(head, &frontier, is_instance) else {
+                continue;
+            };
+            if is_instance {
+                entry.instance_heads.push(classified);
+            } else {
+                entry.series_heads.push(classified);
+            }
+        }
+    }
+
+    for (actor_id, projection) in &by_actor {
+        display.excluded += projection.excluded_heads().len();
+        let conflicted = projection.resolution_state() == arkret_sdk::RsvpResolutionState::Conflict;
+        let needs_reconfirmation = projection.effective_heads().iter().any(|head| {
+            head.basis_class == arkret_sdk::RsvpBasisClass::EffectiveNeedsReconfirmation
+        });
+        let status = projection
+            .effective_response()
+            .map(|response| rsvp_status_text(response.status));
+        if actor_id == self_actor_id {
+            display.own_status = status.clone();
+            display.own_conflicted = conflicted;
+            display.own_needs_reconfirmation = needs_reconfirmation;
+        }
+        // A responder with an unresolved conflict has no single answer, so they
+        // are not counted into any aggregate bucket.
+        match status.as_deref() {
+            Some("accepted") => display.accepted += 1,
+            Some("declined") => display.declined += 1,
+            Some("tentative") => display.tentative += 1,
+            _ => {}
+        }
+    }
+    display
+}
+
+fn classify_rsvp_head(
+    head: &crate::state::projection_views::RsvpHeadProjectionView,
+    frontier: &arkret_sdk::CalendarScheduleProjection,
+    is_instance: bool,
+) -> Option<arkret_sdk::CalendarRsvpHead> {
+    let source_event_digest = arkret_sdk::Hash::new(head.source_event_digest.clone()).ok()?;
+    let entry = serde_json::from_value::<arkret_sdk::RsvpEntry>(head.entry.clone()).ok()?;
+    // The plaintext branch is readable directly; an encrypted branch this
+    // device cannot open is listed without fabricating a status.
+    let (response, response_class) = match (&entry.response, &entry.encrypted_response) {
+        (Some(response), None) => (
+            Some(response.clone()),
+            arkret_sdk::RsvpResponseClass::Resolved,
+        ),
+        (None, Some(_)) => (None, arkret_sdk::RsvpResponseClass::EncryptedUnresolved),
+        _ => (None, arkret_sdk::RsvpResponseClass::InvalidResponse),
+    };
+    let basis_class = arkret_sdk::CalendarRsvpHead::classify_basis(
+        &entry.schedule_basis_refs,
+        &frontier.schedule_revision_heads,
+        is_instance,
+        false,
+        false,
+    );
+    Some(arkret_sdk::CalendarRsvpHead {
+        source_event_digest,
+        schedule_basis_refs: entry.schedule_basis_refs,
+        response,
+        basis_class,
+        response_class,
+    })
+}
+
+fn rsvp_status_text(status: arkret_sdk::RsvpStatus) -> String {
+    match status {
+        arkret_sdk::RsvpStatus::Accepted => "accepted",
+        arkret_sdk::RsvpStatus::Declined => "declined",
+        arkret_sdk::RsvpStatus::Tentative => "tentative",
+    }
+    .to_owned()
 }

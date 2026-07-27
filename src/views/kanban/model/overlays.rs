@@ -31,6 +31,8 @@ pub(crate) fn local_created_card(
         assignee: "inkson".to_owned(),
         assigned_to_relations: Vec::new(),
         due: "unscheduled".to_owned(),
+        calendar_rsvp: CalendarRsvpDisplay::default(),
+        calendar_schedule_basis_refs: Vec::new(),
         calendar: CalendarCardFields::default(),
         primary_strand_id: strand_id,
         locked_strand: None,
@@ -496,6 +498,9 @@ pub(crate) fn local_card_update_from_raw_operation(
         "all_day",
         "recurrence",
         "location",
+        // The schedule is patched as one subtree now, so the overlay follows
+        // the same single path instead of tracking each schedule field.
+        arkret_sdk::CALENDAR_METADATA_FIELDS_NAMESPACE,
     ] {
         if let Some(value) = extract_direct_field_patch(patch, field) {
             direct_fields.insert(field.to_owned(), value);
@@ -596,11 +601,20 @@ pub(crate) fn apply_card_update_overlay(card: &mut KanbanCard, update: &LocalCar
     card.state = update.state;
 }
 
+/// Merges a locally queued schedule patch onto the projected card.
+///
+/// The schedule is written as one object, so touching it replaces the card's
+/// whole calendar; a partial merge would let a stale field survive next to a
+/// freshly written one and produce a schedule that was never signed.
 fn apply_calendar_field_overlay(
     current: &mut CalendarCardFields,
     touched_fields: &Map<String, Value>,
     next: &CalendarCardFields,
 ) {
+    if touched_fields.contains_key(arkret_sdk::CALENDAR_METADATA_FIELDS_NAMESPACE) {
+        *current = next.clone();
+        return;
+    }
     if touched_fields.contains_key("start") {
         current.start = next.start.clone();
     }

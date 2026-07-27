@@ -108,6 +108,8 @@ pub(super) fn test_card(id: &str, rank: &str) -> KanbanCard {
         assignee: String::new(),
         assigned_to_relations: Vec::new(),
         due: String::new(),
+        calendar_rsvp: CalendarRsvpDisplay::default(),
+        calendar_schedule_basis_refs: Vec::new(),
         calendar: CalendarCardFields::default(),
         primary_strand_id: String::new(),
         locked_strand: None,

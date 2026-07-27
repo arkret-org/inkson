@@ -398,6 +398,9 @@ pub(super) fn dispatch_card_detail_update(
     let effective_security_encrypted = current
         .security_encrypted
         .unwrap_or_else(|| scope_security_encrypted.unwrap_or(true));
+    let calendar_changed = patch
+        .as_object()
+        .is_some_and(|entries| entries.contains_key(CALENDAR_SUBTREE_PATH));
     let (patch, mls_events) = if effective_security_encrypted {
         match encrypt_private_card_detail_patch_values_for_effective_scope(
             patch,
@@ -430,7 +433,14 @@ pub(super) fn dispatch_card_detail_update(
         &current.id,
         patch,
     ) {
-        Ok(builder) => builder.build_sdk_event("inkson"),
+        Ok(builder) => {
+            let builder = if calendar_changed {
+                builder.causal_refs(current.calendar_schedule_basis_refs())
+            } else {
+                builder
+            };
+            builder.build_sdk_event("inkson")
+        }
         Err(err) => {
             board_status.set(format!("cannot update card: {err:#}"));
             return false;

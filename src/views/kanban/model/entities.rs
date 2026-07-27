@@ -59,6 +59,14 @@ pub(crate) struct KanbanCard {
     pub(crate) assignee: String,
     pub(crate) assigned_to_relations: Vec<CardAssignedToRelation>,
     pub(crate) due: String,
+    /// Schedule revision frontier this client observed for the card's
+    /// calendar, as `event_digest` values. Empty means the projection has not
+    /// exposed `schedule_revision_heads` yet, and RSVP authoring fails closed
+    /// rather than signing an unbacked basis.
+    pub(crate) calendar_schedule_basis_refs: Vec<String>,
+    /// Folded RSVP state for the card's calendar: the signed-in actor's own
+    /// answer, the aggregate, and how many heads exist but do not count.
+    pub(crate) calendar_rsvp: CalendarRsvpDisplay,
     pub(crate) calendar: CalendarCardFields,
     pub(crate) primary_strand_id: String,
     pub(crate) locked_strand: Option<LockedStrand>,
@@ -75,6 +83,20 @@ pub(crate) struct KanbanCard {
     /// irreversible terminal (content cleared, envelope/audit retained); UI
     /// never emits it but renders a withdrawn-message placeholder for it.
     pub(crate) lifecycle: StrandLifecycleState,
+}
+
+impl KanbanCard {
+    /// Parses the observed schedule revision frontier into SDK digests.
+    ///
+    /// Anything unparseable is dropped rather than guessed: an invalid digest
+    /// can never be a legitimate causal edge, and signing it would produce an
+    /// RSVP a receiver rejects with `rsvp_basis_not_causal`.
+    pub(crate) fn calendar_schedule_basis_refs(&self) -> Vec<arkret_sdk::Hash> {
+        self.calendar_schedule_basis_refs
+            .iter()
+            .filter_map(|value| arkret_sdk::Hash::new(value.clone()).ok())
+            .collect()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

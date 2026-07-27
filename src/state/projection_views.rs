@@ -44,6 +44,29 @@ pub struct SpaceContainerProjectionView {
     pub parent_space_id: Option<String>,
 }
 
+/// One RSVP cell keyed by occurrence and responder.
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
+pub struct RsvpCellProjectionView {
+    /// `null` is the whole series; a string is a canonical instance key.
+    #[serde(default)]
+    pub occurrence: Option<String>,
+    #[serde(default)]
+    pub actor_id: String,
+    #[serde(default)]
+    pub heads: Vec<RsvpHeadProjectionView>,
+}
+
+/// One `mv_register` head. `entry` is the complete signed lattice value.
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
+pub struct RsvpHeadProjectionView {
+    #[serde(default)]
+    pub source_event_id: String,
+    #[serde(default)]
+    pub source_event_digest: String,
+    #[serde(default)]
+    pub entry: serde_json::Value,
+}
+
 /// Server-side Strand row from `GET /_arkret/self/realms/{realm_id}/strands`.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct StrandProjectionView {
@@ -67,6 +90,20 @@ pub struct StrandProjectionView {
     pub assigned_to_relations: Vec<AssignedToRelationProjectionView>,
     #[serde(default)]
     pub fields: serde_json::Map<String, serde_json::Value>,
+    /// Profile activation axis; its calendar entry and the
+    /// `metadata.fields.calendar` subtree co-occur in both directions.
+    #[serde(default)]
+    pub schema_refs: Vec<String>,
+    /// Canonical schedule revision frontier as `event_digest` values. RSVP
+    /// authoring signs a subset of this, so an empty frontier is what keeps the
+    /// RSVP path fail-closed.
+    #[serde(default)]
+    pub schedule_revision_heads: Vec<String>,
+    /// Live RSVP `mv_register` heads for this Strand. Concurrent responses stay
+    /// side by side; the UI shows them as an unresolved conflict rather than
+    /// silently choosing one.
+    #[serde(default)]
+    pub rsvps: Vec<RsvpCellProjectionView>,
     /// `active` / `archived` / `redacted` per spec
     /// `common-fields.md §5.1`. `redacted` is the only irreversible
     /// terminal state; the reducer no longer accepts `deleted`.
@@ -325,8 +362,14 @@ impl From<arkret_sdk::ProjectionStrandRow> for StrandProjectionView {
             // The SDK strand projection row carries no free-form `body` /
             // `fields`; the server never emits them on this endpoint, so they
             // default to empty (behavior-equivalent to the prior lenient
-            // decode against `ProjectionStrandList`).
+            // decode against `ProjectionStrandList`). The same applies to the
+            // calendar activation axis and schedule frontier, so a card built
+            // from this row keeps RSVP authoring fail-closed until the richer
+            // projection read supplies them.
             body: None,
+            schema_refs: Vec::new(),
+            rsvps: Vec::new(),
+            schedule_revision_heads: Vec::new(),
             board_space_id: row
                 .board_space_id
                 .map(|space_id| space_id.as_str().to_owned()),

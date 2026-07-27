@@ -119,6 +119,16 @@ pub(crate) fn card_from_strand_projection(
     strand: &crate::state::projection_views::StrandProjectionView,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> KanbanCard {
+    card_from_strand_projection_for_actor(strand, decrypt_ctx, "")
+}
+
+/// Same as [`card_from_strand_projection`], with the signed-in actor so the
+/// card can mark which RSVP head is the viewer's own answer.
+pub(crate) fn card_from_strand_projection_for_actor(
+    strand: &crate::state::projection_views::StrandProjectionView,
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+    self_actor_id: &str,
+) -> KanbanCard {
     let title = if strand.title.trim().is_empty() {
         strand.strand_id.clone()
     } else {
@@ -223,6 +233,15 @@ pub(crate) fn card_from_strand_projection(
         assigned_to_relations: strand_projection_assigned_to_relations(strand),
         due: strand_projection_field_string(strand, None, &["due_at", "due", "due_date"])
             .unwrap_or_else(|| "—".to_owned()),
+        // Fold the projected RSVP heads for the card's base occurrence. The
+        // self actor is filled in by the view layer, which knows the session.
+        calendar_rsvp: calendar_rsvp_display(
+            &strand.rsvps,
+            &strand.schedule_revision_heads,
+            None,
+            self_actor_id,
+        ),
+        calendar_schedule_basis_refs: strand.schedule_revision_heads.clone(),
         calendar: calendar_fields_from_metadata(&strand.fields, decrypt_ctx, &strand.strand_id),
         primary_strand_id: strand.strand_id.clone(),
         locked_strand,

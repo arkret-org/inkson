@@ -2208,6 +2208,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                             let has_schedule = schedule.has_schedule();
                                                                             let recurrence_label = schedule.recurrence_label();
                                                                             let occurrence_hint = calendar_occurrence_hint(&schedule);
+                                                                            let rsvp_display = card.calendar_rsvp.clone();
                                                                             let location_label = if schedule.location_locked {
                                                                                 MLS_LOCKED_FIELD_PLACEHOLDER.to_owned()
                                                                             } else {
@@ -2327,6 +2328,48 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             div {
                                                                                                 class: "calendar-rsvp",
                                                                                                 "data-testid": "card-detail-calendar-rsvp",
+                                                                                                // Answer state before the buttons: a card that only
+                                                                                                // offered "send once" could never show whether the
+                                                                                                // response landed, who else answered, or that the
+                                                                                                // responder has an unresolved conflict.
+                                                                                                if rsvp_display.has_any() {
+                                                                                                    div {
+                                                                                                        class: "calendar-rsvp-status",
+                                                                                                        "data-testid": "card-detail-rsvp-status",
+                                                                                                        if rsvp_display.own_conflicted {
+                                                                                                            span {
+                                                                                                                class: "calendar-rsvp-conflict",
+                                                                                                                "data-testid": "card-detail-rsvp-conflict",
+                                                                                                                "Your answers conflict — answer again to resolve"
+                                                                                                            }
+                                                                                                        } else if let Some(status) = rsvp_display.own_status.clone() {
+                                                                                                            span {
+                                                                                                                class: "calendar-rsvp-own",
+                                                                                                                "data-testid": "card-detail-rsvp-own",
+                                                                                                                "You: {status}"
+                                                                                                            }
+                                                                                                        }
+                                                                                                        if rsvp_display.own_needs_reconfirmation {
+                                                                                                            span {
+                                                                                                                class: "calendar-rsvp-reconfirm",
+                                                                                                                "data-testid": "card-detail-rsvp-reconfirm",
+                                                                                                                "Schedule changed — please reconfirm"
+                                                                                                            }
+                                                                                                        }
+                                                                                                        span {
+                                                                                                            class: "calendar-rsvp-counts",
+                                                                                                            "data-testid": "card-detail-rsvp-counts",
+                                                                                                            "{rsvp_display.accepted} yes · {rsvp_display.tentative} maybe · {rsvp_display.declined} no"
+                                                                                                        }
+                                                                                                        if rsvp_display.excluded > 0 {
+                                                                                                            span {
+                                                                                                                class: "calendar-rsvp-excluded",
+                                                                                                                "data-testid": "card-detail-rsvp-excluded",
+                                                                                                                "{rsvp_display.excluded} response(s) no longer count"
+                                                                                                            }
+                                                                                                        }
+                                                                                                    }
+                                                                                                }
                                                                                                 Label { html_for: "card-detail-calendar-rsvp-occurrence", "Occurrence" }
                                                                                                 Input {
                                                                                                     id: "card-detail-calendar-rsvp-occurrence",

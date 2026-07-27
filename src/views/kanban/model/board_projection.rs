@@ -188,6 +188,12 @@ fn strand_view_from_create_op(
         assigned_actor_ids: Vec::new(),
         assigned_to_relations: Vec::new(),
         fields,
+        // Locally folded board rows carry no activation axis or schedule
+        // frontier; the projection read supplies them, and until it does RSVP
+        // authoring stays fail-closed rather than signing an unobserved basis.
+        schema_refs: Vec::new(),
+        rsvps: Vec::new(),
+        schedule_revision_heads: Vec::new(),
         state: "active".to_owned(),
         created_by,
         created_at,

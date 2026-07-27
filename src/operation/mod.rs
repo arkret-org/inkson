@@ -114,6 +114,7 @@ pub struct OperationBuilder {
     authorization_ref: Option<String>,
     preconditions: Vec<Precondition>,
     effects: Vec<Effect>,
+    causal_refs: Vec<arkret_sdk::Hash>,
     refs: Vec<SemanticRef>,
     seal_ref: Option<String>,
     seal_basis: Option<SealBasis>,
@@ -136,6 +137,7 @@ impl OperationBuilder {
             authorization_ref: None,
             preconditions: Vec::new(),
             effects: Vec::new(),
+            causal_refs: Vec::new(),
             refs: Vec::new(),
             seal_ref: None,
             seal_basis: None,
@@ -189,6 +191,15 @@ impl OperationBuilder {
 
     pub fn refs(mut self, refs: Vec<SemanticRef>) -> Self {
         self.refs = refs;
+        self
+    }
+
+    /// Semantic causal predecessors. RSVP carries the observed schedule
+    /// revision frontier here: the entry basis MUST be a subset of it, and a
+    /// receiver uses the same edges to decide which earlier heads this response
+    /// dominates.
+    pub fn causal_refs(mut self, causal_refs: Vec<arkret_sdk::Hash>) -> Self {
+        self.causal_refs = causal_refs;
         self
     }
 
@@ -302,6 +313,7 @@ impl OperationBuilder {
         .map_err(|err| anyhow::anyhow!("SDK Event construction failed: {err}"))?;
         event.prev_refs = prev_refs;
         event.refs = self.refs;
+        event.causal_refs = self.causal_refs;
         event.preconditions = self.preconditions;
         event.effects = self.effects;
         event.seal_ref = self
@@ -326,14 +338,22 @@ impl OperationBuilder {
                 |error| anyhow::anyhow!("capability grant effect derivation failed: {error}"),
             )?;
         }
-        if matches!(
-            event.kind.as_str(),
-            arkret_sdk::events::EventKind::CALL_STATE
-                | arkret_sdk::events::EventKind::CALL_RECORDING_START
-        ) && event.effects.is_empty()
+        // These reducer-input kinds have a complete registry projection, so a
+        // producer failure must abort authoring. Swallowing the error here
+        // would recreate the effect-less RSVP defect this path is meant to
+        // prevent.
+        if event.effects.is_empty()
+            && matches!(
+                event.kind.as_str(),
+                arkret_sdk::events::EventKind::CALL_STATE
+                    | arkret_sdk::events::EventKind::CALL_RECORDING_START
+                    | arkret_sdk::events::EventKind::RSVP_SET
+            )
         {
             arkret_sdk::schema::materialize_registered_cell_writes(&mut event)
-                .map_err(|error| anyhow::anyhow!("call Event effect derivation failed: {error}"))?;
+                .map_err(|error| anyhow::anyhow!("Event cell-effect derivation failed: {error}"))?;
+            arkret_sdk::schema::validate_registered_cell_writes(&event)
+                .map_err(|error| anyhow::anyhow!("Event cell-effect validation failed: {error}"))?;
         }
         Ok(event)
     }

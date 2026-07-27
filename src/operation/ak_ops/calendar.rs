@@ -1,29 +1,42 @@
 //! Calendar Strand profile builders.
 
-use serde_json::Value;
-
 use super::{OperationBuilder, strand_id_value};
 
+/// Builds an `ak.rsvp.set` operation carrying the complete RSVP entry.
+///
+/// The payload is produced by the shared SDK authoring type, never assembled
+/// here: the entry is the lattice value, so basis and response have to travel
+/// together and stay canonical. The cell effect is derived from the registry in
+/// [`OperationBuilder::build_sdk_event`].
+///
+/// `schedule_basis_refs` is the schedule revision frontier the responder
+/// actually observed; it is mirrored into `causal_refs` because a receiver
+/// admits the basis only as a subset of the envelope causal edges.
 pub fn rsvp_set(
     realm_id: &str,
     actor: &str,
     strand_id: &str,
     status: &str,
     occurrence: Option<&str>,
-    comment: Option<Value>,
+    schedule_basis_refs: Vec<arkret_sdk::Hash>,
+    calendar: &arkret_sdk::CalendarEventFields,
+    schedule: &arkret_sdk::CalendarScheduleProjection,
 ) -> anyhow::Result<OperationBuilder> {
-    let comment = comment
-        .map(serde_json::from_value::<arkret_sdk::RsvpComment>)
-        .transpose()?;
-    let payload = arkret_sdk::RsvpSetPayload {
+    let authoring = arkret_sdk::RsvpAuthoring {
         event_ref: strand_id_value(strand_id)?,
-        status: rsvp_status_value(status)?,
         occurrence: occurrence
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned),
-        comment,
+        schedule_basis_refs: schedule_basis_refs.clone(),
+        response: arkret_sdk::RsvpResponseBranch::Plaintext(arkret_sdk::RsvpResponse {
+            status: rsvp_status_value(status)?,
+            comment: None,
+        }),
     };
+    let payload = authoring
+        .into_payload(calendar, schedule)
+        .map_err(|err| anyhow::anyhow!("ak.rsvp.set payload is not valid: {err}"))?;
     let payload = serde_json::to_value(payload)
         .map_err(|err| anyhow::anyhow!("ak.rsvp.set payload serialize: {err}"))?;
     arkret_sdk::schema::event_payload_validator_catalog()
@@ -36,6 +49,7 @@ pub fn rsvp_set(
         arkret_sdk::events::kinds::EventKind::RsvpSet,
     )
     .target_ref(strand_id)
+    .causal_refs(schedule_basis_refs)
     .body(payload))
 }
 

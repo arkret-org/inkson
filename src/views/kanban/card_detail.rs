@@ -456,12 +456,26 @@ pub(super) fn dispatch_calendar_rsvp(
     mut state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
+    // The schedule the responder observed has to be signed into the entry, so
+    // the card must carry the calendar subtree and the schedule revision
+    // frontier. Both come from the projection; when the frontier is not yet
+    // exposed the helper fails closed instead of signing a claim we cannot
+    // back.
+    let calendar = match calendar_event_fields_from_draft(&card.calendar) {
+        Ok(calendar) => calendar,
+        Err(err) => {
+            board_status.set(format!("cannot build RSVP: {err}"));
+            return;
+        }
+    };
     let op = match calendar_rsvp_operation(
         &realm_id,
         &actor_id,
         &card.primary_strand_id,
         status,
         &occurrence,
+        card.calendar_schedule_basis_refs(),
+        &calendar,
     ) {
         Ok(op) => op,
         Err(err) => {
