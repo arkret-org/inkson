@@ -2413,6 +2413,22 @@ export async function mockArkretApi(
     }
 
     if (
+      (url.pathname === "/_arkret/self/invite-locators" ||
+        url.pathname === "/_arkret/self/invite-locators/rotate") &&
+      route.request().method() === "POST"
+    ) {
+      const body = await route.request().postDataJSON();
+      expect(body.ttl_seconds).toBe(900);
+      expect(body.one_time_use).toBe(false);
+      return json(route, {
+        locator_id: "ak:invite_locator:01964137-0000-7000-8000-0000000000a1",
+        locator_token: "e2e_invite_locator_token",
+        expires_at: "2026-07-27T00:15:00.000Z",
+        one_time_use: false,
+      });
+    }
+
+    if (
       url.pathname === "/_arkret/self/agents" &&
       route.request().method() === "GET"
     ) {

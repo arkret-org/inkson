@@ -127,6 +127,68 @@ test("settings language selector offers only English and Chinese", async ({ page
   await expect(page.getByTestId("client-shell")).toHaveAttribute("data-locale", "en");
 });
 
+test("account invite locator stays contained and follows the active locale", async ({ page }) => {
+  await gotoAndDismissRecovery(page, "/settings/account");
+  await expect(page.getByTestId("settings-invite-locator-url")).not.toHaveValue("");
+
+  const share = page.getByTestId("settings-invite-locator-url-pane");
+  const qr = page.getByTestId("settings-invite-locator-qr");
+  const qrPane = share.locator(".qr-share-qr-pane");
+  const urlPane = share.locator(".qr-share-url-pane");
+
+  await page.setViewportSize({ width: 1565, height: 858 });
+  const wideQrBox = await qr.boundingBox();
+  const wideQrPaneBox = await qrPane.boundingBox();
+  const wideUrlPaneBox = await urlPane.boundingBox();
+  expect(wideQrBox).not.toBeNull();
+  expect(wideQrPaneBox).not.toBeNull();
+  expect(wideUrlPaneBox).not.toBeNull();
+  expect(wideQrBox!.x).toBeGreaterThanOrEqual(wideQrPaneBox!.x);
+  expect(wideQrBox!.x + wideQrBox!.width).toBeLessThanOrEqual(
+    wideQrPaneBox!.x + wideQrPaneBox!.width + 1,
+  );
+  expect(wideUrlPaneBox!.x).toBeGreaterThanOrEqual(
+    wideQrPaneBox!.x + wideQrPaneBox!.width - 1,
+  );
+
+  await page.setViewportSize({ width: 640, height: 900 });
+  const narrowQrPaneBox = await qrPane.boundingBox();
+  const narrowUrlPaneBox = await urlPane.boundingBox();
+  expect(narrowQrPaneBox).not.toBeNull();
+  expect(narrowUrlPaneBox).not.toBeNull();
+  expect(narrowUrlPaneBox!.y).toBeGreaterThanOrEqual(
+    narrowQrPaneBox!.y + narrowQrPaneBox!.height - 1,
+  );
+
+  await page.setViewportSize({ width: 1565, height: 858 });
+  await gotoAndDismissRecovery(page, "/settings/theme");
+  await page.getByTestId("language-zh").click();
+  await gotoAndDismissRecovery(page, "/settings/account");
+  await expect(page.getByTestId("realm-title")).toHaveText("设置");
+  await expect(page.getByTestId("sidebar")).toContainText("主页");
+  await expect(page.getByTestId("sidebar")).toContainText("文件");
+  await expect(page.getByTestId("realm-sidebar-search-input")).toHaveAttribute(
+    "placeholder",
+    "搜索领域",
+  );
+  await expect(page.getByTestId("settings-avatar-card")).toContainText("账号身份");
+  await expect(page.getByTestId("settings-invite-locator-card")).toContainText(
+    "安全邀请链接",
+  );
+  await expect(page.getByTestId("settings-invite-locator-card")).toContainText(
+    "15 分钟后过期",
+  );
+  await expect(page.getByTestId("settings-invite-locator-card")).toContainText(
+    "扫描二维码",
+  );
+  await expect(page.getByTestId("settings-invite-locator-card")).toContainText(
+    "或使用此链接",
+  );
+  await expect(page.getByTestId("settings-invite-locator-card")).toContainText(
+    "复制链接",
+  );
+});
+
 test("settings avatar upload crops local image before publishing profile URL", async ({ page }) => {
   await openSettings(page);
   await expect(page.getByTestId("settings-avatar-card")).toBeVisible();

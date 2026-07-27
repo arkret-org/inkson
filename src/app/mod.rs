@@ -931,8 +931,13 @@ fn AppBootstrap() -> Element {
         "Switch to night theme"
     };
     let route_title = resolved_realm_surface
-        .map(RealmSurface::title)
-        .unwrap_or_else(|| route_label(&route));
+        .map(|surface| surface.title().to_owned())
+        .unwrap_or_else(|| match &route {
+            Route::Dashboard => crate::i18n::tr("nav.dashboard"),
+            Route::FileTransfer => crate::i18n::tr("nav.files"),
+            Route::Settings | Route::SettingsSection { .. } => crate::i18n::tr("nav.settings"),
+            _ => route_label(&route).to_owned(),
+        });
     let topbar_context_title = selected_preview
         .as_ref()
         .map(|space| space.title.clone())
@@ -940,7 +945,7 @@ fn AppBootstrap() -> Element {
             if route_uses_realm_context {
                 "Space".to_owned()
             } else {
-                route_title.to_owned()
+                route_title.clone()
             }
         });
     let topbar_search_is_open =
@@ -1639,7 +1644,7 @@ fn AppBootstrap() -> Element {
                     }
                 }
                 Link { class: "secondary", "data-testid": "mobile-dashboard-nav-button", to: Route::Dashboard, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.dashboard")} }
-                Link { class: "secondary", "data-testid": "mobile-file-transfer-nav-button", to: Route::FileTransfer, onclick: move |_| mobile_nav_open.set(false), "Files" }
+                Link { class: "secondary", "data-testid": "mobile-file-transfer-nav-button", to: Route::FileTransfer, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.files")} }
                 Link { class: "secondary", "data-testid": "mobile-directory-nav-button", to: Route::Directory, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.directory")} }
                 Link { class: "secondary", "data-testid": "mobile-settings-nav-button", to: Route::Settings, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.settings")} }
                 if !loaded_realm_tree_nodes.is_empty() {
@@ -1839,11 +1844,11 @@ fn AppBootstrap() -> Element {
                 div { class: "sidebar-nav-group",
                     Link { class: "sidebar-nav-item", to: Route::Dashboard,
                         span { class: "sidebar-nav-icon", UiIcon { name: "home" } }
-                        span { class: "grow", "Home" }
+                        span { class: "grow", {crate::i18n::tr("nav.dashboard")} }
                     }
                     Link { class: "sidebar-nav-item", to: Route::FileTransfer,
                         span { class: "sidebar-nav-icon", UiIcon { name: "file" } }
-                        span { class: "grow", "Files" }
+                        span { class: "grow", {crate::i18n::tr("nav.files")} }
                     }
                 }
 
@@ -1891,14 +1896,14 @@ fn AppBootstrap() -> Element {
                                     Input {
                                         "data-testid": "realm-sidebar-search-input",
                                         value: "{collaboration_sidebar_query}",
-                                        placeholder: "Search Realms",
+                                        placeholder: crate::i18n::tr("sidebar.search_realms"),
                                         oninput: move |event: FormEvent| collaboration_sidebar_query.set(event.value()),
                                     }
                                 } else {
                                     Input {
                                         "data-testid": "contacts-sidebar-search-input",
                                         value: "{direct_sidebar_query}",
-                                        placeholder: "Search Contacts",
+                                        placeholder: crate::i18n::tr("sidebar.search_contacts"),
                                         oninput: move |event: FormEvent| direct_sidebar_query.set(event.value()),
                                     }
                                 }
@@ -1908,8 +1913,8 @@ fn AppBootstrap() -> Element {
                                     class: "sidebar-toolbar-action sidebar-tab-search-submit",
                                     r#type: "button",
                                     "data-testid": "realm-sidebar-search-button",
-                                    title: "Search",
-                                    "aria-label": "Search",
+                                    title: crate::i18n::tr("sidebar.search"),
+                                    "aria-label": crate::i18n::tr("sidebar.search"),
                                     onclick: {
                                         let base = base_url();
                                         move |_| {
@@ -2636,7 +2641,15 @@ fn AppBootstrap() -> Element {
                     } else if collaboration_realm_tree_nodes.is_empty() {
                         div { class: "sidebar-nav-item is-dim", "data-testid": "realm-tree-empty-state",
                             span { class: "sidebar-nav-icon", UiIcon { name: "folder" } }
-                            span { class: "grow truncate", if has_session { "No Realm tree loaded" } else { "Sign in to load Realms" } }
+                            span { class: "grow truncate",
+                                {
+                                    if has_session {
+                                        crate::i18n::tr("sidebar.realms_empty")
+                                    } else {
+                                        crate::i18n::tr("sidebar.realms_sign_in")
+                                    }
+                                }
+                            }
                         }
                         // Diagnostic line: when an authenticated user sees an
                         // empty sidebar, surface the latest connect status and
@@ -2648,7 +2661,12 @@ fn AppBootstrap() -> Element {
                                 "data-testid": "realm-tree-empty-state-status",
                                 style: "padding: 4px 12px; font-size: 11px; line-height: 1.4; opacity: 0.7;",
                                 {
-                                    let status_text = connection_status();
+                                    let raw_status = connection_status();
+                                    let status_text = match raw_status.as_str() {
+                                        "Online" => crate::i18n::tr("common.online"),
+                                        "Offline" => crate::i18n::tr("common.offline"),
+                                        _ => raw_status,
+                                    };
                                     let error_text = last_error();
                                     // Truncate by characters, not bytes: these
                                     // strings carry server `reason` / error text
@@ -2685,7 +2703,7 @@ fn AppBootstrap() -> Element {
                     } else if filtered_realm_tree.is_empty() {
                         div { class: "sidebar-nav-item is-dim", "data-testid": "realm-tree-no-results",
                             span { class: "sidebar-nav-icon", UiIcon { name: "search" } }
-                            span { class: "grow truncate", "No matching Realms" }
+                            span { class: "grow truncate", {crate::i18n::tr("sidebar.realms_no_results")} }
                         }
                     } else {
                         for item in filtered_realm_tree.iter() {

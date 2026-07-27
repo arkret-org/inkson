@@ -2050,7 +2050,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                 qr_test_id: "agent-admin-pairing-qr".to_owned(),
                                                 url_test_id: "agent-admin-pairing-url".to_owned(),
                                                 copy_test_id: "agent-admin-copy-pairing-link-button".to_owned(),
-                                                copy_label: "Copy link".to_owned(),
                                                 url_rows: 5,
                                             }
                                         }

@@ -20,6 +20,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("nav.login", "Login");
     dict.set("nav.audit", "Audit");
     dict.set("nav.devices", "Devices");
+    dict.set("nav.files", "Files");
     dict.set("nav.collaboration", "Collaboration");
     dict.set("nav.contacts", "Contacts");
     dict.set("nav.direct_messages", "Direct");
@@ -31,6 +32,12 @@ pub fn english_translations() -> TranslationDict {
     dict.set("direct.unavailable", "Direct conversation unavailable");
     dict.set("contacts.empty", "No contacts yet");
     dict.set("contacts.sign_in", "Sign in to load contacts");
+    dict.set("sidebar.search_realms", "Search Realms");
+    dict.set("sidebar.search_contacts", "Search contacts");
+    dict.set("sidebar.search", "Search");
+    dict.set("sidebar.realms_empty", "No Realm tree loaded");
+    dict.set("sidebar.realms_sign_in", "Sign in to load Realms");
+    dict.set("sidebar.realms_no_results", "No matching Realms");
 
     // AKP-0007 Circle error keys (P3B.3.2)
     add_circle_error_keys(&mut dict);
@@ -184,6 +191,15 @@ pub fn english_translations() -> TranslationDict {
     dict.set("common.online", "online");
     dict.set("common.offline", "offline");
     dict.set("common.reconnecting", "reconnecting");
+    dict.set("qr_share.scan", "Scan QR code");
+    dict.set("qr_share.unavailable", "QR unavailable");
+    dict.set("qr_share.use_link", "Or use this link");
+    dict.set("qr_share.copy_link", "Copy link");
+    dict.set("qr_share.copied", "Copied");
+    dict.set(
+        "qr_share.private_hint",
+        "Keep this link private. It expires automatically; pairing links also stop working once accepted.",
+    );
     dict.set("message.actions", "Message actions");
 
     // R-i18n-002 extra keys for the highest-visibility surfaces.
@@ -1101,6 +1117,33 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.avatar.pan_x", "Horizontal");
     dict.set("settings.avatar.pan_y", "Vertical");
     dict.set("settings.avatar.error", "Avatar upload failed");
+    dict.set("settings.account.identity", "Account identity");
+    dict.set("settings.account.handles", "Handles");
+    dict.set("settings.account.current_device", "Current device");
+    dict.set("settings.account.copy_did", "Copy DID");
+    dict.set("settings.account.copy_handles", "Copy handles");
+    dict.set("settings.account.copy_device_id", "Copy device ID");
+    dict.set("settings.invite_locator.title", "Invite locator");
+    dict.set("settings.invite_locator.expiry", "Expires in 15 min");
+    dict.set("settings.invite_locator.issuing", "Issuing secure locator…");
+    dict.set(
+        "settings.invite_locator.rotating",
+        "Rotating secure locator…",
+    );
+    dict.set(
+        "settings.invite_locator.unavailable",
+        "Invite locator unavailable",
+    );
+    dict.set(
+        "settings.invite_locator.refresh_failed",
+        "Invite locator refresh failed",
+    );
+    dict.set("settings.invite_locator.qr_aria", "Invite locator QR code");
+    dict.set("settings.invite_locator.url_aria", "Invite locator URL");
+    dict.set(
+        "settings.invite_locator.sign_in",
+        "Sign in to show invite locator",
+    );
     // A6.1 — global cross-Realm message search.
     dict.set("search.title", "Search messages");
     dict.set("search.placeholder", "Search across all your realms...");

@@ -1394,7 +1394,6 @@ fn render_pair_strand(
                         qr_test_id: "pair-device-qr".to_owned(),
                         url_test_id: "pair-device-secret".to_owned(),
                         copy_test_id: "pair-device-copy-button".to_owned(),
-                        copy_label: "Copy link".to_owned(),
                         url_rows: 4,
                     }
                     Button {

@@ -19,7 +19,6 @@ pub fn QrSharePanel(
     qr_test_id: String,
     url_test_id: String,
     copy_test_id: String,
-    #[props(default = "Copy link".to_owned())] copy_label: String,
     #[props(default = 4)] url_rows: u32,
 ) -> Element {
     let mut copied = use_signal(|| false);
@@ -29,9 +28,9 @@ pub fn QrSharePanel(
         div { class: "qr-share-container",
         div { class: "qr-share-panel",
             div { class: "qr-share-qr-pane",
-                strong { class: "qr-share-pane-label", "Scan QR code" }
+                strong { class: "qr-share-pane-label", {crate::i18n::tr("qr_share.scan")} }
                 if qr_svg.is_empty() {
-                    div { class: "muted qr-share-empty", "QR unavailable" }
+                    div { class: "muted qr-share-empty", {crate::i18n::tr("qr_share.unavailable")} }
                 } else {
                     div {
                         class: "qr-image qr-share-image",
@@ -44,7 +43,7 @@ pub fn QrSharePanel(
             }
             div { class: "qr-share-url-pane",
                 div { class: "qr-share-url-head",
-                    strong { class: "qr-share-pane-label", "Or use this link" }
+                    strong { class: "qr-share-pane-label", {crate::i18n::tr("qr_share.use_link")} }
                     Button {
                         variant: ButtonVariant::Secondary,
                         size: ButtonSize::Sm,
@@ -73,10 +72,10 @@ pub fn QrSharePanel(
                         },
                         if copied() {
                             UiIcon { name: "check" }
-                            span { "aria-live": "polite", "Copied" }
+                            span { "aria-live": "polite", {crate::i18n::tr("qr_share.copied")} }
                         } else {
                             UiIcon { name: "copy" }
-                            span { "{copy_label}" }
+                            span { {crate::i18n::tr("qr_share.copy_link")} }
                         }
                     }
                 }
@@ -89,7 +88,7 @@ pub fn QrSharePanel(
                     rows: "{url_rows}",
                     value: "{url}",
                 }
-                span { class: "muted qr-share-hint", "Keep this link private. It expires automatically; pairing links also stop working once accepted." }
+                span { class: "muted qr-share-hint", {crate::i18n::tr("qr_share.private_hint")} }
             }
         }
         }

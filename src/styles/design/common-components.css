@@ -343,7 +343,7 @@ button[data-style="link"]:disabled:hover {
 }
 .qr-share-panel {
   display: grid;
-  grid-template-columns: minmax(192px, 220px) minmax(0, 1fr);
+  grid-template-columns: 248px minmax(0, 1fr);
   align-items: stretch;
   min-width: 0;
   overflow: hidden;
@@ -372,13 +372,14 @@ button[data-style="link"]:disabled:hover {
   text-transform: uppercase;
 }
 .qr-share-image {
+  width: 220px;
   max-width: 100%;
   margin: 0;
   box-sizing: border-box;
 }
 .qr-share-image svg {
   display: block;
-  width: min(192px, 100%);
+  width: 100%;
   height: auto;
 }
 .qr-share-url-pane {
@@ -416,7 +417,7 @@ button[data-style="link"]:disabled:hover {
   border: 1px dashed var(--border);
   border-radius: 8px;
 }
-@container (max-width: 520px) {
+@container (max-width: 600px) {
   .qr-share-panel {
     grid-template-columns: minmax(0, 1fr);
   }

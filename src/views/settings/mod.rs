@@ -581,7 +581,7 @@ pub fn SettingsPanel(
             invite_locator_subject.set(current_account.clone());
             invite_locator_id.set(String::new());
             invite_locator_token.set(String::new());
-            invite_locator_status.set("Issuing secure locator…".to_owned());
+            invite_locator_status.set(crate::i18n::tr("settings.invite_locator.issuing"));
             let base = current_base_url.clone();
             let api_token = current_token.clone();
             spawn(async move {
@@ -596,8 +596,11 @@ pub fn SettingsPanel(
                         invite_locator_status.set(String::new());
                     }
                     Err(error) => {
-                        invite_locator_status
-                            .set(format!("Invite locator unavailable: {}", error.display()));
+                        invite_locator_status.set(format!(
+                            "{}: {}",
+                            crate::i18n::tr("settings.invite_locator.unavailable"),
+                            error.display()
+                        ));
                     }
                 }
             });
@@ -760,7 +763,7 @@ pub fn SettingsPanel(
                             // directory + member lists pick it up.
                             div { class: "event settings-card-span-2 settings-avatar-card", "data-testid": "settings-avatar-card",
                                 div { class: "event-head",
-                                    span { "Account identity" }
+                                    span { {crate::i18n::tr("settings.account.identity")} }
                                 }
                                 div { class: "settings-avatar-actions",
                                     {
@@ -1197,8 +1200,8 @@ pub fn SettingsPanel(
                                                 size: ButtonSize::IconSm,
                                                 class: "btn icon settings-identity-copy",
                                                 "data-testid": "settings-account-copy-did",
-                                                title: "Copy DID",
-                                                "aria-label": "Copy DID",
+                                                title: crate::i18n::tr("settings.account.copy_did"),
+                                                "aria-label": crate::i18n::tr("settings.account.copy_did"),
                                                 onclick: {
                                                     let value = principal_label.clone();
                                                     move |_| {
@@ -1211,7 +1214,7 @@ pub fn SettingsPanel(
                                         }
                                     }
                                     div { class: "metric settings-identity-row",
-                                        strong { "Handles" }
+                                        strong { {crate::i18n::tr("settings.account.handles")} }
                                         div { class: "settings-identity-value",
                                             span {
                                                 class: "mono",
@@ -1224,8 +1227,8 @@ pub fn SettingsPanel(
                                                 size: ButtonSize::IconSm,
                                                 class: "btn icon settings-identity-copy",
                                                 "data-testid": "settings-account-copy-handles",
-                                                title: "Copy handles",
-                                                "aria-label": "Copy handles",
+                                                title: crate::i18n::tr("settings.account.copy_handles"),
+                                                "aria-label": crate::i18n::tr("settings.account.copy_handles"),
                                                 onclick: {
                                                     let value = account_handles_title.clone();
                                                     move |_| {
@@ -1238,7 +1241,7 @@ pub fn SettingsPanel(
                                         }
                                     }
                                     div { class: "metric settings-identity-row",
-                                        strong { "Current device" }
+                                        strong { {crate::i18n::tr("settings.account.current_device")} }
                                         div { class: "settings-identity-value",
                                             span {
                                                 class: "mono",
@@ -1251,8 +1254,8 @@ pub fn SettingsPanel(
                                                 size: ButtonSize::IconSm,
                                                 class: "btn icon settings-identity-copy",
                                                 "data-testid": "settings-account-copy-device",
-                                                title: "Copy device ID",
-                                                "aria-label": "Copy device ID",
+                                                title: crate::i18n::tr("settings.account.copy_device_id"),
+                                                "aria-label": crate::i18n::tr("settings.account.copy_device_id"),
                                                 onclick: {
                                                     let value = device_label.clone();
                                                     move |_| {
@@ -1269,10 +1272,10 @@ pub fn SettingsPanel(
 
                             div { class: "event settings-card-span-2 invite-locator-card", "data-testid": "settings-invite-locator-card",
                                 div { class: "event-head invite-locator-head",
-                                    span { "Invite locator" }
+                                    span { {crate::i18n::tr("settings.invite_locator.title")} }
                                     if has_session {
                                         div { class: "invite-locator-head-actions",
-                                            span { class: "invite-locator-expiry", "15 min" }
+                                            span { class: "invite-locator-expiry", {crate::i18n::tr("settings.invite_locator.expiry")} }
                                             Button {
                                                 variant: ButtonVariant::Secondary,
                                                 size: ButtonSize::Sm,
@@ -1282,7 +1285,7 @@ pub fn SettingsPanel(
                                                     let base = base_url();
                                                     let api_token = token();
                                                     let old_locator_id = invite_locator_id();
-                                                    invite_locator_status.set("Rotating secure locator…".to_owned());
+                                                    invite_locator_status.set(crate::i18n::tr("settings.invite_locator.rotating"));
                                                     spawn(async move {
                                                         let result = with_authed_sdk_client(&base, api_token, |client| async move {
                                                             if old_locator_id.is_empty() {
@@ -1298,16 +1301,20 @@ pub fn SettingsPanel(
                                                                 invite_locator_status.set(String::new());
                                                                 crate::components::feedback::toast_success("feedback.invite_locator_refreshed", vec![]);
                                                             }
-                                                            Err(error) => invite_locator_status.set(format!("Invite locator refresh failed: {}", error.display())),
+                                                            Err(error) => invite_locator_status.set(format!(
+                                                                "{}: {}",
+                                                                crate::i18n::tr("settings.invite_locator.refresh_failed"),
+                                                                error.display()
+                                                            )),
                                                         }
                                                     });
                                                 },
                                                 UiIcon { name: "refresh" }
-                                                span { "Refresh" }
+                                                span { {crate::i18n::tr("common.refresh")} }
                                             }
                                         }
                                     } else {
-                                        span { "offline" }
+                                        span { {crate::i18n::tr("common.offline")} }
                                     }
                                 }
                                 if has_session {
@@ -1318,12 +1325,11 @@ pub fn SettingsPanel(
                                         QrSharePanel {
                                             qr_svg: invite_locator_qr_svg,
                                             url: invite_locator_url,
-                                            qr_aria_label: "Invite locator QR code".to_owned(),
-                                            url_aria_label: "Invite locator URL".to_owned(),
+                                            qr_aria_label: crate::i18n::tr("settings.invite_locator.qr_aria"),
+                                            url_aria_label: crate::i18n::tr("settings.invite_locator.url_aria"),
                                             qr_test_id: "settings-invite-locator-qr".to_owned(),
                                             url_test_id: "settings-invite-locator-url".to_owned(),
                                             copy_test_id: "settings-invite-locator-copy".to_owned(),
-                                            copy_label: "Copy link".to_owned(),
                                             url_rows: 4,
                                         }
                                     }
@@ -1331,7 +1337,7 @@ pub fn SettingsPanel(
                                     div {
                                         class: "muted",
                                         "data-testid": "settings-invite-locator-signed-out",
-                                        "Sign in to show invite locator"
+                                        {crate::i18n::tr("settings.invite_locator.sign_in")}
                                     }
                                 }
                             }

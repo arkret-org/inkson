@@ -146,6 +146,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("nav.login", "登录");
     dict.set("nav.audit", "审计");
     dict.set("nav.devices", "设备");
+    dict.set("nav.files", "文件");
     dict.set("nav.collaboration", "协作");
     dict.set("nav.contacts", "联系人");
     dict.set("nav.direct_messages", "私聊");
@@ -157,6 +158,12 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("direct.unavailable", "暂不可发送");
     dict.set("contacts.empty", "暂无联系人");
     dict.set("contacts.sign_in", "登录后加载联系人");
+    dict.set("sidebar.search_realms", "搜索领域");
+    dict.set("sidebar.search_contacts", "搜索联系人");
+    dict.set("sidebar.search", "搜索");
+    dict.set("sidebar.realms_empty", "尚未加载领域列表");
+    dict.set("sidebar.realms_sign_in", "登录后加载领域");
+    dict.set("sidebar.realms_no_results", "没有匹配的领域");
 
     dict.set("directory.title", "目录");
     dict.set("directory.search", "搜索");
@@ -262,6 +269,15 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("common.online", "在线");
     dict.set("common.offline", "离线");
     dict.set("common.reconnecting", "重连中");
+    dict.set("qr_share.scan", "扫描二维码");
+    dict.set("qr_share.unavailable", "二维码不可用");
+    dict.set("qr_share.use_link", "或使用此链接");
+    dict.set("qr_share.copy_link", "复制链接");
+    dict.set("qr_share.copied", "已复制");
+    dict.set(
+        "qr_share.private_hint",
+        "请勿公开此链接。链接会自动过期；配对链接被接受后也会立即失效。",
+    );
     dict.set("message.actions", "消息操作");
 
     // R-i18n-002 mirrored keys.
@@ -536,6 +552,24 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.section.release", "发布状态");
     dict.set("settings.section.audit", "审计日志");
     dict.set("settings.section.developer", "开发者工具");
+    dict.set("settings.account.identity", "账号身份");
+    dict.set("settings.account.handles", "账号标识");
+    dict.set("settings.account.current_device", "当前设备");
+    dict.set("settings.account.copy_did", "复制 DID");
+    dict.set("settings.account.copy_handles", "复制账号标识");
+    dict.set("settings.account.copy_device_id", "复制设备 ID");
+    dict.set("settings.invite_locator.title", "安全邀请链接");
+    dict.set("settings.invite_locator.expiry", "15 分钟后过期");
+    dict.set("settings.invite_locator.issuing", "正在生成安全邀请链接…");
+    dict.set("settings.invite_locator.rotating", "正在刷新安全邀请链接…");
+    dict.set("settings.invite_locator.unavailable", "安全邀请链接不可用");
+    dict.set(
+        "settings.invite_locator.refresh_failed",
+        "刷新安全邀请链接失败",
+    );
+    dict.set("settings.invite_locator.qr_aria", "安全邀请链接二维码");
+    dict.set("settings.invite_locator.url_aria", "安全邀请链接地址");
+    dict.set("settings.invite_locator.sign_in", "登录后显示安全邀请链接");
     // Settings navigation - group labels + hints.
     dict.set("settings.group.account", "账号");
     dict.set("settings.group.account.hint", "身份、智能体与服务器。");
