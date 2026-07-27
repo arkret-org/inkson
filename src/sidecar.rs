@@ -287,7 +287,7 @@ pub(crate) fn try_begin_sidecar_submission(
     let mut in_flight = sidecar_submissions_in_flight().lock().ok()?;
     in_flight
         .insert(key.clone())
-        .then_some(SidecarSubmissionGuard { key })
+        .then(|| SidecarSubmissionGuard { key })
 }
 
 /// Deterministic identity of one composer intent. Retrying the same body to
