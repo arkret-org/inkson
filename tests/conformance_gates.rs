@@ -156,7 +156,7 @@ fn cba_exempt_reducer_kind(kind: &EventKind) -> bool {
             | EventKind::RealmHistoryVisibility
             | EventKind::RealmJoinRule
             | EventKind::RealmPlaintextVisibleServices
-            | EventKind::RealmPolicyComponents
+            | EventKind::RealmPolicyBundle
     )
 }
 

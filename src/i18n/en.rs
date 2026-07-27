@@ -453,7 +453,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("realm_admin.durability_submitting", "Submitting…");
     dict.set(
         "realm_admin.durability_submitted",
-        "Submitted ak.realm.policy_components; advance one ak.mls.commit to activate the sealing obligation and trigger re-disclosure.",
+        "Submitted ak.realm.policy_bundle; advance one ak.mls.commit to activate the sealing obligation and trigger re-disclosure.",
     );
     dict.set(
         "realm_admin.durability_submit_failed",

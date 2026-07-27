@@ -336,7 +336,7 @@ pub(crate) fn realm_projection_content_scheme(body: &Value) -> Option<String> {
                 .get("kind")
                 .or_else(|| event.get("type"))
                 .and_then(Value::as_str)
-                == Some("ak.realm.policy_components")
+                == Some("ak.realm.policy_bundle")
         })
         .find_map(|event| {
             non_empty_string(event.pointer("/payload/value/content_scheme"))
@@ -1111,7 +1111,7 @@ mod tests {
     }
 
     #[test]
-    fn content_scheme_prefers_current_policy_components_over_create_snapshot() {
+    fn content_scheme_prefers_current_policy_bundle_over_create_snapshot() {
         let projection = json!({
             "object": {"content_scheme": "mls_rfc9420"},
             "state_after": {"events": [
@@ -1120,7 +1120,7 @@ mod tests {
                     "payload": {"object": {"content_scheme": "mls_rfc9420"}}
                 },
                 {
-                    "kind": "ak.realm.policy_components",
+                    "kind": "ak.realm.policy_bundle",
                     "payload": {"value": {"content_scheme": "mls_exporter_aead_v1"}}
                 }
             ]}

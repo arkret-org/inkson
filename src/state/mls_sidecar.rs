@@ -1083,8 +1083,9 @@ fn remove_private_plaintext_entry(
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use super::LocalStateStore;
     use serde_json::json;
+
+    use super::LocalStateStore;
 
     #[test]
     fn persisted_snapshot_recovers_exact_group_state_reference_without_side_index() {

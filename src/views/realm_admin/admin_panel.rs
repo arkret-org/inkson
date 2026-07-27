@@ -498,7 +498,7 @@ pub fn RealmAdminPanel(
                 }
                 // RRK durability policy editor (realm-and-space.md §2.3.1 /
                 // encryption-and-audit.md §2.10.8). Writes durability_policy via
-                // ak.realm.policy_components; prompts the operator that a
+                // ak.realm.policy_bundle; prompts the operator that a
                 // following ak.mls.commit activates sealing + re-disclosure.
                 super::durability::DurabilityPolicyEditor {
                     token,

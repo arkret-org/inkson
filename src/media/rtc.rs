@@ -312,14 +312,14 @@ impl MediaJoinRequest {
 pub struct MediaGovernanceEvidence {
     pub governance_binding: MlsGovernanceBindingPayload,
     pub media_service_payload: Value,
-    pub policy_components_payload: Option<Value>,
+    pub policy_bundle_payload: Option<Value>,
     pub plaintext_visible_services_payload: Option<PlaintextVisibleServicesPayload>,
     pub media_plaintext_ui_confirmed: bool,
 }
 
 impl MediaGovernanceEvidence {
     pub fn media_service_decrypts_enabled(&self) -> bool {
-        policy_media_service_decrypts(self.policy_components_payload.as_ref())
+        policy_media_service_decrypts(self.policy_bundle_payload.as_ref())
     }
 
     fn verify_for_join(&self, request: &MediaJoinRequest) -> Result<(), RtcClientError> {
@@ -342,7 +342,7 @@ impl MediaGovernanceEvidence {
         let policy_root = recompute_media_policy_root(
             &request.realm_id,
             &self.media_service_payload,
-            self.policy_components_payload.as_ref(),
+            self.policy_bundle_payload.as_ref(),
             self.plaintext_visible_services_payload.as_ref(),
         )?;
         if &policy_root != self.governance_binding.policy_root() {
@@ -405,7 +405,7 @@ impl MediaGovernanceEvidence {
 fn recompute_media_policy_root(
     realm_id: &str,
     media_service_payload: &Value,
-    policy_components_payload: Option<&Value>,
+    policy_bundle_payload: Option<&Value>,
     plaintext_visible_services_payload: Option<&PlaintextVisibleServicesPayload>,
 ) -> Result<arkret_sdk::Hash, RtcClientError> {
     let realm_id = RealmId::new(realm_id.to_owned())
@@ -416,9 +416,9 @@ fn recompute_media_policy_root(
         media_policy_cell("ak.component.realm.media_service.v1", subject)?,
         arkret_sdk::lattice::CellState::Value(media_service_payload.clone()),
     );
-    if let Some(payload) = policy_components_payload {
+    if let Some(payload) = policy_bundle_payload {
         cells.insert(
-            media_policy_cell("ak.component.realm.policy_components.v1", subject)?,
+            media_policy_cell("ak.component.realm.policy_bundle.v1", subject)?,
             arkret_sdk::lattice::CellState::Value(payload.clone()),
         );
     }
@@ -1030,7 +1030,7 @@ mod tests {
                 }
             ]
         });
-        let policy_components_payload = media_service_decrypts.then(|| {
+        let policy_bundle_payload = media_service_decrypts.then(|| {
             json!({
                 "policy_revision": 3,
                 "media_service_decrypts": true
@@ -1048,7 +1048,7 @@ mod tests {
         let policy_root = recompute_media_policy_root(
             "ak:realm:01904100-0000-7000-8000-9b64700c6ee8",
             &media_service_payload,
-            policy_components_payload.as_ref(),
+            policy_bundle_payload.as_ref(),
             plaintext_visible_services_payload.as_ref(),
         )
         .unwrap();
@@ -1091,7 +1091,7 @@ mod tests {
         MediaGovernanceEvidence {
             governance_binding,
             media_service_payload,
-            policy_components_payload,
+            policy_bundle_payload,
             plaintext_visible_services_payload,
             media_plaintext_ui_confirmed,
         }

@@ -301,7 +301,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         vec![
             "ak.realm.create",
             "ak.capability.grant",
-            "ak.realm.policy_components",
+            "ak.realm.policy_bundle",
             "ak.realm.join_rule",
             "ak.realm.history_visibility",
             "ak.realm.history_sharing_policy",

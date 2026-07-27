@@ -3106,8 +3106,8 @@ mod tests {
                 },
                 {
                     "event_id": "ak:event:policy",
-                    "kind": "ak.realm.policy_components",
-                    "effects": [{"cell": "ak:cell:realm.policy_components"}],
+                    "kind": "ak.realm.policy_bundle",
+                    "effects": [{"cell": "ak:cell:realm.policy_bundle"}],
                     "payload": {"value": {"content_scheme": "mls_exporter_aead_v1"}}
                 }
             ]},
@@ -3136,22 +3136,22 @@ mod tests {
         let cached = json!({
             "state": {"events": [{
                 "event_id": "ak:event:old-policy",
-                "kind": "ak.realm.policy_components",
-                "effects": [{"cell": "ak:cell:realm.policy_components"}],
+                "kind": "ak.realm.policy_bundle",
+                "effects": [{"cell": "ak:cell:realm.policy_bundle"}],
                 "payload": {"value": {"content_scheme": "mls_rfc9420"}}
             }]},
             "state_after": {"events": [{
                 "event_id": "ak:event:old-policy-after",
-                "kind": "ak.realm.policy_components",
-                "effects": [{"cell": "ak:cell:realm.policy_components"}],
+                "kind": "ak.realm.policy_bundle",
+                "effects": [{"cell": "ak:cell:realm.policy_bundle"}],
                 "payload": {"value": {"content_scheme": "mls_rfc9420"}}
             }]}
         });
         let incoming = json!({
             "state": {"events": [{
                 "event_id": "ak:event:new-policy",
-                "kind": "ak.realm.policy_components",
-                "effects": [{"cell": "ak:cell:realm.policy_components"}],
+                "kind": "ak.realm.policy_bundle",
+                "effects": [{"cell": "ak:cell:realm.policy_bundle"}],
                 "payload": {"value": {"content_scheme": "mls_exporter_aead_v1"}}
             }]}
         });
@@ -3174,16 +3174,16 @@ mod tests {
         let cached = json!({
             "state": {"events": [{
                 "event_id": "ak:event:old-policy",
-                "kind": "ak.realm.policy_components",
-                "effects": [{"cell": "ak:cell:realm.policy_components"}],
+                "kind": "ak.realm.policy_bundle",
+                "effects": [{"cell": "ak:cell:realm.policy_bundle"}],
                 "payload": {"value": {"content_scheme": "mls_rfc9420"}}
             }]}
         });
         let incoming = json!({
             "state_after": {"events": [{
                 "event_id": "ak:event:new-policy",
-                "kind": "ak.realm.policy_components",
-                "effects": [{"cell": "ak:cell:realm.policy_components"}],
+                "kind": "ak.realm.policy_bundle",
+                "effects": [{"cell": "ak:cell:realm.policy_bundle"}],
                 "payload": {"value": {"content_scheme": "mls_exporter_aead_v1"}}
             }]}
         });

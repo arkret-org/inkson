@@ -3,7 +3,7 @@
 //! Spec: `models/realm-and-space.md` §2.3.1 (durability_policy + write path),
 //! `crypto-media/encryption-and-audit.md` §2.10.8.
 //!
-//! Writes the policy through `ak.realm.policy_components`
+//! Writes the policy through `ak.realm.policy_bundle`
 //! ([`crate::transport::TransportClient::set_realm_durability_policy`]) — there is no
 //! dedicated event kind. Changing the policy is a control-plane Move; the new
 //! sealing obligation only takes effect once a following `ak.mls.commit` covers
@@ -156,7 +156,7 @@ fn build_policy(
     })
 }
 
-/// Read the projection's current `policy_components.policy_revision`, if any, so
+/// Read the projection's current `policy_bundle.policy_revision`, if any, so
 /// the editor can default the next revision to `current + 1` (the reducer
 /// rejects a stale revision). Defaults to `1` when absent.
 fn current_policy_revision(store: &LocalStateStore, realm_id: &str) -> u64 {
@@ -173,7 +173,7 @@ fn current_policy_revision(store: &LocalStateStore, realm_id: &str) -> u64 {
         body.get("metadata").unwrap_or(&null),
     ] {
         if let Some(revision) = container
-            .get("policy_components")
+            .get("policy_bundle")
             .and_then(|components| components.get("policy_revision"))
             .or_else(|| container.get("policy_revision"))
             .and_then(Value::as_u64)

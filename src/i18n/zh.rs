@@ -491,7 +491,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.durability_submitting", "提交中…");
     dict.set(
         "realm_admin.durability_submitted",
-        "已提交 ak.realm.policy_components；推进一次 ak.mls.commit 以激活封存并重新披露。",
+        "已提交 ak.realm.policy_bundle；推进一次 ak.mls.commit 以激活封存并重新披露。",
     );
     dict.set("realm_admin.durability_submit_failed", "提交失败：{error}");
     dict.set(

@@ -182,8 +182,7 @@ pub(super) fn media_governance_evidence(
     media_plaintext_ui_confirmed: bool,
 ) -> Option<MediaGovernanceEvidence> {
     let media_service_payload = latest_body_for_kind(state, realm_id, "ak.realm.media_service")?;
-    let policy_components_payload =
-        latest_body_for_kind(state, realm_id, "ak.realm.policy_components");
+    let policy_bundle_payload = latest_body_for_kind(state, realm_id, "ak.realm.policy_bundle");
     let plaintext_visible_services_payload =
         latest_body_for_kind(state, realm_id, "ak.realm.plaintext_visible_services")
             .and_then(|body| serde_json::from_value(body).ok());
@@ -209,7 +208,7 @@ pub(super) fn media_governance_evidence(
     Some(MediaGovernanceEvidence {
         governance_binding,
         media_service_payload,
-        policy_components_payload,
+        policy_bundle_payload,
         plaintext_visible_services_payload,
         media_plaintext_ui_confirmed,
     })
@@ -219,7 +218,7 @@ pub(super) fn media_service_decrypts_enabled(
     state: &crate::state::ClientLocalState,
     realm_id: &str,
 ) -> bool {
-    latest_body_for_kind(state, realm_id, "ak.realm.policy_components")
+    latest_body_for_kind(state, realm_id, "ak.realm.policy_bundle")
         .as_ref()
         .and_then(|body| {
             body.get("media_service_decrypts")

@@ -203,14 +203,14 @@ pub fn build_realm_bootstrap_events(
         crate::operation::ak_ops::realm_founding_grant(realm_id, actor_id, &founding_grant_id)
             .build_sdk_event("inkson")?,
     );
-    if let Some(policy_components) =
-        recommended_realm_policy_components_for_profile(encryption_profile, content_scheme)
+    if let Some(policy_bundle) =
+        recommended_realm_policy_bundle_for_profile(encryption_profile, content_scheme)
     {
         events.push(build_realm_state_event(
             realm_id,
             actor_id,
-            EventKind::RealmPolicyComponents,
-            policy_components,
+            EventKind::RealmPolicyBundle,
+            policy_bundle,
         )?);
     }
     events.push(build_realm_state_event(
@@ -419,7 +419,7 @@ pub fn build_realm_create_event(
     // [[content-scheme-capability-vs-toggle]].
     if encryption_profile.trim() == RECOMMENDED_REALM_ENCRYPTION_PROFILE {
         // Informational declaration on the realm object; soland's *authoritative*
-        // projection reads content_scheme from the policy_components cell, but
+        // projection reads content_scheme from the policy_bundle cell, but
         // the object field keeps realm.schema.json self-describing.
         object["content_scheme"] =
             Value::String(resolve_realm_content_scheme(content_scheme).to_owned());
@@ -602,24 +602,24 @@ pub fn validate_realm_history_content_scheme_for_profile(
     Ok(())
 }
 
-pub fn recommended_realm_policy_components_value(content_scheme: Option<&str>) -> Value {
+pub fn recommended_realm_policy_bundle_value(content_scheme: Option<&str>) -> Value {
     json!({
         "policy_revision": 1,
         "content_encryption_floor": RECOMMENDED_REALM_ENCRYPTION_FLOOR,
         "metadata_encryption_floor": RECOMMENDED_REALM_ENCRYPTION_FLOOR,
         // §2.10 content scheme — soland projects the effective scheme from THIS
-        // policy_components cell (`policy_floor_field(components, "content_scheme")`),
+        // policy_bundle cell (`policy_floor_field(components, "content_scheme")`),
         // not from the realm.create object, and applies a one-way ratchet.
         "content_scheme": resolve_realm_content_scheme(content_scheme),
     })
 }
 
-pub fn recommended_realm_policy_components_for_profile(
+pub fn recommended_realm_policy_bundle_for_profile(
     profile: &str,
     content_scheme: Option<&str>,
 ) -> Option<Value> {
     encryption_profile_uses_recommended_floor(profile)
-        .then(|| recommended_realm_policy_components_value(content_scheme))
+        .then(|| recommended_realm_policy_bundle_value(content_scheme))
 }
 
 /// Build the genesis notary cell value via the SDK-authoritative
@@ -893,7 +893,7 @@ pub fn build_realm_state_event(
             | EventKind::RealmPreviewPolicy
             | EventKind::RealmDiscovery
             | EventKind::RealmSchema
-            | EventKind::RealmPolicyComponents
+            | EventKind::RealmPolicyBundle
             | EventKind::RealmDeliveryBindingPolicy
     ) {
         return Err(anyhow::anyhow!(

@@ -16,7 +16,7 @@ use crate::event_builders::{
     build_realm_archive_event, build_realm_bootstrap_events, build_realm_destroy_event,
     build_realm_history_sharing_policy_event, build_realm_state_event, build_space_create_event,
     build_space_lifecycle_event, parse_realm_bootstrap_members,
-    recommended_history_sharing_policy_for_visibility, recommended_realm_policy_components_value,
+    recommended_history_sharing_policy_for_visibility, recommended_realm_policy_bundle_value,
 };
 use crate::event_submit::EventSubmitter;
 use crate::models::{RealmCreateResult, RealmPolicyResult, SpaceCreateResult, SubmitEventResult};
@@ -314,7 +314,7 @@ pub async fn update_space_metadata(
 }
 
 /// Set Realm join_rule + history_visibility policy, optionally also
-/// emitting `ak.realm.policy_components` for Join Policy gates.
+/// emitting `ak.realm.policy_bundle` for Join Policy gates.
 pub async fn set_realm_policy_events(
     submitter: &EventSubmitter,
     realm_id: &str,
@@ -356,23 +356,23 @@ pub async fn set_realm_policy_events(
         )?);
     }
     if let Some(join_policy) = join_policy {
-        let mut policy_components = if preserve_recommended_encryption_floor {
+        let mut policy_bundle = if preserve_recommended_encryption_floor {
             // None ⇒ the history-capable `mls_exporter_aead_v1` default. soland
-            // applies a one-way content_scheme ratchet, so a policy_components
+            // applies a one-way content_scheme ratchet, so a policy_bundle
             // write MUST re-assert a scheme of rank ≥ the projected one;
             // omitting it would be rejected for exporter-aead realms.
-            recommended_realm_policy_components_value(None)
+            recommended_realm_policy_bundle_value(None)
         } else {
             json!({
                 "policy_revision": 1,
             })
         };
-        policy_components["join_policy"] = join_policy;
+        policy_bundle["join_policy"] = join_policy;
         events.push(build_realm_state_event(
             realm_id,
             actor_id,
-            EventKind::RealmPolicyComponents,
-            policy_components,
+            EventKind::RealmPolicyBundle,
+            policy_bundle,
         )?);
     }
     for event in events {
@@ -387,7 +387,7 @@ pub async fn set_realm_policy_events(
 }
 
 /// Set (or clear) the Realm Recovery Key (RRK) `durability_policy` via a
-/// `ak.realm.policy_components` event (realm-and-space.md §2.3.1 write path —
+/// `ak.realm.policy_bundle` event (realm-and-space.md §2.3.1 write path —
 /// no new event kind; durability is a policy component).
 ///
 /// `policy` is the SDK-typed [`arkret_models_collaboration::objects::realm::DurabilityPolicy`]
@@ -412,20 +412,20 @@ pub async fn set_realm_durability_policy(
     let actor_id = actor_id.trim();
     if actor_id.is_empty() {
         return Err(anyhow::anyhow!(
-            "actor_id is required for ak.realm.policy_components"
+            "actor_id is required for ak.realm.policy_bundle"
         ));
     }
     let durability_value = serde_json::to_value(policy)
         .map_err(|err| anyhow::anyhow!("serialize durability_policy: {err}"))?;
-    let policy_components = json!({
+    let policy_bundle = json!({
         "policy_revision": policy_revision,
         "durability_policy": durability_value,
     });
     let event = build_realm_state_event(
         realm_id,
         actor_id,
-        EventKind::RealmPolicyComponents,
-        policy_components,
+        EventKind::RealmPolicyBundle,
+        policy_bundle,
     )?;
     submitter.submit_sdk_event(&event).await?;
     Ok(())
