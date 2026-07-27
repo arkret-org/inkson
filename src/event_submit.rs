@@ -549,6 +549,20 @@ fn durable_mls_store_scope(actor_id: &str) -> String {
     format!("{actor_id}\u{1f}mls-durable-post-accept")
 }
 
+fn normalized_outbound_event_intent(mut event: arkret_sdk::Event) -> arkret_sdk::Event {
+    event.actor_seq = 0;
+    event.prev_refs.clear();
+    event.proofs.clear();
+    event.hlc = None;
+    event.seal_ref = None;
+    if event.kind.as_str() != "ak.invite.accept" {
+        event.seal_basis = None;
+    }
+    event.auth_context = None;
+    event.unsigned.remove("local_operation_idempotency_alias");
+    event
+}
+
 /// A browser runtime has multiple outbound triggers: the foreground writer
 /// and the account-sync drain. Garth engines opened on the same durable store
 /// do not share an in-memory lease, so without a runtime single-writer gate
@@ -1284,18 +1298,108 @@ impl EventSubmitter {
         let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
             &outbound_store_scope(event, durable_post_accept),
         )?);
-        outbound
-            .enqueue_scoped(
-                Some(transaction_id.clone()),
-                event.realm_id.clone(),
-                event.actor_id.clone(),
-                garth::SendQueueItemKind::Custom {
-                    kind: event.kind.to_string(),
-                },
-                serde_json::to_value(queued)?,
-                Vec::new(),
-            )
-            .await?;
+        let queued_value = serde_json::to_value(&queued)?;
+        let existing = outbound
+            .snapshot()
+            .await?
+            .items
+            .into_iter()
+            .find(|item| item.transaction_id == transaction_id);
+        if let Some(existing) = existing {
+            let previous = decode_queued_sdk_event(existing.content.clone())?;
+            let same_event_identity = previous.local_operation_id == queued.local_operation_id
+                && previous.event.event_id == queued.event.event_id
+                && previous.event.realm_id == queued.event.realm_id
+                && previous.event.actor_id == queued.event.actor_id
+                && previous.event.kind == queued.event.kind;
+            if !same_event_identity {
+                anyhow::bail!(
+                    "outbound transaction {} is already bound to a different immutable Event intent",
+                    transaction_id
+                );
+            }
+            let same_semantic_intent = arkret_sdk::canonical::canonical_json_bytes(
+                &normalized_outbound_event_intent(previous.event.clone()),
+            )? == arkret_sdk::canonical::canonical_json_bytes(
+                &normalized_outbound_event_intent(queued.event.clone()),
+            )?;
+            match existing.status {
+                garth::SendQueueStatus::Sent => {
+                    return Ok(completed_outbound_result(&existing));
+                }
+                garth::SendQueueStatus::Cancelled | garth::SendQueueStatus::Superseded
+                    if same_semantic_intent
+                        && !previous.canonical_body_bytes.is_empty()
+                        && previous.transport_idempotency_key != previous.local_operation_id =>
+                {
+                    // A deterministic response can cancel an item after its
+                    // immutable signed bytes are already durable. A later
+                    // retry of the same semantic Event must replay those exact
+                    // bytes instead of signing a different transcript under
+                    // the same Event id (which the queue correctly rejects as
+                    // an idempotency conflict).
+                    tracing::warn!(
+                        event_id = %previous.event.event_id,
+                        status = ?existing.status,
+                        "replaying terminal outbound Event bytes for an immutable retry"
+                    );
+                    return self
+                        .submit_sdk_event_direct(
+                            &previous.event,
+                            &previous.transport_idempotency_key,
+                            &previous.canonical_body_bytes,
+                        )
+                        .await;
+                }
+                garth::SendQueueStatus::Cancelled | garth::SendQueueStatus::Superseded => {
+                    // The caller repaired the semantic intent after a
+                    // deterministic rejection (for example, by binding the
+                    // Event to the correct capability grant). Terminal queue
+                    // history is safe to compact because the server did not
+                    // accept that attempt; active dependencies remain
+                    // protected by SendQueue::prune_terminal_before.
+                    outbound
+                        .compact_terminal_before(chrono::Utc::now() + chrono::Duration::seconds(1))
+                        .await?;
+                    let mut repaired = queued.clone();
+                    repaired.event.unsigned.insert(
+                        "local_operation_idempotency_alias".to_owned(),
+                        Value::String(format!("{}:repair:{}", transaction_id, uuid_v7())),
+                    );
+                    outbound
+                        .enqueue_scoped(
+                            Some(transaction_id.clone()),
+                            event.realm_id.clone(),
+                            event.actor_id.clone(),
+                            garth::SendQueueItemKind::Custom {
+                                kind: event.kind.to_string(),
+                            },
+                            serde_json::to_value(repaired)?,
+                            Vec::new(),
+                        )
+                        .await?;
+                }
+                _ => {
+                    // Queued / Sending / Failed items already carry the
+                    // authoritative signed attempt. Let the durable engine
+                    // resume that item below; do not enqueue newly-authored
+                    // bytes for the same transaction identity.
+                }
+            }
+        } else {
+            outbound
+                .enqueue_scoped(
+                    Some(transaction_id.clone()),
+                    event.realm_id.clone(),
+                    event.actor_id.clone(),
+                    garth::SendQueueItemKind::Custom {
+                        kind: event.kind.to_string(),
+                    },
+                    queued_value,
+                    Vec::new(),
+                )
+                .await?;
+        }
 
         let results = OutboundAttemptResults::default();
         let submitter = EventOutboundSubmitter {

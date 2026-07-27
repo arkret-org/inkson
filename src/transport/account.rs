@@ -516,6 +516,23 @@ async fn materialize_direct_conversation(
             anyhow::anyhow!("direct conversation founding grant omitted payload.grant_id")
         })?
         .to_owned();
+    let mut main_strand_grant_event = draft.main_strand_grant_event.clone();
+    crate::event_submit::attach_capability_grant_payload_proof_with_signer(
+        &mut main_strand_grant_event,
+        &signer,
+    )?;
+    arkret_sdk::schema::materialize_capability_grant_event_contract(&mut main_strand_grant_event)
+        .map_err(|error| {
+        anyhow::anyhow!("materialize direct conversation main Strand grant effect: {error}")
+    })?;
+    let main_strand_grant_id = main_strand_grant_event
+        .payload
+        .get("grant_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            anyhow::anyhow!("direct conversation main Strand grant omitted payload.grant_id")
+        })?
+        .to_owned();
     let bootstrap_key =
         pending_direct_conversation_bootstrap_key(draft.materialization_id.as_str());
     let mut accepted = accepted_direct_materialization_events(&submitter, &realm_id).await;
@@ -575,15 +592,48 @@ async fn materialize_direct_conversation(
     save_direct_conversation_realm_projection(&mut state_store, &realm_id, &actor_id, peer);
     refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id, None).await?;
 
+    if !accepted.contains(draft.main_strand_grant_event.event_id.as_str()) {
+        let pre_strand_grant_seal_frontier =
+            state_store.read().seal_view_for_realm(&realm_id).frontier;
+        main_strand_grant_event.authorization_ref = Some(founding_grant_id);
+        submitter
+            .submit_sdk_event(&main_strand_grant_event)
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!("submit direct conversation main Strand grant: {error}")
+            })?;
+        accepted = wait_for_direct_materialization_events(
+            &submitter,
+            &realm_id,
+            [draft.main_strand_grant_event.event_id.as_str()],
+        )
+        .await?;
+        refresh_direct_conversation_seal(
+            &submitter,
+            &mut state_store,
+            &realm_id,
+            Some(&pre_strand_grant_seal_frontier),
+        )
+        .await?;
+    } else {
+        // A resumed materialization may observe the grant only after the Seal
+        // covering it has already become the current frontier. Requiring a
+        // second frontier advance in that case waits for an Event this run did
+        // not submit and turns a successful recovery into a false timeout.
+        refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id, None).await?;
+    }
+
     if !accepted.contains(draft.main_strand_event.event_id.as_str()) {
         let mut main_strand_event = draft.main_strand_event.clone();
-        main_strand_event.authorization_ref = Some(founding_grant_id);
+        main_strand_event.authorization_ref = Some(main_strand_grant_id);
         submitter
             .submit_sdk_event(&main_strand_event)
             .await
             .map_err(|error| anyhow::anyhow!("submit direct conversation main Strand: {error}"))?;
     }
+    tracing::info!(realm_id, "direct conversation main Strand accepted");
     refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id, None).await?;
+    tracing::info!(realm_id, "direct conversation main Strand Seal refreshed");
 
     // The signed Commit / Welcome / post-commit MLS snapshot MUST survive a
     // page reload so a resumed materialization replays the SAME Commit and
@@ -604,7 +654,16 @@ async fn materialize_direct_conversation(
         &pending_key,
         &pending_secure_key,
     )?;
+    tracing::info!(
+        realm_id,
+        resumed = pending.is_some(),
+        "direct conversation pending MLS state loaded"
+    );
     if pending.is_none() {
+        tracing::info!(
+            realm_id,
+            "direct conversation genesis governance proof starting"
+        );
         let genesis_request = crate::mls::governance_proof::proof_request(
             &state_store.read(),
             &realm_id,
@@ -621,8 +680,16 @@ async fn materialize_direct_conversation(
         )
         .await
         .map_err(anyhow::Error::msg)?;
+        tracing::info!(
+            realm_id,
+            "direct conversation genesis governance proof cached"
+        );
 
         let fresh_summary = {
+            tracing::info!(
+                realm_id,
+                "direct conversation creator MLS snapshot starting"
+            );
             let mut store = state_store.write();
             crate::mls::runtime::ensure_creator_mls_snapshot(
                 &mut store,
@@ -633,6 +700,7 @@ async fn materialize_direct_conversation(
             )
             .map_err(|error| anyhow::anyhow!(error.user_message()))?
         };
+        tracing::info!(realm_id, "direct conversation creator MLS snapshot ready");
         let summary = match fresh_summary {
             Some(summary) => summary,
             None => crate::mls::runtime::initial_mls_snapshot_summary_from_existing(
@@ -896,7 +964,7 @@ fn save_direct_conversation_realm_projection(
     actor_id: &str,
     peer: &str,
 ) {
-    let projection = crate::realm_tree::OptimisticRealmTreeProjection::realm(
+    let mut projection = crate::realm_tree::OptimisticRealmTreeProjection::realm(
         crate::realm_tree::RealmProjectionInput {
             owner: actor_id.to_owned(),
             admins: vec![actor_id.to_owned()],
@@ -914,6 +982,8 @@ fn save_direct_conversation_realm_projection(
         },
     )
     .into_value();
+    projection["state_at_window_start"]["realm_metadata"]["collaboration_role"] =
+        Value::String("direct_conversation".to_owned());
     state_store
         .write()
         .save_realm_tree_projection(realm_id.to_owned(), projection);

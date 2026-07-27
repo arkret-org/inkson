@@ -1261,12 +1261,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     account_notification_projection
                                 };
                             notification_projection.retain(|value| {
-                                value.get("type").and_then(serde_json::Value::as_str)
-                                    != Some("agent")
-                                    || value
-                                        .pointer("/data/kind")
-                                        .and_then(serde_json::Value::as_str)
-                                        != Some("agent_runtime_approval")
+                                !crate::state::projection::notifications::is_agent_runtime_approval_notification(value)
                             });
                             notification_projection.extend(projection_from_sync);
                             if let Some(invites) = invite_notifications {

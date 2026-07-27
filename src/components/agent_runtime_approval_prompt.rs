@@ -16,7 +16,6 @@ use crate::views::helpers::short_protocol_id;
 
 const APPROVAL_FALLBACK_POLL_INTERVAL: Duration = Duration::from_secs(30);
 const APPROVAL_FALLBACK_MAX_INTERVAL: Duration = Duration::from_secs(60);
-const APPROVAL_NOTIFICATION_FEATURE: &str = "ak.feature.agent_runtime_approval_notifications.v1";
 
 #[derive(Clone, Debug, PartialEq)]
 struct PendingAgentRuntimeApproval {
@@ -53,11 +52,13 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                 .iter()
                 .filter_map(agent_runtime_approval_notification)
                 .collect::<Vec<_>>();
-            if pending.read().as_ref().is_some_and(|request| {
-                !open
-                    .iter()
-                    .any(|notification| notification.notification_id == request.notification_id)
-            }) {
+            let prompt_notification_closed = pending.read().as_ref().is_some_and(|request| {
+                !request.notification_id.is_empty()
+                    && !open
+                        .iter()
+                        .any(|notification| notification.notification_id == request.notification_id)
+            });
+            if prompt_notification_closed {
                 pending.set(None);
                 approving.set(false);
             }
@@ -97,7 +98,8 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
             loop {
                 let has_prompt = pending.read().is_some();
                 if has_prompt {
-                    if pending.read().as_ref().is_some_and(approval_has_expired) {
+                    let prompt_expired = pending.read().as_ref().is_some_and(approval_has_expired);
+                    if prompt_expired {
                         pending.set(None);
                         approving.set(false);
                         status.set(String::new());
@@ -118,13 +120,6 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                 }
 
                 let base = base_url();
-                match server_supports_approval_notifications(&base, api_token.clone()).await {
-                    Ok(true) | Err(_) => {
-                        crate::runtime_helpers::sleep_for(APPROVAL_FALLBACK_POLL_INTERVAL).await;
-                        continue;
-                    }
-                    Ok(false) => {}
-                }
                 let handled_keys = handled.read().clone();
                 let failed = match fetch_pending_agent_runtime_approval(
                     &base,
@@ -465,9 +460,7 @@ struct AgentRuntimeApprovalNotification {
 }
 
 fn agent_runtime_approval_notification(value: &Value) -> Option<AgentRuntimeApprovalNotification> {
-    if value.get("type").and_then(Value::as_str) != Some("agent")
-        || value.pointer("/data/kind").and_then(Value::as_str) != Some("agent_runtime_approval")
-    {
+    if !crate::state::projection::notifications::is_agent_runtime_approval_notification(value) {
         return None;
     }
     let expires_at = value.pointer("/data/expires_at")?.as_str()?.to_owned();
@@ -482,20 +475,6 @@ fn agent_runtime_approval_notification(value: &Value) -> Option<AgentRuntimeAppr
             .to_owned(),
         agent_id: value.pointer("/data/agent_id")?.as_str()?.to_owned(),
     })
-}
-
-async fn server_supports_approval_notifications(
-    base_url: &str,
-    token: String,
-) -> Result<bool, crate::transport::auth::ApiCallError> {
-    with_authed_api(base_url, token, |api| async move {
-        let description = api.describe_cached().await?;
-        Ok(description
-            .supported_features
-            .iter()
-            .any(|feature| feature == APPROVAL_NOTIFICATION_FEATURE))
-    })
-    .await
 }
 
 async fn fetch_agent_runtime_approval(

@@ -2751,8 +2751,7 @@ fn apply_notification_projection(
 }
 
 fn is_agent_runtime_approval_delta(value: &Value) -> bool {
-    value.get("type").and_then(Value::as_str) == Some("agent")
-        && value.pointer("/data/kind").and_then(Value::as_str) == Some("agent_runtime_approval")
+    crate::state::projection::notifications::is_agent_runtime_approval_notification(value)
 }
 
 fn apply_account_data(

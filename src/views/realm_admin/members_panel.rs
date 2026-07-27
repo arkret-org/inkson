@@ -2606,6 +2606,19 @@ fn admission_joined_member_signature_for_realm(store: &LocalStateStore, realm_id
         .join(",")
 }
 
+fn realm_projection_is_direct_conversation(store: &LocalStateStore, realm_id: &str) -> bool {
+    store
+        .load()
+        .realm_tree_projections
+        .get(realm_id)
+        .and_then(|projection| {
+            projection.pointer("/state_at_window_start/realm_metadata/collaboration_role")
+        })
+        .cloned()
+        .and_then(|value| serde_json::from_value::<arkret_sdk::CollaborationRealmRole>(value).ok())
+        == Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
+}
+
 pub(crate) fn mls_admission_candidate_realms_for_actor(
     store: &LocalStateStore,
     actor_id: &str,
@@ -2631,6 +2644,12 @@ pub(crate) fn mls_admission_candidate_realms_for_actor(
         .filter(|realm_id| {
             store.mls_snapshot_for(realm_id).is_some()
                 && store.realm_projection_is_mls_encrypted(realm_id)
+                // Direct-conversation materialization owns its immutable
+                // genesis/Commit/Welcome IDs and admits the peer itself. The
+                // generic membership reconciler must never race that flow or
+                // it can advance the same local MLS snapshot under unrelated
+                // Event IDs before the canonical binding is submitted.
+                && !realm_projection_is_direct_conversation(store, realm_id)
         })
         .filter_map(|realm_id| {
             let joined_sig = admission_joined_member_signature_for_realm(store, &realm_id);
@@ -5360,6 +5379,34 @@ mod tests {
                 "did:web:alice.example".to_owned(),
                 "did:web:bob.example".to_owned()
             ])
+        );
+    }
+
+    #[test]
+    fn admission_candidates_exclude_direct_conversation_realms() {
+        let realm_id = "ak:realm:direct";
+        let mut store = temp_store("admission-candidate-direct-conversation");
+        store.save_realm_tree_projection(
+            realm_id.to_owned(),
+            serde_json::json!({
+                "encrypted": true,
+                "members_limited": false,
+                "members": [
+                    { "actor_id": "did:web:alice.example", "membership": "join" },
+                    { "actor_id": "did:web:agent.example", "membership": "join" }
+                ],
+                "state_at_window_start": {
+                    "realm_metadata": {
+                        "collaboration_role": "direct_conversation"
+                    }
+                }
+            }),
+        );
+        store.save_mls_snapshot(realm_id.to_owned(), dummy_mls_snapshot(realm_id));
+
+        assert!(
+            mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example").is_empty(),
+            "the direct-conversation materializer owns its immutable MLS admission events"
         );
     }
 
