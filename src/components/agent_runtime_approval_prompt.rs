@@ -582,10 +582,7 @@ fn approval_fallback_delay(failed: bool) -> Duration {
     if !failed {
         return APPROVAL_FALLBACK_POLL_INTERVAL;
     }
-    let jitter = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.subsec_nanos() as u64 % 6)
-        .unwrap_or_default();
+    let jitter = crate::clock::now_unix_ms() % 6;
     APPROVAL_FALLBACK_MAX_INTERVAL.saturating_sub(Duration::from_secs(jitter))
 }
 

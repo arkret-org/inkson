@@ -45,6 +45,7 @@ use crate::routes::Route;
 use crate::state::LocalStateStore;
 use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
 use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
@@ -672,39 +673,47 @@ fn render_revoke_modal(
     mut revoke_passphrase: Signal<String>,
 ) -> Element {
     let confirm_target = target.clone();
-    let cancel_target = target.clone();
     let target_label = short_protocol_id(&target);
     rsx! {
-        div { class: "modal-overlay", "data-testid": "device-revoke-modal",
-            div { class: "modal",
-                div { class: "event-head",
-                    span { "Revoke device" }
-                    span { title: "{target}", "{target_label}" }
+        Dialog {
+            open: true,
+            on_open_change: move |open: bool| {
+                if !open {
+                    revoke_target.set(None);
                 }
-                p {
-                    "This will write "
-                    code { "ak.device.revoke" }
-                    " to your principal control Realm, remove the device from any E2EE Realm it participates in, and rotate the account MLS history secret. The action cannot be undone."
+            },
+            "data-testid": "device-revoke-modal",
+            "aria-labelledby": "device-revoke-title",
+            div { class: "modal event device-revoke-dialog",
+                div { class: "modal-head event-head",
+                    h3 { id: "device-revoke-title", "Revoke device" }
+                    span { class: "muted device-revoke-target", title: "{target}", "{target_label}" }
                 }
-                p { class: "muted", "data-testid": "device-revoke-threat-note",
-                    "Revocation is not a remote wipe. It cannot remotely erase secrets or cached history already copied onto that device. Treat a lost or compromised device as able to read any plaintext or old account MLS secret it retained before revocation."
+                div { class: "modal-body workflow-form device-revoke-modal-body",
+                    p {
+                        "This will write "
+                        code { "ak.device.revoke" }
+                        " to your principal control Realm, remove the device from any E2EE Realm it participates in, and rotate the account MLS history secret. The action cannot be undone."
+                    }
+                    p { class: "muted", "data-testid": "device-revoke-threat-note",
+                        "Revocation is not a remote wipe. It cannot remotely erase secrets or cached history already copied onto that device. Treat a lost or compromised device as able to read any plaintext or old account MLS secret it retained before revocation."
+                    }
+                    Label { html_for: "device-revoke-passphrase", "Recovery Key (24 words)" }
+                    Input {
+                        id: "device-revoke-passphrase",
+                        "data-testid": "device-revoke-passphrase-input",
+                        r#type: "password",
+                        value: "{revoke_passphrase}",
+                        autocomplete: "off",
+                        placeholder: "Your 24-word Recovery Key — required to rotate encrypted history backups",
+                        oninput: move |event: FormEvent| revoke_passphrase.set(event.value()),
+                    }
                 }
-                Label { html_for: "device-revoke-passphrase", "Recovery Key (24 words)" }
-                Input {
-                    id: "device-revoke-passphrase",
-                    "data-testid": "device-revoke-passphrase-input",
-                    r#type: "password",
-                    value: "{revoke_passphrase}",
-                    autocomplete: "off",
-                    placeholder: "Your 24-word Recovery Key — required to rotate encrypted history backups",
-                    oninput: move |event: FormEvent| revoke_passphrase.set(event.value()),
-                }
-                div { class: "actions",
+                div { class: "modal-foot actions",
                     Button {
                         variant: ButtonVariant::Secondary,
                         "data-testid": "device-revoke-cancel-button",
                         onclick: move |_| {
-                            let _ = &cancel_target;
                             revoke_target.set(None);
                         },
                         "Cancel"

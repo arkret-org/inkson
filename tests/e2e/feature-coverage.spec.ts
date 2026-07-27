@@ -46,7 +46,24 @@ async function dismissBlockingDialog(page: import("@playwright/test").Page) {
 
 test.describe("feature coverage placeholders", () => {
   test.beforeEach(async ({ page }) => {
-    await mockArkretApi(page);
+    await mockArkretApi(page, {
+      accountDevices: [
+        {
+          device_id: "ak:device:01964137-0000-7000-8000-0000000000a1",
+          status: "active",
+          display_name: "Current device",
+          verification_state: "unverified",
+          authorized_at: "2026-04-28T12:00:00.000Z",
+        },
+        {
+          device_id: "ak:device:01964137-0000-7000-8000-0000000000b2",
+          status: "active",
+          display_name: "Trusted laptop",
+          verification_state: "verified",
+          authorized_at: "2026-04-29T12:00:00.000Z",
+        },
+      ],
+    });
     await page.addInitScript(() => {
       localStorage.setItem(
         "inkson.test.session_injection.v1",
@@ -308,6 +325,50 @@ test.describe("feature coverage placeholders", () => {
         Math.abs((headerBox?.x ?? 0) - (cellBox?.x ?? 0)),
       ).toBeLessThanOrEqual(2);
     }
+
+    const currentBadgeBox = await firstRow
+      .getByTestId("device-row-current")
+      .boundingBox();
+    const identityCellBox = await cells.nth(0).boundingBox();
+    const verificationBadgeBox = await firstRow
+      .getByTestId("device-verification-badge")
+      .boundingBox();
+    const verificationCellBox = await cells.nth(1).boundingBox();
+    expect(currentBadgeBox).not.toBeNull();
+    expect(identityCellBox).not.toBeNull();
+    expect(verificationBadgeBox).not.toBeNull();
+    expect(verificationCellBox).not.toBeNull();
+    expect(currentBadgeBox!.width).toBeLessThan(identityCellBox!.width);
+    expect(verificationBadgeBox!.width).toBeLessThan(
+      verificationCellBox!.width,
+    );
+
+    await list
+      .getByTestId("device-row")
+      .nth(1)
+      .getByTestId("device-revoke-button")
+      .click();
+    const revokeDialog = page.getByTestId("device-revoke-modal");
+    await expect(revokeDialog).toBeVisible();
+    await expect(revokeDialog).toHaveAttribute("role", "dialog");
+    const revokeSurface = revokeDialog.locator(".device-revoke-dialog");
+    const revokeBody = revokeSurface.locator(".modal-body");
+    const revokeInput = revokeDialog.getByTestId(
+      "device-revoke-passphrase-input",
+    );
+    const surfaceBox = await revokeSurface.boundingBox();
+    const bodyBox = await revokeBody.boundingBox();
+    const inputBox = await revokeInput.boundingBox();
+    expect(surfaceBox).not.toBeNull();
+    expect(bodyBox).not.toBeNull();
+    expect(inputBox).not.toBeNull();
+    expect(bodyBox!.x).toBeGreaterThan(surfaceBox!.x);
+    expect(inputBox!.x).toBeGreaterThan(surfaceBox!.x);
+    expect(inputBox!.x + inputBox!.width).toBeLessThan(
+      surfaceBox!.x + surfaceBox!.width,
+    );
+    await revokeDialog.getByTestId("device-revoke-cancel-button").click();
+    await expect(revokeDialog).toBeHidden();
 
     await page.setViewportSize({ width: 760, height: 900 });
     await expect(

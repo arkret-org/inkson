@@ -338,6 +338,11 @@
   min-width: 0;
   align-items: center;
 }
+.device-list-cell > .badge {
+  width: fit-content;
+  max-width: 100%;
+  justify-self: start;
+}
 .device-list-cell-actions {
   justify-items: start;
 }
@@ -360,6 +365,43 @@
 .device-created-at {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.device-revoke-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(640px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow: hidden;
+}
+.device-revoke-dialog .modal-head,
+.device-revoke-dialog .modal-body,
+.device-revoke-dialog .modal-foot {
+  min-width: 0;
+}
+.device-revoke-target {
+  min-width: 0;
+  max-width: 55%;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.device-revoke-modal-body {
+  gap: 12px;
+  overflow: auto;
+}
+.device-revoke-modal-body p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.device-revoke-modal-body input {
+  min-width: 0;
+  width: 100%;
+}
+.device-revoke-dialog .modal-foot {
+  flex-wrap: wrap;
 }
 
 .device-pairing-layout {
