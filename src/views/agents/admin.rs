@@ -17,7 +17,6 @@ use arkret_models_collaboration::governance::agent_artifacts::GrantSnapshot;
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::{use_navigator, use_route};
-use serde_json::Value;
 
 use super::model::{
     AgentGrantPreset, AgentServiceScopePreset, agent_lifecycle_wire, agent_runtime_state_wire,
@@ -1039,11 +1038,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
             .read()
             .notification_projection()
             .into_iter()
-            .filter(|value| {
-                value.get("type").and_then(Value::as_str) == Some("agent")
-                    && value.pointer("/data/kind").and_then(Value::as_str)
-                        == Some("agent_runtime_approval")
-            })
+            .filter(crate::state::projection::notifications::is_agent_runtime_approval_notification)
             .map(|value| value.to_string())
             .collect::<Vec<_>>();
         ids.sort();

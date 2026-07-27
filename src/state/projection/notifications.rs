@@ -16,6 +16,15 @@ pub(crate) fn is_notification_account_data(value: &BTreeMap<String, Value>) -> b
     value.get("schema").and_then(Value::as_str) == Some("ak.schema.notification.v1")
 }
 
+pub(crate) fn is_agent_runtime_approval_notification(value: &Value) -> bool {
+    value
+        .get("notification_kind")
+        .or_else(|| value.get("type"))
+        .and_then(Value::as_str)
+        == Some("agent")
+        && value.pointer("/data/kind").and_then(Value::as_str) == Some("agent_runtime_approval")
+}
+
 pub(crate) fn raw_notifications_from_sources(
     notification_response: Option<&[arkret_sdk::NotificationDelta]>,
     account_data: &[arkret_sdk::Event],
@@ -148,6 +157,35 @@ fn notification_is_invite(value: &Value) -> bool {
         .iter()
         .filter_map(|key| value.get(*key).and_then(Value::as_str))
         .any(|kind| matches!(kind, "invite" | "ak.invite" | "ak.invite.create"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_runtime_approval_recognizes_canonical_notification_delta() {
+        assert!(is_agent_runtime_approval_notification(&json!({
+            "id": "ak:notification:test",
+            "notification_kind": "agent",
+            "action": "add",
+            "data": {
+                "kind": "agent_runtime_approval"
+            }
+        })));
+    }
+
+    #[test]
+    fn agent_runtime_approval_keeps_legacy_type_compatibility() {
+        assert!(is_agent_runtime_approval_notification(&json!({
+            "id": "ak:notification:test",
+            "type": "agent",
+            "action": "add",
+            "data": {
+                "kind": "agent_runtime_approval"
+            }
+        })));
+    }
 }
 
 pub(crate) fn drop_joined_invite_notifications(

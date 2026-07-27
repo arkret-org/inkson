@@ -786,6 +786,11 @@ fn AppBootstrap() -> Element {
     let collaboration_sidebar_query_value =
         collaboration_sidebar_query().trim().to_ascii_lowercase();
     let direct_sidebar_query_value = direct_sidebar_query().trim().to_ascii_lowercase();
+    // Render from an owned snapshot. Keeping a Signal read guard alive inside
+    // the RSX iterator lets an async Direct Conversation open complete while
+    // Dioxus is still reconciling that borrowed hook storage, which panics in
+    // generational-box when the opening state is cleared.
+    let own_agent_rows_for_sidebar = own_agent_rows.read().clone();
     let realm_remarks_for_sidebar = state_store.read().realm_remarks();
     let contact_remarks_for_sidebar = state_store.read().contact_remarks();
     let filtered_realm_tree: Vec<_> = realm_tree
@@ -1986,7 +1991,7 @@ fn AppBootstrap() -> Element {
                     }
                     if realm_sidebar_tab() == "direct" {
                         if has_session && (direct_sidebar_query_value.is_empty()
-                            || own_agent_rows.read().iter().any(|agent| {
+                            || own_agent_rows_for_sidebar.iter().any(|agent| {
                                 sidebar_text_matches_query(
                                     &direct_sidebar_query_value,
                                     &[
@@ -2061,7 +2066,7 @@ fn AppBootstrap() -> Element {
                                         }
                                         if own_agents_expanded() {
                                             div { class: "contact-agent-list", "data-testid": "contact-sidebar-self-agents",
-                                                for agent in own_agent_rows.read().iter() {
+                                                for agent in own_agent_rows_for_sidebar.iter() {
                                                     {
                                                         let agent_id = agent.agent_id.to_string();
                                                         let agent_label = agent
@@ -2112,6 +2117,7 @@ fn AppBootstrap() -> Element {
                                                                         let base = base.clone();
                                                                         let agent_id = agent_id.clone();
                                                                         spawn(async move {
+                                                                            let agent_id_for_log = agent_id.clone();
                                                                             let route = match crate::transport::auth::with_authed_api(
                                                                                 &base,
                                                                                 api_token,
@@ -2144,6 +2150,11 @@ fn AppBootstrap() -> Element {
                                                                                     None
                                                                                 }
                                                                                 Err(err) => {
+                                                                                    tracing::error!(
+                                                                                        error = %err.display(),
+                                                                                        agent_id = %agent_id_for_log,
+                                                                                        "owned agent direct conversation open failed"
+                                                                                    );
                                                                                     crate::components::feedback::toast_error(
                                                                                         "feedback.direct_open_failed", vec![], Some(err.display()),
                                                                                     );
@@ -2567,6 +2578,7 @@ fn AppBootstrap() -> Element {
                                                                     let base = base.clone();
                                                                     let agent_id = agent_id.clone();
                                                                     spawn(async move {
+                                                                        let agent_id_for_log = agent_id.clone();
                                                                         let route = match crate::transport::auth::with_authed_api(
                                                                             &base,
                                                                             api_token,
@@ -2599,6 +2611,11 @@ fn AppBootstrap() -> Element {
                                                                                 None
                                                                             }
                                                                             Err(err) => {
+                                                                                tracing::error!(
+                                                                                    error = %err.display(),
+                                                                                    agent_id = %agent_id_for_log,
+                                                                                    "contact agent direct conversation open failed"
+                                                                                );
                                                                                 crate::components::feedback::toast_error(
                                                                                     "feedback.direct_open_failed", vec![], Some(err.display()),
                                                                                 );
