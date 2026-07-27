@@ -39,31 +39,14 @@ async function dismissBlockingDialog(page: import("@playwright/test").Page) {
     if ((await dismiss.count()) === 0) {
       return;
     }
-    await dismiss.evaluate((button: HTMLElement) => button.click());
+    await dismiss.last().evaluate((button: HTMLElement) => button.click());
     await expect(dialog).toBeHidden({ timeout: 5_000 });
   }
 }
 
 test.describe("feature coverage placeholders", () => {
   test.beforeEach(async ({ page }) => {
-    await mockArkretApi(page, {
-      accountDevices: [
-        {
-          device_id: "ak:device:01964137-0000-7000-8000-0000000000a1",
-          status: "active",
-          display_name: "Current device",
-          verification_state: "unverified",
-          authorized_at: "2026-04-28T12:00:00.000Z",
-        },
-        {
-          device_id: "ak:device:01964137-0000-7000-8000-0000000000b2",
-          status: "active",
-          display_name: "Trusted laptop",
-          verification_state: "verified",
-          authorized_at: "2026-04-29T12:00:00.000Z",
-        },
-      ],
-    });
+    await mockArkretApi(page);
     await page.addInitScript(() => {
       localStorage.setItem(
         "inkson.test.session_injection.v1",
@@ -301,6 +284,38 @@ test.describe("feature coverage placeholders", () => {
   test("device list keeps headers aligned and becomes labelled rows when narrow", async ({
     page,
   }) => {
+    await page.route("**/_arkret/self/account/viewer", async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.fallback();
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          principal_id: "did:web:alice.example",
+          state: "active",
+          current_device_id: "ak:device:01964137-0000-7000-8000-0000000000a1",
+          devices: [
+            {
+              device_id: "ak:device:01964137-0000-7000-8000-0000000000a1",
+              status: "active",
+              display_name: "Current device",
+              verification_state: "unverified",
+              authorized_at: "2026-04-28T12:00:00.000Z",
+              is_current_session_device: true,
+            },
+            {
+              device_id: "ak:device:01964137-0000-7000-8000-0000000000b2",
+              status: "active",
+              display_name: "Trusted laptop",
+              verification_state: "verified",
+              authorized_at: "2026-04-29T12:00:00.000Z",
+            },
+          ],
+        }),
+      });
+    });
     await page.setViewportSize({ width: 1800, height: 1000 });
     await page.goto("/settings/devices", {
       waitUntil: "domcontentloaded",
