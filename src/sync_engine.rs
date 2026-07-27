@@ -1931,6 +1931,15 @@ pub fn apply_response(
                 };
                 let projection = preserve_realm_security_projection(existing.as_ref(), &projection);
                 store.save_realm_tree_projection(id.to_owned(), projection.clone());
+                if let Err(error) =
+                    store.reconcile_mls_genesis_group_state_ref_from_projection(id, None)
+                {
+                    tracing::error!(
+                        realm_id = %id,
+                        %error,
+                        "sync engine: accepted MLS genesis projection conflicts with local group state",
+                    );
+                }
                 if is_full_sync || response.has_window_start_realm_metadata(id) {
                     store.save_realm_collaboration_role(
                         id.to_owned(),

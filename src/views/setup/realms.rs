@@ -1018,7 +1018,8 @@ pub(super) fn RealmsSection(
                                                             // freshly-created creator group at epoch 0,
                                                             // BEFORE any ak.mls.commit can bump the epoch.
                                                             // A duplicate (mls_genesis_already_exists) is
-                                                            // treated as success. Failure is non-fatal:
+                                                            // treated as success only after resolving its
+                                                            // accepted Event id. Failure is non-fatal:
                                                             // soland lazily defaults a never-seen group to
                                                             // epoch 0, so commits still work; we just leave
                                                             // the genesis_emitted flag unset to retry later
@@ -1049,27 +1050,51 @@ pub(super) fn RealmsSection(
                                                                     }
                                                                 });
                                                             if let Some(genesis_event) = genesis_event {
-                                                                match match api.event_submitter() {
-                                                                    Ok(sub) => sub.submit_sdk_event(&genesis_event).await,
+                                                                let genesis_event_id =
+                                                                    genesis_event.event_id.clone();
+                                                                let accepted_genesis_event_id =
+                                                                    match api.event_submitter() {
+                                                                    Ok(submitter) => {
+                                                                        match submitter
+                                                                            .submit_sdk_event(&genesis_event)
+                                                                            .await
+                                                                        {
+                                                                            Ok(_) => Ok(genesis_event_id),
+                                                                            Err(error)
+                                                                                if error
+                                                                                    .to_string()
+                                                                                    .contains("mls_genesis_already_exists") =>
+                                                                            {
+                                                                                match submitter
+                                                                                    .find_mls_genesis_event_id(&realm_id)
+                                                                                    .await
+                                                                                {
+                                                                                    Ok(Some(event_id)) => Ok(event_id),
+                                                                                    Ok(None) => Err(anyhow::anyhow!(
+                                                                                        "MLS genesis already exists server-side but its accepted Event id is unavailable"
+                                                                                    )),
+                                                                                    Err(error) => Err(error),
+                                                                                }
+                                                                            }
+                                                                            Err(error) => Err(error),
+                                                                        }
+                                                                    }
                                                                     Err(err) => Err(err),
-                                                                } {
-                                                                    Ok(_) => {
+                                                                };
+                                                                match accepted_genesis_event_id {
+                                                                    Ok(accepted_event_id) => {
                                                                         state_store.write().mark_mls_genesis_emitted_with_event(
                                                                             realm_id.clone(),
-                                                                            &genesis_event.event_id,
+                                                                            &accepted_event_id,
                                                                         );
                                                                     }
                                                                     Err(err) => {
                                                                         let text = err.to_string();
-                                                                        if text.contains("mls_genesis_already_exists") {
-                                                                            state_store.write().mark_mls_genesis_emitted(realm_id.clone());
-                                                                        } else {
-                                                                            tracing::warn!(
-                                                                                error = %text,
-                                                                                realm = %realm_id,
-                                                                                "ak.mls.genesis submit failed; soland will default epoch 0 and the kanban write path will retry",
-                                                                            );
-                                                                        }
+                                                                        tracing::warn!(
+                                                                            error = %text,
+                                                                            realm = %realm_id,
+                                                                            "ak.mls.genesis submit failed; soland will default epoch 0 and the kanban write path will retry",
+                                                                        );
                                                                     }
                                                                 }
                                                             }

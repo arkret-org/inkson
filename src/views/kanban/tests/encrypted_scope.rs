@@ -373,6 +373,23 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
     let genesis = mls_events
         .genesis
         .expect("freshly-created creator group should emit genesis");
+    assert_eq!(patched["body"]["value"]["version"], "1.0");
+    assert_eq!(
+        patched["body"]["value"]["key_ref"]["group_state_ref"],
+        genesis.event_id.as_str()
+    );
+    let accepted_genesis =
+        arkret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-000000000099").unwrap();
+    let mut rebound_patch = patched.clone();
+    assert_eq!(
+        rebind_encrypted_group_state_ref(&mut rebound_patch, &genesis.event_id, &accepted_genesis)
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        rebound_patch["body"]["value"]["key_ref"]["group_state_ref"],
+        accepted_genesis.as_str()
+    );
     assert_eq!(genesis.kind.as_str(), "ak.mls.genesis");
     assert_eq!(genesis.payload["epoch"].as_u64(), Some(0));
     assert_eq!(
@@ -485,6 +502,10 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     let commit = mls_events
         .commit
         .expect("overdue minimal metadata MLS snapshot should emit commit event");
+    assert_eq!(
+        patched["body"]["value"]["key_ref"]["group_state_ref"],
+        commit.event_id.as_str()
+    );
     assert_eq!(commit.kind.as_str(), "ak.mls.commit");
     assert_registered_payload_valid(&commit);
     assert!(commit.payload.get("group_id").is_none());

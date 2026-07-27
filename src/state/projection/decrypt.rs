@@ -39,8 +39,16 @@ pub(crate) fn try_local_mls_decrypt_core_for_effective_scope(
     payload_value: &Value,
     circle_id: Option<&str>,
 ) -> Option<Vec<u8>> {
-    let payload: arkret_sdk::EncryptedPayload =
-        serde_json::from_value(payload_value.clone()).ok()?;
+    // New writes use the canonical EncryptedEnvelope so the ciphertext binds
+    // to an exact accepted MLS group state. Keep raw EncryptedPayload parsing
+    // as a read-only compatibility fallback for locally cached legacy Strand
+    // patches authored before that envelope requirement was enforced.
+    let payload = serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(payload_value.clone())
+        .ok()
+        .and_then(|envelope| arkret_sdk::mls::encrypted_envelope_to_payload(&envelope).ok())
+        .or_else(|| {
+            serde_json::from_value::<arkret_sdk::EncryptedPayload>(payload_value.clone()).ok()
+        })?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     crate::mls::runtime::decrypt_application_payload_for_effective_scope(
         state_store,

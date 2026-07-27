@@ -18,6 +18,50 @@ use crate::state::{LocalStateStore, MoveSubmissionState};
 use crate::transport::auth::with_authed_api;
 use crate::views::helpers::short_protocol_id;
 
+pub(super) fn rebind_encrypted_group_state_ref(
+    value: &mut Value,
+    provisional_ref: &arkret_sdk::EventId,
+    accepted_ref: &arkret_sdk::EventId,
+) -> Result<usize, String> {
+    let mut rebound = 0;
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                rebound += rebind_encrypted_group_state_ref(value, provisional_ref, accepted_ref)?;
+            }
+        }
+        Value::Object(object) => {
+            let is_envelope = object.get("version").and_then(Value::as_str) == Some("1.0")
+                && object.get("scheme").and_then(Value::as_str).is_some()
+                && object
+                    .get("key_ref")
+                    .and_then(|key_ref| key_ref.get("group_state_ref"))
+                    .and_then(Value::as_str)
+                    == Some(provisional_ref.as_str());
+            if is_envelope {
+                let key_ref = object
+                    .get_mut("key_ref")
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(|| "encrypted envelope key_ref is invalid".to_owned())?;
+                key_ref.insert(
+                    "group_state_ref".to_owned(),
+                    Value::String(accepted_ref.to_string()),
+                );
+                serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(value.clone())
+                    .map_err(|error| format!("rebound encrypted envelope is invalid: {error}"))?
+                    .validate()
+                    .map_err(|error| format!("rebound encrypted envelope is invalid: {error}"))?;
+                return Ok(1);
+            }
+            for value in object.values_mut() {
+                rebound += rebind_encrypted_group_state_ref(value, provisional_ref, accepted_ref)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(rebound)
+}
+
 /// The MLS events an encrypted write must submit, in submit order: the
 /// one-time `ak.mls.genesis` (if not yet emitted) MUST precede any forced
 /// `ak.mls.commit` so the server has the group at epoch 0 before the commit
@@ -163,10 +207,13 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
             fresh_summary.as_ref(),
         )?
     };
+    let aad_realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
+        .map_err(|error| format!("invalid Realm id for encrypted AAD: {error:?}"))?;
+    let envelope_aad = arkret_sdk::EncryptedEnvelopeAad::hidden(aad_realm_id, "ak.strand.update");
     let (
         schedule_hash,
         _member_dids,
-        encrypted_values,
+        mut encrypted_values,
         commit_envelope,
         new_snapshot,
         pending_history_secrets,
@@ -178,6 +225,7 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
         device_id,
         KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         &plaintext_values,
+        envelope_aad,
         circle_id,
         sidecar.and_then(|context| context.binding.as_ref()),
     )
@@ -205,6 +253,50 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
         }),
         None => None,
     };
+    let first_payload = encrypted_values
+        .first()
+        .cloned()
+        .ok_or_else(|| "MLS encryption returned no encrypted patch values".to_owned())
+        .and_then(|value| {
+            serde_json::from_value::<arkret_sdk::EncryptedPayload>(value)
+                .map_err(|error| format!("invalid encrypted patch payload: {error}"))
+        })?;
+    let group_state_ref = if let Some(commit_event) = commit_event.as_ref() {
+        commit_event.event_id.to_string()
+    } else if first_payload.epoch == 0
+        && let Some(genesis_event) = genesis_event.as_ref()
+    {
+        genesis_event.event_id.to_string()
+    } else {
+        crate::mls::group_events::mls_base_epoch_ref_for_scope(
+            state_store,
+            realm_id,
+            circle_id,
+            first_payload.group_id.as_str(),
+            first_payload.epoch,
+        )?
+    };
+    for encrypted_value in &mut encrypted_values {
+        let payload =
+            serde_json::from_value::<arkret_sdk::EncryptedPayload>(encrypted_value.clone())
+                .map_err(|error| format!("invalid encrypted patch payload: {error}"))?;
+        if payload.group_id != first_payload.group_id || payload.epoch != first_payload.epoch {
+            return Err("encrypted patch values do not share one MLS group and epoch".to_owned());
+        }
+        let aad = payload
+            .aad
+            .clone()
+            .ok_or_else(|| "encrypted patch payload is missing canonical AAD".to_owned())?;
+        let envelope = arkret_sdk::mls::encrypted_envelope_from_payload(
+            &payload,
+            aad,
+            arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
+            &group_state_ref,
+        )
+        .map_err(|error| format!("build encrypted Strand patch envelope: {error}"))?;
+        *encrypted_value = serde_json::to_value(envelope)
+            .map_err(|error| format!("serialize encrypted Strand patch envelope: {error}"))?;
+    }
     // X5.1 — encryption succeeded. Persist the author's own plaintext into
     // the local-only sidecar so a later re-projection (refresh / board
     // switch / live poll) can render the author's own content, which can
@@ -417,7 +509,7 @@ pub(super) fn dispatch_card_detail_update(
     let actor_for_backup_trigger = actor_id.clone();
     let device_for_sidecar_backup = device_id.clone();
     let circle_id = sidecar_track_write.map(|context| context.circle_id);
-    let submit_event = op;
+    let mut submit_event = op;
     spawn(async move {
         if let Some(pending) = pending_history_secrets {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -435,43 +527,88 @@ pub(super) fn dispatch_card_detail_update(
         }
         // Genesis MUST land before the first commit so the server has the
         // group at epoch 0 before the commit bumps it to 1. A duplicate
-        // genesis (`mls_genesis_already_exists`) is treated as success.
+        // genesis is success only after resolving the exact already-accepted
+        // Event id; merely setting the emitted flag strands secure messages
+        // without their mandatory group_state_ref.
         if let Some(genesis_op) = mls_genesis_op {
             let genesis_event_id = genesis_op.event_id.clone();
+            let provisional_genesis_event_id = genesis_event_id.clone();
+            let realm_for_genesis_lookup = realm_id.clone();
             let genesis_result = with_authed_api(&base_url, api_token.clone(), |api| async move {
-                api.event_submitter()?.submit_sdk_event(&genesis_op).await
+                let submitter = api.event_submitter()?;
+                match submitter.submit_sdk_event(&genesis_op).await {
+                    Ok(_) => Ok(genesis_event_id),
+                    Err(error)
+                        if error
+                            .to_string()
+                            .contains("mls_genesis_already_exists") =>
+                    {
+                        submitter
+                            .find_mls_genesis_event_id(&realm_for_genesis_lookup)
+                            .await?
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "MLS genesis already exists server-side but its accepted Event id is unavailable"
+                                )
+                            })
+                    }
+                    Err(error) => Err(error),
+                }
             })
             .await;
             match genesis_result {
-                Ok(_) => {
-                    state_store
-                        .write()
-                        .mark_mls_genesis_emitted_with_event(realm_id.clone(), &genesis_event_id);
+                Ok(accepted_genesis_event_id) => {
+                    state_store.write().mark_mls_genesis_emitted_with_event(
+                        realm_id.clone(),
+                        &accepted_genesis_event_id,
+                    );
+                    if accepted_genesis_event_id != provisional_genesis_event_id {
+                        let rebound =
+                            submit_event
+                                .payload
+                                .values_mut()
+                                .try_fold(0, |count, value| {
+                                    rebind_encrypted_group_state_ref(
+                                        value,
+                                        &provisional_genesis_event_id,
+                                        &accepted_genesis_event_id,
+                                    )
+                                    .map(|rebound| count + rebound)
+                                });
+                        match rebound {
+                            Ok(rebound) if rebound > 0 => {}
+                            Ok(_) => {
+                                board_status.set(
+                                    "MLS genesis reference recovery found no encrypted Strand envelope"
+                                        .to_owned(),
+                                );
+                                return;
+                            }
+                            Err(error) => {
+                                board_status
+                                    .set(format!("MLS genesis reference recovery failed: {error}"));
+                                return;
+                            }
+                        }
+                    }
                 }
                 Err(err) => {
                     let err_text = err.display().to_string();
-                    if err_text.contains("mls_genesis_already_exists") {
-                        // Already installed server-side — record locally and proceed.
-                        state_store
-                            .write()
-                            .mark_mls_genesis_emitted(realm_id.clone());
-                    } else {
-                        state_store.write().update_raw_operation_write_state(
-                            &operation_id,
-                            "failed",
-                            None,
-                            Some(err_text.clone()),
-                        );
-                        let selected = selected_card.read().clone();
-                        if let Some(mut card) = selected
-                            && card.id == strand_id
-                        {
-                            card.state = CardState::SoftFailed;
-                            selected_card.set(Some(card));
-                        }
-                        board_status.set(format!("MLS genesis event failed: {err_text}"));
-                        return;
+                    state_store.write().update_raw_operation_write_state(
+                        &operation_id,
+                        "failed",
+                        None,
+                        Some(err_text.clone()),
+                    );
+                    let selected = selected_card.read().clone();
+                    if let Some(mut card) = selected
+                        && card.id == strand_id
+                    {
+                        card.state = CardState::SoftFailed;
+                        selected_card.set(Some(card));
                     }
+                    board_status.set(format!("MLS genesis event failed: {err_text}"));
+                    return;
                 }
             }
         }

@@ -1573,6 +1573,10 @@ pub(crate) fn encrypt_values_with_device_snapshot(
     ),
     MlsRuntimeError,
 > {
+    let aad_realm_id = arkret_sdk::RealmId::new(realm_id.to_owned()).map_err(|error| {
+        MlsRuntimeError::Serialize(format!("invalid Realm id for encrypted AAD: {error:?}"))
+    })?;
+    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(aad_realm_id, "ak.strand.update");
     encrypt_values_with_device_snapshot_for_effective_scope(
         state_store,
         secure_store,
@@ -1581,6 +1585,7 @@ pub(crate) fn encrypt_values_with_device_snapshot(
         device_id,
         content_type,
         plaintext_values,
+        aad,
         None,
         None,
     )
@@ -1595,6 +1600,7 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     device_id: &str,
     content_type: &str,
     plaintext_values: &[Vec<u8>],
+    aad: arkret_sdk::EncryptedEnvelopeAad,
     circle_id: Option<&str>,
     sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
 ) -> Result<
@@ -1660,9 +1666,15 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
         .map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
     for plaintext in plaintext_values {
         let encrypted = if let Some(aad_bytes) = exporter_aad.as_deref() {
-            group.encrypt_payload_exporter_aead(content_type, realm_id, aad_bytes, None, plaintext)
+            group.encrypt_payload_exporter_aead(
+                content_type,
+                realm_id,
+                aad_bytes,
+                Some(aad.clone()),
+                plaintext,
+            )
         } else {
-            group.encrypt_payload(content_type, plaintext)
+            group.encrypt_payload_with_aad(content_type, Some(aad.clone()), plaintext)
         }
         .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))?;
         encrypted_values.push(
