@@ -116,7 +116,7 @@ fn build_pair_payload(
     requesting_device_id: &str,
     public_key_material: &str,
     pairing_code: &str,
-    challenge_signature: &str,
+    challenge_proof: &arkret_sdk::DevicePairingChallengeProof,
     device_pairing_request_id: &str,
 ) -> String {
     let mut payload = json!({
@@ -134,7 +134,7 @@ fn build_pair_payload(
             // approval paths fail with "unknown field `public_key`".
             "key": public_key_material,
         },
-        "challenge_signature": challenge_signature,
+        "challenge_proof": challenge_proof,
         "display_name": "New device",
         "device_metadata": {
             "platform": "browser",
@@ -173,9 +173,16 @@ fn build_device_pairing_handoff_token(
 /// The short HTTPS deep-link the new device renders as its QR. The fragment
 /// carries only the handoff token — never in the query string — so it stays out
 /// of server/proxy logs. Mirrors `build_agent_pairing_deep_link`.
-fn build_device_pairing_deep_link(base_url: &str, token: &str) -> String {
+fn build_device_pairing_deep_link(
+    base_url: &str,
+    token: &str,
+    challenge_proof: &arkret_sdk::DevicePairingChallengeProof,
+) -> String {
     let base = base_url.trim_end_matches('/');
-    format!("{base}/_arkret/open/device-pairing/resolve#token={token}")
+    let proof = arkret_sdk::canonical::canonical_json_bytes(challenge_proof)
+        .map(arkret_sdk::base64url_encode)
+        .expect("a typed device-pairing proof always canonicalizes");
+    format!("{base}/_arkret/open/device-pairing/resolve#token={token}&proof={proof}")
 }
 
 /// Parse a scanned/pasted pairing deep-link (or a bare token) into the compact
@@ -198,6 +205,14 @@ fn extract_device_pairing_token(input: &str) -> Option<String> {
     None
 }
 
+fn extract_device_pairing_proof(input: &str) -> Option<arkret_sdk::DevicePairingChallengeProof> {
+    let trimmed = input.trim();
+    let (_, encoded) = trimmed.split_once("&proof=")?;
+    let encoded = encoded.split(['&', ' ']).next()?.trim();
+    let bytes = arkret_sdk::base64url_decode(encoded).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
 fn build_pairing_verification_content(
     request_payload: &Value,
     requesting_device_id: &str,
@@ -215,7 +230,7 @@ fn build_pairing_verification_content(
         "purpose": "same_principal_device_authorization",
         "pairing_code": request_payload.get("pairing_code").cloned().unwrap_or(Value::Null),
         "new_device_pubkey": request_payload.get("new_device_pubkey").cloned().unwrap_or(Value::Null),
-        "challenge_signature": request_payload.get("challenge_signature").cloned().unwrap_or(Value::Null),
+        "challenge_proof": request_payload.get("challenge_proof").cloned().unwrap_or(Value::Null),
         "gate_audience": gate_audience,
         "request_canonical_digest": arkret_sdk::canonical::sha256_digest(&canonical),
         "device_metadata": request_payload
@@ -1135,7 +1150,7 @@ fn render_pair_strand(
                             );
                             return;
                         };
-                        let challenge_signature = uuid_v7().replace('-', "");
+                        let client_nonce = uuid_v7().replace('-', "");
                         pair_action_busy.set(true);
                         pair_status.set("Staging pairing request…".to_owned());
                         let base = base_url();
@@ -1154,7 +1169,7 @@ fn render_pair_strand(
                                         "alg": "EdDSA",
                                         "key": public_key_material.clone(),
                                     },
-                                    "challenge_signature": challenge_signature.clone(),
+                                    "client_nonce": client_nonce.clone(),
                                     "display_name": "New device",
                                     "device_metadata": { "platform": "browser" },
                                 })) {
@@ -1167,6 +1182,8 @@ fn render_pair_strand(
                                         return;
                                     }
                                 };
+                            let challenge_public_key = stage_body.new_device_pubkey.clone();
+                            let challenge_client_nonce = stage_body.client_nonce.clone();
                             let stage_outcome = crate::transport::auth::with_endpoint_clients(
                                 &base,
                                 api_token.clone(),
@@ -1190,11 +1207,65 @@ fn render_pair_strand(
                             let request_id =
                                 stage_outcome.device_pairing_request_id.to_string();
                             let server_code = stage_outcome.pairing_code.to_string();
+                            let challenge =
+                                arkret_sdk::signatures::device_pairing::ServerDevicePairingChallenge::from_stage(
+                                    challenge_client_nonce,
+                                    &stage_outcome,
+                                );
+                            let (challenge_bytes, transcript_digest) =
+                                match arkret_sdk::signatures::device_pairing::server_device_pairing_transcript(
+                                    &challenge_public_key,
+                                    &challenge,
+                                ) {
+                                    Ok(value) => value,
+                                    Err(err) => {
+                                        pair_status.set(format!(
+                                            "Building pairing challenge failed: {err}"
+                                        ));
+                                        pair_action_busy.set(false);
+                                        return;
+                                    }
+                                };
+                            let signature = match signer.sign_raw(&challenge_bytes) {
+                                Ok(signature) => signature,
+                                Err(err) => {
+                                    pair_status.set(format!(
+                                        "Signing pairing challenge failed: {err}"
+                                    ));
+                                    pair_action_busy.set(false);
+                                    return;
+                                }
+                            };
+                            let challenge_proof = match (
+                                arkret_sdk::DeviceId::new(requesting_device_id.clone()),
+                                arkret_sdk::NonEmptyString::new(signer.algorithm().to_owned()),
+                                arkret_sdk::Base64UrlString::new(
+                                    arkret_sdk::base64url_encode(signature),
+                                ),
+                            ) {
+                                (Ok(verification_method), Ok(alg), Ok(signature)) => {
+                                    arkret_sdk::DevicePairingChallengeProof {
+                                        transcript: arkret_sdk::DevicePairingChallengeTranscriptKind::ServerMediated,
+                                        verification_method,
+                                        alg,
+                                        transcript_digest,
+                                        signature,
+                                    }
+                                }
+                                _ => {
+                                    pair_status.set(
+                                        "Building the canonical pairing proof failed.".to_owned(),
+                                    );
+                                    pair_action_busy.set(false);
+                                    return;
+                                }
+                            };
 
                             // 2) Short deep-link QR + code for out-of-band scan.
                             let handoff =
                                 build_device_pairing_handoff_token(&request_id, &server_code);
-                            let deep_link = build_device_pairing_deep_link(&base, &handoff);
+                            let deep_link =
+                                build_device_pairing_deep_link(&base, &handoff, &challenge_proof);
                             pair_payload.set(deep_link);
                             pair_request_id.set(request_id.clone());
                             pair_code.set(server_code.clone());
@@ -1213,7 +1284,7 @@ fn render_pair_strand(
                                 &requesting_device_id,
                                 &public_key_material,
                                 &server_code,
-                                &challenge_signature,
+                                &challenge_proof,
                                 &request_id,
                             );
                             let request_body: Value = match serde_json::from_str(&payload) {
@@ -1444,6 +1515,15 @@ fn render_pair_strand(
                             );
                             return;
                         };
+                        let Some(challenge_proof) =
+                            extract_device_pairing_proof(&accept_input())
+                        else {
+                            accept_status.set(
+                                "The pairing link is missing its signed challenge proof."
+                                    .to_owned(),
+                            );
+                            return;
+                        };
                         let base = base_url();
                         let api_token = token();
                         accept_action_busy.set(true);
@@ -1471,7 +1551,7 @@ fn render_pair_strand(
                                     let mut request_payload = json!({
                                         "pairing_code": bootstrap.pairing_code,
                                         "new_device_pubkey": bootstrap.new_device_pubkey,
-                                        "challenge_signature": bootstrap.challenge_signature,
+                                        "challenge_proof": challenge_proof,
                                         "device_pairing_request_id": bootstrap.device_pairing_request_id,
                                     });
                                     if let Some(object) = request_payload.as_object_mut() {
@@ -1584,6 +1664,17 @@ mod tests {
 
     use super::*;
 
+    fn challenge_proof() -> arkret_sdk::DevicePairingChallengeProof {
+        serde_json::from_value(json!({
+            "transcript": "ak.device-pairing.challenge.v1",
+            "verification_method": "ak:device:01964137-0000-7000-8000-0000000000c1",
+            "alg": "EdDSA",
+            "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
+        }))
+        .unwrap()
+    }
+
     #[test]
     fn parses_device_list_response() {
         let payload = json!({
@@ -1646,7 +1737,7 @@ mod tests {
             "device-1",
             "abc-123",
             "7H2K9M4Q",
-            "challenge-signature",
+            &challenge_proof(),
             "device_pairing_request:01964137-0000-7000-8000-0000000000c1",
         );
         let parsed: Value = serde_json::from_str(&raw).unwrap();
@@ -1659,7 +1750,10 @@ mod tests {
         // the "unknown field `public_key`" pairing failure).
         assert_eq!(parsed["new_device_pubkey"]["key"], "abc-123");
         assert!(parsed["new_device_pubkey"].get("public_key").is_none());
-        assert_eq!(parsed["challenge_signature"], "challenge-signature");
+        assert_eq!(
+            parsed["challenge_proof"]["transcript"],
+            "ak.device-pairing.challenge.v1"
+        );
         // The staged short-link request id threads through so the to-device
         // approval path can flip the staged row to `authorized`.
         assert_eq!(
@@ -1676,7 +1770,7 @@ mod tests {
             "device-1",
             "abc-123",
             "7H2K9M4Q",
-            "sig",
+            &challenge_proof(),
             "",
         );
         let parsed: Value = serde_json::from_str(&raw).unwrap();
@@ -1685,12 +1779,13 @@ mod tests {
 
     #[test]
     fn extract_device_pairing_token_handles_link_and_bare() {
+        let proof = challenge_proof();
+        let link = build_device_pairing_deep_link("https://host.example", "abc123", &proof);
         assert_eq!(
-            extract_device_pairing_token(
-                "https://host.example/_arkret/open/device-pairing/resolve#token=abc123"
-            ),
+            extract_device_pairing_token(&link),
             Some("abc123".to_owned())
         );
+        assert_eq!(extract_device_pairing_proof(&link), Some(proof));
         assert_eq!(
             extract_device_pairing_token("  bare-token-xyz  "),
             Some("bare-token-xyz".to_owned())
@@ -1707,7 +1802,13 @@ mod tests {
                 "alg": "EdDSA",
                 "public_key": "abc-123"
             },
-            "challenge_signature": "challenge-signature",
+            "challenge_proof": {
+                "transcript": "ak.device-pairing.challenge.v1",
+                "verification_method": "ak:device:01964137-0000-7000-8000-0000000000c1",
+                "alg": "EdDSA",
+                "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
+            },
             "device_metadata": {
                 "platform": "browser"
             }
@@ -1721,7 +1822,10 @@ mod tests {
         assert_eq!(content["purpose"], "same_principal_device_authorization");
         assert_eq!(content["from_device"], "ak:device:new");
         assert_eq!(content["pairing_code"], "7H2K9M4Q");
-        assert_eq!(content["challenge_signature"], "challenge-signature");
+        assert_eq!(
+            content["challenge_proof"]["transcript"],
+            "ak.device-pairing.challenge.v1"
+        );
         assert_eq!(
             content["new_device_pubkey"]["public_key"],
             request_payload["new_device_pubkey"]["public_key"]

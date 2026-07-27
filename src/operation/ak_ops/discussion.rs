@@ -121,13 +121,15 @@ pub fn confidential_discussion_relation_create(
     // additionalProperties:false and the private-side scope is already
     // carried by the Circle-scoped Strand itself.
     let _ = circle_id;
+    let relation_id = format!("ak:relation:{}", crate::operation::uuid_v7());
     Ok(OperationBuilder::new(
         realm_id,
         actor,
         arkret_sdk::events::kinds::EventKind::RelationCreate,
     )
-    .target_ref(private_strand_id)
+    .target_ref(&relation_id)
     .body(relation_create_payload_value(
+        &relation_id,
         "confidential_discussion_of",
         private_strand_id,
         public_seal_ref,

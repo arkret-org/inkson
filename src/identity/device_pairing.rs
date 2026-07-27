@@ -46,7 +46,7 @@ pub struct PendingPairingRequest {
 /// Filters to `ak.key.verification.request` messages carrying
 /// `purpose == "same_principal_device_authorization"` and the full pairing
 /// material (`from_device`, `pairing_code`, `new_device_pubkey`,
-/// `challenge_signature`). Incomplete requests are skipped.
+/// `challenge_proof`). Incomplete requests are skipped.
 pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequest> {
     inbox
         .iter()
@@ -63,7 +63,7 @@ pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequ
             let requesting_device_id = content.get("from_device").and_then(Value::as_str)?;
             let pairing_code = content.get("pairing_code").and_then(Value::as_str)?;
             let new_device_pubkey = content.get("new_device_pubkey")?.clone();
-            let challenge_signature = content.get("challenge_signature").and_then(Value::as_str)?;
+            let challenge_proof = content.get("challenge_proof")?.clone();
             let device_metadata = content
                 .get("device_metadata")
                 .cloned()
@@ -100,7 +100,7 @@ pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequ
             let mut request_payload = json!({
                 "pairing_code": pairing_code,
                 "new_device_pubkey": new_device_pubkey,
-                "challenge_signature": challenge_signature,
+                "challenge_proof": challenge_proof,
                 "device_metadata": device_metadata,
             });
             if !display_name.is_empty()
@@ -112,6 +112,14 @@ pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequ
                 && let Some(object) = request_payload.as_object_mut()
             {
                 object.insert("device_pairing_request_id".to_owned(), json!(request_id));
+            }
+            if let Some(challenge_transcript) = content.get("challenge_transcript")
+                && let Some(object) = request_payload.as_object_mut()
+            {
+                object.insert(
+                    "challenge_transcript".to_owned(),
+                    challenge_transcript.clone(),
+                );
             }
             Some(PendingPairingRequest {
                 request_key,
@@ -147,15 +155,11 @@ pub fn pairing_request_body(
         Some(value @ Value::Object(_)) => serde_json::from_value(value.clone())?,
         _ => anyhow::bail!("pairing payload is missing new_device_pubkey"),
     };
-    let challenge_signature = arkret_sdk::Base64UrlString::new(
-        payload
-            .get("challenge_signature")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("pairing payload is missing challenge_signature"))?,
-    )
-    .map_err(anyhow::Error::msg)?;
+    let challenge_proof = payload
+        .get("challenge_proof")
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("pairing payload is missing challenge_proof"))
+        .and_then(|value| serde_json::from_value(value).map_err(anyhow::Error::from))?;
     let display_name = payload
         .get("display_name")
         .and_then(Value::as_str)
@@ -177,13 +181,19 @@ pub fn pairing_request_body(
         .map(arkret_sdk::DevicePairingRequestId::new)
         .transpose()
         .map_err(anyhow::Error::msg)?;
+    let challenge_transcript = payload
+        .get("challenge_transcript")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()?;
     Ok(arkret_sdk::AccountDevicePairRequestBody {
         pairing_code,
         new_device_pubkey,
-        challenge_signature,
+        challenge_proof,
         display_name,
         device_metadata,
         device_pairing_request_id,
+        challenge_transcript,
     })
 }
 
@@ -208,7 +218,14 @@ mod tests {
                     "alg": "EdDSA",
                     "key": "abc-123"
                 },
-                "challenge_signature": "challenge-signature",
+                "challenge_proof": {
+                    "transcript": "ak.device-pairing.challenge.v1",
+                    "verification_method": "ak:device:01904100-0000-7000-8000-000000000001",
+                    "alg": "EdDSA",
+                    "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
+                },
+                "device_pairing_request_id": "device_pairing_request:01904100-0000-7000-8000-000000000001",
                 "device_metadata": {
                     "display_name": "New browser",
                     "platform": "browser"
@@ -249,7 +266,7 @@ mod tests {
         missing_challenge["content"]
             .as_object_mut()
             .unwrap()
-            .remove("challenge_signature");
+            .remove("challenge_proof");
         assert!(parse_pending_pairing_requests(&[missing_challenge]).is_empty());
     }
 
@@ -274,7 +291,10 @@ mod tests {
             .unwrap();
         let body = pairing_request_body(&row.request_payload).expect("body");
         assert_eq!(body.pairing_code.as_str(), "7H2K9M4Q");
-        assert_eq!(body.challenge_signature.as_str(), "challenge-signature");
+        assert_eq!(
+            body.challenge_proof.transcript.as_str(),
+            "ak.device-pairing.challenge.v1"
+        );
         assert_eq!(body.display_name.as_deref(), Some("New browser"));
         assert_eq!(body.new_device_pubkey.kty.as_str(), "OKP");
         assert_eq!(body.new_device_pubkey.key.as_str(), "abc-123");
@@ -288,7 +308,14 @@ mod tests {
     fn body_accepts_canonical_pubkey_with_kty() {
         let payload = json!({
             "pairing_code": "7H2K9M4Q",
-            "challenge_signature": "challenge-signature",
+            "challenge_proof": {
+                "transcript": "ak.device-pairing.challenge.v1",
+                "verification_method": "ak:device:01904100-0000-7000-8000-000000000001",
+                "alg": "EdDSA",
+                "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
+            },
+            "device_pairing_request_id": "device_pairing_request:01904100-0000-7000-8000-000000000001",
             "new_device_pubkey": {
                 "kty": "OKP",
                 "kid": "ak:device:01904100-0000-7000-8000-000000000001",
@@ -305,7 +332,14 @@ mod tests {
     fn body_rejects_noncanonical_public_key_field() {
         let payload = json!({
             "pairing_code": "7H2K9M4Q",
-            "challenge_signature": "challenge-signature",
+            "challenge_proof": {
+                "transcript": "ak.device-pairing.challenge.v1",
+                "verification_method": "ak:device:01904100-0000-7000-8000-000000000001",
+                "alg": "EdDSA",
+                "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
+            },
+            "device_pairing_request_id": "device_pairing_request:01904100-0000-7000-8000-000000000001",
             "new_device_pubkey": {
                 "kty": "OKP",
                 "kid": "ak:device:01904100-0000-7000-8000-000000000001",
@@ -320,7 +354,14 @@ mod tests {
     fn body_fails_closed_on_missing_pubkey() {
         let payload = json!({
             "pairing_code": "7H2K9M4Q",
-            "challenge_signature": "challenge-signature"
+            "challenge_proof": {
+                "transcript": "ak.device-pairing.challenge.v1",
+                "verification_method": "ak:device:01904100-0000-7000-8000-000000000001",
+                "alg": "EdDSA",
+                "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
+            },
+            "device_pairing_request_id": "device_pairing_request:01904100-0000-7000-8000-000000000001"
         });
         assert!(pairing_request_body(&payload).is_err());
     }

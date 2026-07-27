@@ -279,22 +279,25 @@ pub(super) fn object_lifecycle_payload_value(target_ref: &str) -> anyhow::Result
 }
 
 /// Build the canonical `relation_create_payload` body (flat
-/// `{kind, from_ref, to_ref}` form) via the SDK strong type. The
-/// schema is `additionalProperties:false`, so unsupported
-/// `relation_id` / `scope_circle_id` / `fields` keys are dropped:
-/// the relation id is routed via the operation `target_ref`, and the
-/// extra annotation fields were never spec-legal (they tripped
-/// `schema_violation`).
+/// `{relation_id, kind, from_ref, to_ref}` form) via the SDK strong type.
 pub(super) fn relation_create_payload_value(
+    relation_id: &str,
     kind: &str,
     from_ref: &str,
     to_ref: &str,
 ) -> anyhow::Result<Value> {
-    arkret_sdk::RelationCreatePayload::new(kind, from_ref.to_owned(), to_ref.to_owned())
-        .to_value()
-        .map_err(|err| {
-            anyhow::anyhow!("invalid relation_create_payload ({kind} {from_ref}->{to_ref}): {err}")
-        })
+    arkret_sdk::RelationCreatePayload::new(
+        relation_id,
+        kind,
+        from_ref.to_owned(),
+        to_ref.to_owned(),
+    )
+    .to_value()
+    .map_err(|err| {
+        anyhow::anyhow!(
+            "invalid relation_create_payload ({relation_id} {kind} {from_ref}->{to_ref}): {err}"
+        )
+    })
 }
 
 pub(super) fn patch_from_value(patch: Value) -> anyhow::Result<arkret_sdk::Patch> {

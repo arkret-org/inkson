@@ -27,7 +27,9 @@ async function dismissBlockingDialog(page: import("@playwright/test").Page) {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     const dialog = page.getByRole("dialog").last();
-    await dialog.waitFor({ state: "visible", timeout: 500 }).catch(() => undefined);
+    await dialog
+      .waitFor({ state: "visible", timeout: 500 })
+      .catch(() => undefined);
     if (!(await dialog.isVisible().catch(() => false))) {
       return;
     }
@@ -73,7 +75,9 @@ test.describe("feature coverage placeholders", () => {
       );
     });
     await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120_000 });
-    await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+    await expect(latestTestId(page, "client-shell")).toBeVisible({
+      timeout: 120_000,
+    });
     const connectButton = latestTestId(page, "connect-button");
     if (await connectButton.count()) {
       await connectButton.click();
@@ -83,7 +87,9 @@ test.describe("feature coverage placeholders", () => {
   // ---- Board / Strand / ak.strand.move drag conflict ----
   // UI surface: board
   // spec: overview/current-model.md §4, models/views.md §6
-  test("board: drag strand across lists writes ak.strand.move", async ({ page }) => {
+  test("board: drag strand across lists writes ak.strand.move", async ({
+    page,
+  }) => {
     // The drag-drop pipeline is exercised end-to-end by
     // inkson.strands.spec.ts::"kanban card drag queues a strand move".
     // This placeholder pins the structural contract the drop relies
@@ -92,19 +98,32 @@ test.describe("feature coverage placeholders", () => {
     // ak.strand.reorder write records through them. The HLC tiebreak
     // assertion called out in the spec is exercised in the SDK's
     // reducer unit tests (`strand_position_cas_*`), not at the UI layer.
-    await page.goto("/kanban", { waitUntil: "domcontentloaded", timeout: 120_000 });
-    await expect(page.getByTestId("kanban-panel")).toBeVisible({ timeout: 60_000 });
+    await page.goto("/kanban", {
+      waitUntil: "domcontentloaded",
+      timeout: 120_000,
+    });
+    await expect(page.getByTestId("kanban-panel")).toBeVisible({
+      timeout: 60_000,
+    });
     await expect(page.getByTestId("board-offline-queue")).toBeVisible();
     // At least one card MUST render so the drop target exists; the
     // fully-mocked server returns persisted board projections.
-    await page.getByTestId("kanban-card").first().waitFor({ state: "visible", timeout: 30_000 });
+    await page
+      .getByTestId("kanban-card")
+      .first()
+      .waitFor({ state: "visible", timeout: 30_000 });
   });
 
   test("board: omits dormant View renderer controls", async ({ page }) => {
     // The kanban surface should not expose disabled View renderer
     // placeholders until those renderers are wired to real behavior.
-    await page.goto("/kanban", { waitUntil: "domcontentloaded", timeout: 120_000 });
-    await expect(page.getByTestId("kanban-panel")).toBeVisible({ timeout: 60_000 });
+    await page.goto("/kanban", {
+      waitUntil: "domcontentloaded",
+      timeout: 120_000,
+    });
+    await expect(page.getByTestId("kanban-panel")).toBeVisible({
+      timeout: 60_000,
+    });
     await expect(page.getByTestId("view-renderer-switcher")).toHaveCount(0);
     await expect(page.getByTestId("renderer-board")).toHaveCount(0);
   });
@@ -112,9 +131,16 @@ test.describe("feature coverage placeholders", () => {
   // ---- Strand detail · embedded discussion ----
   // UI surface: strand detail
   // spec: overview/current-model.md §3
-  test("card detail drawer embeds the discussion composer", async ({ page }) => {
-    await page.goto("/kanban", { waitUntil: "domcontentloaded", timeout: 120_000 });
-    await expect(page.getByTestId("kanban-panel")).toBeVisible({ timeout: 60_000 });
+  test("card detail drawer embeds the discussion composer", async ({
+    page,
+  }) => {
+    await page.goto("/kanban", {
+      waitUntil: "domcontentloaded",
+      timeout: 120_000,
+    });
+    await expect(page.getByTestId("kanban-panel")).toBeVisible({
+      timeout: 60_000,
+    });
     await page.getByTestId("kanban-card").first().click();
     const drawer = page.getByTestId("card-detail-modal");
     await expect(drawer).toBeVisible({ timeout: 30_000 });
@@ -124,14 +150,20 @@ test.describe("feature coverage placeholders", () => {
     await expect(drawer.getByTestId("card-strand-tracks")).toHaveCount(0);
     await expect(drawer.getByTestId("open-primary-discussion")).toHaveCount(0);
     await drawer.getByTestId("card-detail-edit-button").click();
-    await expect(drawer.getByTestId("card-detail-description-rich-editor")).toBeVisible();
-    await expect(drawer.getByTestId("card-detail-description-input")).toBeAttached();
+    await expect(
+      drawer.getByTestId("card-detail-description-rich-editor"),
+    ).toBeVisible();
+    await expect(
+      drawer.getByTestId("card-detail-description-input"),
+    ).toBeAttached();
   });
 
   // ---- Identity / Device — three independent concerns ----
   // UI surface: devices and verify-device
   // spec: crypto-media/devices-and-auth.md §1.2
-  test("device verification: SAS match writes ak.device.authorize + ak.device.cross_sign", async ({ page }) => {
+  test("device verification: SAS match writes ak.device.authorize + ak.device.cross_sign", async ({
+    page,
+  }) => {
     // pin the SAS verification UI surface. The
     // full SAS exchange + cross_sign + ak.device.authorize event emit
     // happen inside the SDK + soland's identity store; this test
@@ -139,12 +171,21 @@ test.describe("feature coverage placeholders", () => {
     // (sas-verify-strand, sas-emoji-row, sas-digits, sas-match-button)
     // continue to render so the full strand can plug in without a UI
     // rewrite.
-    await page.goto("/verify-device", { waitUntil: "domcontentloaded", timeout: 120_000 });
+    await page.goto("/verify-device", {
+      waitUntil: "domcontentloaded",
+      timeout: 120_000,
+    });
     await page.getByTestId("sas-verify-button").click();
-    await expect(page.getByTestId("sas-verify-strand")).toBeVisible({ timeout: 30_000 });
-    await page.getByTestId("sas-target-device").fill("ak:device:01904100-0000-7000-8000-d0d0d0d0d0d0");
+    await expect(page.getByTestId("sas-verify-strand")).toBeVisible({
+      timeout: 30_000,
+    });
+    await page
+      .getByTestId("sas-target-device")
+      .fill("ak:device:01904100-0000-7000-8000-d0d0d0d0d0d0");
     await page.getByTestId("start-sas-button").click();
-    await expect(page.getByTestId("sas-display")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("sas-display")).toBeVisible({
+      timeout: 30_000,
+    });
     await expect(page.getByTestId("sas-emoji-row")).toBeVisible();
     await expect(page.getByTestId("sas-digits")).toBeVisible();
     await expect(page.getByTestId("sas-match-button")).toBeVisible();
@@ -159,19 +200,26 @@ test.describe("feature coverage placeholders", () => {
   test("device pairing: short-link request is staged, resolved, and accepted through account gate", async ({
     page,
   }) => {
-    await page.goto("/settings/devices/pair", { waitUntil: "domcontentloaded", timeout: 120_000 });
+    await page.goto("/settings/devices/pair", {
+      waitUntil: "domcontentloaded",
+      timeout: 120_000,
+    });
     await dismissBlockingDialog(page);
-    await expect(page.getByTestId("pair-device-card")).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId("pending-pairing-requests-card")).toBeVisible({ timeout: 30_000 });
-    const deviceAccessNav = page.getByRole("navigation", { name: "Device settings" });
-    await expect(deviceAccessNav.getByRole("link", { name: "Add a device" })).toHaveAttribute(
-      "aria-current",
-      "page",
+    await expect(page.getByTestId("pair-device-card")).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByTestId("pending-pairing-requests-card")).toBeVisible(
+      { timeout: 30_000 },
     );
-    await expect(deviceAccessNav.getByRole("link", { name: "Devices" })).toHaveAttribute(
-      "aria-current",
-      "false",
-    );
+    const deviceAccessNav = page.getByRole("navigation", {
+      name: "Device settings",
+    });
+    await expect(
+      deviceAccessNav.getByRole("link", { name: "Add a device" }),
+    ).toHaveAttribute("aria-current", "page");
+    await expect(
+      deviceAccessNav.getByRole("link", { name: "Devices" }),
+    ).toHaveAttribute("aria-current", "false");
 
     // New device: staging yields a SHORT resolve deep-link (not the old
     // full-payload blob) in the pairing-link field.
@@ -182,7 +230,9 @@ test.describe("feature coverage placeholders", () => {
     );
     await expect(page.getByTestId("pair-device-qr")).toBeVisible();
     await expect(page.getByTestId("pair-device-copy-button")).toBeVisible();
-    const pairingLink = await page.getByTestId("pair-device-secret").inputValue();
+    const pairingLink = await page
+      .getByTestId("pair-device-secret")
+      .inputValue();
 
     // Authorized device: paste the link, resolve it, then approve.
     await page.getByTestId("accept-pairing-input").fill(pairingLink);
@@ -193,18 +243,26 @@ test.describe("feature coverage placeholders", () => {
     await page.getByTestId("accept-pairing-resolve-button").click();
     expect((await resolvePromise).ok()).toBeTruthy();
     // Resolved code surfaces for the human SAS compare before approving.
-    await expect(page.getByTestId("accept-pairing-code")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("accept-pairing-code")).toBeVisible({
+      timeout: 30_000,
+    });
 
     const requestPromise = page.waitForRequest((request) => {
       const url = new URL(request.url());
-      return url.pathname === "/_arkret/gate/account/device-pair" && request.method() === "POST";
+      return (
+        url.pathname === "/_arkret/gate/account/device-pair" &&
+        request.method() === "POST"
+      );
     });
     const responsePromise = page.waitForResponse((response) => {
       const url = new URL(response.url());
       return url.pathname === "/_arkret/gate/account/device-pair";
     });
     await page.getByTestId("accept-pairing-button").click();
-    const [request, response] = await Promise.all([requestPromise, responsePromise]);
+    const [request, response] = await Promise.all([
+      requestPromise,
+      responsePromise,
+    ]);
     expect(response.ok()).toBeTruthy();
     const body = request.postDataJSON();
     expect(body.pairing_code).toBeTruthy();
@@ -212,15 +270,25 @@ test.describe("feature coverage placeholders", () => {
     // Canonical field name is `key`, never the legacy `public_key`.
     expect(body.new_device_pubkey.key).toBeTruthy();
     expect(body.new_device_pubkey.public_key).toBeUndefined();
-    expect(body.challenge_signature).toBeTruthy();
+    expect(body.challenge_proof.transcript).toBe(
+      "ak.device-pairing.challenge.v1",
+    );
+    expect(body.challenge_proof.signature).toBeTruthy();
     // The resolved staged request id is echoed so the server flips the row.
     expect(body.device_pairing_request_id).toMatch(/^device_pairing_request:/);
-    await expect(page.getByTestId("accept-pairing-status")).toContainText("Device paired");
+    await expect(page.getByTestId("accept-pairing-status")).toContainText(
+      "Device paired",
+    );
   });
 
-  test("device list keeps headers aligned and becomes labelled rows when narrow", async ({ page }) => {
+  test("device list keeps headers aligned and becomes labelled rows when narrow", async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 1800, height: 1000 });
-    await page.goto("/settings/devices", { waitUntil: "domcontentloaded", timeout: 120_000 });
+    await page.goto("/settings/devices", {
+      waitUntil: "domcontentloaded",
+      timeout: 120_000,
+    });
     await dismissBlockingDialog(page);
 
     const list = page.getByTestId("device-list");
@@ -236,13 +304,19 @@ test.describe("feature coverage placeholders", () => {
       const cellBox = await cells.nth(index).boundingBox();
       expect(headerBox).not.toBeNull();
       expect(cellBox).not.toBeNull();
-      expect(Math.abs((headerBox?.x ?? 0) - (cellBox?.x ?? 0))).toBeLessThanOrEqual(2);
+      expect(
+        Math.abs((headerBox?.x ?? 0) - (cellBox?.x ?? 0)),
+      ).toBeLessThanOrEqual(2);
     }
 
     await page.setViewportSize({ width: 760, height: 900 });
-    await expect(firstRow.getByText("Verification", { exact: true })).toBeVisible();
+    await expect(
+      firstRow.getByText("Verification", { exact: true }),
+    ).toBeVisible();
     const horizontalOverflow = await page.evaluate(
-      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      () =>
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
     );
     expect(horizontalOverflow).toBeLessThanOrEqual(1);
   });
@@ -274,8 +348,13 @@ test.describe("feature coverage placeholders", () => {
         }),
       );
     });
-    await page.goto("/verify-device", { waitUntil: "domcontentloaded", timeout: 120_000 });
-    await expect(page.getByTestId("verify-device-panel")).toBeVisible({ timeout: 60_000 });
+    await page.goto("/verify-device", {
+      waitUntil: "domcontentloaded",
+      timeout: 120_000,
+    });
+    await expect(page.getByTestId("verify-device-panel")).toBeVisible({
+      timeout: 60_000,
+    });
 
     // Step 1: build the plan. The panel populates the steps list and
     // unlocks the Run setup button below.
@@ -285,10 +364,14 @@ test.describe("feature coverage placeholders", () => {
     // Step 2: capture the ak.cross_signing.publish submission before
     // it fires so we don't race the spawn task.
     const publishPromise = page.waitForRequest((request) => {
-      if (request.method() !== "POST" || !request.url().endsWith("/_arkret/self/events")) {
+      if (
+        request.method() !== "POST" ||
+        !request.url().endsWith("/_arkret/self/events")
+      ) {
         return false;
       }
-      const body = request.postDataJSON?.() as Record<string, unknown> | undefined;
+      const body = request.postDataJSON?.() as
+        Record<string, unknown> | undefined;
       return body?.kind === "ak.cross_signing.publish";
     });
 
@@ -329,7 +412,9 @@ test.describe("feature coverage placeholders", () => {
     expect(sskKey.public_key).not.toBe(uskKey.public_key);
 
     // After submit, the UI shows the publish event id.
-    await expect(page.getByTestId("cross-signing-publish-id")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId("cross-signing-publish-id")).toBeVisible({
+      timeout: 60_000,
+    });
   });
 
   test("session grant alone never reads E2EE history", async ({ page }) => {
@@ -341,8 +426,13 @@ test.describe("feature coverage placeholders", () => {
     // the views still render the fail-closed surfaces for the mock-
     // loaded session, so when the session-grant-only branch hydrates
     // them they have somewhere to write to.
-    await page.goto("/kanban", { waitUntil: "domcontentloaded", timeout: 120_000 });
-    await expect(page.getByTestId("kanban-panel")).toBeVisible({ timeout: 60_000 });
+    await page.goto("/kanban", {
+      waitUntil: "domcontentloaded",
+      timeout: 120_000,
+    });
+    await expect(page.getByTestId("kanban-panel")).toBeVisible({
+      timeout: 60_000,
+    });
     // The mocked persisted board includes a locked-discussion row,
     // which renders the fail-closed banner inside `card-detail-modal`.
     // The test passes when at least one card-with-locked-discussion is
@@ -356,7 +446,9 @@ test.describe("feature coverage placeholders", () => {
   // ---- Recovery — three layers ----
   // UI surface: recovery
   // spec: crypto-media/devices-and-auth.md §4
-  test("recovery: encrypted vault rekey rewrites cipher blob client-side", async ({ page }) => {
+  test("recovery: encrypted vault rekey rewrites cipher blob client-side", async ({
+    page,
+  }) => {
     // D1 — formerly skipped. The recovery view stretches the passphrase
     // with Argon2id on the device and uploads ONLY the ciphertext blob
     // (+ random salt + nonce) to PUT /_arkret/self/keys/backups/{id}. The
@@ -364,21 +456,29 @@ test.describe("feature coverage placeholders", () => {
     // by intercepting the upload and checking the wire body.
     const PASSPHRASE = "correct-horse-battery-staple-7";
 
-    await page.goto("/settings/recovery", { waitUntil: "domcontentloaded", timeout: 120_000 });
+    await page.goto("/settings/recovery", {
+      waitUntil: "domcontentloaded",
+      timeout: 120_000,
+    });
     const recoveryPanel = latestTestId(page, "recovery-panel");
-    await expect(recoveryPanel.getByTestId("vault-section")).toBeVisible({ timeout: 60_000 });
+    await expect(recoveryPanel.getByTestId("vault-section")).toBeVisible({
+      timeout: 60_000,
+    });
 
     // Watch for the PUT before we trigger it so we don't race the
     // browser. The mock above returns `{status: "stored"}` so the UI
     // reaches the success branch.
     const uploadPromise = page.waitForRequest((request) => {
       return (
-        request.method() === "PUT" && /\/_arkret\/self\/keys\/backups\//.test(request.url())
+        request.method() === "PUT" &&
+        /\/_arkret\/self\/keys\/backups\//.test(request.url())
       );
     });
 
     await recoveryPanel.getByTestId("vault-passphrase").fill(PASSPHRASE);
-    await recoveryPanel.getByTestId("vault-passphrase-confirm").fill(PASSPHRASE);
+    await recoveryPanel
+      .getByTestId("vault-passphrase-confirm")
+      .fill(PASSPHRASE);
     await recoveryPanel.getByTestId("vault-rekey").click();
 
     const request = await uploadPromise;
@@ -390,7 +490,9 @@ test.describe("feature coverage placeholders", () => {
     // Poly1305 and carry a ciphertext + digest. Without these the
     // recovery layer is not in spec.
     expect(body.encryption?.kdf?.name).toBe("argon2id");
-    expect(body.encryption?.kdf?.params?.memory_kib).toBeGreaterThanOrEqual(65_536);
+    expect(body.encryption?.kdf?.params?.memory_kib).toBeGreaterThanOrEqual(
+      65_536,
+    );
     expect(body.encryption?.kdf?.params?.iterations).toBeGreaterThanOrEqual(3);
     expect(body.encryption?.kdf?.params?.parallelism).toBeGreaterThanOrEqual(1);
     expect(body.encryption?.aead?.name).toBe("xchacha20_poly1305");
@@ -408,12 +510,17 @@ test.describe("feature coverage placeholders", () => {
     expect(raw).not.toContain("inkson_demo_nonce");
     expect(raw).not.toContain("BASE64URL_OPAQUE_BLOB_PLACEHOLDER");
 
-    await expect(recoveryPanel.getByTestId("vault-status")).toContainText(/Uploaded backup|stored/i, {
-      timeout: 60_000,
-    });
+    await expect(recoveryPanel.getByTestId("vault-status")).toContainText(
+      /Uploaded backup|stored/i,
+      {
+        timeout: 60_000,
+      },
+    );
   });
 
-  test("recovery: social recovery surfaces guardian configuration", async ({ page }) => {
+  test("recovery: social recovery surfaces guardian configuration", async ({
+    page,
+  }) => {
     // the recovery view's three layers
     // (vault / recovery-key / social) each expose a dedicated
     // data-testid section. The 3-of-5 social-recovery reconstruct strand
@@ -421,14 +528,23 @@ test.describe("feature coverage placeholders", () => {
     // surfaces to render. The Shamir share release/reconstruct path is
     // not wired yet; this e2e pins the UI surface so the strand has
     // somewhere to plug in when the policy-backed recovery session lands.
-    await page.goto("/settings/recovery", { waitUntil: "domcontentloaded", timeout: 120_000 });
+    await page.goto("/settings/recovery", {
+      waitUntil: "domcontentloaded",
+      timeout: 120_000,
+    });
     const recoveryPanel = latestTestId(page, "recovery-panel");
     await expect(recoveryPanel).toBeVisible({ timeout: 60_000 });
-    await expect(recoveryPanel.getByTestId("social-recovery-section")).toBeVisible();
-    await expect(recoveryPanel.getByTestId("recovery-key-section")).toBeVisible();
+    await expect(
+      recoveryPanel.getByTestId("social-recovery-section"),
+    ).toBeVisible();
+    await expect(
+      recoveryPanel.getByTestId("recovery-key-section"),
+    ).toBeVisible();
   });
 
-  test("recovery: backup history emphasizes the latest backup time", async ({ page }) => {
+  test("recovery: backup history emphasizes the latest backup time", async ({
+    page,
+  }) => {
     await dismissBlockingDialog(page);
     await page.route("**/_arkret/self/keys/backups", async (route) => {
       await route.fulfill({
@@ -456,19 +572,30 @@ test.describe("feature coverage placeholders", () => {
       });
     });
 
-    await page.goto("/settings/recovery", { waitUntil: "domcontentloaded", timeout: 120_000 });
+    await page.goto("/settings/recovery", {
+      waitUntil: "domcontentloaded",
+      timeout: 120_000,
+    });
     await dismissBlockingDialog(page);
     const recoveryPanel = latestTestId(page, "recovery-panel");
     await expect(recoveryPanel).toBeVisible({ timeout: 60_000 });
 
     await recoveryPanel.getByTestId("restore-list-button").click();
-    await expect(recoveryPanel.getByTestId("restore-latest-backup")).toBeVisible();
-    await expect(recoveryPanel.getByTestId("restore-latest-backup-time")).toContainText(
-      "2026-06-15 08:00 UTC",
+    await expect(
+      recoveryPanel.getByTestId("restore-latest-backup"),
+    ).toBeVisible();
+    await expect(
+      recoveryPanel.getByTestId("restore-latest-backup-time"),
+    ).toContainText("2026-06-15 08:00 UTC");
+    await expect(recoveryPanel.getByTestId("restore-backup-time")).toHaveCount(
+      3,
     );
-    await expect(recoveryPanel.getByTestId("restore-backup-time")).toHaveCount(3);
-    await expect(recoveryPanel.getByTestId("restore-select-button")).toHaveCount(0);
-    await expect(recoveryPanel.getByTestId("restore-delete-button")).toHaveCount(0);
+    await expect(
+      recoveryPanel.getByTestId("restore-select-button"),
+    ).toHaveCount(0);
+    await expect(
+      recoveryPanel.getByTestId("restore-delete-button"),
+    ).toHaveCount(0);
     await expect(recoveryPanel).not.toContainText("ak:backup:");
     await expect(recoveryPanel).not.toContainText("did_recovery");
   });
@@ -476,14 +603,19 @@ test.describe("feature coverage placeholders", () => {
   // ---- Discoverability ≠ Join Rule ≠ History ----
   // UI surface: directory
   // spec: discovery/discovery-directory.md §2
-  test("directory: invite_only realm hides existence from search", async ({ page }) => {
+  test("directory: invite_only realm hides existence from search", async ({
+    page,
+  }) => {
     // The keyword-search path must respect
     // `discoverability=invite_only` - the spec (discovery/discovery-
     // directory.md §2) requires that searches MUST NOT enumerate
     // invite-only Realms. Soland's `/_arkret/find/directory/search-realms`
     // filters them out; the mock surface returns the same shape so the
     // contract holds without a live server.
-    await page.goto("/directory", { waitUntil: "domcontentloaded", timeout: 120_000 });
+    await page.goto("/directory", {
+      waitUntil: "domcontentloaded",
+      timeout: 120_000,
+    });
     // Realms tab is the default for the directory; just in case it's
     // not the active tab on first mount, click it explicitly so the
     // search button hits search-realms (not search-actors etc.).
@@ -497,22 +629,27 @@ test.describe("feature coverage placeholders", () => {
     // private/invite-only badge ("private").
     const results = page.getByTestId("directory-result");
     await results.first().waitFor({ state: "visible", timeout: 10_000 });
-    const privateBadges = await results
-      .locator("text=private")
-      .count();
+    const privateBadges = await results.locator("text=private").count();
     expect(privateBadges).toBe(0);
   });
 
   // ---- Capability approval workflow ----
   // UI surface: realm admin
   // spec: authz/capabilities.md
-  test("realm-admin: capability grant and revoke live under security", async ({ page }) => {
-    await page.goto("/realms/ak:realm:0196419b-0000-7000-8000-000000000000/settings/security", {
-      waitUntil: "domcontentloaded",
-      timeout: 120_000,
-    });
+  test("realm-admin: capability grant and revoke live under security", async ({
+    page,
+  }) => {
+    await page.goto(
+      "/realms/ak:realm:0196419b-0000-7000-8000-000000000000/settings/security",
+      {
+        waitUntil: "domcontentloaded",
+        timeout: 120_000,
+      },
+    );
     await expect(page.getByTestId("grant-explanation")).toHaveCount(0);
-    await expect(page.getByTestId("capability-grant-card")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId("capability-grant-card")).toBeVisible({
+      timeout: 60_000,
+    });
     await expect(page.getByTestId("cap-grant-submit-button")).toBeVisible();
     await expect(page.getByTestId("cap-revoke-submit-button")).toBeVisible();
   });
@@ -520,15 +657,22 @@ test.describe("feature coverage placeholders", () => {
   // ---- Audit — projection origin / conflict trail ----
   // UI surface: audit
   // spec: sync/operations-sync.md
-  test("audit: conflict trail shows winner + superseded events", async ({ page }) => {
+  test("audit: conflict trail shows winner + superseded events", async ({
+    page,
+  }) => {
     // the audit view exposes three counted
     // surfaces — accessed (attested decrypts), ryw_receipt (disclosed
     // writes), and the raw operation log. The conflict trail (when
     // present) renders inside the per-row layout below. We pin the
     // outer panel + the three count badges so any future regression
     // that strips the counted surfaces fails loudly.
-    await page.goto("/audit", { waitUntil: "domcontentloaded", timeout: 120_000 });
-    await expect(page.getByTestId("audit-panel")).toBeVisible({ timeout: 60_000 });
+    await page.goto("/audit", {
+      waitUntil: "domcontentloaded",
+      timeout: 120_000,
+    });
+    await expect(page.getByTestId("audit-panel")).toBeVisible({
+      timeout: 60_000,
+    });
     await expect(page.getByTestId("audit-accessed-count")).toBeVisible();
     await expect(page.getByTestId("audit-receipt-count")).toBeVisible();
     await expect(page.getByTestId("audit-total-count")).toBeVisible();
@@ -537,20 +681,30 @@ test.describe("feature coverage placeholders", () => {
   // ---- Applet / Agent / Portal Space ----
   // UI surface: applets
   // spec: extensions/applet-integration.md
-  test("applets: register new applet writes signed ak.applet.registration", async ({ page }) => {
+  test("applets: register new applet writes signed ak.applet.registration", async ({
+    page,
+  }) => {
     // The applet surface is compiled for unit coverage but hidden in
     // the default local 1.0 UI until the `experimental-applets`
     // feature is explicitly enabled.
-    await page.goto("/applets", { waitUntil: "domcontentloaded", timeout: 120_000 });
+    await page.goto("/applets", {
+      waitUntil: "domcontentloaded",
+      timeout: 120_000,
+    });
     await expect(page.getByTestId("deferred-feature-gate")).toHaveAttribute(
       "data-feature",
       "experimental-applets",
     );
   });
 
-  test("applets: agent capability approval writes signed event chain", async ({ page }) => {
+  test("applets: agent capability approval writes signed event chain", async ({
+    page,
+  }) => {
     // Applet/agent approval remains behind the same default-off gate.
-    await page.goto("/applets", { waitUntil: "domcontentloaded", timeout: 120_000 });
+    await page.goto("/applets", {
+      waitUntil: "domcontentloaded",
+      timeout: 120_000,
+    });
     await expect(page.getByTestId("deferred-feature-gate")).toHaveAttribute(
       "data-feature",
       "experimental-applets",
@@ -560,13 +714,20 @@ test.describe("feature coverage placeholders", () => {
   // ---- WebRTC call ----
   // UI surface: call
   // spec: crypto-media/webrtc-signaling.md
-  test("call: SFU mode never enters plaintext path; recording requires explicit grant", async ({ page }) => {
+  test("call: SFU mode never enters plaintext path; recording requires explicit grant", async ({
+    page,
+  }) => {
     // inkson ships the call SIGNALING surface
     // (`ak.call.signal` / `ak.call.state` / `ak.call.recording.start`)
     // but the WebRTC media stack is renderer-provided and hidden from
     // the default local 1.0 UI until `experimental-webrtc` is enabled.
-    await page.goto("/call", { waitUntil: "domcontentloaded", timeout: 120_000 });
-    await expect(page.getByTestId("call-panel")).toBeVisible({ timeout: 60_000 });
+    await page.goto("/call", {
+      waitUntil: "domcontentloaded",
+      timeout: 120_000,
+    });
+    await expect(page.getByTestId("call-panel")).toBeVisible({
+      timeout: 60_000,
+    });
     await expect(page.getByTestId("call-signal-count")).toBeVisible();
     await expect(page.getByTestId("deferred-feature-gate")).toHaveAttribute(
       "data-feature",
@@ -577,7 +738,9 @@ test.describe("feature coverage placeholders", () => {
   // ---- Push gateway masking ----
   // UI surface: inbox
   // spec: discovery/push-notifications.md, crypto-media/devices-and-auth.md §5
-  test("push gateway only ships background_sync_needed payload", async ({ page }) => {
+  test("push gateway only ships background_sync_needed payload", async ({
+    page,
+  }) => {
     // the push-register payload inkson sends to
     // soland (`POST /_arkret/edge/push/register-device`) MUST NOT carry any
     // body / title / sender / collapse_key fields — only the minimal
@@ -587,16 +750,20 @@ test.describe("feature coverage placeholders", () => {
     // Spec: `discovery/push-notifications.md`.
     const pushRequestPromise = page.waitForRequest(
       (request) =>
-        request.url().endsWith("/_arkret/edge/push/register-device")
-        && request.method() === "POST",
+        request.url().endsWith("/_arkret/edge/push/register-device") &&
+        request.method() === "POST",
       { timeout: 60_000 },
     );
     await page.goto("/settings/notifications", {
       waitUntil: "domcontentloaded",
       timeout: 120_000,
     });
-    await expect(page.getByTestId("settings-notification-sound-toggle")).toBeAttached();
-    await expect(page.getByTestId("settings-notification-sound-test")).toBeVisible();
+    await expect(
+      page.getByTestId("settings-notification-sound-toggle"),
+    ).toBeAttached();
+    await expect(
+      page.getByTestId("settings-notification-sound-test"),
+    ).toBeVisible();
     await dismissBlockingDialog(page);
     await page.getByTestId("push-register-button").click();
     const request = await pushRequestPromise;
