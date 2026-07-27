@@ -242,6 +242,11 @@ pub fn service_is_v1_principal_server_ready(description: &ServiceDescribe) -> bo
 pub struct AccountSyncStep {
     pub cursor: String,
     pub updates: arkret_sdk::SyncUpdates,
+    /// Canonical SDK Realm entries retained after sync decoding. Product
+    /// projections may derive JSON views for heterogeneous reducers, but
+    /// security decisions (for example Direct Conversation MLS admission)
+    /// must use this typed source.
+    pub realm_entries: BTreeMap<arkret_sdk::RealmId, arkret_sdk::RealmSyncEntry>,
     pub realm_projections: BTreeMap<String, Value>,
 }
 
@@ -271,6 +276,11 @@ impl AccountSyncStep {
         cursor: String,
         updates: arkret_sdk::SyncUpdates,
     ) -> arkret_sdk::Result<Self> {
+        let realm_entries = updates
+            .realm_updates
+            .iter()
+            .map(|update| (update.realm_id.clone(), update.entry.clone()))
+            .collect();
         let realm_projections = updates
             .realm_updates
             .iter()
@@ -283,8 +293,24 @@ impl AccountSyncStep {
         Ok(Self {
             cursor,
             updates,
+            realm_entries,
             realm_projections,
         })
+    }
+
+    pub fn collaboration_role(&self, realm_id: &str) -> Option<arkret_sdk::CollaborationRealmRole> {
+        self.realm_entries
+            .iter()
+            .find(|(id, _)| id.as_str() == realm_id)
+            .and_then(|(_, entry)| entry.state_at_window_start.as_ref())
+            .and_then(|state| state.realm_metadata.collaboration_role)
+    }
+
+    pub fn has_window_start_realm_metadata(&self, realm_id: &str) -> bool {
+        self.realm_entries
+            .iter()
+            .find(|(id, _)| id.as_str() == realm_id)
+            .is_some_and(|(_, entry)| entry.state_at_window_start.is_some())
     }
 }
 

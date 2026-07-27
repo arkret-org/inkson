@@ -1,17 +1,7 @@
 use super::*;
 
-/// Serializes the tests that read/write the process-global
-/// `ACTIVE_DEVICE_SEED_SCOPE` static. They each carry their own
-/// `MemorySecureKeyStore`, but the seed-scope selector is process-wide, so
-/// running them concurrently lets one test's `set_active_device_seed_scope`
-/// corrupt another's `load_signing_seed` / `active_device_seed_scope()`
-/// assertions. Non-scope tests keep running in parallel.
-static SCOPE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 fn lock_scope_tests() -> std::sync::MutexGuard<'static, ()> {
-    SCOPE_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+    lock_active_device_seed_scope_for_test()
 }
 
 struct SeedScopeReset;

@@ -598,38 +598,57 @@ fn dashboard_notification_summaries(
         .notification_projection
         .iter()
         .enumerate()
-        .filter_map(|(index, value)| {
-            let id = value_string(value, &["notification_id", "id"])
-                .unwrap_or_else(|| format!("notification-{index}"));
+        .filter_map(|(_index, value)| {
+            let id = value.notification_id();
             let client_state = snapshot
                 .notification_client_state
                 .get(&id)
                 .cloned()
                 .unwrap_or_default();
-            let archived = value
-                .get("archived")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(client_state.archived);
+            let archived = client_state.archived;
             if archived {
                 return None;
             }
-            let kind = value_string(
-                value,
-                &["notification_kind", "notification_kind", "type", "kind"],
+            let kind = crate::state::projection::notifications::notification_kind_wire(
+                &value.notification_kind(),
             )
-            .unwrap_or_else(|| "message".to_owned());
+            .to_owned();
+            let title = match value {
+                crate::state::StoredNotification::Event { notification } => {
+                    crate::state::projection::notifications::event_preview_string(
+                        notification,
+                        &["title"],
+                    )
+                }
+                crate::state::StoredNotification::AgentRuntimeApproval { .. } => {
+                    Some("Agent runtime approval".to_owned())
+                }
+                crate::state::StoredNotification::Invite { .. } => None,
+            }
+            .unwrap_or_else(|| default_notification_title(&kind).to_owned());
+            let body = match value {
+                crate::state::StoredNotification::Event { notification } => {
+                    crate::state::projection::notifications::event_preview_string(
+                        notification,
+                        &["body", "summary"],
+                    )
+                }
+                crate::state::StoredNotification::AgentRuntimeApproval { data, .. } => Some(
+                    format!("Approve a runtime key for {}.", data.agent_id.as_str()),
+                ),
+                crate::state::StoredNotification::Invite { invite } => invite
+                    .realm_label
+                    .as_deref()
+                    .map(|label| format!("You were invited to join {label}.")),
+            }
+            .unwrap_or_else(|| "Notification".to_owned());
             Some(DashboardNotificationSummary {
                 id,
-                title: value_string(value, &["title"])
-                    .unwrap_or_else(|| default_notification_title(&kind).to_owned()),
-                body: value_string(value, &["body", "preview", "summary"])
-                    .unwrap_or_else(|| "Notification".to_owned()),
+                title,
+                body,
                 kind,
-                timestamp: value_string(value, &["timestamp", "created_at"]).unwrap_or_default(),
-                read: value
-                    .get("read")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(client_state.read),
+                timestamp: arkret_sdk::canonical::format_timestamp_canonical(value.created_at()),
+                read: client_state.read,
             })
         })
         .collect::<Vec<_>>();
@@ -688,7 +707,7 @@ fn contact_summary_delta(summary: &DashboardContactsSummary) -> String {
 }
 
 // Shared with the notifications model (single source, YGN-DRY-05):
-use crate::views::notifications::{default_notification_title, value_string};
+use crate::views::notifications::default_notification_title;
 
 // The projection label helpers below return i18n KEYS; render sites pass
 // them through `tr()` (model helpers stay runtime-free so unit tests can

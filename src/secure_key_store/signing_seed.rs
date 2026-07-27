@@ -49,6 +49,17 @@ pub const SIGNING_SEED_KEY: &str = "device.ed25519.signing_seed.v1";
 /// this is not a hot path.
 static ACTIVE_DEVICE_SEED_SCOPE: RwLock<Option<String>> = RwLock::new(None);
 
+#[cfg(test)]
+static ACTIVE_DEVICE_SEED_SCOPE_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Serializes tests that temporarily mutate the process-wide active seed scope.
+#[cfg(test)]
+pub(crate) fn lock_active_device_seed_scope_for_test() -> std::sync::MutexGuard<'static, ()> {
+    ACTIVE_DEVICE_SEED_SCOPE_TEST_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Set the active per-account device-seed scope (the account DID), or `None`
 /// for the bootstrap scope.
 pub fn set_active_device_seed_scope(scope: Option<&str>) {

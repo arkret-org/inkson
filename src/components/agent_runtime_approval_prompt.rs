@@ -1,35 +1,36 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
+use arkret_sdk::{Did, DidUrl, Hash, KeyState, NotificationId, OpaqueLocalId};
 use dioxus::prelude::*;
-use serde_json::Value;
 
 use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::dialog::Dialog;
 use crate::views::agents::{
     bootstrap_provisioned_agent, build_agent_key_authorization_for_pairing,
-    build_requested_scope_disclosure_for_pairing, parse_runtime_key_approval_request,
-    runtime_key_pairing_error_message, summarize_runtime_key_approval_request,
+    build_requested_scope_disclosure_for_pairing, into_agent_key_pair_request,
+    parse_runtime_key_approval_request, runtime_key_pairing_error_message,
+    summarize_runtime_key_approval_request,
 };
 use crate::views::helpers::short_protocol_id;
 
 const APPROVAL_FALLBACK_POLL_INTERVAL: Duration = Duration::from_secs(30);
 const APPROVAL_FALLBACK_MAX_INTERVAL: Duration = Duration::from_secs(60);
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 struct PendingAgentRuntimeApproval {
-    notification_id: String,
-    request_key: String,
-    agent_id: String,
+    notification_id: Option<NotificationId>,
+    request_key: OpaqueLocalId,
+    agent_id: Did,
     display_name: String,
     agent_slug: String,
     pairing_code: String,
     approval_requested_at: String,
     proof_expires_at: String,
-    verification_method: String,
-    public_key_fingerprint: String,
-    key_state: Value,
+    verification_method: DidUrl,
+    public_key_fingerprint: Hash,
+    key_state: KeyState,
     request_json: String,
     replacement: bool,
 }
@@ -39,7 +40,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
     // A4 — base_url from session context instead of a prop.
     let base_url = crate::app::SessionContext::get().base_url;
     let mut pending = use_signal(|| None::<PendingAgentRuntimeApproval>);
-    let mut handled = use_signal(HashSet::<String>::new);
+    let mut handled = use_signal(HashSet::<OpaqueLocalId>::new);
     let mut status = use_signal(String::new);
     let mut approving = use_signal(|| false);
     let state_store = crate::app::SessionContext::get().state_store;
@@ -53,10 +54,14 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                 .filter_map(agent_runtime_approval_notification)
                 .collect::<Vec<_>>();
             let prompt_notification_closed = pending.read().as_ref().is_some_and(|request| {
-                !request.notification_id.is_empty()
-                    && !open
-                        .iter()
-                        .any(|notification| notification.notification_id == request.notification_id)
+                request
+                    .notification_id
+                    .as_ref()
+                    .is_some_and(|notification_id| {
+                        !open
+                            .iter()
+                            .any(|notification| &notification.notification_id == notification_id)
+                    })
             });
             if prompt_notification_closed {
                 pending.set(None);
@@ -160,13 +165,13 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
     };
 
     let agent_label = if request.display_name.trim().is_empty() {
-        short_protocol_id(&request.agent_id)
+        short_protocol_id(request.agent_id.as_str())
     } else {
         request.display_name.clone()
     };
-    let agent_id_label = short_protocol_id(&request.agent_id);
-    let verification_label = short_protocol_id(&request.verification_method);
-    let fingerprint_label = short_protocol_id(&request.public_key_fingerprint);
+    let agent_id_label = short_protocol_id(request.agent_id.as_str());
+    let verification_label = short_protocol_id(request.verification_method.as_str());
+    let fingerprint_label = short_protocol_id(request.public_key_fingerprint.as_str());
     let status_value = status();
     let busy = approving();
 
@@ -255,7 +260,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                         let agent_id = agent_id.clone();
                                         async move {
                                             http.agent_renew_pairing(
-                                                &agent_id,
+                                                agent_id.as_str(),
                                                 &arkret_models_collaboration::agent_operations::AgentRenewPairingRequestBody::default(),
                                             )
                                             .await
@@ -316,9 +321,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                     return;
                                 }
                             };
-                            if body.agent_id.as_str()
-                                != approve_request.agent_id
-                            {
+                            if body.agent_id != approve_request.agent_id {
                                 status.set(runtime_key_pairing_error_message(
                                     "runtime key request targets a different agent",
                                 ));
@@ -337,17 +340,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                     let key_state = key_state.clone();
                                     let controller = controller.clone();
                                     async move {
-                                        let bootstrap_key_state: arkret_models_collaboration::agent_operations::KeyState =
-                                            serde_json::from_value(key_state.clone()).map_err(
-                                                |error| {
-                                                    anyhow::anyhow!(
-                                                        "Agent key state is invalid: {error}"
-                                                    )
-                                                },
-                                            )?;
-                                        let previous_seal_id = match &bootstrap_key_state
-                                            .pcr_recovery
-                                        {
+                                        let previous_seal_id = match &key_state.pcr_recovery {
                                             arkret_models_collaboration::agent_operations::AgentPcrRecoveryState::Ready {
                                                 managed_frontier_ref,
                                                 ..
@@ -378,7 +371,8 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                                 &key_state,
                                                 &body,
                                             )?;
-                                        let pair_request = body.into_pair_request(
+                                        let pair_request = into_agent_key_pair_request(
+                                            body,
                                             requested_scope_disclosure,
                                             authorize_event.clone(),
                                             authorization.signing_key_binding,
@@ -393,9 +387,9 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                         let recovery_refresh_error = bootstrap_provisioned_agent(
                                             &api,
                                             state_store,
-                                            &bootstrap_key_state.agent_id,
-                                            &bootstrap_key_state.principal_control_realm_id,
-                                            &bootstrap_key_state.controller_authorization_ref,
+                                            &key_state.agent_id,
+                                            &key_state.principal_control_realm_id,
+                                            key_state.controller_authorization_ref.as_str(),
                                             previous_seal_id.as_deref(),
                                         )
                                         .await
@@ -454,26 +448,22 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
 
 #[derive(Clone, Debug)]
 struct AgentRuntimeApprovalNotification {
-    notification_id: String,
-    approval_request_id: String,
-    agent_id: String,
+    notification_id: NotificationId,
+    approval_request_id: OpaqueLocalId,
+    agent_id: Did,
 }
 
-fn agent_runtime_approval_notification(value: &Value) -> Option<AgentRuntimeApprovalNotification> {
-    if !crate::state::projection::notifications::is_agent_runtime_approval_notification(value) {
-        return None;
-    }
-    let expires_at = value.pointer("/data/expires_at")?.as_str()?.to_owned();
-    if timestamp_has_expired(&expires_at) {
+fn agent_runtime_approval_notification(
+    value: &crate::state::StoredNotification,
+) -> Option<AgentRuntimeApprovalNotification> {
+    let (notification_id, data) = value.agent_runtime_approval()?;
+    if data.expires_at <= chrono::Utc::now() {
         return None;
     }
     Some(AgentRuntimeApprovalNotification {
-        notification_id: value.get("id")?.as_str()?.to_owned(),
-        approval_request_id: value
-            .pointer("/data/approval_request_id")?
-            .as_str()?
-            .to_owned(),
-        agent_id: value.pointer("/data/agent_id")?.as_str()?.to_owned(),
+        notification_id: notification_id.clone(),
+        approval_request_id: data.approval_request_id.clone(),
+        agent_id: data.agent_id.clone(),
     })
 }
 
@@ -483,7 +473,7 @@ async fn fetch_agent_runtime_approval(
     notification: AgentRuntimeApprovalNotification,
 ) -> Result<Option<PendingAgentRuntimeApproval>, crate::transport::auth::ApiCallError> {
     with_authed_sdk_client(base_url, token, move |http| async move {
-        let view = http.agent_get(&notification.agent_id).await?;
+        let view = http.agent_get(notification.agent_id.as_str()).await?;
         let Some(mut request) = pending_runtime_approval_from_view(&view) else {
             return Ok(None);
         };
@@ -492,7 +482,7 @@ async fn fetch_agent_runtime_approval(
         {
             return Ok(None);
         }
-        request.notification_id = notification.notification_id;
+        request.notification_id = Some(notification.notification_id);
         Ok(Some(request))
     })
     .await
@@ -501,7 +491,7 @@ async fn fetch_agent_runtime_approval(
 async fn fetch_pending_agent_runtime_approval(
     base_url: &str,
     token: String,
-    handled: HashSet<String>,
+    handled: HashSet<OpaqueLocalId>,
 ) -> Result<Option<PendingAgentRuntimeApproval>, crate::transport::auth::ApiCallError> {
     with_authed_sdk_client(base_url, token, move |http| async move {
         let list = http.agent_list().await?;
@@ -535,9 +525,6 @@ fn pending_runtime_approval_from_view(
     }
     let key_state = view.key_state.as_ref()?;
     let request_value = key_state.pending_runtime_key_request.clone()?;
-    if request_value.is_empty() {
-        return None;
-    }
     let request_json = serde_json::to_string(&request_value).ok()?;
     let summary = summarize_runtime_key_approval_request(&request_json).ok()?;
     if timestamp_has_expired(&summary.proof_expires_at)
@@ -549,7 +536,7 @@ fn pending_runtime_approval_from_view(
     {
         return None;
     }
-    let agent_id = view.agent.agent_id.to_string();
+    let agent_id = view.agent.agent_id.clone();
     if agent_id != summary.agent_id {
         return None;
     }
@@ -557,9 +544,10 @@ fn pending_runtime_approval_from_view(
     let request_key = key_state
         .approval_request_id
         .clone()
+        .map(|value| value)
         .unwrap_or_else(|| summary.pairing_request_id.clone());
     Some(PendingAgentRuntimeApproval {
-        notification_id: String::new(),
+        notification_id: None,
         request_key,
         agent_id,
         display_name: view.agent.display_name.clone().unwrap_or_default(),
@@ -572,7 +560,7 @@ fn pending_runtime_approval_from_view(
         proof_expires_at: summary.proof_expires_at,
         verification_method: summary.verification_method,
         public_key_fingerprint: summary.public_key_fingerprint,
-        key_state: serde_json::to_value(key_state).ok()?,
+        key_state: key_state.clone(),
         request_json,
         // A replacement pairing is one where the agent already holds an active
         // key — projected as runtime_state replacing (key-management.md §3.6.1).

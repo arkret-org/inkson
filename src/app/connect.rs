@@ -3,18 +3,6 @@ use std::future::Future;
 use super::*;
 use crate::api_error::{is_auth_expired_error, is_terminal_session_grant_error};
 
-/// Project the SDK `AuthzInviteList.invites` (typed `Invite` rows) into the
-/// `Vec<serde_json::Value>` shape the bootstrap invite-notification pipeline
-/// folds through lenient JSON accessors.
-fn invite_rows_to_values(
-    invites: Vec<arkret_models_collaboration::governance::operation_wire::Invite>,
-) -> Vec<serde_json::Value> {
-    invites
-        .into_iter()
-        .filter_map(|invite| serde_json::to_value(invite).ok())
-        .collect()
-}
-
 #[cfg(target_arch = "wasm32")]
 const BOOTSTRAP_NETWORK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
 
@@ -1116,7 +1104,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             return;
                         };
                         let invite_notifications = match invite_notifications_result {
-                                Ok(response) => Some(invite_rows_to_values(response.invites)),
+                                Ok(response) => Some(response.invites),
                                 Err(error) if is_auth_expired_error(&error) => {
                                     match bootstrap_session_refresh(&session).await {
                                         crate::runtime::session::CurrentSessionRefresh::Credential(
@@ -1158,9 +1146,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                             else {
                                                 return;
                                             };
-                                            invite_retry_result.ok().map(|response| {
-                                                invite_rows_to_values(response.invites)
-                                            })
+                                            invite_retry_result.ok().map(|response| response.invites)
                                         }
                                         crate::runtime::session::CurrentSessionRefresh::SignInRequired {
                                             ..
@@ -1211,7 +1197,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             let realm_title_hints = invite_notifications
                                 .as_deref()
                                 .map(
-                                    crate::state::projection::notifications::realm_title_hints_from_values,
+                                    crate::state::projection::notifications::realm_title_hints_from_invites,
                                 )
                                 .unwrap_or_default();
                             for (id, body) in &sync.realm_projections {
@@ -1221,6 +1207,10 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     realm_title_hints.get(id).map(String::as_str),
                                 );
                                 store.save_realm_tree_projection(id.clone(), projection);
+                                store.save_realm_collaboration_role(
+                                    id.clone(),
+                                    sync.collaboration_role(id),
+                                );
                                 // Thread the per-Realm Seal view (frontier /
                                 // leaves / state_root / bottom cells) into the
                                 // local store so Move builders + UI can read
@@ -1238,39 +1228,15 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             // Keep notification projection current even when
                             // invites live on `authz/invites` rather than the
                             // normal account subscribe notification stream.
-                            let projection_from_sync = sync
-                                .updates
-                                .notifications
-                                .iter()
-                                .filter_map(|notification| serde_json::to_value(notification).ok())
-                                .collect::<Vec<_>>();
-                            let account_notification_projection = sync
-                                .updates
-                                .account_data
-                                .iter()
-                                .filter_map(|entry| {
-                                    crate::state::projection::notifications::is_notification_account_data(
-                                        &entry.payload,
-                                    ).then(|| serde_json::to_value(&entry.payload).ok()).flatten()
-                                })
-                                .collect::<Vec<_>>();
-                            let mut notification_projection =
-                                if account_notification_projection.is_empty() {
-                                    store.notification_projection()
-                                } else {
-                                    account_notification_projection
-                                };
-                            notification_projection.retain(|value| {
-                                !crate::state::projection::notifications::is_agent_runtime_approval_notification(value)
-                            });
-                            notification_projection.extend(projection_from_sync);
-                            if let Some(invites) = invite_notifications {
-                                crate::state::projection::notifications::merge_invite_notifications(
-                                    &mut notification_projection,
-                                    invites,
-                                    &server_set,
-                                );
-                            }
+                            let mut notification_projection = store.notification_projection();
+                            crate::state::projection::notifications::apply_notification_projection(
+                                &mut notification_projection,
+                                &sync.updates.notifications,
+                                &sync.updates.account_data,
+                                true,
+                                invite_notifications,
+                                &server_set,
+                            );
                             store.save_notification_projection(notification_projection);
                             store.save_presence_projection(&sync.updates.presence);
                             store.ingest_to_device_messages(&sync.updates.to_device);
@@ -1594,8 +1560,10 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         // by a use_effect in `RouterView` — we don't set it
                         // here. Read a reconciled snapshot for status text
                         // and selected_realm_id bookkeeping only.
-                        let reconciled = realm_tree_nodes_from_sync_realms(
-                            &state_store.read().load().realm_tree_projections,
+                        let local_state = state_store.read().load();
+                        let reconciled = realm_tree_nodes_from_sync_realms_with_roles(
+                            &local_state.realm_tree_projections,
+                            &local_state.realm_collaboration_roles,
                         );
                         if reconciled.is_empty() {
                             status.set(ConnectionState::Empty.label().to_owned());
@@ -1643,8 +1611,10 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         // derive effect; just refresh status text and
                         // make sure selected_realm_id points at something
                         // still in scope.
-                        let fallback = realm_tree_nodes_from_sync_realms(
-                            &state_store.read().load().realm_tree_projections,
+                        let local_state = state_store.read().load();
+                        let fallback = realm_tree_nodes_from_sync_realms_with_roles(
+                            &local_state.realm_tree_projections,
+                            &local_state.realm_collaboration_roles,
                         );
                         if fallback.is_empty() {
                             status.set(format!(

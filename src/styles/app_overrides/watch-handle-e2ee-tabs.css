@@ -183,11 +183,6 @@
   white-space: nowrap;
 }
 
-.pinned-bar-empty {
-  color: var(--text-3);
-  font-size: 12px;
-}
-
 .discussion-chat-feed {
   flex: 1;
   min-height: 0;

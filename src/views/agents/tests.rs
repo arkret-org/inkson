@@ -331,12 +331,14 @@ mod personal_agent_tests {
                 "ak:realm:01964137-0000-7000-8000-000000000005",
             )
             .unwrap(),
-            controller_authorization_ref: "ak:event:01964137-0000-7000-8000-000000000006"
-                .to_owned(),
+            controller_authorization_ref: arkret_sdk::DidUrl::new(
+                "did:web:controller.example#controller-authorization",
+            )
+            .unwrap(),
             requested_scope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64)))
                 .unwrap(),
             pcr_recovery: arkret_sdk::AgentProvisionPcrRecovery::default(),
-            pairing_request_id: "0197-req".to_owned(),
+            pairing_request_id: arkret_sdk::OpaqueLocalId::new("0197-req").unwrap(),
             pairing_code: Some("123456".to_owned()),
             expires_at: chrono::DateTime::parse_from_rfc3339("2026-06-26T00:00:00.000Z")
                 .unwrap()
@@ -376,12 +378,14 @@ mod personal_agent_tests {
                 "ak:realm:01964137-0000-7000-8000-000000000005",
             )
             .unwrap(),
-            controller_authorization_ref: "ak:event:01964137-0000-7000-8000-000000000006"
-                .to_owned(),
+            controller_authorization_ref: arkret_sdk::DidUrl::new(
+                "did:web:controller.example#controller-authorization",
+            )
+            .unwrap(),
             requested_scope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64)))
                 .unwrap(),
             pcr_recovery: arkret_sdk::AgentProvisionPcrRecovery::default(),
-            pairing_request_id: "0197-req".to_owned(),
+            pairing_request_id: arkret_sdk::OpaqueLocalId::new("0197-req").unwrap(),
             pairing_code: Some("123456".to_owned()),
             expires_at: chrono::DateTime::parse_from_rfc3339("2026-06-26T00:00:00.000Z")
                 .unwrap()
@@ -449,8 +453,8 @@ mod personal_agent_tests {
         let expected =
             arkret_signatures::agent::agent_runtime_public_key_digest(&request.public_key).unwrap();
 
-        assert_eq!(summary.public_key_fingerprint, expected.as_str());
-        assert_eq!(summary.verification_method, verification_method);
+        assert_eq!(summary.public_key_fingerprint, expected);
+        assert_eq!(summary.verification_method.as_str(), verification_method);
         assert_eq!(summary.proof_expires_at, "2026-07-06T00:15:00.000Z");
     }
 
@@ -491,18 +495,21 @@ mod personal_agent_tests {
         ));
         let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
         let scope = requested_scope_for_presets(&[], &AgentServiceScopePreset::DEFAULTS).unwrap();
-        let key_state = serde_json::json!({
+        let key_state: arkret_sdk::KeyState = serde_json::from_value(serde_json::json!({
             "agent_id": agent,
             "controller_id": controller,
             "principal_control_realm_id": "ak:realm:01964137-0000-7000-8000-000000000005",
-            "controller_authorization_ref": "ak:event:01964137-0000-7000-8000-000000000006",
+            "controller_authorization_ref": "did:web:controller.example#controller-authorization",
             "status": "active",
             "runtime_state": "pending_runtime_key",
+            "pcr_recovery": {"status": "pending"},
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "pairing_code": "12345678",
             "pairing_expires_at": "2026-07-06T00:15:00.000Z",
             "requested_scope": scope,
-        });
+            "requested_scope_digest": format!("sha256:{}", "0".repeat(64)),
+        }))
+        .unwrap();
         let raw = serde_json::json!({
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "agent_id": agent,
@@ -537,10 +544,7 @@ mod personal_agent_tests {
 
         assert_eq!(disclosure.agent_id.as_str(), agent);
         assert_eq!(disclosure.controller_id.as_str(), controller);
-        assert_eq!(
-            disclosure.requested_scope,
-            serde_json::from_value(key_state["requested_scope"].clone()).unwrap()
-        );
+        assert_eq!(disclosure.requested_scope, key_state.requested_scope);
 
         let runtime_digest =
             arkret_signatures::agent::agent_runtime_public_key_digest(&request.public_key).unwrap();
@@ -620,21 +624,21 @@ mod personal_agent_tests {
                 .is_none()
         );
 
-        let mut noncanonical_key_state = key_state.clone();
-        noncanonical_key_state["pairing_expires_at"] =
-            serde_json::json!("2026-07-06T00:15:00.000123Z");
-        let error = build_agent_key_authorize_event_for_pairing(
-            controller,
-            service_id,
-            &noncanonical_key_state,
-            &request,
-        )
-        .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("canonical millisecond timestamp")
-        );
+        let noncanonical_key_state = serde_json::json!({
+            "agent_id": agent,
+            "controller_id": controller,
+            "principal_control_realm_id": "ak:realm:01964137-0000-7000-8000-000000000005",
+            "controller_authorization_ref": "did:web:controller.example#controller-authorization",
+            "status": "active",
+            "runtime_state": "pending_runtime_key",
+            "pcr_recovery": {"status": "pending"},
+            "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
+            "pairing_code": "12345678",
+            "pairing_expires_at": "2026-07-06T00:15:00.000123Z",
+            "requested_scope": key_state.requested_scope,
+            "requested_scope_digest": format!("sha256:{}", "0".repeat(64)),
+        });
+        assert!(serde_json::from_value::<arkret_sdk::KeyState>(noncanonical_key_state).is_err());
     }
 
     #[test]
@@ -658,23 +662,26 @@ mod personal_agent_tests {
         ));
         let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
         let scope = requested_scope_for_presets(&[], &AgentServiceScopePreset::DEFAULTS).unwrap();
-        let key_state = serde_json::json!({
+        let key_state: arkret_sdk::KeyState = serde_json::from_value(serde_json::json!({
             "agent_id": agent,
             "controller_id": controller,
             "principal_control_realm_id": "ak:realm:01964137-0000-7000-8000-000000000005",
-            "controller_authorization_ref": "ak:event:01964137-0000-7000-8000-000000000006",
+            "controller_authorization_ref": "did:web:controller.example#controller-authorization",
             "status": "active",
             "runtime_state": "replacing",
+            "pcr_recovery": {"status": "pending"},
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "pairing_code": "12345678",
             "pairing_expires_at": "2026-07-06T00:15:00.000Z",
             "requested_scope": scope,
+            "requested_scope_digest": format!("sha256:{}", "0".repeat(64)),
             "active_authorizations": [{
                 "key_id": verification_method,
                 "verification_method": verification_method,
                 "authorized_event_ref": old_event,
             }],
-        });
+        }))
+        .unwrap();
         let raw = serde_json::json!({
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "agent_id": agent,

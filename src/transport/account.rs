@@ -336,13 +336,6 @@ async fn ensure_owned_agent_direct_reply(
         .agent_participation_get(agent_id)
         .await
         .map_err(anyhow::Error::from)?;
-    if existing
-        .entries
-        .iter()
-        .any(|entry| entry.scope == scope && entry.effective.reply)
-    {
-        return Ok(());
-    }
     let mut selection = existing
         .entries
         .iter()
@@ -350,7 +343,31 @@ async fn ensure_owned_agent_direct_reply(
         .map(|entry| entry.selection)
         .unwrap_or_default();
     selection.reply = true;
-    let replace_result = http
+    let updated = replace_agent_participation(http, agent_id, scope.clone(), selection).await?;
+    if !participation_reply_is_effective(&updated, &scope) {
+        anyhow::bail!("owned-Agent Direct Conversation reply participation remains disabled");
+    }
+    Ok(())
+}
+
+pub(crate) async fn replace_agent_participation(
+    http: &arkret_sdk::http_client::Client,
+    agent_id: &str,
+    scope: arkret_sdk::AgentParticipationScope,
+    selection: arkret_sdk::AgentParticipation,
+) -> anyhow::Result<arkret_sdk::AgentParticipationOutcome> {
+    let controller_id = crate::event_signer::active_signer()
+        .map(|signer| signer.signer_did().to_owned())
+        .ok_or_else(|| anyhow::anyhow!("no active controller signer is available"))?;
+    let previous = http
+        .agent_participation_get(agent_id)
+        .await
+        .map_err(anyhow::Error::from)?;
+    let previous_entry = previous.entries.iter().find(|entry| entry.scope == scope);
+    let previous_selection = previous_entry
+        .map(|entry| entry.selection)
+        .unwrap_or_default();
+    let updated = http
         .agent_participation_replace(
             agent_id,
             &arkret_sdk::AgentParticipationReplaceRequestBody {
@@ -358,31 +375,99 @@ async fn ensure_owned_agent_direct_reply(
                 selection,
             },
         )
-        .await;
-    let updated = match replace_result {
-        Ok(updated) => updated,
-        Err(replace_error) => {
-            // Soland persists the controller's participation selection before
-            // attempting its legacy development fan-out. Newer servers reject
-            // that unsigned fan-out with `controller_signed_event_required`.
-            // Re-read the canonical selection so a committed reply policy does
-            // not turn an otherwise successful Direct Conversation into a
-            // dead-end UI action. If the selection was not committed, preserve
-            // the original error.
-            let refreshed = match http.agent_participation_get(agent_id).await {
-                Ok(refreshed) => refreshed,
-                Err(_) => return Err(anyhow::Error::from(replace_error)),
-            };
-            if !participation_reply_is_effective(&refreshed, &scope) {
-                return Err(anyhow::Error::from(replace_error));
-            }
-            refreshed
-        }
-    };
-    if !participation_reply_is_effective(&updated, &scope) {
-        anyhow::bail!("owned-Agent Direct Conversation reply participation remains disabled");
+        .await
+        .map_err(anyhow::Error::from)?;
+    let entry = updated
+        .entries
+        .iter()
+        .find(|entry| entry.scope == scope)
+        .ok_or_else(|| anyhow::anyhow!("participation replace omitted the requested scope"))?;
+    let materialization = async {
+        let grant_id = arkret_sdk::agent_participation_grant_id(agent_id, &entry.scope.scope_key());
+        let mut event = participation_materialization_event(
+            &controller_id,
+            agent_id,
+            &entry.scope,
+            entry.effective,
+            &grant_id,
+        )?;
+        crate::event_submit::attach_capability_grant_payload_proof(&mut event)?;
+        crate::event_submit::EventSubmitter::new(http.clone())
+            .submit_sdk_event(&event)
+            .await
     }
-    Ok(())
+    .await;
+    if let Err(materialization_error) = materialization {
+        let rollback = http
+            .agent_participation_replace(
+                agent_id,
+                &arkret_sdk::AgentParticipationReplaceRequestBody {
+                    scope,
+                    selection: previous_selection,
+                },
+            )
+            .await;
+        if let Err(rollback_error) = rollback {
+            anyhow::bail!(
+                "signed participation materialization failed ({materialization_error}); \
+                 restoring the previous selection also failed ({rollback_error})"
+            );
+        }
+        return Err(materialization_error);
+    }
+    Ok(updated)
+}
+
+fn participation_materialization_event(
+    controller_id: &str,
+    agent_id: &str,
+    scope: &arkret_sdk::AgentParticipationScope,
+    effective: arkret_sdk::AgentParticipation,
+    grant_id: &str,
+) -> anyhow::Result<arkret_sdk::Event> {
+    if !effective.reply {
+        return crate::operation::ak_ops::capability_revoke(
+            scope.realm_id().as_str(),
+            controller_id,
+            grant_id,
+            Some("agent_participation_disabled"),
+        )?
+        .build_sdk_event("inkson");
+    }
+
+    let actions = ["ak.message.create", "ak.reaction.add"];
+    let resource = match scope {
+        arkret_sdk::AgentParticipationScope::Realm { realm_id } => {
+            serde_json::json!({ "kind": "realm", "realm_id": realm_id })
+        }
+        arkret_sdk::AgentParticipationScope::Circle {
+            realm_id,
+            circle_id,
+        } => serde_json::json!({
+            "kind": "circle",
+            "realm_id": realm_id,
+            "circle_id": circle_id
+        }),
+        arkret_sdk::AgentParticipationScope::Strand {
+            realm_id,
+            strand_id,
+        } => serde_json::json!({
+            "kind": "strand",
+            "realm_id": realm_id,
+            "strand_id": strand_id
+        }),
+    };
+    crate::operation::ak_ops::capability_grant_actions_with_resources(
+        scope.realm_id().as_str(),
+        controller_id,
+        grant_id,
+        agent_id,
+        &actions,
+        vec![resource],
+        None,
+        serde_json::Value::Null,
+    )
+    .build_sdk_event("inkson")
 }
 
 fn participation_reply_is_effective(
@@ -964,7 +1049,7 @@ fn save_direct_conversation_realm_projection(
     actor_id: &str,
     peer: &str,
 ) {
-    let mut projection = crate::realm_tree::OptimisticRealmTreeProjection::realm(
+    let projection = crate::realm_tree::OptimisticRealmTreeProjection::realm(
         crate::realm_tree::RealmProjectionInput {
             owner: actor_id.to_owned(),
             admins: vec![actor_id.to_owned()],
@@ -976,17 +1061,21 @@ fn save_direct_conversation_realm_projection(
             content_scheme: "mls_rfc9420".to_owned(),
             history_visibility: "joined".to_owned(),
             plaintext_visible_services: Vec::new(),
+            collaboration_role: Some(arkret_sdk::CollaborationRealmRole::DirectConversation),
             encryption_floor: Some(
                 crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR.to_owned(),
             ),
         },
     )
     .into_value();
-    projection["state_at_window_start"]["realm_metadata"]["collaboration_role"] =
-        Value::String("direct_conversation".to_owned());
-    state_store
-        .write()
-        .save_realm_tree_projection(realm_id.to_owned(), projection);
+    {
+        let mut store = state_store.write();
+        store.save_realm_tree_projection(realm_id.to_owned(), projection);
+        store.save_realm_collaboration_role(
+            realm_id.to_owned(),
+            Some(arkret_sdk::CollaborationRealmRole::DirectConversation),
+        );
+    }
 }
 
 async fn sign_peer_keypackage_claim_authorization(
@@ -1400,6 +1489,67 @@ mod tests {
         assert_eq!(account.handle, "");
         assert_eq!(account.display_name, None);
         assert_eq!(account.created_at, "");
+    }
+
+    #[test]
+    fn reply_participation_builds_scoped_capability_grant() {
+        let realm_id = arkret_sdk::RealmId::new("ak:realm:01970000-0000-7000-8000-000000000001")
+            .expect("realm id");
+        let strand_id = arkret_sdk::StrandId::new("ak:strand:01970000-0000-7000-8000-000000000002")
+            .expect("strand id");
+        let grant_id = "ak:grant:01970000-0000-7000-8000-000000000003";
+        let event = participation_materialization_event(
+            "did:web:alice.example",
+            "did:web:agent.example",
+            &arkret_sdk::AgentParticipationScope::Strand {
+                realm_id: realm_id.clone(),
+                strand_id: strand_id.clone(),
+            },
+            arkret_sdk::AgentParticipation {
+                reply: true,
+                ..Default::default()
+            },
+            grant_id,
+        )
+        .expect("reply grant");
+
+        assert_eq!(event.kind.as_str(), "ak.capability.grant");
+        assert_eq!(event.realm_id, realm_id);
+        assert_eq!(event.payload["grant_id"], grant_id);
+        assert_eq!(
+            event.payload["grant"]["actions"],
+            json!(["ak.message.create", "ak.reaction.add"])
+        );
+        assert_eq!(
+            event.payload["grant"]["resources"],
+            json!([{
+                "kind": "strand",
+                "realm_id": "ak:realm:01970000-0000-7000-8000-000000000001",
+                "strand_id": strand_id
+            }])
+        );
+    }
+
+    #[test]
+    fn disabled_reply_participation_builds_capability_revoke() {
+        let realm_id = arkret_sdk::RealmId::new("ak:realm:01970000-0000-7000-8000-000000000001")
+            .expect("realm id");
+        let grant_id = "ak:grant:01970000-0000-7000-8000-000000000003";
+        let event = participation_materialization_event(
+            "did:web:alice.example",
+            "did:web:agent.example",
+            &arkret_sdk::AgentParticipationScope::Realm { realm_id },
+            arkret_sdk::AgentParticipation::NONE,
+            grant_id,
+        )
+        .expect("reply revoke");
+
+        assert_eq!(event.kind.as_str(), "ak.capability.revoke");
+        assert_eq!(event.payload["grant_id"], grant_id);
+        assert_eq!(
+            event.payload["reason"],
+            json!("agent_participation_disabled")
+        );
     }
 
     #[test]

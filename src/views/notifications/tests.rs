@@ -8,13 +8,24 @@ mod tests {
         UiNotificationAction, append_invite_notifications, drop_joined_invite_notifications,
         hydrate_notifications, notification_eval_context, notification_overrides_realm_mute,
         raw_notifications_from_sources, read_cursor_targets, realm_is_muted,
-        realm_title_hints_from_values,
+        realm_title_hints_from_invites,
     };
     use crate::notification_rules::WatchLevel;
+    use crate::state::projection::notifications::{test_event_notification, test_invite};
     use crate::state::{
         ClientLocalState, NotificationClientState, ReadCursorPosition, ReadMarkerBody,
         ReadMarkerRecord, read_scope_for_cursor,
     };
+
+    fn event(
+        ordinal: u64,
+        kind: arkret_sdk::NotificationKind,
+        realm_id: &str,
+        source_event_id: Option<&str>,
+        preview: serde_json::Value,
+    ) -> crate::state::StoredNotification {
+        test_event_notification(ordinal, kind, realm_id, source_event_id, preview)
+    }
 
     fn account_data_event(payload: serde_json::Value) -> arkret_sdk::Event {
         arkret_sdk::Event::new(
@@ -30,18 +41,18 @@ mod tests {
 
     #[test]
     fn hydrate_notifications_applies_push_rules_and_dnd() {
-        let raw = vec![json!({
-            "notification_id": "n1",
-            "schema": "ak.schema.notification.v1",
-            "notification_kind": "message",
-            "realm_id": "ak:realm:quiet",
-            "body": "hello"
-        })];
+        let raw = vec![event(
+            1,
+            arkret_sdk::NotificationKind::Message,
+            "ak:realm:0196419b-0000-7000-8000-000000000010",
+            None,
+            json!({"body": "hello"}),
+        )];
         let rules = crate::notification_rules::parse_push_rules(&json!({
             "rules": [{
                 "rule_id": "override.quiet",
                 "conditions": [
-                    {"kind": "field_match", "field": "realm_id", "pattern": "ak:realm:quiet"}
+                    {"kind": "field_match", "field": "realm_id", "pattern": "ak:realm:0196419b-0000-7000-8000-000000000010"}
                 ],
                 "actions": ["dont_notify"]
             }]
@@ -55,22 +66,18 @@ mod tests {
 
     #[test]
     fn pending_invites_are_hydrated_as_notifications() {
-        let invite = json!({
-            "id": "ak:invite:01904100-0000-7000-8000-000000000001",
-            "schema": "ak.schema.invite.v1",
-            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002",
-            "inviter": "did:web:alice.example",
-            "state": "pending",
-            "created_at": "2026-05-29T00:00:00.000Z",
-        });
-        let duplicate_invite = json!({
-            "id": "ak:invite:01904100-0000-7000-8000-000000000099",
-            "schema": "ak.schema.invite.v1",
-            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002",
-            "inviter": "did:web:alice.example",
-            "state": "pending",
-            "created_at": "2026-05-29T00:00:01.000Z",
-        });
+        let invite = test_invite(
+            1,
+            "ak:realm:01904100-0000-7000-8000-000000000002",
+            None,
+            None,
+        );
+        let duplicate_invite = test_invite(
+            99,
+            "ak:realm:01904100-0000-7000-8000-000000000002",
+            None,
+            None,
+        );
         let mut raw = Vec::new();
         append_invite_notifications(&mut raw, vec![invite.clone()], &BTreeSet::new());
         append_invite_notifications(&mut raw, vec![duplicate_invite], &BTreeSet::new());
@@ -108,21 +115,20 @@ mod tests {
     fn hydrate_notifications_uses_local_read_overlay_over_projection() {
         let mut local_state = ClientLocalState::default();
         local_state.notification_client_state.insert(
-            "n1".to_owned(),
+            "ak:notification:0196419b-0000-7000-8000-000000000001".to_owned(),
             NotificationClientState {
                 read: true,
                 archived: false,
             },
         );
         let notifications = hydrate_notifications(
-            vec![json!({
-                "notification_id": "n1",
-                "schema": "ak.schema.notification.v1",
-                "notification_kind": "mention",
-                "realm_id": "ak:realm:quiet",
-                "body": "hello",
-                "read": false
-            })],
+            vec![event(
+                1,
+                arkret_sdk::NotificationKind::Mention,
+                "ak:realm:0196419b-0000-7000-8000-000000000010",
+                None,
+                json!({"body": "hello"}),
+            )],
             &local_state,
             None,
             None,
@@ -162,26 +168,20 @@ mod tests {
 
         let notifications = hydrate_notifications(
             vec![
-                json!({
-                    "notification_id": "old",
-                    "notification_kind": "mention",
-                    "realm_id": realm_id,
-                    "strand_id": strand_id,
-                    "source_event_id": old_event,
-                    "timestamp": "2026-05-29T00:00:00.000Z",
-                    "body": "old mention",
-                    "read": false
-                }),
-                json!({
-                    "notification_id": "cursor",
-                    "notification_kind": "mention",
-                    "realm_id": realm_id,
-                    "strand_id": strand_id,
-                    "source_event_id": cursor_event,
-                    "timestamp": "2026-05-29T00:00:01.000Z",
-                    "body": "cursor mention",
-                    "read": false
-                }),
+                event(
+                    1,
+                    arkret_sdk::NotificationKind::Mention,
+                    realm_id,
+                    Some(old_event),
+                    json!({"strand_id": strand_id, "body": "old mention"}),
+                ),
+                event(
+                    2,
+                    arkret_sdk::NotificationKind::Mention,
+                    realm_id,
+                    Some(cursor_event),
+                    json!({"strand_id": strand_id, "body": "cursor mention"}),
+                ),
             ],
             &local_state,
             None,
@@ -210,13 +210,7 @@ mod tests {
             .insert(realm_id.to_owned(), WatchLevel::Muted);
 
         // A brand-new invitation (distinct invite id) to the same realm.
-        let invite = json!({
-            "id": "ak:invite:00000000-0000-7000-8000-0000000000bb",
-            "schema": "ak.schema.invite.v1",
-            "realm_id": realm_id,
-            "state": "pending",
-            "created_at": "2026-06-10T00:00:00.000Z",
-        });
+        let invite = test_invite(0xbb, realm_id, None, None);
         let mut raw = Vec::new();
         append_invite_notifications(&mut raw, vec![invite], &BTreeSet::new());
 
@@ -228,7 +222,7 @@ mod tests {
             "fresh invite must not inherit archive"
         );
         assert_eq!(
-            notification.id, "invite:ak:invite:00000000-0000-7000-8000-0000000000bb",
+            notification.id, "invite:ak:invite:0196419b-0000-7000-8000-0000000000bb",
             "invite notification id is keyed on the unique invite id"
         );
         // Realm mute must not hide an invite to a realm we are not in.
@@ -244,19 +238,20 @@ mod tests {
             .realm_watch_levels
             .insert(realm_id.to_owned(), WatchLevel::Muted);
         let raw = vec![
-            json!({
-                "notification_id": "normal",
-                "notification_kind": "message",
-                "realm_id": realm_id,
-                "body": "muted normal message",
-            }),
-            json!({
-                "notification_id": "mention",
-                "notification_kind": "mention",
-                "realm_id": realm_id,
-                "body": "@bob muted mention override",
-                "mentions_actor": true,
-            }),
+            event(
+                1,
+                arkret_sdk::NotificationKind::Message,
+                realm_id,
+                None,
+                json!({"body": "muted normal message"}),
+            ),
+            event(
+                2,
+                arkret_sdk::NotificationKind::Mention,
+                realm_id,
+                None,
+                json!({"body": "@bob muted mention override", "mentions_actor": true}),
+            ),
         ];
 
         let hydrated = hydrate_notifications(raw, &local_state, None, None);
@@ -275,20 +270,26 @@ mod tests {
             .realm_watch_levels
             .insert(realm_id.to_owned(), WatchLevel::Muted);
         let raw = vec![
-            json!({
-                "notification_id": "assignment",
-                "notification_kind": "assignment",
-                "realm_id": realm_id,
-                "body": "You were assigned to a Strand.",
-                "assigned_to_actor": true,
-            }),
-            json!({
-                "notification_id": "schedule",
-                "notification_kind": "schedule",
-                "realm_id": realm_id,
-                "body": "A due date or calendar schedule changed.",
-                "schedule_target": true,
-            }),
+            event(
+                1,
+                arkret_sdk::NotificationKind::Assignment,
+                realm_id,
+                None,
+                json!({
+                    "body": "You were assigned to a Strand.",
+                    "assigned_to_actor": true
+                }),
+            ),
+            event(
+                2,
+                arkret_sdk::NotificationKind::Schedule,
+                realm_id,
+                None,
+                json!({
+                    "body": "A due date or calendar schedule changed.",
+                    "schedule_target": true
+                }),
+            ),
         ];
 
         let hydrated = hydrate_notifications(raw, &local_state, None, None);
@@ -302,21 +303,16 @@ mod tests {
     #[test]
     fn invite_title_is_preserved_for_accept_projection_hint() {
         let realm_id = "ak:realm:01904100-0000-7000-8000-000000000010";
-        let invite = json!({
-            "id": "ak:invite:01904100-0000-7000-8000-000000000011",
-            "schema": "ak.schema.invite.v1",
-            "realm_id": realm_id,
-            "realm_title": "Partner Launch",
-            "join_rule_snapshot": {
-                "invite_token": "ak:invite-token:01904100-0000-7000-8000-000000000012"
-            },
-            "state": "pending",
-            "created_at": "2026-05-29T00:00:00.000Z",
-        });
+        let invite = test_invite(
+            0x11,
+            realm_id,
+            Some("Partner Launch"),
+            Some("ak:invite-token:01904100-0000-7000-8000-000000000012"),
+        );
+        let hints = realm_title_hints_from_invites(std::slice::from_ref(&invite));
         let mut raw = Vec::new();
         append_invite_notifications(&mut raw, vec![invite], &BTreeSet::new());
 
-        let hints = realm_title_hints_from_values(&raw);
         let notifications = hydrate_notifications(raw, &ClientLocalState::default(), None, None);
 
         assert_eq!(
@@ -340,19 +336,22 @@ mod tests {
 
     #[test]
     fn notification_eval_context_extracts_watch_and_e2ee_flags() {
-        let ctx = notification_eval_context(&json!({
-            "notification_id": "n1",
-            "event_kind": "ak.message.create",
-            "notification_kind": "mention",
-            "actor_id": "did:web:alice.example",
-            "realm_id": "ak:realm:e2ee",
-            "strand_id": "ak:strand:1",
-            "track_name": "discussion",
-            "watch_state": "participating",
-            "encrypted": true,
-            "local_decrypted": false,
-            "mentions_actor": true
-        }));
+        let notification = event(
+            1,
+            arkret_sdk::NotificationKind::Mention,
+            "ak:realm:0196419b-0000-7000-8000-000000000010",
+            None,
+            json!({
+                "event_kind": "ak.message.create",
+                "strand_id": "ak:strand:0196419b-0000-7000-8000-000000000011",
+                "track_name": "discussion",
+                "watch_state": "participating",
+                "encrypted": true,
+                "local_decrypted": false,
+                "mentions_actor": true
+            }),
+        );
+        let ctx = notification_eval_context(&notification);
 
         assert_eq!(ctx.event_kind, "ak.message.create");
         assert_eq!(ctx.notification_kind, "mention");
@@ -366,29 +365,39 @@ mod tests {
 
     #[test]
     fn notification_eval_context_extracts_schedule_target() {
-        let ctx = notification_eval_context(&json!({
-            "notification_id": "n1",
-            "event_kind": "ak.strand.update",
-            "notification_kind": "schedule",
-            "schedule_target": true,
-        }));
+        let notification = event(
+            1,
+            arkret_sdk::NotificationKind::Schedule,
+            "ak:realm:0196419b-0000-7000-8000-000000000010",
+            None,
+            json!({
+                "event_kind": "ak.strand.update",
+                "schedule_target": true
+            }),
+        );
+        let ctx = notification_eval_context(&notification);
 
         assert_eq!(ctx.notification_kind, "schedule");
         assert!(ctx.schedule_target);
     }
 
     #[test]
-    fn notification_eval_context_ignores_deprecated_sender_fields() {
-        let ctx = notification_eval_context(&json!({
-            "notification_id": "n1",
-            "event_kind": "ak.message.create",
-            "notification_kind": "mention",
-            "sender": "did:web:removed.example",
-            "sender_did": "did:web:removed-did.example",
-            "sender_actor_id": "did:web:removed-actor.example"
-        }));
+    fn notification_eval_context_uses_typed_actor_not_preview_aliases() {
+        let notification = event(
+            1,
+            arkret_sdk::NotificationKind::Mention,
+            "ak:realm:0196419b-0000-7000-8000-000000000010",
+            None,
+            json!({
+                "event_kind": "ak.message.create",
+                "sender": "did:web:removed.example",
+                "sender_did": "did:web:removed-did.example",
+                "sender_actor_id": "did:web:removed-actor.example"
+            }),
+        );
+        let ctx = notification_eval_context(&notification);
 
-        assert_eq!(ctx.sender, None);
+        assert_eq!(ctx.sender.as_deref(), Some("did:web:alice.example"));
     }
 
     #[test]
@@ -397,35 +406,27 @@ mod tests {
         let strand_a = "ak:strand:01904100-0000-7000-8000-000000000003";
         let realm_b = "ak:realm:01904100-0000-7000-8000-000000000004";
         let raw = vec![
-            json!({
-                "notification_id": "old-a",
-                "notification_kind": "message",
-                "realm_id": realm_a,
-                "strand_id": strand_a,
-                "source_event_id": "ak:event:01904100-0000-7000-8000-000000000005",
-                "timestamp": "2026-05-29T00:00:00.000Z",
-            }),
-            json!({
-                "notification_id": "new-a",
-                "notification_kind": "message",
-                "realm_id": realm_a,
-                "strand_id": strand_a,
-                "event_id": "ak:event:01904100-0000-7000-8000-000000000006",
-                "timestamp": "2026-05-29T00:00:01.000Z",
-            }),
-            json!({
-                "notification_id": "no-position",
-                "notification_kind": "message",
-                "realm_id": realm_a,
-                "timestamp": "2026-05-29T00:00:02.000Z",
-            }),
-            json!({
-                "notification_id": "new-b",
-                "notification_kind": "mention",
-                "realm_id": realm_b,
-                "source_event_id": "ak:event:01904100-0000-7000-8000-000000000007",
-                "timestamp": "2026-05-29T00:00:03.000Z",
-            }),
+            event(
+                1,
+                arkret_sdk::NotificationKind::Message,
+                realm_a,
+                Some("ak:event:01904100-0000-7000-8000-000000000005"),
+                json!({"strand_id": strand_a}),
+            ),
+            event(
+                2,
+                arkret_sdk::NotificationKind::Message,
+                realm_a,
+                Some("ak:event:01904100-0000-7000-8000-000000000006"),
+                json!({"strand_id": strand_a}),
+            ),
+            event(
+                3,
+                arkret_sdk::NotificationKind::Mention,
+                realm_b,
+                Some("ak:event:01904100-0000-7000-8000-000000000007"),
+                json!({}),
+            ),
         ];
 
         let notifications = hydrate_notifications(raw, &ClientLocalState::default(), None, None);
@@ -454,12 +455,18 @@ mod tests {
 
     #[test]
     fn notification_sources_merge_account_data_with_typed_subscribe_deltas() {
+        let stored = event(
+            1,
+            arkret_sdk::NotificationKind::Message,
+            "ak:realm:0196419b-0000-7000-8000-000000000001",
+            Some("ak:event:0196419b-0000-7000-8000-000000000002"),
+            json!({"body": "hello"}),
+        );
+        let crate::state::StoredNotification::Event { notification } = stored else {
+            unreachable!("test fixture is Event notification");
+        };
         let account_data = vec![
-            account_data_event(json!({
-                "schema": "ak.schema.notification.v1",
-                "notification_id": "n1",
-                "read": false
-            })),
+            account_data_event(serde_json::to_value(notification).unwrap()),
             account_data_event(json!({
                 "kind": "ak.profile",
                 "id": "profile"
@@ -475,21 +482,48 @@ mod tests {
             1
         );
 
-        let subscribe_delta = vec![arkret_sdk::NotificationDelta {
-            id: arkret_sdk::NotificationId::new(
-                "ak:notification:01964137-0000-7000-8000-000000000004",
+        let subscribe_delta = vec![
+            arkret_sdk::NotificationDelta::try_new(
+                arkret_sdk::NotificationId::new(
+                    "ak:notification:01964137-0000-7000-8000-000000000004",
+                )
+                .unwrap(),
+                arkret_sdk::NotificationKind::Agent,
+                arkret_sdk::NotificationDeltaAction::Add,
+                Some(arkret_sdk::NotificationData::AgentRuntimeApproval(
+                    arkret_sdk::AgentRuntimeApprovalNotificationData {
+                        kind: arkret_sdk::AccountNotificationDataKind::AgentRuntimeApproval,
+                        approval_request_id: arkret_sdk::OpaqueLocalId::new(
+                            "agent_runtime_approval:01964137-0000-7000-8000-000000000005",
+                        )
+                        .unwrap(),
+                        agent_id: arkret_sdk::Did::new("did:web:agent.example".to_owned()).unwrap(),
+                        requested_at: chrono::DateTime::parse_from_rfc3339(
+                            "2026-05-29T00:00:00.000Z",
+                        )
+                        .unwrap()
+                        .with_timezone(&chrono::Utc),
+                        expires_at: chrono::DateTime::parse_from_rfc3339(
+                            "2026-05-29T00:10:00.000Z",
+                        )
+                        .unwrap()
+                        .with_timezone(&chrono::Utc),
+                    },
+                )),
             )
             .unwrap(),
-            notification_kind: arkret_sdk::NotificationKind::Agent,
-            action: arkret_sdk::NotificationDeltaAction::Remove,
-            data: None,
-        }];
+        ];
         let from_subscribe = raw_notifications_from_sources(Some(&subscribe_delta), &account_data);
         assert_eq!(from_subscribe.len(), 2);
-        assert_eq!(
-            from_subscribe[0]["id"].as_str(),
-            Some("ak:notification:01964137-0000-7000-8000-000000000004")
+        assert!(from_subscribe.iter().any(|item| {
+            item.agent_runtime_approval().is_some_and(|(id, _)| {
+                id.as_str() == "ak:notification:01964137-0000-7000-8000-000000000004"
+            })
+        }));
+        assert!(
+            from_subscribe
+                .iter()
+                .any(|item| matches!(item, crate::state::StoredNotification::Event { .. }))
         );
-        assert_eq!(from_subscribe[1]["notification_id"].as_str(), Some("n1"));
     }
 }

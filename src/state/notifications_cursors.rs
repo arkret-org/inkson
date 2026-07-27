@@ -1,13 +1,13 @@
 use super::*;
 
 impl LocalStateStore {
-    pub fn save_notification_projection(&mut self, notifications: Vec<Value>) {
+    pub fn save_notification_projection(&mut self, notifications: Vec<StoredNotification>) {
         self.ensure_cached_loaded();
         self.cached.notification_projection = notifications;
         let _ = self.flush();
     }
 
-    pub fn notification_projection(&self) -> Vec<Value> {
+    pub fn notification_projection(&self) -> Vec<StoredNotification> {
         self.load().notification_projection
     }
 

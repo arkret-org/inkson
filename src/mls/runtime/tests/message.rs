@@ -309,6 +309,7 @@ async fn authoring_exporter_aead_content_retains_history_secret() {
             content_scheme: "mls_exporter_aead_v1".to_owned(),
             history_visibility: "shared".to_owned(),
             plaintext_visible_services: Vec::new(),
+            collaboration_role: None,
             encryption_floor: Some("e2ee_required".to_owned()),
         },
     )

@@ -117,8 +117,11 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
     }
 
     use_effect(move || {
-        let projections = state_store.read().load().realm_tree_projections;
-        let next = realm_tree_nodes_from_sync_realms(&projections);
+        let state = state_store.read().load();
+        let next = realm_tree_nodes_from_sync_realms_with_roles(
+            &state.realm_tree_projections,
+            &state.realm_collaboration_roles,
+        );
         if *realm_tree_nodes.peek() != next {
             realm_tree_nodes.set(next);
         }

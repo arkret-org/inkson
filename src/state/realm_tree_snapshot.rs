@@ -36,6 +36,35 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
+    pub fn save_realm_collaboration_role(
+        &mut self,
+        realm_id: impl Into<String>,
+        role: Option<arkret_sdk::CollaborationRealmRole>,
+    ) {
+        self.ensure_cached_loaded();
+        let realm_id = realm_id.into();
+        let changed = match role {
+            Some(role) => {
+                self.cached.realm_collaboration_roles.insert(realm_id, role) != Some(role)
+            }
+            None => self
+                .cached
+                .realm_collaboration_roles
+                .remove(&realm_id)
+                .is_some(),
+        };
+        if changed {
+            let _ = self.flush();
+        }
+    }
+
+    pub fn realm_collaboration_role(
+        &self,
+        realm_id: &str,
+    ) -> Option<arkret_sdk::CollaborationRealmRole> {
+        self.load().realm_collaboration_roles.get(realm_id).copied()
+    }
+
     pub fn apply_snapshot_chunks(
         &mut self,
         manifest: &arkret_sdk::SnapshotManifest,
@@ -163,6 +192,7 @@ impl LocalStateStore {
 
     fn forget_realm_tree_projection_inner(&mut self, projection_id: &str) {
         self.cached.realm_tree_projections.remove(projection_id);
+        self.cached.realm_collaboration_roles.remove(projection_id);
         self.cached.realm_destroy_receipts.remove(projection_id);
         self.cached.seal_views.remove(projection_id);
         self.cached.realm_remarks.remove(projection_id);

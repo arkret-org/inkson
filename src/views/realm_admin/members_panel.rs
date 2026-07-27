@@ -278,17 +278,15 @@ fn spawn_set_agent_realm_behavior(
                 return;
             }
         };
-        let body = arkret_models_collaboration::governance::agent_participation::AgentParticipationReplaceRequestBody {
-            scope: AgentParticipationScope::Realm { realm_id },
-            selection,
-        };
+        let scope = AgentParticipationScope::Realm { realm_id };
         match crate::transport::auth::with_authed_sdk_client(&base, api_token, |http| {
-            let body = body.clone();
+            let scope = scope.clone();
             let agent_id = agent_id.clone();
             async move {
-                http.agent_participation_replace(&agent_id, &body)
-                    .await
-                    .map_err(anyhow::Error::from)
+                crate::transport::account::replace_agent_participation(
+                    &http, &agent_id, scope, selection,
+                )
+                .await
             }
         })
         .await
@@ -2607,15 +2605,7 @@ fn admission_joined_member_signature_for_realm(store: &LocalStateStore, realm_id
 }
 
 fn realm_projection_is_direct_conversation(store: &LocalStateStore, realm_id: &str) -> bool {
-    store
-        .load()
-        .realm_tree_projections
-        .get(realm_id)
-        .and_then(|projection| {
-            projection.pointer("/state_at_window_start/realm_metadata/collaboration_role")
-        })
-        .cloned()
-        .and_then(|value| serde_json::from_value::<arkret_sdk::CollaborationRealmRole>(value).ok())
+    store.realm_collaboration_role(realm_id)
         == Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
 }
 
@@ -5401,6 +5391,10 @@ mod tests {
                     }
                 }
             }),
+        );
+        store.save_realm_collaboration_role(
+            realm_id.to_owned(),
+            Some(arkret_sdk::CollaborationRealmRole::DirectConversation),
         );
         store.save_mls_snapshot(realm_id.to_owned(), dummy_mls_snapshot(realm_id));
 

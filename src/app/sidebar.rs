@@ -8,33 +8,20 @@ pub(super) fn pinned_realm_ids_from_store(store: &LocalStateStore) -> BTreeSet<S
         .collect()
 }
 
-pub(super) fn notification_projection_string(value: &Value, keys: &[&str]) -> Option<String> {
-    keys.iter()
-        .filter_map(|key| value.get(*key).and_then(Value::as_str))
-        .map(str::trim)
-        .find(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-pub(super) fn notification_projection_bool(value: &Value, key: &str) -> Option<bool> {
-    value.get(key).and_then(Value::as_bool)
-}
-
 pub(super) fn unread_notification_count(snapshot: &ClientLocalState) -> usize {
     snapshot
         .notification_projection
         .iter()
         .enumerate()
         .filter(|(index, value)| {
-            let id = notification_projection_string(value, &["notification_id", "id"])
-                .unwrap_or_else(|| format!("notification-{index}"));
+            let id = value.notification_id();
             let client_state = snapshot.notification_client_state.get(&id);
-            let archived = client_state.map(|state| state.archived).unwrap_or_else(|| {
-                notification_projection_bool(value, "archived").unwrap_or(false)
-            });
-            let read = client_state
-                .map(|state| state.read)
-                .unwrap_or_else(|| notification_projection_bool(value, "read").unwrap_or(false))
+            let (projection_read, projection_archived) =
+                crate::views::notifications::notification_wire_state(value);
+            let archived =
+                projection_archived || client_state.map(|state| state.archived).unwrap_or(false);
+            let read = projection_read
+                || client_state.map(|state| state.read).unwrap_or(false)
                 || crate::views::notifications::notification_value_read_by_cursor(
                     *index, value, snapshot,
                 );

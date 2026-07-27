@@ -12,14 +12,13 @@ use arkret_models_collaboration::events_payloads::agent::{
 use arkret_models_collaboration::governance::agent_participation::AgentParticipation;
 use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
-    AgentKeyAuthorizePayloadRuntimeAttestation, AgentKeyPairRequestBody, AgentKeySupersession,
-    AgentPairingBootstrap, AgentProvisionEvents, AgentRequestedScopeDisclosure,
+    AgentKeyPairRequestBody, AgentKeySupersession, AgentPairingBootstrap, AgentProvisionEvents,
+    AgentRequestedScopeDisclosure, AgentRuntimeApprovalControllerProjection,
     AgentSigningKeyBinding, AgentSigningPublicKey, Did, DidUrl, Event, EventId, GrantConstraint,
-    GrantConstraintEffect, GrantConstraintKind, GrantConstraintSubkind, Hash, NonEmptyJsonObject,
-    NonEmptyString, Proof, PublicKey, RealmId, RequestId,
+    GrantConstraintEffect, GrantConstraintKind, GrantConstraintSubkind, Hash, KeyState,
+    NonEmptyString, OpaqueLocalId, Proof, RealmId, RequestId,
 };
 use chrono::Utc;
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 pub fn build_agent_provision_event_drafts(
@@ -419,65 +418,51 @@ fn json_invalid_input(error: impl std::fmt::Display) -> serde_json::Error {
     ))
 }
 
-#[derive(Clone, Debug, Deserialize)]
-pub struct RuntimeKeyApprovalRequest {
-    pub pairing_request_id: NonEmptyString,
-    pub agent_id: Did,
-    pub verification_method: DidUrl,
-    pub public_key: PublicKey,
-    pub proof_of_possession: NonEmptyJsonObject,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_attestation: Option<AgentKeyAuthorizePayloadRuntimeAttestation>,
-}
-
-impl RuntimeKeyApprovalRequest {
-    pub fn into_pair_request(
-        self,
-        requested_scope_disclosure: AgentRequestedScopeDisclosure,
-        authorize_event: Event,
-        signing_key_binding: AgentSigningKeyBinding,
-    ) -> AgentKeyPairRequestBody {
-        AgentKeyPairRequestBody {
-            pairing_request_id: self.pairing_request_id,
-            agent_id: self.agent_id,
-            verification_method: self.verification_method,
-            public_key: self.public_key,
-            proof_of_possession: self.proof_of_possession,
-            requested_scope_disclosure,
-            runtime_attestation: self.runtime_attestation,
-            authorize_event,
-            signing_key_binding,
-        }
+pub fn into_agent_key_pair_request(
+    request: AgentRuntimeApprovalControllerProjection,
+    requested_scope_disclosure: AgentRequestedScopeDisclosure,
+    authorize_event: Event,
+    signing_key_binding: AgentSigningKeyBinding,
+) -> AgentKeyPairRequestBody {
+    AgentKeyPairRequestBody {
+        pairing_request_id: request.pairing_request_id,
+        agent_id: request.agent_id,
+        verification_method: request.verification_method,
+        public_key: request.public_key,
+        proof_of_possession: request.proof_of_possession,
+        requested_scope_disclosure,
+        runtime_attestation: request.runtime_attestation,
+        authorize_event,
+        signing_key_binding,
     }
 }
 
 pub fn build_requested_scope_disclosure_for_pairing(
     controller_id: &str,
     service_id: &str,
-    key_state: &Value,
-    request: &RuntimeKeyApprovalRequest,
+    key_state: &KeyState,
+    request: &AgentRuntimeApprovalControllerProjection,
 ) -> anyhow::Result<AgentRequestedScopeDisclosure> {
     let controller_id = Did::new(controller_id.trim().to_owned())?;
     let agent_id = request.agent_id.clone();
-    if key_state_str(key_state, "controller_id")? != controller_id.as_str() {
+    if key_state.controller_id != controller_id {
         anyhow::bail!("agent key_state.controller_id does not match the signed-in controller");
     }
-    if key_state_str(key_state, "agent_id")? != agent_id.as_str() {
+    if key_state.agent_id != agent_id {
         anyhow::bail!("runtime request agent_id does not match this agent key state");
     }
-    let pairing_request_id = key_state_str(key_state, "pairing_request_id")?;
-    if pairing_request_id != request.pairing_request_id.as_str() {
+    let pairing_request_id = key_state
+        .pairing_request_id
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("agent key_state.pairing_request_id is required"))?;
+    if pairing_request_id != &request.pairing_request_id {
         anyhow::bail!("runtime request pairing_request_id does not match this agent");
     }
     let request_uuid = pairing_request_id
+        .as_str()
         .strip_prefix("agent_pairing_request:")
         .ok_or_else(|| anyhow::anyhow!("agent pairing_request_id is invalid"))?;
-    let requested_scope: AgentKeyScope = serde_json::from_value(
-        key_state
-            .get("requested_scope")
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("agent key_state.requested_scope is required"))?,
-    )?;
+    let requested_scope = key_state.requested_scope.clone();
     let requested_scope_digest = arkret_signatures::agent::agent_requested_scope_digest(
         &agent_id,
         &controller_id,
@@ -500,7 +485,7 @@ pub fn build_requested_scope_disclosure_for_pairing(
         verifier_did: Did::new(service_id.trim().to_owned())?,
         audience: NonEmptyString::new("ak.gate.account.command.pair_agent_key")
             .map_err(anyhow::Error::msg)?,
-        challenge: NonEmptyString::new(pairing_request_id.to_owned())
+        challenge: NonEmptyString::new(pairing_request_id.as_str().to_owned())
             .map_err(anyhow::Error::msg)?,
         issued_at,
         expires_at: issued_at + chrono::Duration::minutes(5),
@@ -524,17 +509,19 @@ pub fn build_requested_scope_disclosure_for_pairing(
     Ok(disclosure)
 }
 
-pub fn parse_runtime_key_approval_request(raw: &str) -> anyhow::Result<RuntimeKeyApprovalRequest> {
-    let request: RuntimeKeyApprovalRequest = serde_json::from_str(raw.trim())?;
+pub fn parse_runtime_key_approval_request(
+    raw: &str,
+) -> anyhow::Result<AgentRuntimeApprovalControllerProjection> {
+    let request: AgentRuntimeApprovalControllerProjection = serde_json::from_str(raw.trim())?;
     Ok(request)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeKeyApprovalSummary {
-    pub pairing_request_id: String,
-    pub agent_id: String,
-    pub verification_method: String,
-    pub public_key_fingerprint: String,
+    pub pairing_request_id: OpaqueLocalId,
+    pub agent_id: Did,
+    pub verification_method: DidUrl,
+    pub public_key_fingerprint: Hash,
     pub proof_expires_at: String,
 }
 
@@ -543,9 +530,7 @@ pub fn summarize_runtime_key_approval_request(
 ) -> anyhow::Result<RuntimeKeyApprovalSummary> {
     let request = parse_runtime_key_approval_request(raw)?;
     let public_key_fingerprint =
-        arkret_signatures::agent::agent_runtime_public_key_digest(&request.public_key)?
-            .as_str()
-            .to_owned();
+        arkret_signatures::agent::agent_runtime_public_key_digest(&request.public_key)?;
     let proof_expires_at = request
         .proof_of_possession
         .as_map()
@@ -554,9 +539,9 @@ pub fn summarize_runtime_key_approval_request(
         .unwrap_or_default()
         .to_owned();
     Ok(RuntimeKeyApprovalSummary {
-        pairing_request_id: request.pairing_request_id.as_str().to_owned(),
-        agent_id: request.agent_id.to_string(),
-        verification_method: request.verification_method.as_str().to_owned(),
+        pairing_request_id: request.pairing_request_id,
+        agent_id: request.agent_id,
+        verification_method: request.verification_method,
         public_key_fingerprint,
         proof_expires_at,
     })
@@ -589,14 +574,6 @@ pub fn runtime_key_pairing_error_message(error: impl std::fmt::Display) -> Strin
     message.to_owned()
 }
 
-fn key_state_str<'a>(key_state: &'a Value, key: &str) -> anyhow::Result<&'a str> {
-    key_state
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("agent key_state.{key} is required"))
-}
-
 pub struct AgentKeyAuthorizationForPairing {
     pub authorize_event: Event,
     pub signing_key_binding: AgentSigningKeyBinding,
@@ -605,28 +582,28 @@ pub struct AgentKeyAuthorizationForPairing {
 pub fn build_agent_key_authorization_for_pairing(
     controller_id: &str,
     service_id: &str,
-    key_state: &Value,
-    request: &RuntimeKeyApprovalRequest,
+    key_state: &KeyState,
+    request: &AgentRuntimeApprovalControllerProjection,
 ) -> anyhow::Result<AgentKeyAuthorizationForPairing> {
     let controller = Did::new(controller_id.trim().to_owned())?;
-    if key_state_str(key_state, "controller_id")? != controller.as_str() {
+    if key_state.controller_id != controller {
         anyhow::bail!("agent key_state.controller_id does not match the signed-in controller");
     }
-    if request.agent_id.as_str() != key_state_str(key_state, "agent_id")? {
+    if request.agent_id != key_state.agent_id {
         anyhow::bail!("runtime request agent_id does not match this agent key state");
     }
-    if request.pairing_request_id.as_str() != key_state_str(key_state, "pairing_request_id")? {
+    if key_state.pairing_request_id.as_ref() != Some(&request.pairing_request_id) {
         anyhow::bail!("runtime request pairing_request_id does not match this agent");
     }
-    let pairing_code = key_state_str(key_state, "pairing_code")?;
-    let pairing_expires_at = key_state_str(key_state, "pairing_expires_at")?;
-    arkret_sdk::canonical::validate_timestamp_canonical(pairing_expires_at)?;
-    let requested_scope: AgentKeyScope = serde_json::from_value(
-        key_state
-            .get("requested_scope")
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("agent key_state.requested_scope is required"))?,
-    )?;
+    let pairing_code = key_state
+        .pairing_code
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("agent key_state.pairing_code is required"))?;
+    let pairing_expires_at = key_state
+        .pairing_expires_at
+        .map(arkret_sdk::canonical::format_timestamp_canonical)
+        .ok_or_else(|| anyhow::anyhow!("agent key_state.pairing_expires_at is required"))?;
+    let requested_scope = key_state.requested_scope.clone();
     let runtime_public_key_digest =
         arkret_signatures::agent::agent_runtime_public_key_digest(&request.public_key)?;
     let runtime_public_key = request.public_key.clone();
@@ -640,7 +617,7 @@ pub fn build_agent_key_authorization_for_pairing(
         &runtime_public_key_digest,
         request.pairing_request_id.as_str(),
         pairing_code,
-        pairing_expires_at,
+        &pairing_expires_at,
         service_id,
     )?;
     let issued_at = Utc::now();
@@ -656,33 +633,28 @@ pub fn build_agent_key_authorization_for_pairing(
     // exact-match check with a CONFLICT ("Server rejected the runtime key
     // approval"). Supersede all active authorizations, keyed by their distinct
     // authorized_event_ref.
-    let supersedes = match key_state.get("active_authorizations") {
-        Some(Value::Array(authorizations)) => authorizations
+    let supersedes = if !key_state.active_authorizations.is_empty() {
+        key_state
+            .active_authorizations
             .iter()
-            .map(|authorization| {
-                Ok(AgentKeySupersession {
-                    key_id: key_state_str(authorization, "key_id")?.to_owned(),
-                    authorized_event_ref: EventId::new(
-                        key_state_str(authorization, "authorized_event_ref")?.to_owned(),
-                    )?,
-                })
+            .map(|authorization| AgentKeySupersession {
+                key_id: authorization.key_id.clone(),
+                authorized_event_ref: authorization.authorized_event_ref.clone(),
             })
-            .collect::<anyhow::Result<Vec<_>>>()?,
-        Some(_) => anyhow::bail!("agent key_state.active_authorizations must be an array"),
+            .collect()
         // A keyed agent — projected on the runtime readiness axis as ready or
         // replacing (key-management.md §3.6.1), never the lifecycle status which
         // now reads "active" for a never-keyed bootstrap agent too — MUST expose
         // its authoritative active_authorizations so the replacement supersedes
         // them exactly. A bootstrap pairing (pending_runtime_key / pairing_expired)
         // legitimately has none.
-        None if matches!(
-            key_state.get("runtime_state").and_then(Value::as_str),
-            Some("ready" | "replacing")
-        ) =>
-        {
-            anyhow::bail!("keyed agent key_state must expose authoritative active_authorizations")
-        }
-        None => Vec::new(),
+    } else if matches!(
+        key_state.runtime_state,
+        AgentRuntimeState::Ready | AgentRuntimeState::Replacing
+    ) {
+        anyhow::bail!("keyed agent key_state must expose authoritative active_authorizations")
+    } else {
+        Vec::new()
     };
     let authorize_event_id = EventId::new(arkret_sdk::new_prefixed_uuid7("ak:event:"))?;
     let signer = crate::event_signer::active_signer()
@@ -733,8 +705,8 @@ pub fn build_agent_key_authorization_for_pairing(
             .map_err(|reason| anyhow::anyhow!(reason.as_str()))?;
     let payload = AgentKeyAuthorizePayload {
         agent_id: request.agent_id.clone(),
-        key_id: agent_key_id.as_str().to_owned(),
-        verification_method: request.verification_method.as_str().to_owned(),
+        key_id: agent_key_id.clone(),
+        verification_method: request.verification_method.clone(),
         public_key_digest: Hash::new(runtime_public_key_digest.as_str().to_owned())?,
         signing_key_binding_digest,
         accountable_principal_id: controller.clone(),
@@ -748,15 +720,15 @@ pub fn build_agent_key_authorization_for_pairing(
             kind: AgentKeyApprovalEvidenceKind::PairingRequest,
             evidence_ref: None,
             request_canonical_digest: Some(Hash::new(pairing_digest.as_str().to_owned())?),
-            pairing_request_id: Some(request.pairing_request_id.as_str().to_owned()),
+            pairing_request_id: Some(request.pairing_request_id.clone()),
             approved_by: Some(controller.clone()),
         },
         supersedes,
         revocation_check_ref: None,
         runtime_attestation,
     };
-    let realm_id = RealmId::new(key_state_str(key_state, "principal_control_realm_id")?)?;
-    let authorization_ref = key_state_str(key_state, "controller_authorization_ref")?;
+    let realm_id = key_state.principal_control_realm_id.clone();
+    let authorization_ref = key_state.controller_authorization_ref.clone();
     let hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
         controller.as_str(),
         realm_id.as_str(),
@@ -788,8 +760,8 @@ pub fn build_agent_key_authorization_for_pairing(
 pub fn build_agent_key_authorize_event_for_pairing(
     controller_id: &str,
     service_id: &str,
-    key_state: &Value,
-    request: &RuntimeKeyApprovalRequest,
+    key_state: &KeyState,
+    request: &AgentRuntimeApprovalControllerProjection,
 ) -> anyhow::Result<Event> {
     Ok(
         build_agent_key_authorization_for_pairing(controller_id, service_id, key_state, request)?

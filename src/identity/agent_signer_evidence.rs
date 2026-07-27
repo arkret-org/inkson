@@ -92,62 +92,85 @@ pub(crate) async fn prefetch_from_realm_projections(
             .or_default()
             .push(selector);
     }
-    for (realm_id, event_selectors) in by_realm {
+    for (realm_id, mut pending_selectors) in by_realm {
         let Ok(realm_id) = RealmId::new(realm_id) else {
             continue;
         };
-        let queries = event_selectors
-            .iter()
-            .map(|selector| AgentSignerEvidenceQuerySelector {
-                agent_id: selector.admission.agent_id.clone(),
-                verification_method: selector.admission.verification_method.clone(),
-                agent_key_authorize_event_id: Some(
-                    selector.admission.authorization_event_id.clone(),
-                ),
-                event_accepted_frontier: Some(selector.admission.accepted_frontier.clone()),
-            })
-            .collect();
-        let request = AgentSignerEvidenceQueryRequestBodyBody { realm_id, queries };
-        let mut outcome = None;
         for attempt in 0..4 {
+            let queries = pending_selectors
+                .iter()
+                .map(|selector| AgentSignerEvidenceQuerySelector {
+                    agent_id: selector.admission.agent_id.clone(),
+                    verification_method: selector.admission.verification_method.clone(),
+                    agent_key_authorize_event_id: Some(
+                        selector.admission.authorization_event_id.clone(),
+                    ),
+                    event_accepted_frontier: Some(selector.admission.accepted_frontier.clone()),
+                })
+                .collect();
+            let request = AgentSignerEvidenceQueryRequestBodyBody {
+                realm_id: realm_id.clone(),
+                queries,
+            };
             match http.agent_signer_evidence_query(&request).await {
-                Ok(candidate) if !candidate.evidence.is_empty() => {
-                    outcome = Some(candidate);
-                    break;
+                Ok(outcome) => {
+                    for evidence in outcome.evidence {
+                        let Some(selector_index) = pending_selectors.iter().position(|selector| {
+                            selector.admission.agent_id == evidence.signing_key_binding.agent_id
+                                && selector.admission.verification_method
+                                    == evidence.signing_key_binding.verification_method
+                                && selector.admission.authorization_event_id
+                                    == evidence.signing_key_binding.agent_key_authorize_event_id
+                        }) else {
+                            continue;
+                        };
+                        let Some(entry) = verify_for_cache(
+                            http,
+                            &anchor,
+                            evidence,
+                            &pending_selectors[selector_index],
+                        )
+                        .await
+                        else {
+                            continue;
+                        };
+                        if state_store
+                            .write(|store| store.store_verified_agent_signer_evidence(entry))
+                            .is_ok()
+                        {
+                            changed = true;
+                            pending_selectors.remove(selector_index);
+                        }
+                    }
+                    if pending_selectors.is_empty() {
+                        break;
+                    }
+                    if attempt == 3 {
+                        tracing::warn!(
+                            realm_id = %realm_id,
+                            unresolved = pending_selectors.len(),
+                            failures = ?outcome.failures,
+                            "agent signer evidence remained unresolved after bounded verification retries",
+                        );
+                    }
                 }
-                Ok(candidate) => outcome = Some(candidate),
+                Err(error) if attempt == 3 => {
+                    tracing::warn!(
+                        realm_id = %realm_id,
+                        unresolved = pending_selectors.len(),
+                        %error,
+                        "agent signer evidence query failed after bounded retries",
+                    );
+                }
                 Err(_) => {}
             }
             if attempt < 3 {
                 // The accepted Event can reach the account stream a few
-                // milliseconds before the evidence query projection observes
-                // the same canonical record. Keep the message fail-closed, but
-                // bridge that bounded read-after-write window before rendering
-                // it as unresolved.
+                // milliseconds before either the evidence projection or its
+                // DID key material is observable. Stop only after evidence is
+                // fully verified and cached, not merely after a non-empty
+                // query response.
                 crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(500)).await;
-            }
-        }
-        let Some(outcome) = outcome else {
-            continue;
-        };
-        for evidence in outcome.evidence {
-            let Some(selector) = event_selectors.iter().find(|selector| {
-                selector.admission.agent_id == evidence.signing_key_binding.agent_id
-                    && selector.admission.verification_method
-                        == evidence.signing_key_binding.verification_method
-                    && selector.admission.authorization_event_id
-                        == evidence.signing_key_binding.agent_key_authorize_event_id
-            }) else {
-                continue;
-            };
-            let Some(entry) = verify_for_cache(http, &anchor, evidence, selector).await else {
-                continue;
-            };
-            if state_store
-                .write(|store| store.store_verified_agent_signer_evidence(entry))
-                .is_ok()
-            {
-                changed = true;
             }
         }
     }

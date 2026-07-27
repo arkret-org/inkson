@@ -46,6 +46,7 @@ pub(crate) struct RealmProjectionInput {
     /// Initial history visibility selected at creation time.
     pub history_visibility: String,
     pub plaintext_visible_services: Vec<String>,
+    pub collaboration_role: Option<arkret_sdk::CollaborationRealmRole>,
     /// Recommended content/metadata floor (e.g. `e2ee_required`), or `None`
     /// to omit the floor keys entirely. The caller decides this via
     /// [`crate::event_builders::encryption_profile_uses_recommended_floor`] so the
@@ -94,6 +95,7 @@ impl OptimisticRealmTreeProjection {
             content_scheme,
             history_visibility,
             plaintext_visible_services,
+            collaboration_role,
             encryption_floor,
         } = input;
         // Realm metadata is mirrored at the body top level *and* under
@@ -107,6 +109,7 @@ impl OptimisticRealmTreeProjection {
             content_scheme: content_scheme.clone(),
             history_visibility: history_visibility.clone(),
             plaintext_visible_services: plaintext_visible_services.clone(),
+            collaboration_role,
             content_encryption_floor: encryption_floor.clone(),
             metadata_encryption_floor: encryption_floor.clone(),
             summary: RealmProjectionSummary {
@@ -166,6 +169,8 @@ pub(crate) struct RealmProjectionBody {
     content_scheme: String,
     history_visibility: String,
     plaintext_visible_services: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    collaboration_role: Option<arkret_sdk::CollaborationRealmRole>,
     #[serde(skip_serializing_if = "Option::is_none")]
     content_encryption_floor: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -820,7 +825,15 @@ pub(crate) fn realm_tree_node_is_direct_conversation(node: &RealmTreeNode) -> bo
     node.direct_conversation
 }
 
+#[cfg(test)]
 pub fn realm_tree_nodes_from_sync_realms(realms: &BTreeMap<String, Value>) -> Vec<RealmTreeNode> {
+    realm_tree_nodes_from_sync_realms_with_roles(realms, &BTreeMap::new())
+}
+
+pub fn realm_tree_nodes_from_sync_realms_with_roles(
+    realms: &BTreeMap<String, Value>,
+    collaboration_roles: &BTreeMap<String, arkret_sdk::CollaborationRealmRole>,
+) -> Vec<RealmTreeNode> {
     let mut previews: Vec<RealmTreeNode> = realms
         .iter()
         .filter(|(id, body)| {
@@ -846,13 +859,8 @@ pub fn realm_tree_nodes_from_sync_realms(realms: &BTreeMap<String, Value>) -> Ve
                 RealmTreeNodeKind::Space => projection_home_realm_id(body).unwrap_or_default(),
             };
             let parent_space_id = extract_parent_space_id(id, body);
-            let direct_conversation = body
-                .pointer("/state_at_window_start/realm_metadata/collaboration_role")
-                .cloned()
-                .and_then(|value| {
-                    serde_json::from_value::<arkret_sdk::CollaborationRealmRole>(value).ok()
-                })
-                == Some(arkret_sdk::CollaborationRealmRole::DirectConversation);
+            let direct_conversation = collaboration_roles.get(id)
+                == Some(&arkret_sdk::CollaborationRealmRole::DirectConversation);
             RealmTreeNode {
                 id: id.clone(),
                 title,
@@ -1207,6 +1215,7 @@ mod tests {
             content_scheme: "mls_exporter_aead_v1".to_owned(),
             history_visibility: "shared".to_owned(),
             plaintext_visible_services: vec!["directory".to_owned()],
+            collaboration_role: None,
             encryption_floor: Some("e2ee_required".to_owned()),
         })
         .into_value();
@@ -1240,6 +1249,7 @@ mod tests {
             content_scheme: "mls_rfc9420".to_owned(),
             history_visibility: "joined".to_owned(),
             plaintext_visible_services: Vec::new(),
+            collaboration_role: None,
             encryption_floor: None,
         })
         .into_value();
@@ -1343,19 +1353,37 @@ mod tests {
     #[test]
     fn direct_conversation_role_uses_typed_sync_projection_not_category_or_tags() {
         let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000701";
-        let strong = realm_tree_nodes_from_sync_realms(&BTreeMap::from([(
+        let strong = realm_tree_nodes_from_sync_realms_with_roles(
+            &BTreeMap::from([(
+                realm_id.to_owned(),
+                json!({"summary": {"title": "Conversation"}}),
+            )]),
+            &BTreeMap::from([(
+                realm_id.to_owned(),
+                arkret_sdk::CollaborationRealmRole::DirectConversation,
+            )]),
+        );
+        assert!(realm_tree_node_is_direct_conversation(&strong[0]));
+
+        let genesis_only = realm_tree_nodes_from_sync_realms(&BTreeMap::from([(
             realm_id.to_owned(),
             json!({
-                "state_at_window_start": {
-                    "realm_metadata": {
-                        "title": "Conversation",
-                        "collaboration_role": "direct_conversation"
-                    },
-                    "e2ee_epoch": null
+                "state": {
+                    "events": [{
+                        "kind": "ak.realm.create",
+                        "payload": {
+                            "object": {
+                                "collaboration_role": "direct_conversation"
+                            }
+                        }
+                    }]
                 }
             }),
         )]));
-        assert!(realm_tree_node_is_direct_conversation(&strong[0]));
+        assert!(
+            !realm_tree_node_is_direct_conversation(&genesis_only[0]),
+            "untyped Event payload probes must not drive MLS classification"
+        );
 
         let heuristic_only = realm_tree_nodes_from_sync_realms(&BTreeMap::from([(
             realm_id.to_owned(),

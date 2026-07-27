@@ -237,8 +237,11 @@ mod directory_refresh_tests {
     {
         vec![
             arkret_models_collaboration::governance::agent_artifacts::AgentKeyAuthorizationState {
-                key_id: "runtime-key-1".to_owned(),
-                verification_method: "did:web:agents.example:summary#runtime-key-1".to_owned(),
+                key_id: arkret_sdk::NonEmptyString::new("runtime-key-1").unwrap(),
+                verification_method: arkret_sdk::DidUrl::new(
+                    "did:web:agents.example:summary#runtime-key-1",
+                )
+                .unwrap(),
                 authorized_event_ref: arkret_sdk::EventId::new(
                     "ak:event:01964137-0000-7000-8000-000000000099",
                 )
@@ -313,8 +316,10 @@ mod directory_refresh_tests {
                     "ak:realm:01964137-0000-7000-8000-000000000001".to_owned(),
                 )
                 .unwrap(),
-                controller_authorization_ref: "did:web:agents.example:summary#managed-controller"
-                    .to_owned(),
+                controller_authorization_ref: arkret_sdk::DidUrl::new(
+                    "did:web:agents.example:summary#managed-controller",
+                )
+                .unwrap(),
                 status,
                 runtime_state,
                 pcr_recovery: AgentPcrRecoveryState::Pending,
@@ -371,7 +376,7 @@ mod directory_refresh_tests {
                 },
             },
             pairing_mode: mode,
-            pairing_request_id: "pairing-request-2".to_owned(),
+            pairing_request_id: arkret_sdk::OpaqueLocalId::new("pairing-request-2").unwrap(),
             pairing_code: Some("fresh-code".to_owned()),
             expires_at: chrono::DateTime::parse_from_rfc3339("2026-07-18T01:00:00.000Z")
                 .unwrap()
@@ -1038,8 +1043,15 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
             .read()
             .notification_projection()
             .into_iter()
-            .filter(crate::state::projection::notifications::is_agent_runtime_approval_notification)
-            .map(|value| value.to_string())
+            .filter_map(|value| {
+                let (id, data) = value.agent_runtime_approval()?;
+                Some(format!(
+                    "{}:{}:{}",
+                    id.as_str(),
+                    data.approval_request_id,
+                    data.expires_at
+                ))
+            })
             .collect::<Vec<_>>();
         ids.sort();
         ids

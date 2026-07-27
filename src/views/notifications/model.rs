@@ -23,10 +23,9 @@ use crate::notification_rules::{
 pub(crate) use crate::state::projection::notifications::{
     append_invite_notifications, default_notification_title, drop_joined_invite_notifications,
     invite_notification_target_for_dedupe, merge_invite_notifications, notification_id_for_dedupe,
-    raw_notifications_from_sources, realm_title_hints_from_values, value_string,
-    value_string_with_prefix,
+    notification_kind_wire, raw_notifications_from_sources, realm_title_hints_from_invites,
 };
-use crate::state::{ClientLocalState, LocalSealView, LocalStateStore};
+use crate::state::{ClientLocalState, LocalSealView, LocalStateStore, StoredNotification};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum UiNotificationGroup {
@@ -103,25 +102,18 @@ pub(crate) fn read_cursor_targets(
 }
 
 pub(crate) fn notification_value_read_by_cursor(
-    index: usize,
-    value: &Value,
+    _index: usize,
+    value: &StoredNotification,
     local_state: &ClientLocalState,
 ) -> bool {
-    let id = notification_id_from_value(index, value);
-    let Some(source_event_id) = notification_source_event_id_from_value(value, &id) else {
+    let Some(source_event_id) = value.source_event_id() else {
         return false;
     };
-    let realm_id = value_string(value, &["realm_id"]).unwrap_or_default();
-    let strand_id = value_string_with_prefix(
-        value,
-        &["strand_id", "target_strand_id", "space_id"],
-        "ak:strand:",
-    );
     read_cursor_covers_notification(
         local_state,
-        &realm_id,
-        strand_id.as_deref(),
-        &source_event_id,
+        value.realm_id().unwrap_or_default(),
+        value.strand_id(),
+        source_event_id,
     )
 }
 
@@ -142,6 +134,7 @@ pub(crate) fn apply_sync_projection_to_store(
             realm_title_hints.get(id).map(String::as_str),
         );
         store.save_realm_tree_projection(id.clone(), projection);
+        store.save_realm_collaboration_role(id.clone(), response.collaboration_role(id));
         let view = LocalSealView::from_sync_body(body);
         store.set_realm_seal_view(id.clone(), view);
         store.ingest_move_event_states(id, body);
@@ -149,7 +142,7 @@ pub(crate) fn apply_sync_projection_to_store(
 }
 
 pub(crate) fn hydrate_notifications(
-    raw_notifications: Vec<Value>,
+    raw_notifications: Vec<StoredNotification>,
     local_state: &ClientLocalState,
     push_rules: Option<&PushRulesConfig>,
     dnd: Option<&DndSettings>,
@@ -170,16 +163,16 @@ pub(crate) fn hydrate_notifications(
             !joined_realms.contains(&target) && seen_invite_targets.insert(target)
         })
         .filter_map(|(index, value)| {
-            notification_from_value(index, value, local_state, push_rules, dnd)
+            notification_from_stored(index, value, local_state, push_rules, dnd)
         })
         .collect::<Vec<_>>();
     apply_read_cursors_to_notifications(&mut notifications, local_state);
     notifications
 }
 
-fn notification_from_value(
-    index: usize,
-    value: Value,
+fn notification_from_stored(
+    _index: usize,
+    value: StoredNotification,
     local_state: &ClientLocalState,
     push_rules: Option<&PushRulesConfig>,
     dnd: Option<&DndSettings>,
@@ -214,51 +207,26 @@ fn notification_from_value(
         return None;
     }
 
-    let id = notification_id_from_value(index, &value);
-    let source_event_id = notification_source_event_id_from_value(&value, &id);
-    let strand_id = value_string_with_prefix(
-        &value,
-        &["strand_id", "target_strand_id", "space_id"],
-        "ak:strand:",
-    );
+    let id = value.notification_id();
+    let source_event_id = value.source_event_id().map(ToOwned::to_owned);
+    let strand_id = value.strand_id().map(ToOwned::to_owned);
     let client_state = local_state.notification_client_state.get(&id).cloned();
-    let kind = value_string(
-        &value,
-        &["notification_kind", "notification_kind", "type", "kind"],
-    )
-    .unwrap_or_else(|| "message".to_owned());
-    let title = value_string(&value, &["title"])
-        .unwrap_or_else(|| default_notification_title(&kind).to_owned());
-    let body = value_string(&value, &["body", "preview", "summary"])
-        .or_else(|| {
-            value
-                .pointer("/preview/body")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-        })
-        .unwrap_or_else(|| "Notification".to_owned());
-    let realm_id = value_string(&value, &["realm_id"]).unwrap_or_default();
-    let invite_id = value_string(&value, &["invite_id"]);
-    let invite_token = value_string(&value, &["invite_token"]);
-    let realm_label = value_string(&value, &["realm_label", "realm_title"]);
-    let action = if kind == "invite" {
-        invite_id.clone().and_then(|invite_id| {
-            if realm_id.is_empty() {
-                None
-            } else {
-                Some(UiNotificationAction::AcceptInvite {
-                    realm_id: realm_id.clone(),
-                    invite_id,
-                    invite_token: invite_token.clone(),
-                    realm_label: realm_label.clone(),
-                })
-            }
-        })
-    } else {
-        None
+    let kind = notification_kind_wire(&value.notification_kind()).to_owned();
+    let title = notification_title(&value, &kind);
+    let body = notification_body(&value);
+    let realm_id = value.realm_id().unwrap_or_default().to_owned();
+    let realm_label = notification_realm_label(&value);
+    let action = match value.invite() {
+        Some(invite) => Some(UiNotificationAction::AcceptInvite {
+            realm_id: invite.realm_id.as_str().to_owned(),
+            invite_id: invite.invite_id.as_str().to_owned(),
+            invite_token: invite.invite_token.clone(),
+            realm_label: invite.realm_label.clone(),
+        }),
+        None => None,
     };
-    let timestamp = value_string(&value, &["timestamp", "created_at"])
-        .unwrap_or_else(|| arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()));
+    let timestamp = arkret_sdk::canonical::format_timestamp_canonical(value.created_at());
+    let (projection_read, projection_archived) = notification_wire_state(&value);
 
     Some(UiNotification {
         id,
@@ -269,14 +237,16 @@ fn notification_from_value(
         strand_id,
         realm_label,
         kind: kind.clone(),
-        read: client_state
-            .as_ref()
-            .map(|state| state.read)
-            .unwrap_or_else(|| value_bool(&value, "read").unwrap_or(false)),
-        archived: client_state
-            .as_ref()
-            .map(|state| state.archived)
-            .unwrap_or_else(|| value_bool(&value, "archived").unwrap_or(false)),
+        read: projection_read
+            || client_state
+                .as_ref()
+                .map(|state| state.read)
+                .unwrap_or(false),
+        archived: projection_archived
+            || client_state
+                .as_ref()
+                .map(|state| state.archived)
+                .unwrap_or(false),
         timestamp,
         action_label: action
             .as_ref()
@@ -312,26 +282,6 @@ fn apply_read_cursors_to_notifications(
             notification.read = true;
         }
     }
-}
-
-fn notification_id_from_value(index: usize, value: &Value) -> String {
-    value_string(value, &["notification_id", "id"])
-        .unwrap_or_else(|| format!("notification-{index}"))
-}
-
-fn notification_source_event_id_from_value(value: &Value, id: &str) -> Option<String> {
-    value_string_with_prefix(
-        value,
-        &[
-            "source_event_id",
-            "event_id",
-            "target_event_id",
-            "message_event_id",
-            "timeline_event_id",
-        ],
-        "ak:event:",
-    )
-    .or_else(|| id.strip_prefix("ak:event:").map(|_| id.to_owned()))
 }
 
 fn read_cursor_covers_notification(
@@ -472,31 +422,55 @@ pub(crate) fn notification_scope_kind(notification: &UiNotification) -> &'static
     }
 }
 
-fn value_bool(value: &Value, key: &str) -> Option<bool> {
-    value.get(key).and_then(|field| field.as_bool())
+fn notification_preview(value: &StoredNotification) -> Option<&BTreeMap<String, Value>> {
+    match value {
+        StoredNotification::Event { notification } => notification.preview.as_ref(),
+        StoredNotification::AgentRuntimeApproval { .. } | StoredNotification::Invite { .. } => None,
+    }
 }
 
-fn value_u32(value: &Value, key: &str) -> Option<u32> {
-    value
+fn preview_bool(value: &StoredNotification, key: &str) -> Option<bool> {
+    notification_preview(value)?
+        .get(key)
+        .and_then(Value::as_bool)
+}
+
+fn preview_string(value: &StoredNotification, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        notification_preview(value)?
+            .get(*key)
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+    })
+}
+
+fn preview_u32(value: &StoredNotification, key: &str) -> Option<u32> {
+    notification_preview(value)?
         .get(key)
         .and_then(|field| field.as_u64())
         .and_then(|field| u32::try_from(field).ok())
 }
 
-pub(crate) fn notification_eval_context(value: &Value) -> NotificationEvalContext {
-    let notification_kind = value_string(
-        value,
-        &["notification_kind", "notification_kind", "type", "kind"],
-    )
-    .unwrap_or_else(|| "message".to_owned());
-    let event_kind = value_string(value, &["event_kind", "source_event_kind", "kind", "type"])
-        .unwrap_or_else(|| notification_kind.clone());
-    let is_e2ee = value_bool(value, "is_e2ee")
-        .or_else(|| value_bool(value, "encrypted"))
-        .unwrap_or_else(|| value.get("encrypted_content").is_some());
-    let priority = value_string(value, &["priority", "notification_priority"])
-        .map(|value| value.to_ascii_lowercase());
-    let priority_override = value_bool(value, "priority_override").unwrap_or_else(|| {
+pub(crate) fn notification_eval_context(value: &StoredNotification) -> NotificationEvalContext {
+    let notification_kind = notification_kind_wire(&value.notification_kind()).to_owned();
+    let event_kind =
+        preview_string(value, &["event_kind"]).unwrap_or_else(|| notification_kind.clone());
+    let is_e2ee = preview_bool(value, "is_e2ee")
+        .or_else(|| preview_bool(value, "encrypted"))
+        .unwrap_or(false);
+    let priority = match value {
+        StoredNotification::Event { notification } => Some(
+            match notification.priority {
+                arkret_sdk::NotificationPriority::Low => "low",
+                arkret_sdk::NotificationPriority::Normal => "normal",
+                arkret_sdk::NotificationPriority::High => "high",
+                arkret_sdk::NotificationPriority::Urgent => "urgent",
+            }
+            .to_owned(),
+        ),
+        StoredNotification::AgentRuntimeApproval { .. } | StoredNotification::Invite { .. } => None,
+    };
+    let priority_override = preview_bool(value, "priority_override").unwrap_or_else(|| {
         priority
             .as_deref()
             .is_some_and(|value| matches!(value, "critical" | "high" | "urgent" | "priority"))
@@ -504,32 +478,84 @@ pub(crate) fn notification_eval_context(value: &Value) -> NotificationEvalContex
     NotificationEvalContext {
         event_kind,
         notification_kind,
-        realm_id: value_string(value, &["realm_id"]).unwrap_or_default(),
-        strand_id: value_string(value, &["strand_id"]),
-        strand_track: value_string(value, &["strand_track", "track_name"]),
-        // Canonical notification attribution comes from the SDK Event
-        // actor_id. Deprecated sender/sender_did wire names are ignored in
-        // the default protocol path.
-        sender: value_string(value, &["actor_id"]),
-        body: value_string(value, &["body", "summary", "preview"]),
+        realm_id: value.realm_id().unwrap_or_default().to_owned(),
+        strand_id: value.strand_id().map(ToOwned::to_owned),
+        strand_track: preview_string(value, &["strand_track", "track_name"]),
+        sender: match value {
+            StoredNotification::Event { notification } => {
+                Some(notification.actor_id.as_str().to_owned())
+            }
+            StoredNotification::AgentRuntimeApproval { .. } | StoredNotification::Invite { .. } => {
+                None
+            }
+        },
+        body: preview_string(value, &["body", "summary"]),
         is_e2ee,
-        local_decrypted: value_bool(value, "local_decrypted").unwrap_or(!is_e2ee),
-        mentions_actor: value_bool(value, "mentions_actor"),
-        assigned_to_actor: value_bool(value, "assigned_to_actor").unwrap_or(false),
-        schedule_target: value_bool(value, "schedule_target").unwrap_or(false),
-        reply_to_self: value_bool(value, "reply_to_self").unwrap_or(false),
-        participating_thread_update: value_bool(value, "participating_thread_update")
+        local_decrypted: preview_bool(value, "local_decrypted").unwrap_or(!is_e2ee),
+        mentions_actor: preview_bool(value, "mentions_actor"),
+        assigned_to_actor: preview_bool(value, "assigned_to_actor").unwrap_or(false),
+        schedule_target: preview_bool(value, "schedule_target").unwrap_or(false),
+        reply_to_self: preview_bool(value, "reply_to_self").unwrap_or(false),
+        participating_thread_update: preview_bool(value, "participating_thread_update")
             .unwrap_or(false),
-        is_direct_message: value_bool(value, "is_direct_message").unwrap_or(false),
-        member_count: value_u32(value, "member_count"),
+        is_direct_message: preview_bool(value, "is_direct_message").unwrap_or(false),
+        member_count: preview_u32(value, "member_count"),
         priority,
         priority_override,
-        watch_level: value_string(value, &["watch_state", "watch_level"])
+        watch_level: preview_string(value, &["watch_state", "watch_level"])
             .and_then(|level| WatchLevel::from_wire(&level)),
         // Filled by the caller from the receiver's per-realm override; left
         // `None` here so a bare context never resolves to a watch level.
         realm_watch_level: None,
         now_minutes: None,
+    }
+}
+
+fn notification_title(value: &StoredNotification, kind: &str) -> String {
+    match value {
+        StoredNotification::Event { .. } => preview_string(value, &["title"])
+            .unwrap_or_else(|| default_notification_title(kind).to_owned()),
+        StoredNotification::AgentRuntimeApproval { .. } => "Agent runtime approval".to_owned(),
+        StoredNotification::Invite { .. } => default_notification_title("invite").to_owned(),
+    }
+}
+
+fn notification_body(value: &StoredNotification) -> String {
+    match value {
+        StoredNotification::Event { .. } => {
+            preview_string(value, &["body", "summary"]).unwrap_or_else(|| "Notification".to_owned())
+        }
+        StoredNotification::AgentRuntimeApproval { data, .. } => {
+            format!("Approve a runtime key for {}.", data.agent_id.as_str())
+        }
+        StoredNotification::Invite { invite } => invite
+            .realm_label
+            .as_deref()
+            .map(|title| format!("You were invited to join {title}."))
+            .unwrap_or_else(|| "You were invited to join a Realm.".to_owned()),
+    }
+}
+
+fn notification_realm_label(value: &StoredNotification) -> Option<String> {
+    match value {
+        StoredNotification::Event { .. } => preview_string(value, &["realm_label", "realm_title"]),
+        StoredNotification::AgentRuntimeApproval { .. } => None,
+        StoredNotification::Invite { invite } => invite.realm_label.clone(),
+    }
+}
+
+pub(crate) fn notification_wire_state(value: &StoredNotification) -> (bool, bool) {
+    match value {
+        StoredNotification::Event { notification } => match notification.state {
+            arkret_sdk::NotificationState::Unread => (false, false),
+            arkret_sdk::NotificationState::Read => (true, false),
+            arkret_sdk::NotificationState::Dismissed | arkret_sdk::NotificationState::Archived => {
+                (true, true)
+            }
+        },
+        StoredNotification::AgentRuntimeApproval { .. } | StoredNotification::Invite { .. } => {
+            (false, false)
+        }
     }
 }
 

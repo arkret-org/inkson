@@ -836,7 +836,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "chat.crypto.needs_verification",
-        "Sender needs verification",
+        "Verifying sender identity…",
     );
     // T6: human-readable copy for late-recovery rejections; the raw
     // protocol reason code is only surfaced via the element tooltip.
@@ -905,7 +905,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("message.private_save", "Save for me");
     dict.set("message.private_saved", "Saved for me");
     dict.set("pinned_bar.title", "Shared pinned messages");
-    dict.set("pinned_bar.empty", "No pinned messages.");
     dict.set("pinned_bar.scroll_to", "Jump to message");
     // Actor-private Realm list pinning.
     dict.set("realm.pin", "Pin Realm");

@@ -885,6 +885,7 @@ pub(super) fn RealmsSection(
                                                                     content_scheme: content_scheme.clone(),
                                                                     history_visibility: history_visibility.clone(),
                                                                     plaintext_visible_services: plaintext_services.clone(),
+                                                                    collaboration_role: None,
                                                                     encryption_floor: projection_floor,
                                                                 },
                                                             )

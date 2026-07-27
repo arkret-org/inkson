@@ -54,6 +54,120 @@ pub struct NotificationClientState {
     pub archived: bool,
 }
 
+/// Current local notification projection.
+///
+/// Account-subscribe `NotificationDelta` values are reducer inputs only. They
+/// are folded into this closed current-state model before persistence or UI
+/// consumption, so business code never has to rediscover the wire branch by
+/// probing JSON discriminator strings.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "projection_kind", rename_all = "snake_case")]
+pub enum StoredNotification {
+    Event {
+        notification: arkret_sdk::Notification,
+    },
+    AgentRuntimeApproval {
+        id: arkret_sdk::NotificationId,
+        data: arkret_sdk::AgentRuntimeApprovalNotificationData,
+    },
+    Invite {
+        invite: StoredInviteNotification,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredInviteNotification {
+    pub invite_id: arkret_sdk::InviteId,
+    pub realm_id: arkret_sdk::RealmId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invite_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub realm_label: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl StoredNotification {
+    pub fn notification_id(&self) -> String {
+        match self {
+            Self::Event { notification } => notification.id.as_str().to_owned(),
+            Self::AgentRuntimeApproval { id, .. } => id.as_str().to_owned(),
+            Self::Invite { invite } => format!("invite:{}", invite.invite_id.as_str()),
+        }
+    }
+
+    pub fn notification_kind(&self) -> arkret_sdk::NotificationKind {
+        match self {
+            Self::Event { notification } => notification.notification_kind.clone(),
+            Self::AgentRuntimeApproval { .. } => arkret_sdk::NotificationKind::Agent,
+            Self::Invite { .. } => arkret_sdk::NotificationKind::Invite,
+        }
+    }
+
+    pub fn realm_id(&self) -> Option<&str> {
+        match self {
+            Self::Event { notification } => match &notification.source {
+                arkret_sdk::NotificationSource::Event(source) => {
+                    source.realm_id.as_ref().map(arkret_sdk::RealmId::as_str)
+                }
+                arkret_sdk::NotificationSource::AccountArtifact(_) => None,
+            },
+            Self::AgentRuntimeApproval { .. } => None,
+            Self::Invite { invite } => Some(invite.realm_id.as_str()),
+        }
+    }
+
+    pub fn source_event_id(&self) -> Option<&str> {
+        match self {
+            Self::Event { notification } => match &notification.source {
+                arkret_sdk::NotificationSource::Event(source) => {
+                    Some(source.source_event_id.as_str())
+                }
+                arkret_sdk::NotificationSource::AccountArtifact(_) => None,
+            },
+            Self::AgentRuntimeApproval { .. } | Self::Invite { .. } => None,
+        }
+    }
+
+    pub fn strand_id(&self) -> Option<&str> {
+        match self {
+            Self::Event { notification } => match &notification.source {
+                arkret_sdk::NotificationSource::Event(source) => {
+                    source.strand_id.as_ref().map(arkret_sdk::StrandId::as_str)
+                }
+                arkret_sdk::NotificationSource::AccountArtifact(_) => None,
+            },
+            Self::AgentRuntimeApproval { .. } | Self::Invite { .. } => None,
+        }
+    }
+
+    pub fn created_at(&self) -> DateTime<Utc> {
+        match self {
+            Self::Event { notification } => notification.created_at,
+            Self::AgentRuntimeApproval { data, .. } => data.requested_at,
+            Self::Invite { invite } => invite.created_at,
+        }
+    }
+
+    pub fn agent_runtime_approval(
+        &self,
+    ) -> Option<(
+        &arkret_sdk::NotificationId,
+        &arkret_sdk::AgentRuntimeApprovalNotificationData,
+    )> {
+        match self {
+            Self::AgentRuntimeApproval { id, data } => Some((id, data)),
+            Self::Event { .. } | Self::Invite { .. } => None,
+        }
+    }
+
+    pub fn invite(&self) -> Option<&StoredInviteNotification> {
+        match self {
+            Self::Invite { invite } => Some(invite),
+            Self::Event { .. } | Self::AgentRuntimeApproval { .. } => None,
+        }
+    }
+}
+
 /// Realm-scoped cache for `ak.find.directory.query.list_handles_for_subject`.
 ///
 /// Handles are display evidence, not identity keys. Cache entries are
@@ -700,6 +814,8 @@ pub struct ClientLocalState {
     pub realm_destroy_receipts: BTreeMap<String, RealmDestroyReceipt>,
     pub realm_tree_projections: BTreeMap<String, Value>,
     #[serde(default)]
+    pub realm_collaboration_roles: BTreeMap<String, arkret_sdk::CollaborationRealmRole>,
+    #[serde(default)]
     pub snapshot_sync: BTreeMap<String, SnapshotSyncStatus>,
     /// Principal-private saved-item account-data values, keyed by
     /// `ak.saved.v1:<collection_key>:<target_key>`.
@@ -707,7 +823,7 @@ pub struct ClientLocalState {
     pub saved_account_data: BTreeMap<String, Value>,
     pub pending_encrypted_messages: BTreeMap<String, EncryptedPayload>,
     #[serde(default)]
-    pub notification_projection: Vec<Value>,
+    pub notification_projection: Vec<StoredNotification>,
     #[serde(default)]
     pub presence_projection: Vec<Value>,
     #[serde(default)]
@@ -1195,6 +1311,7 @@ impl Default for ClientLocalState {
             raw_operations: Vec::new(),
             realm_destroy_receipts: BTreeMap::new(),
             realm_tree_projections: BTreeMap::new(),
+            realm_collaboration_roles: BTreeMap::new(),
             snapshot_sync: BTreeMap::new(),
             saved_account_data: BTreeMap::new(),
             pending_encrypted_messages: BTreeMap::new(),

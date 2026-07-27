@@ -831,7 +831,7 @@ async fn collect_current_managed_pcr_backup_items(
             managed_principal_id: key_state.agent_id.clone(),
             controller_id: key_state.controller_id,
             principal_control_realm_id: key_state.principal_control_realm_id,
-            authorization_ref: key_state.controller_authorization_ref,
+            authorization_ref: key_state.controller_authorization_ref.to_string(),
             managed_frontier_ref: ManagedFrontierRef {
                 frontier_digest: frontier.control_event_set_root,
                 seal_ref: frontier.seal_id.to_string(),

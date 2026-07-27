@@ -21,7 +21,7 @@ use crate::routes::Route;
 use crate::state::{ClientLocalState, LocalStateStore};
 use crate::transport::TransportClient;
 use crate::transport::auth::{authed_api_with_sync, with_authed_api_with_sync};
-use crate::ui::button::{Button, ButtonVariant};
+use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
@@ -1691,7 +1691,7 @@ pub fn ChatPanel(
         presence_heartbeat_tick: _,
         mut promote_discussion_draft,
         mut promoted_targets,
-        latest_read_cursor,
+        latest_read_cursor: _,
         blocked_show_anyway: _,
         account_display_name,
         mut track_filter,
@@ -2637,8 +2637,11 @@ pub fn ChatPanel(
                             rsx! {
                                 Button {
                                     variant: ButtonVariant::Secondary,
+                                    size: ButtonSize::IconSm,
+                                    class: "icon-button",
                                     r#type: "button",
                                     "data-testid": "chat-call-voice-button",
+                                    "aria-label": crate::i18n::tr("chat.call.voice"),
                                     disabled: call_disabled,
                                     title: crate::i18n::tr("chat.call.voice"),
                                     onclick: move |_| {
@@ -2650,12 +2653,15 @@ pub fn ChatPanel(
                                             incoming: "0".to_owned(),
                                         });
                                     },
-                                    "\u{1f4de}"
+                                    UiIcon { name: "phone" }
                                 }
                                 Button {
                                     variant: ButtonVariant::Secondary,
+                                    size: ButtonSize::IconSm,
+                                    class: "icon-button",
                                     r#type: "button",
                                     "data-testid": "chat-call-video-button",
+                                    "aria-label": crate::i18n::tr("chat.call.video"),
                                     disabled: call_disabled,
                                     title: crate::i18n::tr("chat.call.video"),
                                     onclick: move |_| {
@@ -2667,7 +2673,7 @@ pub fn ChatPanel(
                                             incoming: "0".to_owned(),
                                         });
                                     },
-                                    "\u{1f4f9}"
+                                    UiIcon { name: "video" }
                                 }
                             }
                         }
@@ -2898,36 +2904,29 @@ pub fn ChatPanel(
                         })
                         .collect();
                     rsx! {
-                        if !embedded || !pinned_view.is_empty() {
+                        if !pinned_view.is_empty() {
                             div {
                                 class: "pinned-bar",
                                 "data-testid": "pinned-bar",
                                 "data-source": "shared-event",
                                 "data-permission": "ak.pin.add ak.pin.remove",
-                                if pinned_view.is_empty() {
-                                    span {
-                                        class: "pinned-bar-empty",
-                                        "data-testid": "pinned-bar-empty",
-                                        {crate::i18n::tr("pinned_bar.empty")}
-                                    }
-                                } else {
-                                    div { class: "pinned-bar-head",
-                                        UiIcon { name: "pin" }
-                                        span { {crate::i18n::tr("pinned_bar.title")} }
-                                    }
-                                    div { class: "pinned-bar-list",
-                                        for (id, target_ref, body) in pinned_view {
-                                            {
-                                                let id_for_click = id.clone();
-                                                let preview = if body.chars().count() > 40 {
-                                                    format!(
-                                                        "{}...",
-                                                        body.chars().take(40).collect::<String>()
-                                                    )
-                                                } else {
-                                                    body
-                                                };
-                                                rsx! {
+                                div { class: "pinned-bar-head",
+                                    UiIcon { name: "pin" }
+                                    span { {crate::i18n::tr("pinned_bar.title")} }
+                                }
+                                div { class: "pinned-bar-list",
+                                    for (id, target_ref, body) in pinned_view {
+                                        {
+                                            let id_for_click = id.clone();
+                                            let preview = if body.chars().count() > 40 {
+                                                format!(
+                                                    "{}...",
+                                                    body.chars().take(40).collect::<String>()
+                                                )
+                                            } else {
+                                                body
+                                            };
+                                            rsx! {
                                                     Button {
                                                         variant: ButtonVariant::Secondary,
                                                         r#type: "button",
@@ -2954,7 +2953,6 @@ pub fn ChatPanel(
                                                         UiIcon { name: "pin" }
                                                         span { class: "pinned-bar-preview", "{preview}" }
                                                     }
-                                                }
                                             }
                                         }
                                     }
@@ -3553,29 +3551,6 @@ pub fn ChatPanel(
                                 },
                                 "Create private discussion"
                             }
-                        }
-                    }
-                }
-            }
-
-            // G3.Y2 — read-receipt marker bar. A horizontal divider
-            // sealed at the highest event id we've sent a
-            // `ak.read_cursor.advance` for; renders only when we have one. The
-            // `ak.read_cursor.advanceessage list so users can see the
-            // "everyone read up to here" seal without scrolling
-            // around. The marker itself is actor-private — see
-            // discovery/read-receipts.md §3.1.
-            if !embedded && !latest_read_cursor().is_empty() {
-                {
-                    let latest_read_cursor_value = latest_read_cursor();
-                    let latest_read_cursor_label = short_protocol_id(&latest_read_cursor_value);
-                    rsx! {
-                        div {
-                            class: "read-receipt-marker-bar",
-                            "data-testid": "read-receipt-marker-bar",
-                            "data-up-to-event-id": "{latest_read_cursor_value}",
-                            span { "Read up to " }
-                            span { class: "mono", title: "{latest_read_cursor_value}", "{latest_read_cursor_label}" }
                         }
                     }
                 }

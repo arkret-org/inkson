@@ -660,11 +660,7 @@ impl AccountPostCommitHook<crate::client_core::InksonAccountTransport> for Inkso
         if should_bootstrap_invites(step.initial) {
             match crate::transport::account::invites(http).await {
                 Ok(invites) => {
-                    let invite_notifications = invites
-                        .invites
-                        .into_iter()
-                        .filter_map(|invite| serde_json::to_value(invite).ok())
-                        .collect::<Vec<_>>();
+                    let invite_notifications = invites.invites;
                     self.ctx.state_store.write(|store| {
                         store.batch(|store| {
                             apply_notification_projection(
@@ -1850,7 +1846,9 @@ pub fn apply_response(
     response: &AccountSyncStep,
     is_full_sync: bool,
     ctx: &SyncEngineContext,
-    invite_notifications: Option<Vec<Value>>,
+    invite_notifications: Option<
+        Vec<arkret_models_collaboration::governance::operation_wire::Invite>,
+    >,
 ) {
     // Clone runtime adapter handles before applying this response.
     let state_store = ctx.state_store.clone();
@@ -1933,6 +1931,12 @@ pub fn apply_response(
                 };
                 let projection = preserve_realm_security_projection(existing.as_ref(), &projection);
                 store.save_realm_tree_projection(id.to_owned(), projection.clone());
+                if is_full_sync || response.has_window_start_realm_metadata(id) {
+                    store.save_realm_collaboration_role(
+                        id.to_owned(),
+                        response.collaboration_role(id),
+                    );
+                }
                 let view = LocalSealView::from_sync_body(&projection);
                 store.set_realm_seal_view(id.to_owned(), view);
                 store.ingest_move_event_states(id, &projection);
@@ -1988,7 +1992,11 @@ pub fn apply_response(
     // canonical local-state projection; the engine only computes a snapshot
     // for status and selected-Realm bookkeeping.
     let reconciled = state_store.read(|store| {
-        crate::app::realm_tree_nodes_from_sync_realms(&store.load().realm_tree_projections)
+        let state = store.load();
+        crate::app::realm_tree_nodes_from_sync_realms_with_roles(
+            &state.realm_tree_projections,
+            &state.realm_collaboration_roles,
+        )
     });
     ctx.projection_sink.sync_status(SyncStatusEvent::Online);
     let first_realm = reconciled
@@ -2688,70 +2696,31 @@ fn apply_notification_projection(
     store: &mut LocalStateStore,
     response: &AccountSyncStep,
     is_full_sync: bool,
-    invite_notifications: Option<Vec<Value>>,
+    invite_notifications: Option<
+        Vec<arkret_models_collaboration::governance::operation_wire::Invite>,
+    >,
 ) {
-    let account_notification_projection = response
-        .updates
-        .account_data
-        .iter()
-        .filter_map(|entry| {
-            crate::state::projection::notifications::is_notification_account_data(&entry.payload)
-                .then(|| serde_json::to_value(&entry.payload).ok())
-                .flatten()
-        })
-        .collect::<Vec<_>>();
     let should_save_notification_projection = !response.updates.notifications.is_empty()
         || is_full_sync
-        || !account_notification_projection.is_empty()
+        || !response.updates.account_data.is_empty()
         || invite_notifications.is_some();
-    let mut notification_projection = if account_notification_projection.is_empty() {
-        store.notification_projection()
-    } else {
-        account_notification_projection
-    };
-    if is_full_sync {
-        notification_projection.retain(|value| !is_agent_runtime_approval_delta(value));
-    }
-    for delta in &response.updates.notifications {
-        let id = delta.id.as_str();
-        match delta.action {
-            arkret_sdk::NotificationDeltaAction::Add
-            | arkret_sdk::NotificationDeltaAction::Update => {
-                let value = serde_json::to_value(delta).unwrap_or(Value::Null);
-                if let Some(existing) = notification_projection
-                    .iter_mut()
-                    .find(|candidate| candidate.get("id").and_then(Value::as_str) == Some(id))
-                {
-                    *existing = value;
-                } else {
-                    notification_projection.push(value);
-                }
-            }
-            arkret_sdk::NotificationDeltaAction::Remove => {
-                notification_projection
-                    .retain(|candidate| candidate.get("id").and_then(Value::as_str) != Some(id));
-            }
-        }
-    }
-    if let Some(invites) = invite_notifications {
-        let joined_realms = response
-            .realm_projections
-            .keys()
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        crate::state::projection::notifications::merge_invite_notifications(
-            &mut notification_projection,
-            invites,
-            &joined_realms,
-        );
-    }
+    let mut notification_projection = store.notification_projection();
+    let joined_realms = response
+        .realm_projections
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    crate::state::projection::notifications::apply_notification_projection(
+        &mut notification_projection,
+        &response.updates.notifications,
+        &response.updates.account_data,
+        is_full_sync,
+        invite_notifications,
+        &joined_realms,
+    );
     if should_save_notification_projection {
         store.save_notification_projection(notification_projection);
     }
-}
-
-fn is_agent_runtime_approval_delta(value: &Value) -> bool {
-    crate::state::projection::notifications::is_agent_runtime_approval_notification(value)
 }
 
 fn apply_account_data(
@@ -3025,6 +2994,7 @@ mod tests {
     fn empty_response(cursor: &str) -> AccountSyncStep {
         AccountSyncStep {
             cursor: cursor.to_owned(),
+            realm_entries: Default::default(),
             realm_projections: Default::default(),
             updates: arkret_sdk::SyncUpdates {
                 realm_updates: Vec::new(),
@@ -3836,35 +3806,40 @@ mod tests {
     #[test]
     fn notification_projection_merges_pending_invites_from_authz() {
         let mut store = temp_store("invite-notifications");
-        store.save_notification_projection(vec![json!({
-            "notification_id": "message-1",
-            "notification_kind": "message",
-            "realm_id": "ak:realm:existing",
-            "timestamp": "2026-06-01T00:00:00.000Z"
-        })]);
+        let existing = crate::state::projection::notifications::test_event_notification(
+            1,
+            arkret_sdk::NotificationKind::Message,
+            "ak:realm:0196419b-0000-7000-8000-000000000012",
+            None,
+            json!({}),
+        );
+        let existing_id = existing.notification_id();
+        store.save_notification_projection(vec![existing]);
         let response = empty_response("sx:invite");
 
         apply_notification_projection(
             &mut store,
             &response,
             false,
-            Some(vec![json!({
-                "invite_id": "ak:invite:0196419b-0000-7000-8000-000000000010",
-                "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000011",
-                "created_at": "2026-06-01T00:00:01.000Z"
-            })]),
+            Some(vec![crate::state::projection::notifications::test_invite(
+                0x10,
+                "ak:realm:0196419b-0000-7000-8000-000000000011",
+                None,
+                None,
+            )]),
         );
 
         let projection = store.notification_projection();
-        assert!(projection.iter().any(|entry| {
-            entry.get("notification_id").and_then(Value::as_str) == Some("message-1")
-        }));
+        assert!(
+            projection
+                .iter()
+                .any(|entry| entry.notification_id() == existing_id)
+        );
         // The invite notification is keyed on the unique invite id, not the
         // realm id, so a re-invite to the same realm cannot inherit stale
         // archive/read client-state from an earlier invite.
         assert!(projection.iter().any(|entry| {
-            entry.get("notification_id").and_then(Value::as_str)
-                == Some("invite:ak:invite:0196419b-0000-7000-8000-000000000010")
+            entry.notification_id() == "invite:ak:invite:0196419b-0000-7000-8000-000000000010"
         }));
     }
 

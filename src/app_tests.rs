@@ -99,41 +99,37 @@ fn ensure_default_push_token_provider_installs_a_provider_and_is_idempotent() {
 
 #[test]
 fn unread_notification_count_ignores_read_and_archived_items() {
+    let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000001";
+    let mut projection = (1..=5)
+        .map(|ordinal| {
+            crate::state::projection::notifications::test_event_notification(
+                ordinal,
+                arkret_sdk::NotificationKind::Message,
+                realm_id,
+                None,
+                serde_json::json!({}),
+            )
+        })
+        .collect::<Vec<_>>();
+    if let crate::state::StoredNotification::Event { notification } = &mut projection[1] {
+        notification.state = arkret_sdk::NotificationState::Read;
+    }
+    if let crate::state::StoredNotification::Event { notification } = &mut projection[4] {
+        notification.state = arkret_sdk::NotificationState::Archived;
+    }
     let mut snapshot = ClientLocalState {
-        notification_projection: vec![
-            serde_json::json!({
-                "notification_id": "unread",
-                "read": false
-            }),
-            serde_json::json!({
-                "notification_id": "server-read",
-                "read": true
-            }),
-            serde_json::json!({
-                "notification_id": "client-read",
-                "read": false
-            }),
-            serde_json::json!({
-                "notification_id": "client-archived",
-                "archived": false
-            }),
-            serde_json::json!({
-                "notification_id": "server-archived",
-                "read": false,
-                "archived": true
-            }),
-        ],
+        notification_projection: projection,
         ..ClientLocalState::default()
     };
     snapshot.notification_client_state.insert(
-        "client-read".to_owned(),
+        "ak:notification:0196419b-0000-7000-8000-000000000003".to_owned(),
         crate::state::NotificationClientState {
             read: true,
             archived: false,
         },
     );
     snapshot.notification_client_state.insert(
-        "client-archived".to_owned(),
+        "ak:notification:0196419b-0000-7000-8000-000000000004".to_owned(),
         crate::state::NotificationClientState {
             read: false,
             archived: true,

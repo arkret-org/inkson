@@ -918,7 +918,7 @@ pub fn chinese_translations() -> TranslationDict {
         "chat.crypto.key_missing_hint",
         "等待 Space 管理员或其他设备发送的 Welcome 消息。",
     );
-    dict.set("chat.crypto.needs_verification", "发送方需要验证");
+    dict.set("chat.crypto.needs_verification", "正在验证发送方身份…");
     // T6: human-readable copy for late-recovery rejections; the raw
     // protocol reason code is only surfaced via the element tooltip.
     dict.set(
@@ -981,7 +981,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("message.private_save", "仅为我保存");
     dict.set("message.private_saved", "已为我保存");
     dict.set("pinned_bar.title", "共享钉选消息");
-    dict.set("pinned_bar.empty", "暂无钉选消息。");
     dict.set("pinned_bar.scroll_to", "跳转到消息");
     // Actor-private Realm list pinning.
     dict.set("realm.pin", "置顶 Realm");

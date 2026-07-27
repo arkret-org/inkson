@@ -25,7 +25,7 @@ use crate::models::{
 // resolving without a sync_engine edit.
 pub(crate) use crate::realm_tree::{
     descendant_node_ids, full_sync_projection_keep_set, realm_tree_items_with_pinned_realms,
-    realm_tree_node_is_direct_conversation, realm_tree_nodes_from_sync_realms,
+    realm_tree_node_is_direct_conversation, realm_tree_nodes_from_sync_realms_with_roles,
 };
 use crate::routes::Route;
 use crate::state::projection::ProjectionEvent;
@@ -224,8 +224,10 @@ fn AppBootstrap() -> Element {
         &initial_config.account_did,
         initial_secure_store_bootstrap_ready,
     );
-    let initial_realm_tree_nodes =
-        realm_tree_nodes_from_sync_realms(&initial_local_state.realm_tree_projections);
+    let initial_realm_tree_nodes = realm_tree_nodes_from_sync_realms_with_roles(
+        &initial_local_state.realm_tree_projections,
+        &initial_local_state.realm_collaboration_roles,
+    );
     let initial_realm_tree_owner_did = initial_state_store.active_account_did().unwrap_or_default();
     let initial_sidebar_width = load_sidebar_width_preference(&initial_state_store);
     let initial_locale = initial_state_store

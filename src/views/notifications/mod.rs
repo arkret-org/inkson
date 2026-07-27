@@ -17,11 +17,9 @@ mod tests;
 
 // Crate-internal projection helpers consumed by the dashboard card and
 // `app::sidebar` via `crate::views::notifications::*`. The notification /
-// invite wire-payload projection primitives (`notification_items_from_value`,
-// `is_notification_account_data`, `merge_invite_notifications`,
-// `realm_title_hints_from_values`) moved to `projection::notifications`
-// (YGN-ARCH-01) and are consumed there directly by the sync layer.
+// invite projection reducer lives in `projection::notifications` and is
+// consumed there directly by the sync layer.
 pub(crate) use model::{
-    default_notification_title, notification_value_read_by_cursor, value_string,
+    default_notification_title, notification_value_read_by_cursor, notification_wire_state,
 };
 pub use panel::NotificationsPanel;

@@ -6,13 +6,12 @@
 use std::collections::BTreeMap;
 
 use dioxus::prelude::*;
-use serde_json::Value;
 
 use super::model::{
     UiNotification, UiNotificationAction, append_invite_notifications,
     apply_sync_projection_to_store, drop_joined_invite_notifications, hydrate_notifications,
     joined_realm_ids, merge_invite_notifications, notification_id_for_dedupe,
-    raw_notifications_from_sources, read_cursor_targets, realm_title_hints_from_values,
+    raw_notifications_from_sources, read_cursor_targets, realm_title_hints_from_invites,
 };
 use crate::api_error::is_auth_expired_error;
 use crate::notification_rules::{dnd_settings_from_account_data, push_rules_from_account_data};
@@ -21,23 +20,11 @@ use crate::transport::TransportClient;
 use crate::transport::auth::{with_authed_api, with_event_submitter};
 use crate::views::helpers::short_protocol_id;
 
-/// Project the SDK `AuthzInviteList.invites` (typed `Invite` rows) into the
-/// `Vec<Value>` shape the local notification pipeline folds through lenient
-/// JSON accessors.
-fn invites_to_values(
-    invites: Vec<arkret_models_collaboration::governance::operation_wire::Invite>,
-) -> Vec<Value> {
-    invites
-        .into_iter()
-        .filter_map(|invite| serde_json::to_value(invite).ok())
-        .collect()
-}
-
 pub(crate) async fn optional_invite_notifications(
     api: &TransportClient,
-) -> anyhow::Result<Vec<Value>> {
+) -> anyhow::Result<Vec<arkret_models_collaboration::governance::operation_wire::Invite>> {
     match async { crate::transport::account::invites(&api.sdk_http_client()?).await }.await {
-        Ok(response) => Ok(invites_to_values(response.invites)),
+        Ok(response) => Ok(response.invites),
         Err(error) if is_auth_expired_error(&error) => Err(error),
         Err(error) => {
             tracing::debug!(
@@ -373,10 +360,7 @@ fn accept_invite_notification(
                     Some(&sync.updates.notifications),
                     &sync.updates.account_data,
                 );
-                for (realm_id, title) in realm_title_hints_from_values(&raw_notifications) {
-                    realm_title_hints.entry(realm_id).or_insert(title);
-                }
-                for (realm_id, title) in realm_title_hints_from_values(&invite_notifications) {
+                for (realm_id, title) in realm_title_hints_from_invites(&invite_notifications) {
                     realm_title_hints.entry(realm_id).or_insert(title);
                 }
                 drop_joined_invite_notifications(&mut raw_notifications, &hidden_realms);

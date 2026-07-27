@@ -17,9 +17,15 @@ pub(crate) async fn issue_event_stamp(event: &arkret_sdk::Event) -> anyhow::Resu
     let device_id = signer
         .device_id()
         .context("active event signer is not bound to a device")?;
+    #[cfg(not(test))]
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    #[cfg(not(test))]
     let material = crate::secure_key_store::load_signing_seed(secure_store.as_ref())?
         .context("active event signing seed is unavailable")?;
+    #[cfg(not(test))]
+    let local_node_secret = material.seed;
+    #[cfg(test)]
+    let local_node_secret = [0x49; 32];
     let scope = StampScope {
         service_id: None,
         actor_id: event.actor_id.clone(),
@@ -32,7 +38,7 @@ pub(crate) async fn issue_event_stamp(event: &arkret_sdk::Event) -> anyhow::Resu
     #[cfg(any(target_arch = "wasm32", test))]
     let store = memory_stamp_store();
 
-    SigningStampAllocator::with_clock(store, scope, &material.seed, InksonClock)
+    SigningStampAllocator::with_clock(store, scope, &local_node_secret, InksonClock)
         .issue()
         .await
         .map_err(Into::into)

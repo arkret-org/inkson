@@ -62,6 +62,32 @@ pub fn capability_grant_actions(
     constraints: Value,
 ) -> OperationBuilder {
     let realm = trim_realm_id(realm_id);
+    capability_grant_actions_with_resources(
+        &realm,
+        actor,
+        grant_id,
+        subject,
+        actions,
+        vec![json!({ "kind": "realm", "realm_id": realm })],
+        expires_at,
+        constraints,
+    )
+}
+
+/// Build a capability grant with caller-supplied canonical resource selectors.
+/// Participation uses this form for Circle and Strand scopes; the ordinary
+/// Realm-admin helper above keeps its Realm-wide default.
+pub fn capability_grant_actions_with_resources(
+    realm_id: &str,
+    actor: &str,
+    grant_id: &str,
+    subject: &str,
+    actions: &[&str],
+    resources: Vec<Value>,
+    expires_at: Option<&str>,
+    constraints: Value,
+) -> OperationBuilder {
+    let realm = trim_realm_id(realm_id);
     let mut grant = json!({
         "id": grant_id,
         "schema": "ak.schema.capability.v1",
@@ -69,7 +95,7 @@ pub fn capability_grant_actions(
         "issuer": actor,
         "subject": subject,
         "actions": actions,
-        "resources": [{ "kind": "realm", "realm_id": realm }],
+        "resources": resources,
         "issued_at": crate::clock::now_timestamp(),
         "proofs": [],
     });

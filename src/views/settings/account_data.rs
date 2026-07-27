@@ -511,8 +511,10 @@ pub(super) fn watch_level_label(level: WatchLevel) -> &'static str {
 pub(super) fn known_realm_options(store: &LocalStateStore) -> Vec<(String, String)> {
     let state = store.load();
     let mut titles: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
-    for node in crate::realm_tree::realm_tree_nodes_from_sync_realms(&state.realm_tree_projections)
-    {
+    for node in crate::realm_tree::realm_tree_nodes_from_sync_realms_with_roles(
+        &state.realm_tree_projections,
+        &state.realm_collaboration_roles,
+    ) {
         if node.kind == crate::models::RealmTreeNodeKind::Realm && !node.realm_id.is_empty() {
             titles.entry(node.realm_id).or_insert(node.title);
         }

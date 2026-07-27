@@ -238,22 +238,25 @@ fn local_state_store_persists_to_disk_between_instances() {
 fn local_state_store_persists_notifications_and_mute_preferences() {
     let path = temp_state_path("notifications");
     let mut store = LocalStateStore::with_path(path.clone());
-    store.save_notification_projection(vec![serde_json::json!({
-        "notification_id": "notif-1",
-        "realm_id": "ak:realm:demo",
-        "kind": "message",
-        "body": "Hello"
-    })]);
-    store.set_notification_read("notif-1", true);
-    store.set_notification_archived("notif-1", true);
-    store.set_realm_muted("ak:realm:demo", true);
+    let notification = crate::state::projection::notifications::test_event_notification(
+        1,
+        arkret_sdk::NotificationKind::Message,
+        "ak:realm:0196419b-0000-7000-8000-000000000001",
+        None,
+        serde_json::json!({"body": "Hello"}),
+    );
+    let notification_id = notification.notification_id();
+    store.save_notification_projection(vec![notification]);
+    store.set_notification_read(notification_id.clone(), true);
+    store.set_notification_archived(notification_id.clone(), true);
+    store.set_realm_muted("ak:realm:0196419b-0000-7000-8000-000000000001", true);
     store.set_notification_kind_enabled("message", false);
 
     let reader = LocalStateStore::with_path(path);
     assert_eq!(reader.notification_projection().len(), 1);
-    assert!(reader.notification_state_for("notif-1").read);
-    assert!(reader.notification_state_for("notif-1").archived);
-    assert!(reader.is_realm_muted("ak:realm:demo"));
+    assert!(reader.notification_state_for(&notification_id).read);
+    assert!(reader.notification_state_for(&notification_id).archived);
+    assert!(reader.is_realm_muted("ak:realm:0196419b-0000-7000-8000-000000000001"));
     assert!(!reader.notification_kind_enabled("message"));
 }
 
