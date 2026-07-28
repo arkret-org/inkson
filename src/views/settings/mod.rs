@@ -1429,8 +1429,8 @@ pub fn SettingsPanel(
                         }
                         div { class: "metric",
                             strong {
-                                "No Cross-Tab Sync "
-                                HelpTip { text: "localStorage changes in one tab are not automatically reflected in other tabs. Consider using BroadcastChannel or storage events for multi-tab sync." }
+                                "Single Active Browser Tab "
+                                HelpTip { text: "Inkson allows one active tab per browser profile so IndexedDB, device keys, MLS state, cursors, and outbound writes have a single owner." }
                             }
                             span { class: "badge badge-info",
                                 "Info"

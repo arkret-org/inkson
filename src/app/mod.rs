@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::*;
-use dioxus_router::{Link, Navigator, Outlet, Router};
+use dioxus_router::{Link, Navigator, Outlet};
 use serde_json::Value;
 
 use crate::api_error::is_auth_expired_error;
@@ -59,6 +59,7 @@ pub(crate) use bootstrap::*;
 // resolution unchanged.
 mod theme;
 pub(crate) use theme::*;
+mod web_leader;
 // YOU-07-001: per-realm surface selection (RealmSurface enum + preference
 // load/persist + route→surface resolution) lives in `app/realm_surface.rs`
 // (move only). The glob re-export keeps inline call sites and `app_tests.rs`
@@ -191,7 +192,7 @@ pub fn App() -> Element {
     ensure_default_push_token_provider();
     use_hook(crate::notification_sound::initialize_notification_audio);
     rsx! {
-        Router::<Route> {}
+        web_leader::WebLeaderGate {}
     }
 }
 

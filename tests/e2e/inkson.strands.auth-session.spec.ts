@@ -5,7 +5,9 @@ import {
   refreshServer,
   writeLocalConfigAndReload,
   readLocalConfig,
+  addSessionGrantInjection,
 } from "./strandsHarness";
+import { mockArkretApi } from "./mockArkretApi";
 
 registerStrandsBeforeEach();
 
@@ -46,6 +48,23 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await expect(page.getByTestId("current-realm-surface")).toContainText("Board");
   await expect(page.getByTestId("realm-context-menu-button")).toBeVisible();
+});
+
+test("a second browser tab is blocked until the active Inkson tab closes", async ({ page }) => {
+  const follower = await page.context().newPage();
+  await mockArkretApi(follower);
+  await addSessionGrantInjection(follower);
+  await follower.goto("/", { waitUntil: "domcontentloaded" });
+
+  await expect(follower.getByTestId("web-leader-follower")).toBeVisible();
+  await expect(follower.getByTestId("client-shell")).toHaveCount(0);
+  await expect(follower.getByText("Inkson is already open")).toBeVisible();
+
+  await page.close();
+  await follower.getByTestId("web-leader-retry").click();
+
+  await expect(latestTestId(follower, "client-shell")).toBeVisible({ timeout: 120_000 });
+  await expect(follower.getByTestId("web-leader-follower")).toHaveCount(0);
 });
 
 test("selected Realm security badge matches its encrypted sidebar marker", async ({ page }) => {
