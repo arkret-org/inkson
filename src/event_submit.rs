@@ -725,15 +725,10 @@ fn pending_chat_message_ids_from_snapshot(
             )
         })
         .filter_map(|item| decode_queued_sdk_event(item.content.clone()).ok())
-        .filter_map(|queued| {
-            queued
-                .intent
-                .payload
-                .get("message_id")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|message_id| !message_id.is_empty())
-                .map(ToOwned::to_owned)
+        .map(|queued| {
+            arkret_sdk::MessageId::from_event_id(&queued.intent.event_id)
+                .as_str()
+                .to_owned()
         })
         .collect()
 }
@@ -1135,6 +1130,50 @@ impl EventSubmitter {
         )?;
         let encrypted_payload =
             crate::signal::encrypt_signal_payload(&header, material, &plaintext)?;
+        let envelope = crate::signal::seal_signal_envelope(header, encrypted_payload)?;
+        self.submit_signal_envelope(&envelope).await
+    }
+
+    /// Send one producer-scheduled `ak.message.stream` frame.
+    ///
+    /// The mutable MLS snapshot is supplied explicitly so the SDK-owned
+    /// Signal nonce counter is persisted before the request leaves this
+    /// device.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn send_message_stream_frame(
+        &self,
+        scope_ref: arkret_sdk::ScopeRef,
+        actor_id: &str,
+        device_id: &str,
+        material: &crate::signal::SignalKeyMaterial,
+        frame: arkret_sdk::MessageStreamFrame,
+        state_store: &crate::runtime::input::StateStoreHandle,
+    ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
+        let seal_ref = self.current_seal_for(scope_ref.realm_id().as_str()).await?;
+        let header = crate::signal::SignalHeader::new(
+            scope_ref,
+            arkret_sdk::Did::new(actor_id)
+                .map_err(|error| anyhow::anyhow!("invalid message stream actor_id: {error}"))?,
+            arkret_sdk::DeviceId::new(device_id)
+                .map_err(|error| anyhow::anyhow!("invalid message stream device_id: {error}"))?,
+            arkret_sdk::SealId::new(seal_ref)
+                .map_err(|error| anyhow::anyhow!("invalid message stream seal_ref: {error}"))?,
+            arkret_wire::SignalClass::Session,
+            crate::clock::now_utc(),
+        );
+        let plaintext = frame
+            .canonical_plaintext()
+            .map_err(|error| anyhow::anyhow!("encode message stream Signal plaintext: {error}"))?;
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        let encrypted_payload = state_store.write(|store| {
+            crate::signal::encrypt_signal_payload_with_store(
+                store,
+                secure_store.as_ref(),
+                &header,
+                material,
+                &plaintext,
+            )
+        })?;
         let envelope = crate::signal::seal_signal_envelope(header, encrypted_payload)?;
         self.submit_signal_envelope(&envelope).await
     }
@@ -2028,7 +2067,7 @@ impl EventSubmitter {
             .validate_structural()
             .map_err(|error| anyhow::anyhow!("signal submit rejected locally: {error}"))?;
         self.http
-            .post("/_arkret/self/signal", envelope)
+            .signal_send(envelope)
             .await
             .map_err(anyhow::Error::from)
     }

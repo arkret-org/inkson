@@ -480,12 +480,14 @@ fn chat_message_create_operation_with_content_and_expiry(
     }
     // T2.3: v1 wire uses `track_name` — a display-only message segment
     // identifier — instead of the removed `branch` top-level field.
+    let message_event_id = arkret_sdk::MessageId::new(message_id.to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid message_id {message_id:?}: {err}"))?
+        .event_id();
     let mut payload = arkret_sdk::MessageCreatePayload::with_content(
         strand_id_value(strand_id)?,
         "discussion",
         content,
-    )
-    .with_message_id(message_id);
+    );
     if let Some(reply_to) = reply_to.map(str::trim).filter(|value| !value.is_empty()) {
         if !is_schema_message_id(reply_to) {
             anyhow::bail!("reply_to must be a ak:message id");
@@ -500,6 +502,7 @@ fn chat_message_create_operation_with_content_and_expiry(
         actor,
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
+    .event_id(message_event_id)
     .target_ref(strand_id)
     .body(sdk_payload_value(
         payload.to_value(),

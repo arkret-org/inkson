@@ -560,13 +560,11 @@ fn AppBootstrap() -> Element {
     // backup prompt on directly, WITHOUT relying on the fragile boot-time
     // detection effect (X11). See `maybe_auto_backup_mls_after_encrypted_write`.
     use_context_provider(|| crate::components::MlsBackupSignal(needs_mls_backup));
-    // Call-signaling hub — the receive side of `ak.call.signal`. Provided once
-    // at the app root and drained by `CallPanel` to drive the transport / call
-    // FSM. Nothing fills it yet: the sync apply paths used to, from the
-    // plaintext `ephemeral.events[]` bucket v1 deleted, and the Signal
-    // subscribe rail that replaces them cannot be opened until the SDK exposes
-    // the `ak.signal-v1` exporter derivation. See `crate::views::call_signals`.
+    // Signal product hubs are populated only by the encrypted Signal receive
+    // path after envelope proof, MLS AEAD and product authorization succeed.
     let _call_signal_hub = use_context_provider(crate::views::call_signals::CallSignalHub::new);
+    let _message_stream_hub =
+        use_context_provider(crate::views::message_streams::MessageStreamHub::new);
     let mls_restore_payload_cache = use_signal(|| Option::<Value>::None);
     let mls_unlock_detection_key_seen = use_signal(|| Option::<String>::None);
 

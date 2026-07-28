@@ -301,10 +301,9 @@ fn content_kind(content: &Value) -> Option<&str> {
 
 /// Build the canonical `poll_block` message
 /// (`content-block-poll.schema.json#/$defs/poll_block`) as a
-/// `ak.message.create` event. The poll's wire identity is the stamped
-/// `message_id` (`ak:message:<uuid7>` derived from the event id) — callers
-/// read it back from `event.payload["message_id"]` to address later
-/// `poll_response.poll_ref`s at this poll.
+/// `ak.message.create` event. The poll's wire identity is the Event UUID
+/// retyped as `ak:message:<uuid7>`; it is never duplicated in the create
+/// payload.
 pub fn build_poll_create_op(
     realm_id: &str,
     actor: &str,
@@ -347,7 +346,7 @@ pub fn build_poll_create_op(
                 .map_err(|err| anyhow::anyhow!("poll create content serialize: {err}"))?,
         )?,
     );
-    let mut event = OperationBuilder::new(
+    OperationBuilder::new(
         realm_id,
         actor,
         arkret_sdk::events::kinds::EventKind::MessageCreate,
@@ -357,26 +356,16 @@ pub fn build_poll_create_op(
         payload.to_value(),
         "poll ak.message.create payload serialize",
     )?)
-    .build_sdk_event("inkson")?;
-    let message_ref = event
-        .event_id
-        .as_str()
-        .replacen("ak:event:", "ak:message:", 1);
-    event
-        .payload
-        .insert("message_id".to_owned(), json!(message_ref));
-    Ok(event)
+    .build_sdk_event("inkson")
 }
 
-/// Read the stamped wire message id (`ak:message:<uuid7>`) back from a
-/// freshly built poll-create event — the identity later
-/// `poll_response.poll_ref`s point at.
+/// Derive the wire message id from a freshly built poll-create Event.
 pub fn poll_message_ref(event: &arkret_sdk::Event) -> Option<String> {
-    event
-        .payload
-        .get("message_id")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
+    (event.kind == arkret_sdk::events::kinds::EventKind::MessageCreate).then(|| {
+        arkret_sdk::MessageId::from_event_id(&event.event_id)
+            .as_str()
+            .to_owned()
+    })
 }
 
 /// Build the canonical `poll_response_block`

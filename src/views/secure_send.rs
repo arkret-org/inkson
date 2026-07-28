@@ -288,12 +288,14 @@ pub(crate) fn build_secure_send(
     .map_err(|err| format!("MLS encrypted envelope build failed: {err}"))?;
     let typed_strand_id = arkret_sdk::StrandId::new(strand_id.to_owned())
         .map_err(|err| format!("Send Secure strand id invalid: {err:?}"))?;
+    let message_event_id = arkret_sdk::MessageId::new(message_id.to_owned())
+        .map_err(|err| format!("Send Secure message id invalid: {err}"))?
+        .event_id();
     let mut message_payload = arkret_sdk::MessageCreatePayload::with_encrypted_content(
         typed_strand_id,
         "discussion",
         encrypted_envelope,
-    )
-    .with_message_id(message_id.to_owned());
+    );
     if let Some((metadata_payload, metadata_aad)) = encrypted_metadata_message {
         // Same canonical wrap + AAD visibility + group-state binding as the
         // `encrypted_content` envelope, mounted parallel to it on the payload.
@@ -321,6 +323,7 @@ pub(crate) fn build_secure_send(
         actor,
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
+    .event_id(message_event_id)
     .body(msg_payload_value)
     .build_sdk_event("inkson");
 

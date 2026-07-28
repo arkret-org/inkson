@@ -594,9 +594,10 @@ fn chat_message_create_operation_emits_schema_canonical_content() {
     .expect("builds");
 
     assert_eq!(op.kind.as_str(), "ak.message.create");
+    assert!(op.payload.get("message_id").is_none());
     assert_eq!(
-        op.payload["message_id"].as_str(),
-        Some("ak:message:01904100-0000-7000-8000-000000000001")
+        arkret_sdk::MessageId::from_event_id(&op.event_id).as_str(),
+        "ak:message:01904100-0000-7000-8000-000000000001"
     );
     assert_eq!(
         op.payload["strand_id"].as_str(),
@@ -1423,7 +1424,6 @@ fn chat_messages_fold_canonical_create_with_streamed_reaction_envelope() {
             "refs": [],
             "payload": {
                 "content": {"kind": "ak.content.text", "body": "canonical hello"},
-                "message_id": "ak:message:01904100-0000-7000-8000-000000000201",
                 "strand_id": "ak:strand:01904100-0000-7000-8000-000000000301",
                 "track_name": "discussion"
             }
@@ -1441,7 +1441,7 @@ fn chat_messages_fold_canonical_create_with_streamed_reaction_envelope() {
             "refs": [],
             "payload": {
                 "key": "👍",
-                "target_ref": "ak:message:01904100-0000-7000-8000-000000000201"
+                "target_ref": "ak:message:01904100-0000-7000-8000-000000000101"
             }
         }),
     ];
@@ -1458,7 +1458,7 @@ fn chat_messages_fold_canonical_create_with_streamed_reaction_envelope() {
     assert_eq!(messages.len(), 1);
     assert_eq!(
         messages[0].protocol_message_id.as_deref(),
-        Some("ak:message:01904100-0000-7000-8000-000000000201")
+        Some("ak:message:01904100-0000-7000-8000-000000000101")
     );
     assert_eq!(
         messages[0].reactions,
@@ -1469,7 +1469,7 @@ fn chat_messages_fold_canonical_create_with_streamed_reaction_envelope() {
 #[test]
 fn durable_reaction_folds_onto_controller_only_create() {
     let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
-    let message_id = "ak:message:01904100-0000-7000-8000-000000000201";
+    let message_id = "ak:message:01904100-0000-7000-8000-000000000101";
     let mut events = vec![
         json!({
             "event_id": "ak:event:01904100-0000-7000-8000-000000000101",
@@ -1484,7 +1484,6 @@ fn durable_reaction_folds_onto_controller_only_create() {
             "refs": [],
             "payload": {
                 "content": {"kind": "ak.content.text", "body": "optimistic first"},
-                "message_id": message_id,
                 "strand_id": "ak:strand:01904100-0000-7000-8000-000000000301",
                 "track_name": "discussion"
             }
@@ -1668,23 +1667,22 @@ fn chat_messages_keep_folded_timeline_revision_over_older_backfill_create() {
     let mut events = vec![
         json!({
             "event_id": "ak:event:019f3b27-fb61-7ed3-af84-04cc68eac2f6",
-            "kind": "ak.message.create",
+            "kind": "ak.message.revise",
             "actor_id": "did:web:bob.example",
             "realm_id": "ak:realm:r1",
             "created_at": "2026-07-07T05:58:23.000Z",
             "strand_id": "ak:strand:topic",
-            "message_id": message_id,
+            "target_ref": message_id,
             "content": {"kind": "ak.content.text", "body": "edited body"}
         }),
         json!({
-            "event_id": "ak:event:019f3b27-f523-7571-89cb-5e27479d5e6d",
+            "event_id": "ak:event:019f3b27-f521-70f0-84f3-e06f95177dbf",
             "kind": "ak.message.create",
             "actor_id": "did:web:bob.example",
             "realm_id": "ak:realm:r1",
             "created_at": "2026-07-07T05:58:22.000Z",
             "payload": {
                 "content": {"kind": "ak.content.text", "body": "original body"},
-                "message_id": message_id,
                 "reply_to": reply_to,
                 "strand_id": "ak:strand:topic",
                 "track_name": "discussion"
@@ -2422,12 +2420,11 @@ fn rebuild_restores_authors_own_encrypted_poll_from_content_sidecar() {
         &serde_json::to_string(&content).expect("content serializes"),
     );
     let mut event = json!({
-        "event_id": "ak:event:01904100-0000-7000-8000-000000000013",
+        "event_id": "ak:event:01904100-0000-7000-8000-000000000012",
         "kind": "ak.message.create",
         "actor_id": "did:web:alice.example",
         "realm_id": realm,
         "strand_id": strand,
-        "message_id": message_id,
         "encrypted_content": true,
         "status": "accepted"
     });

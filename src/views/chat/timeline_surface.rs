@@ -73,6 +73,16 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
     // sender's canonical create was persisted locally.
     let all_messages_snapshot = (controller.messages)();
     let messages_for_reply_lookup = &all_messages_snapshot;
+    let durable_message_ids = all_messages_snapshot
+        .iter()
+        .filter_map(|message| message.protocol_message_id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let message_stream_cards = crate::views::message_streams::MessageStreamHub::try_use()
+        .map(|hub| hub.visible_for(&selected_realm_id, &selected_channel_value))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|preview| !durable_message_ids.contains(&preview.message_id))
+        .collect::<Vec<_>>();
     let pinned_target_set: std::collections::HashSet<String> = (controller.shared_pins)()
         .iter()
         .map(|pin| pin.target_ref.clone())
@@ -112,6 +122,42 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                     target_ref: prompt.target_ref.clone(),
                                     api_token,
                                     current_state,
+                                }
+                            }
+                        }
+                    }
+                    for preview in message_stream_cards {
+                        div {
+                            key: "{preview.message_id}",
+                            class: if preview.stalled {
+                                "chat-message message-stream-preview is-stalled"
+                            } else {
+                                "chat-message message-stream-preview"
+                            },
+                            "data-testid": "message-stream-preview",
+                            "data-message-id": "{preview.message_id}",
+                            "data-stream-state": if preview.stalled { "stalled" } else { "active" },
+                            div { class: "message-meta",
+                                span { class: "message-sender", "{preview.sender_actor_id}" }
+                                span { class: "message-stream-badge", "Generating…" }
+                            }
+                            div { class: "msg-body",
+                                if preview.text.is_empty() {
+                                    span { class: "message-stream-waiting", "…" }
+                                } else {
+                                    "{preview.text}"
+                                }
+                                if preview.truncated {
+                                    span {
+                                        class: "message-stream-truncated",
+                                        " Preview truncated; waiting for final message."
+                                    }
+                                }
+                                if preview.stalled {
+                                    span {
+                                        class: "message-stream-stalled",
+                                        " Generation paused; waiting for an update."
+                                    }
                                 }
                             }
                         }

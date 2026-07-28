@@ -524,7 +524,16 @@ fn message_created_at_from_candidates(
 fn message_protocol_message_id_from_candidates(candidates: &[&Value]) -> Option<String> {
     if let Some(message_id) = candidates
         .iter()
-        .filter(|candidate| message_kind_is_create(candidate) || message_kind_is_revise(candidate))
+        .filter(|candidate| message_kind_is_create(candidate))
+        .find_map(|candidate| value_string_at(candidate, &["event_id", "id"]))
+        .and_then(|event_id| arkret_sdk::EventId::new(event_id.to_owned()).ok())
+        .map(|event_id| arkret_sdk::MessageId::from_event_id(&event_id))
+    {
+        return Some(message_id.as_str().to_owned());
+    }
+    if let Some(message_id) = candidates
+        .iter()
+        .filter(|candidate| message_kind_is_revise(candidate))
         .find_map(|candidate| {
             candidate
                 .get("payload")

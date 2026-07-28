@@ -10,8 +10,7 @@
 //!
 //! What survives from the old rail is the *plaintext body* of each signal —
 //! that body is now the AEAD plaintext instead of a wire object. This module
-//! keeps those bodies, the header assembly and the device proof, and stops at
-//! the single missing primitive: see [`encrypt_signal_payload`].
+//! keeps those bodies, the header assembly and the device proof.
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -32,9 +31,8 @@ static SIGNAL_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomic
 /// The AEAD `device_nonce_counter` has a stricter contract — `encoding.md`
 /// §10.1 requires it to be persisted per `(key_ref, epoch, device_id, purpose,
 /// aead_profile)` and, when the local counter for an epoch cannot be recovered,
-/// requires an MLS Commit to a fresh epoch before sending again. Wiring that
-/// durable counter belongs with the missing exporter derivation
-/// ([`encrypt_signal_payload`]); until then nothing reaches an AEAD.
+/// requires an MLS Commit to a fresh epoch before sending again. The SDK owns
+/// that counter inside the persisted MLS group snapshot.
 pub fn next_signal_sequence() -> SignalSequence {
     SignalSequence(SIGNAL_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
 }
@@ -66,6 +64,7 @@ pub enum SignalPayload {
         signal_kind: String,
         data: Option<Value>,
     },
+    MessageStream(arkret_sdk::MessageStreamFrame),
 }
 
 impl SignalPayload {
@@ -118,6 +117,18 @@ impl SignalPayload {
         sequence: SignalSequence,
         sent_at: chrono::DateTime<chrono::Utc>,
     ) -> anyhow::Result<Vec<u8>> {
+        if let Self::MessageStream(frame) = self {
+            if frame.payload_sequence() != sequence.0 {
+                anyhow::bail!(
+                    "message stream payload_sequence {} disagrees with Signal sequence {}",
+                    frame.payload_sequence(),
+                    sequence.0
+                );
+            }
+            return frame.canonical_plaintext().map_err(|error| {
+                anyhow::anyhow!("message stream plaintext encoding failed: {error}")
+            });
+        }
         let body = match self {
             Self::Typing { strand_id, typing } => json!({
                 "kind": "ak.typing",
@@ -196,6 +207,7 @@ impl SignalPayload {
                 }
                 body
             }
+            Self::MessageStream(_) => unreachable!("handled before generic Signal encoding"),
         };
         let mut body = body;
         body["actor_id"] = Value::String(actor_id.as_str().to_owned());
@@ -335,30 +347,16 @@ pub fn key_material_for_scope(
 /// fall back; there is no plaintext branch to fall back to.
 #[derive(Debug, thiserror::Error)]
 #[error(
-    "signal rail unavailable: the SDK exposes no ak.signal-v1 exporter derivation, \
-     so this client cannot produce an encrypted SignalEnvelope for {scope}. \
-     v1 has no plaintext signal branch, so the capability stays withdrawn."
+    "signal rail unavailable for {scope}: sealing requires mutable persisted MLS \
+     state and its account snapshot secret; v1 has no plaintext fallback"
 )]
 pub struct SignalRailUnavailable {
     pub scope: String,
 }
 
-/// Derive the per-epoch Signal content key and seal `plaintext` under it.
-///
-/// # Why this fails closed
-///
-/// `exporter-label-registry.json` registers `ak.signal-v1` as
-/// `ExpandWithLabel(history_secret, "ak.signal-v1", "", AEAD.Nk)` with parent
-/// label `ak.history-v1` — structurally identical to the `ak.content-v1`
-/// content key. `arkret-mls` implements the `ak.content-v1` half
-/// (`derive_content_key` / `encrypt_payload_exporter_aead`) but exposes
-/// neither an `ak.signal-v1` derivation nor its MLS `ExpandWithLabel` encoder
-/// (`mls_kdf_label` is private), and `arkret-crypto` has no Signal AEAD entry
-/// point either.
-///
-/// Re-deriving an MLS KDF label encoding inside a UI client to work around
-/// that would fork a security primitive across implementations, so this
-/// returns [`SignalRailUnavailable`] until the SDK lands the derivation.
+/// Compatibility guard for call sites that do not provide mutable persisted
+/// MLS state. Signal nonce state must never live only in a detached material
+/// descriptor, so these callers fail closed.
 pub fn encrypt_signal_payload(
     header: &SignalHeader,
     _material: &SignalKeyMaterial,
@@ -368,6 +366,85 @@ pub fn encrypt_signal_payload(
         scope: serde_json::to_string(&header.scope_ref)
             .unwrap_or_else(|_| header.scope_ref.realm_id().as_str().to_owned()),
     })
+}
+
+/// Seal a Signal and durably burn the SDK-owned nonce counter before submit.
+pub fn encrypt_signal_payload_with_store(
+    state_store: &mut crate::state::LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    header: &SignalHeader,
+    material: &SignalKeyMaterial,
+    plaintext: &[u8],
+) -> anyhow::Result<arkret_wire::SignalEncryptedPayload> {
+    let realm_id = header.scope_ref.realm_id().as_str();
+    let circle_id = header
+        .scope_ref
+        .circle_id()
+        .map(arkret_sdk::CircleId::as_str);
+    let snapshot = state_store
+        .mls_snapshot_for_effective_scope(realm_id, circle_id)
+        .ok_or_else(|| anyhow::anyhow!("no MLS snapshot for Signal scope"))?;
+    if snapshot.epoch != material.epoch {
+        anyhow::bail!(
+            "Signal material epoch {} disagrees with persisted MLS epoch {}",
+            material.epoch,
+            snapshot.epoch
+        );
+    }
+    let snapshot_secret = crate::mls::runtime::load_device_snapshot_secret(
+        secure_store,
+        header.sender_actor_id.as_str(),
+        header.sender_device_id.as_str(),
+    )
+    .map_err(|error| anyhow::anyhow!("load Signal MLS snapshot secret: {error}"))?;
+    let mut group =
+        crate::mls::persistence::restore_envelope(&snapshot, &snapshot_secret, snapshot.epoch)
+            .map_err(|error| anyhow::anyhow!("restore Signal MLS snapshot: {error}"))?;
+    let key_ref = arkret_wire::SignalKeyRef {
+        algorithm: "MLS-EXPORTER-AEAD".to_owned(),
+        group_state_ref: material.group_state_ref.clone(),
+    };
+    let binding = arkret_wire::SignalAeadBinding {
+        realm_id: header.scope_ref.realm_id(),
+        scope_ref: &header.scope_ref,
+        sender_actor_id: &header.sender_actor_id,
+        sender_device_id: &header.sender_device_id,
+        seal_ref: &header.seal_ref,
+        signal_class: header.signal_class,
+        sent_at: header.sent_at,
+        expires_at: header.expires_at,
+        scheme: arkret_wire::signal::SIGNAL_AEAD_SCHEME,
+        key_ref: &key_ref,
+        purpose: arkret_wire::signal::SIGNAL_AEAD_PURPOSE,
+        aead_profile: &material.aead_profile,
+        epoch: material.epoch,
+    };
+    let sealed = group
+        .seal_signal_payload(&binding, plaintext)
+        .map_err(|error| anyhow::anyhow!("seal Signal payload: {error}"))?;
+
+    // Persist before the HTTP submit. A failed or uncertain request may skip a
+    // nonce value, but it must never allow that value to be reused.
+    let state = group
+        .export_state_record()
+        .map_err(|error| anyhow::anyhow!("export post-Signal MLS state: {error}"))?;
+    let state_bytes = serde_json::to_vec(&state)
+        .map_err(|error| anyhow::anyhow!("serialize post-Signal MLS state: {error}"))?;
+    let mut salt = [0_u8; 16];
+    getrandom::fill(&mut salt)
+        .map_err(|error| anyhow::anyhow!("generate Signal snapshot salt: {error}"))?;
+    let updated = crate::mls::persistence::encrypt_state(
+        realm_id,
+        &state.group_id,
+        state.epoch,
+        &state_bytes,
+        &snapshot_secret,
+        &salt,
+    )
+    .carry_epoch_started_at(&snapshot)
+    .with_app_messages_observed(snapshot.app_messages_observed);
+    state_store.save_mls_snapshot_for_effective_scope(realm_id.to_owned(), circle_id, updated);
+    Ok(sealed.encrypted_payload)
 }
 
 /// Assemble the complete envelope and attach the sending device's proof.
@@ -558,6 +635,45 @@ mod tests {
         // Typing is an ordinary session signal: the 30 second class ceiling.
         assert_eq!(payload.signal_class(), arkret_wire::SignalClass::Session);
         assert_eq!(payload.signal_class().max_ttl().num_seconds(), 30);
+    }
+
+    #[test]
+    fn message_stream_uses_its_closed_profile_plaintext() {
+        let frame = arkret_sdk::MessageStreamFrame::Keyframe(
+            arkret_sdk::MessageStreamKeyframe::new(
+                8,
+                arkret_sdk::StrandId::new("ak:strand:01964200-0000-7000-8000-000000000001")
+                    .unwrap(),
+                arkret_sdk::MessageId::new("ak:message:01964200-0000-7000-8000-000000000002")
+                    .unwrap(),
+                0,
+                arkret_sdk::MessageStreamId::new(
+                    "ak:message_stream:01964200-0000-7000-8000-000000000003",
+                )
+                .unwrap(),
+                0,
+                arkret_sdk::MessageStreamFormat::Markdown,
+                "draft",
+                false,
+            )
+            .unwrap(),
+        );
+        let body: Value = serde_json::from_slice(
+            &SignalPayload::MessageStream(frame)
+                .to_plaintext(
+                    &actor(),
+                    &realm(),
+                    SignalSequence(8),
+                    crate::clock::now_utc(),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(body["kind"], "ak.message.stream");
+        assert_eq!(body["payload_sequence"], 8);
+        assert!(body.get("actor_id").is_none());
+        assert!(body.get("ttl_ms").is_none());
     }
 
     #[test]
