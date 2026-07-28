@@ -1070,12 +1070,6 @@ impl<'de> Deserialize<'de> for SubmitEventResult {
     }
 }
 
-// Round R2/R3 (T02) — server response shape for the
-// The `POST /_arkret/self/ephemeral` channel is fire-and-forget; its response
-// decodes into the SDK's authoritative `arkret_sdk::EphemeralSubmitOutcome`
-// (`accepted`, `dispatched_to`, `server_received_at`). The former inkson-local
-// `EphemeralSubmitResult` mirror was removed in favor of the wire type.
-
 // ── Media ────────────────────────────────────────────────────────
 
 // YOU-05-004: the hand-rolled `IceConfigOutcome` / `IceServer` /

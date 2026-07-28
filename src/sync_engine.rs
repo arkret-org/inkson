@@ -393,23 +393,6 @@ fn realm_update_has_durable_projection(update: &arkret_sdk::RealmUpdate) -> bool
         || entry.bottoms.is_some()
 }
 
-fn merge_ephemeral_realm_projection(store: &mut LocalStateStore, realm_id: &str, incoming: &Value) {
-    let Some(ephemeral) = incoming.get("ephemeral").cloned() else {
-        return;
-    };
-    let mut merged = store
-        .load()
-        .realm_tree_projections
-        .get(realm_id)
-        .cloned()
-        .unwrap_or_else(|| json!({}));
-    let Some(object) = merged.as_object_mut() else {
-        return;
-    };
-    object.insert("ephemeral".to_owned(), ephemeral);
-    store.save_realm_tree_projection(realm_id.to_owned(), merged);
-}
-
 fn overlay_json_object(base: &mut Value, incoming: &Value) {
     let (Some(base), Some(incoming)) = (base.as_object_mut(), incoming.as_object()) else {
         *base = incoming.clone();
@@ -1863,7 +1846,6 @@ pub fn apply_response(
                     continue;
                 };
                 if !is_full_sync && !realm_update_has_durable_projection(update) {
-                    merge_ephemeral_realm_projection(store, id, body);
                     continue;
                 }
                 // The live epoch represents the durable Realm projection as a
@@ -3011,31 +2993,6 @@ mod tests {
             .expect("durable Realm update"),
         };
         assert!(realm_update_has_durable_projection(&durable));
-    }
-
-    #[test]
-    fn ephemeral_realm_delta_does_not_replace_durable_projection() {
-        let mut store = temp_store("ephemeral-realm-merge");
-        store.save_realm_tree_projection(
-            "ak:realm:demo",
-            json!({"summary": {"joined_member_count": 2}, "members": []}),
-        );
-
-        merge_ephemeral_realm_projection(
-            &mut store,
-            "ak:realm:demo",
-            &json!({"ephemeral": {"events": [{"kind": "ak.typing"}]}}),
-        );
-
-        let projection = store
-            .load()
-            .realm_tree_projections
-            .get("ak:realm:demo")
-            .cloned()
-            .expect("merged Realm projection");
-        assert_eq!(projection["summary"]["joined_member_count"], 2);
-        assert_eq!(projection["members"], json!([]));
-        assert_eq!(projection["ephemeral"]["events"][0]["kind"], "ak.typing");
     }
 
     #[test]

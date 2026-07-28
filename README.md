@@ -55,18 +55,15 @@ section plus the protocol spec history in `../arkret-spec/spec/v1/`.
 - **Late-recovery banner** — sourced from
   `late_recovery_original_event_id`.
 
-## Round R2/R3 user-facing surfaces
+## User-facing protocol surfaces
 
-Spec rounds 2+3 (2026-05-20) added a handful of end-user changes — see
-the protocol spec tree (`../arkret-spec/spec/v1/`) for the normative source.
+See the protocol spec tree (`../arkret-spec/spec/v1/`) for the normative source.
 
-- **Ephemeral signal routing change** — typing / receipts / presence /
-  call-signal no longer travel through the durable `ak.self.events.command.submit`
-  path. They go through a dedicated `ak.schema.ephemeral_envelope.v1`
-  channel (broadcast) or `ak.schema.device_message.v1` (to-device key
-  verification). This is transparent to end users but is a
-  wire-breaking change for any third-party client built against the
-  old inkson behaviour.
+- **Signal routing** — typing / receipts / presence / call-signal do not
+  travel through the durable `ak.self.events.command.submit` path. They are
+  encrypted inside `SignalEnvelope` and sent with
+  `ak.self.signal.command.send`; device verification uses
+  `ak.schema.device_message.v1`.
 - **Moderation appeal strand** — when a moderation decision blocks a
   member, they can now file an appeal directly from the timeline.
   Status surfaces back to the appellant as `Submitted → UnderReview →

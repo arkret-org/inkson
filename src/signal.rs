@@ -194,7 +194,7 @@ impl SignalPayload {
                 signal_kind,
                 data,
             } => {
-                if !arkret_sdk::CALL_SIGNAL_KINDS.contains(&signal_kind.as_str()) {
+                if !crate::webrtc::CALL_SIGNAL_KINDS.contains(&signal_kind.as_str()) {
                     anyhow::bail!("call signal_kind {signal_kind:?} is not in the canonical enum");
                 }
                 let mut body = json!({

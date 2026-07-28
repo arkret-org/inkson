@@ -880,7 +880,7 @@ export async function mockArkretApi(
           "ak.open.mimi.command.report_abuse",
           "ak.open.mimi.command.proxy_download",
           "ak.open.invite_locator.query.resolve",
-          "ak.self.ephemeral.command.send",
+          "ak.self.signal.command.send",
         ],
         supported_schema_profiles: ["ak.schema.core.v1"],
         supported_reducer_profiles: ["ak.reducer.v1"],
@@ -1695,7 +1695,6 @@ export async function mockArkretApi(
                   limited: false,
                 },
                 state: { events: [] },
-                ephemeral: { events: [] },
                 unread_notifications: {
                   notification_count: 0,
                   highlight_count: 0,
@@ -1744,7 +1743,6 @@ export async function mockArkretApi(
                       },
                     ],
                   },
-                  ephemeral: { events: [] },
                   unread_notifications: {
                     notification_count: 0,
                     highlight_count: 0,
@@ -1762,7 +1760,6 @@ export async function mockArkretApi(
                   summary: { joined_member_count: 1 },
                   timeline: { events: [], limited: false },
                   state: { events: [] },
-                  ephemeral: { events: [] },
                   unread_notifications: {
                     notification_count: 0,
                     highlight_count: 0,
@@ -1780,7 +1777,6 @@ export async function mockArkretApi(
                   summary: { joined_member_count: 1 },
                   timeline: { events: [], limited: false },
                   state: { events: [] },
-                  ephemeral: { events: [] },
                   unread_notifications: {
                     notification_count: 0,
                     highlight_count: 0,
@@ -1803,7 +1799,6 @@ export async function mockArkretApi(
                   summary: { joined_member_count: 1 },
                   timeline: { events: [], limited: false },
                   state: { events: [] },
-                  ephemeral: { events: [] },
                   unread_notifications: {
                     notification_count: 0,
                     highlight_count: 0,
@@ -1817,7 +1812,6 @@ export async function mockArkretApi(
         },
         account_data: { events: notificationEvents },
         device_lists: { changed: [], left: [] },
-        presence: { events: [] },
         notifications: { items: [] },
       };
       return route.fulfill({
@@ -3041,34 +3035,17 @@ export async function mockArkretApi(
     }
 
     if (
-      url.pathname === "/_arkret/self/ephemeral" &&
+      url.pathname === "/_arkret/self/signal" &&
       route.request().method() === "POST"
     ) {
       const body = await route.request().postDataJSON();
-      if (
-        ![
-          "ak.receipt.read",
-          "ak.typing",
-          "ak.presence",
-          "ak.call.signal",
-        ].includes(body.kind)
-      ) {
-        return json(
-          route,
-          {
-            ok: false,
-            error: {
-              code: "invalid_param",
-              message: "expected broadcast ephemeral kind",
-            },
-          },
-          400,
-        );
-      }
       return json(route, {
         accepted: true,
-        kind: body.kind,
         realm_id: body.realm_id,
+        envelope_digest:
+          body.proof?.envelope_digest ??
+          `sha256:${"0".repeat(64)}`,
+        dispatched_recipient_count: 0,
         server_received_at: new Date().toISOString(),
       });
     }

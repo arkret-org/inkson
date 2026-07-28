@@ -24,6 +24,22 @@ use crate::operation::OperationBuilder;
 // `focus_leave`, `moderation`, `error`) and lives in the ciphertext. Do NOT
 // re-introduce a durable `OperationBuilder`-based helper, a plaintext
 // envelope, or a parallel `CallSignalKind` enum here.
+pub const CALL_SIGNAL_KINDS: &[&str] = &[
+    "invite",
+    "answer",
+    "candidate",
+    "renegotiate",
+    "hangup",
+    "ack",
+    "reject",
+    "mute_state",
+    "media_state",
+    "speaking",
+    "focus_join",
+    "focus_leave",
+    "moderation",
+    "error",
+];
 
 /// Call lifecycle state for `ak.call.state`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,7 +121,7 @@ impl CallSignalBody {
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| "ak.call.signal body omits signal_kind".to_owned())?
             .to_owned();
-        if !arkret_sdk::CALL_SIGNAL_KINDS.contains(&signal_kind.as_str()) {
+        if !CALL_SIGNAL_KINDS.contains(&signal_kind.as_str()) {
             return Err(format!(
                 "ak.call.signal signal_kind {signal_kind:?} is not in the canonical enum"
             ));
@@ -259,7 +275,7 @@ mod tests {
             arkret_sdk::events::kinds::event_wire_scope("ak.call.signal"),
             arkret_sdk::events::kinds::EventWireScope::Custom
         );
-        assert!(arkret_sdk::CALL_SIGNAL_KINDS.contains(&"invite"));
+        assert!(CALL_SIGNAL_KINDS.contains(&"invite"));
     }
 
     #[test]
@@ -368,7 +384,7 @@ mod tests {
 
     #[test]
     fn every_canonical_signal_kind_round_trips_sender_to_receiver() {
-        for kind in arkret_sdk::CALL_SIGNAL_KINDS {
+        for kind in CALL_SIGNAL_KINDS {
             let body = CallSignalBody::from_plaintext(&call_signal_body(1, kind))
                 .expect("canonical signal_kind must parse");
             assert_eq!(body.signal_kind, *kind);

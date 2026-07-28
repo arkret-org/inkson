@@ -31,7 +31,7 @@ export function mockArkretContract(req) {
         "ak.self.events.query.scan",
         "ak.find.directory.query.search_realms",
         "ak.self.keys.backups.query.list",
-        "ak.self.ephemeral.command.send",
+        "ak.self.signal.command.send",
       ],
       limits: {},
     });
@@ -187,20 +187,14 @@ export function mockArkretContract(req) {
     });
   }
 
-  if (method === "POST" && path === "/_arkret/self/ephemeral") {
-    if (!["ak.receipt.read", "ak.typing", "ak.presence", "ak.call.signal"].includes(body.kind)) {
-      return json(
-        {
-          ok: false,
-          error: { code: "invalid_param", message: "expected broadcast ephemeral kind" },
-        },
-        400,
-      );
-    }
+  if (method === "POST" && path === "/_arkret/self/signal") {
     return json({
       accepted: true,
-      kind: body.kind,
       realm_id: body.realm_id,
+      envelope_digest:
+        body.proof?.envelope_digest ??
+        `sha256:${"0".repeat(64)}`,
+      dispatched_recipient_count: 0,
       server_received_at: "2026-04-28T12:00:00.000Z",
     });
   }
@@ -224,7 +218,7 @@ export function canonicalPath(path) {
     "/directory/search-realms": "/_arkret/find/directory/search-realms",
     "/keys/backups": "/_arkret/self/keys/backups",
     "/gate/account/device-pair": "/_arkret/gate/account/device-pair",
-    "/ephemeral": "/_arkret/self/ephemeral",
+    "/signal": "/_arkret/self/signal",
   };
   return aliases[clean] ?? clean;
 }
