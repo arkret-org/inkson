@@ -754,11 +754,35 @@ pub(crate) fn text_body_from_value(value: &Value) -> Option<&str> {
         })
 }
 
+fn long_text_marker_from_value(value: &Value) -> Option<String> {
+    if value.get("kind").and_then(Value::as_str) == Some(arkret_sdk::CONTENT_KIND_LONG_TEXT) {
+        return crate::content::encode_long_text_marker(
+            value.get("blob_ref")?.as_str()?,
+            value.get("body")?.as_str()?,
+            value.get("format")?.as_str()?,
+        );
+    }
+    value
+        .get("parts")
+        .and_then(Value::as_array)
+        .and_then(|parts| parts.iter().find_map(long_text_marker_from_value))
+        .or_else(|| {
+            value
+                .get("content")
+                .filter(|content| content.is_object())
+                .and_then(long_text_marker_from_value)
+        })
+}
+
+fn display_body_from_value(value: &Value) -> Option<String> {
+    long_text_marker_from_value(value)
+        .or_else(|| text_body_from_value(value).map(ToOwned::to_owned))
+}
+
 pub(crate) fn text_body_from_message(candidates: &[&Value]) -> Option<String> {
     candidates
         .iter()
-        .find_map(|candidate| text_body_from_value(candidate))
-        .map(ToOwned::to_owned)
+        .find_map(|candidate| display_body_from_value(candidate))
 }
 
 pub(crate) fn short_message_time(value: Option<&str>) -> String {
@@ -831,7 +855,7 @@ pub(crate) fn decrypt_chat_encrypted_content(
         circle_id,
         encrypted_content,
     )
-    .and_then(|content_value| text_body_from_value(&content_value).map(ToOwned::to_owned))
+    .and_then(|content_value| display_body_from_value(&content_value))
 }
 
 fn decrypt_chat_encrypted_content_value(

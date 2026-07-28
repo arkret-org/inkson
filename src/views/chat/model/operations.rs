@@ -380,6 +380,33 @@ pub(crate) fn chat_content_block_for_body(body: &str) -> anyhow::Result<arkret_s
     Ok(arkret_sdk::ContentBlock::text(body))
 }
 
+pub(crate) async fn chat_content_block_for_body_with_upload(
+    base_url: &str,
+    session_credential: String,
+    wait_for_sync_token: Option<String>,
+    realm_id: &str,
+    body: &str,
+) -> anyhow::Result<arkret_sdk::ContentBlock> {
+    if let Some(error) = public_update_policy_error(body) {
+        anyhow::bail!(error);
+    }
+    let normalized = arkret_sdk::normalize_long_text(body)
+        .map_err(|error| anyhow::anyhow!("normalize message body: {error}"))?;
+    if normalized.len() <= arkret_sdk::CONTENT_TEXT_INLINE_MAX_BYTES {
+        return Ok(arkret_sdk::ContentBlock::text(body));
+    }
+    let api = crate::transport::auth::authed_api_with_sync(
+        base_url,
+        session_credential,
+        wait_for_sync_token,
+    )?;
+    let clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
+    clients
+        .blob()
+        .upload_plaintext_long_text(&normalized, arkret_sdk::LongTextFormat::Markdown, realm_id)
+        .await
+}
+
 pub(crate) fn chat_message_create_operation_with_expiry(
     realm_id: &str,
     actor: &str,
@@ -391,6 +418,41 @@ pub(crate) fn chat_message_create_operation_with_expiry(
     reply_to: Option<&str>,
     expiry: Option<arkret_sdk::DisappearingMessageExpiry>,
 ) -> anyhow::Result<arkret_sdk::Event> {
+    let content = chat_content_block_for_body(body)?;
+    chat_message_create_operation_with_content_and_expiry(
+        realm_id, actor, strand_id, message_id, body, content, mentions, reply_to, expiry,
+    )
+}
+
+pub(crate) fn chat_message_create_operation_with_content(
+    realm_id: &str,
+    actor: &str,
+    strand_id: &str,
+    message_id: &str,
+    body: &str,
+    content: arkret_sdk::ContentBlock,
+    mentions: &[MentionNode],
+    reply_to: Option<&str>,
+) -> anyhow::Result<arkret_sdk::Event> {
+    chat_message_create_operation_with_content_and_expiry(
+        realm_id, actor, strand_id, message_id, body, content, mentions, reply_to, None,
+    )
+}
+
+fn chat_message_create_operation_with_content_and_expiry(
+    realm_id: &str,
+    actor: &str,
+    strand_id: &str,
+    message_id: &str,
+    body: &str,
+    mut content: arkret_sdk::ContentBlock,
+    mentions: &[MentionNode],
+    reply_to: Option<&str>,
+    expiry: Option<arkret_sdk::DisappearingMessageExpiry>,
+) -> anyhow::Result<arkret_sdk::Event> {
+    if let Some(error) = public_update_policy_error(body) {
+        anyhow::bail!(error);
+    }
     let actor_mentions = mentions
         .iter()
         .filter_map(|mention| mention.as_mention().cloned())
@@ -399,7 +461,13 @@ pub(crate) fn chat_message_create_operation_with_expiry(
         .iter()
         .filter_map(|mention| mention.as_audience_mention().cloned())
         .collect::<Vec<_>>();
-    let mut content = chat_content_block_for_body(body)?;
+    if content.kind == arkret_sdk::CONTENT_KIND_LONG_TEXT
+        && (!actor_mentions.is_empty() || !audience_mentions.is_empty())
+    {
+        let fallback = content.body.clone();
+        content = arkret_sdk::ContentBlock::new(arkret_sdk::CONTENT_KIND_COMPOSITE, fallback)
+            .with_part(content);
+    }
     if !actor_mentions.is_empty() {
         content = content
             .with_mentions(actor_mentions)

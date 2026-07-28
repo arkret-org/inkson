@@ -83,6 +83,53 @@ impl<'a> BlobEndpoints<'a> {
             .map_err(anyhow::Error::from)
     }
 
+    /// Normalize and upload a plaintext long-text body, then build the
+    /// hash-addressed `ak.content.long_text` descriptor for a message Event.
+    pub async fn upload_plaintext_long_text(
+        &self,
+        body: &str,
+        format: arkret_sdk::LongTextFormat,
+        realm_id: &str,
+    ) -> anyhow::Result<arkret_sdk::ContentBlock> {
+        let normalized = arkret_sdk::normalize_long_text(body)
+            .map_err(|error| anyhow::anyhow!("normalize long text: {error}"))?;
+        let digest = format!(
+            "sha256:{}",
+            crate::canonical::sha256_hex(normalized.as_bytes())
+        );
+        let expected_blob_ref = format!("ak:blob:{digest}");
+        let metadata = Self::upload_metadata(
+            normalized.len(),
+            format.media_type(),
+            Some(realm_id),
+            Some(&digest),
+            None,
+            Some("long_text"),
+        )?;
+        let outcome = self
+            .transport
+            .http()
+            .blob_upload_bytes(&metadata, normalized.as_bytes().to_vec())
+            .await
+            .map_err(anyhow::Error::from)?;
+        if outcome.size_bytes != normalized.len() as u64
+            || outcome.content_digest.as_str() != digest
+            || outcome.blob_ref.as_str() != expected_blob_ref
+        {
+            anyhow::bail!(
+                "long-text Blob upload outcome does not match the normalized content commitment"
+            );
+        }
+        arkret_sdk::ContentBlock::plaintext_long_text(
+            &normalized,
+            format,
+            expected_blob_ref,
+            arkret_sdk::LongTextBodyKind::Prefix,
+            None,
+        )
+        .map_err(|error| anyhow::anyhow!("build long-text content block: {error}"))
+    }
+
     pub async fn get_bytes(&self, blob_ref: &str) -> anyhow::Result<Vec<u8>> {
         self.download_bytes(
             blob_ref,

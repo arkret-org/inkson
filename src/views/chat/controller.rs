@@ -714,27 +714,6 @@ impl ChatController {
             .cloned();
         let plaintext_services =
             plaintext_services_for_policy(projection.as_ref(), &context.plaintext_service_id);
-        let operation = match chat_message_create_operation(
-            &message.realm_id,
-            &context.account_did,
-            &message.strand_id,
-            "discussion",
-            &retry_message_id,
-            &message.body,
-            &message.mentions,
-            message.reply_to.as_deref(),
-        ) {
-            Ok(operation) => operation,
-            Err(error) => {
-                mark_message_command_failed(
-                    &mut self.messages,
-                    &retry_message_id,
-                    format!("send failed: {error:#}"),
-                );
-                self.status_msg.set(format!("send failed: {error:#}"));
-                return;
-            }
-        };
         let mention_values = mention_nodes_to_values(&message.mentions);
         let base_url = context.base_url;
         let actor = context.account_did;
@@ -746,6 +725,47 @@ impl ChatController {
         let mut status_msg = self.status_msg;
         let message_id_for_lookup = retry_message_id.clone();
         spawn(async move {
+            let content = match chat_content_block_for_body_with_upload(
+                &base_url,
+                api_token.clone(),
+                wait_for.clone(),
+                &message.realm_id,
+                &message.body,
+            )
+            .await
+            {
+                Ok(content) => content,
+                Err(error) => {
+                    mark_message_command_failed(
+                        &mut messages,
+                        &message_id_for_lookup,
+                        format!("send failed: {error:#}"),
+                    );
+                    status_msg.set(format!("send failed: {error:#}"));
+                    return;
+                }
+            };
+            let operation = match chat_message_create_operation_with_content(
+                &message.realm_id,
+                &actor,
+                &message.strand_id,
+                &retry_message_id,
+                &message.body,
+                content,
+                &message.mentions,
+                message.reply_to.as_deref(),
+            ) {
+                Ok(operation) => operation,
+                Err(error) => {
+                    mark_message_command_failed(
+                        &mut messages,
+                        &message_id_for_lookup,
+                        format!("send failed: {error:#}"),
+                    );
+                    status_msg.set(format!("send failed: {error:#}"));
+                    return;
+                }
+            };
             match submit_chat_operation_with_auth_refresh(
                 &base_url,
                 &actor,

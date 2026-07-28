@@ -8,6 +8,38 @@ use pulldown_cmark::{CowStr, Event, Options, Parser as MdParser, Tag, TagEnd, ht
 
 use crate::config::LocalConfigStore;
 
+const LONG_TEXT_MARKER_PREFIX: &str = "\u{1e}ak.long_text.v1:";
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct LongTextMarker {
+    blob_ref: String,
+    fallback: String,
+    format: String,
+}
+
+/// Encode a plaintext long-text descriptor for the local chat projection.
+///
+/// This marker is never protocol wire data. It lets the synchronous projection
+/// preserve the Blob ref until the renderer can perform an authenticated
+/// asynchronous fetch.
+pub(crate) fn encode_long_text_marker(
+    blob_ref: &str,
+    fallback: &str,
+    format: &str,
+) -> Option<String> {
+    serde_json::to_string(&LongTextMarker {
+        blob_ref: blob_ref.to_owned(),
+        fallback: fallback.to_owned(),
+        format: format.to_owned(),
+    })
+    .ok()
+    .map(|json| format!("{LONG_TEXT_MARKER_PREFIX}{json}"))
+}
+
+fn decode_long_text_marker(body: &str) -> Option<LongTextMarker> {
+    serde_json::from_str(body.strip_prefix(LONG_TEXT_MARKER_PREFIX)?).ok()
+}
+
 /// Marker recognised in message bodies that points at an uploaded blob.
 ///
 /// Produced by chat composer drag-and-drop when the upload pipeline sends
@@ -66,6 +98,13 @@ pub enum ContentBlock {
         blob_ref: String,
         media_type: Option<String>,
     },
+    /// Blob-backed long text. The fallback is visible until the authenticated,
+    /// content-address-verified full body has loaded.
+    LongText {
+        blob_ref: String,
+        fallback: String,
+        markdown: bool,
+    },
     /// Fallback for malformed / unrecognised content. Rendered inside
     /// a `<pre>` to make the raw payload obvious for debugging.
     Unknown(String),
@@ -78,6 +117,13 @@ pub enum ContentBlock {
 /// everything else through pulldown-cmark. This keeps the renderer
 /// predictable and avoids the temptation to grow a bespoke parser.
 pub fn parse_message_body(body: &str) -> Vec<ContentBlock> {
+    if let Some(marker) = decode_long_text_marker(body) {
+        return vec![ContentBlock::LongText {
+            blob_ref: marker.blob_ref,
+            fallback: marker.fallback,
+            markdown: marker.format == "markdown",
+        }];
+    }
     let trimmed = body.trim();
     if trimmed.is_empty() {
         return Vec::new();
@@ -473,6 +519,17 @@ fn add_link_target(html: String) -> String {
 }
 
 async fn authenticated_blob_data_url(blob_ref: &str, media_type: &str) -> anyhow::Result<String> {
+    let bytes = authenticated_blob_bytes(blob_ref).await?;
+    let mime = if media_type.trim().is_empty() {
+        "application/octet-stream"
+    } else {
+        media_type.trim()
+    };
+    let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
+    Ok(format!("data:{mime};base64,{encoded}"))
+}
+
+async fn authenticated_blob_bytes(blob_ref: &str) -> anyhow::Result<Vec<u8>> {
     let config = LocalConfigStore::default().load();
     let token = config.session_credential.trim().to_owned();
     if token.is_empty() {
@@ -481,14 +538,7 @@ async fn authenticated_blob_data_url(blob_ref: &str, media_type: &str) -> anyhow
     // ②(A+②): grant + per-request DPoP for the self-path blob fetch (§3.3).
     let api = crate::transport::auth::authed_api(&config.server_url, token)?;
     let clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
-    let bytes = clients.blob().get_bytes(blob_ref).await?;
-    let mime = if media_type.trim().is_empty() {
-        "application/octet-stream"
-    } else {
-        media_type.trim()
-    };
-    let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
-    Ok(format!("data:{mime};base64,{encoded}"))
+    clients.blob().get_bytes(blob_ref).await
 }
 
 /// RSX renderer for a slice of [`ContentBlock`]s.
@@ -621,6 +671,18 @@ fn render_single_block(idx: usize, block: ContentBlock) -> Element {
                 }
             }
         }
+        ContentBlock::LongText {
+            blob_ref,
+            fallback,
+            markdown,
+        } => rsx! {
+            AuthenticatedLongText {
+                key: "{key}",
+                blob_ref,
+                fallback,
+                markdown,
+            }
+        },
         ContentBlock::Unknown(raw) => rsx! {
             pre {
                 key: "{key}",
@@ -629,6 +691,62 @@ fn render_single_block(idx: usize, block: ContentBlock) -> Element {
                 "{raw}"
             }
         },
+    }
+}
+
+#[component]
+fn AuthenticatedLongText(blob_ref: String, fallback: String, markdown: bool) -> Element {
+    let mut full_text = use_signal(String::new);
+    let mut status = use_signal(String::new);
+    let blob_for_effect = blob_ref.clone();
+    use_effect(move || {
+        let blob = blob_for_effect.clone();
+        spawn(async move {
+            match authenticated_blob_bytes(&blob).await.and_then(|bytes| {
+                let text = String::from_utf8(bytes)
+                    .map_err(|error| anyhow::anyhow!("long-text Blob is not UTF-8: {error}"))?;
+                arkret_sdk::normalize_long_text(&text)
+                    .map_err(|error| anyhow::anyhow!("long-text Blob is invalid: {error}"))
+            }) {
+                Ok(text) => {
+                    full_text.set(text);
+                    status.set(String::new());
+                }
+                Err(error) => status.set(error.to_string()),
+            }
+        });
+    });
+    let visible = if full_text().is_empty() {
+        fallback
+    } else {
+        full_text()
+    };
+    if markdown {
+        let html = markdown_to_safe_html(&visible);
+        rsx! {
+            div {
+                class: "content-block-long-text",
+                "data-testid": "content-block-long-text",
+                div {
+                    class: "content-block-markdown",
+                    dangerous_inner_html: "{html}",
+                }
+                if !status().is_empty() {
+                    div { class: "muted", "data-testid": "content-block-blob-error", "{status}" }
+                }
+            }
+        }
+    } else {
+        rsx! {
+            div {
+                class: "content-block-long-text",
+                "data-testid": "content-block-long-text",
+                p { class: "content-block-text", "{visible}" }
+                if !status().is_empty() {
+                    div { class: "muted", "data-testid": "content-block-blob-error", "{status}" }
+                }
+            }
+        }
     }
 }
 
@@ -1189,5 +1307,23 @@ mod tests {
         assert!(looks_like_markdown("- item"));
         assert!(looks_like_markdown("[link](https://example.com)"));
         assert!(!looks_like_markdown("just plain prose"));
+    }
+
+    #[test]
+    fn long_text_marker_round_trips_as_a_typed_render_block() {
+        let marker = encode_long_text_marker(
+            &format!("ak:blob:sha256:{}", "a".repeat(64)),
+            "fallback",
+            "markdown",
+        )
+        .unwrap();
+        assert!(matches!(
+            parse_message_body(&marker).as_slice(),
+            [ContentBlock::LongText {
+                fallback,
+                markdown: true,
+                ..
+            }] if fallback == "fallback"
+        ));
     }
 }

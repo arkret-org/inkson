@@ -15,4 +15,5 @@
 
 pub mod renderer;
 
+pub(crate) use renderer::encode_long_text_marker;
 pub use renderer::{ContentBlock, parse_message_body, render_blocks};

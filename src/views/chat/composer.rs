@@ -1384,7 +1384,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 let api_token = token();
                                 let actor = actor.clone();
                                 let strand_id = channel.strand_id.clone();
-                                let channel_kind = channel.kind.clone();
                                 let message_id = local_id.clone();
                                 let reply_to = reply_to_message();
                                 // Clear the picker chip list now that
@@ -1433,13 +1432,40 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     {
                                         found.mentions = mentions.clone();
                                     }
-                                    let mut op = match chat_message_create_operation(
+                                    let content = match chat_content_block_for_body_with_upload(
+                                        &base,
+                                        api_token.clone(),
+                                        wait_for.clone(),
+                                        &realm,
+                                        &body_for_resolve,
+                                    )
+                                    .await
+                                    {
+                                        Ok(content) => content,
+                                        Err(error) => {
+                                            if let Some(found) = messages
+                                                .write()
+                                                .iter_mut()
+                                                .find(|candidate| {
+                                                    candidate.matches_id_or_protocol(&local_id)
+                                                })
+                                            {
+                                                found.pending = false;
+                                                found.failed = true;
+                                                found.error =
+                                                    Some(format!("send failed: {error:#}"));
+                                            }
+                                            status_msg.set(format!("send failed: {error:#}"));
+                                            return;
+                                        }
+                                    };
+                                    let mut op = match chat_message_create_operation_with_content(
                                         &realm,
                                         &actor,
                                         &strand_id,
-                                        &channel_kind,
                                         &message_id,
                                         &body_for_resolve,
+                                        content,
                                         &mentions,
                                         reply_to.as_deref(),
                                     ) {
