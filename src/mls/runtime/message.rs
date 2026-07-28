@@ -431,6 +431,11 @@ fn try_history_decrypt_standalone(
     payload: &arkret_sdk::EncryptedPayload,
 ) -> Option<Vec<u8>> {
     let nonce_and_ct = arkret_sdk::base64url_decode(payload.ciphertext.as_bytes()).ok()?;
+    // There is no local group snapshot on this path, so the suite has to come
+    // from the envelope. `encryption-and-audit.md` §2.10.2 requires the producer
+    // to carry it; a payload without it is not decryptable here rather than
+    // decryptable under a guessed suite.
+    let aead_profile = payload.aead_profile.as_deref()?;
     // The payload's own epoch is the only key that can open it; prefer the exact
     // match, but fall back to scanning all granted secrets so a payload whose
     // epoch field drifted from the keyed epoch still resolves.
@@ -448,6 +453,7 @@ fn try_history_decrypt_standalone(
         if let Ok(plaintext) = arkret_sdk::mls::decrypt_content_exporter_aead_standalone(
             &secret,
             realm_id,
+            aead_profile,
             &nonce_and_ct,
             &aad_bytes,
         ) {
