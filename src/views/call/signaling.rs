@@ -44,6 +44,7 @@ pub(super) async fn relay_local_signals(
             base,
             api_token,
             realm_id,
+            None,
             call_id,
             actor,
             device,
@@ -59,7 +60,7 @@ pub(super) async fn relay_local_signals(
 /// transport and the call FSM.
 ///
 /// Routing per `signal_kind` (`data` shapes mirror the sender side —
-/// `submit_call_signal_v1` / `relay_local_signals`):
+/// `signal::SignalPayload::CallSignal` / `relay_local_signals`):
 ///   * `answer`               — call-accept ack (`{accepted:true}`); the SDP answer itself rides
 ///     `renegotiate{answer}`. A bare ack only nudges the FSM toward `Active`.
 ///   * `renegotiate` w/ offer  — `transport.accept_offer(sdp)`, then relay the locally-produced
@@ -346,6 +347,7 @@ pub(super) fn emit_async(
     base: &str,
     api_token: &str,
     realm_id: &str,
+    material: Option<&crate::signal::SignalKeyMaterial>,
     call_id: &str,
     actor: &str,
     device: &str,
@@ -367,11 +369,13 @@ pub(super) fn emit_async(
         device.to_owned(),
         signal_kind.to_owned(),
     );
+    let material = material.cloned();
     spawn(async move {
         let _ = emit_signal(
             &base,
             &api_token,
             &realm_id,
+            material.as_ref(),
             &call_id,
             &actor,
             &device,
@@ -383,12 +387,18 @@ pub(super) fn emit_async(
     });
 }
 
-/// Submit a single `ak.call.signal` ephemeral envelope.
+/// Send a single `ak.call.signal` on the encrypted Signal rail.
+///
+/// `material` is the scope's accepted MLS key material: a scope without it has
+/// its Signal capability withdrawn, and v1 has no plaintext fallback. The
+/// accepted Seal the receiver resolves the sender's live-send eligibility under
+/// is fetched by the submitter.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn emit_signal(
     base: &str,
     api_token: &str,
     realm_id: &str,
+    material: Option<&crate::signal::SignalKeyMaterial>,
     call_id: &str,
     actor: &str,
     device: &str,
@@ -396,23 +406,31 @@ pub(super) async fn emit_signal(
     seq: u64,
     data: serde_json::Value,
 ) -> Result<(), String> {
-    let (realm_id, call_id, actor, device, signal_kind) = (
-        realm_id.to_owned(),
-        call_id.to_owned(),
-        actor.to_owned(),
-        device.to_owned(),
-        signal_kind.to_owned(),
-    );
+    // No accepted MLS key material for the scope means the Signal capability is
+    // withdrawn there (`signal.md` §3). v1 has no plaintext branch.
+    let material = material.ok_or_else(|| {
+        format!("signal rail unavailable for {realm_id}: no accepted MLS key material")
+    })?;
+    let scope_ref = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm_id.trim().to_owned())
+            .map_err(|error| format!("invalid call signal realm_id: {error}"))?,
+    };
+    let payload = crate::signal::SignalPayload::CallSignal {
+        call_id: arkret_sdk::CallId::new(call_id)
+            .map_err(|error| format!("invalid call_id: {error}"))?,
+        signal_kind: signal_kind.to_owned(),
+        data: (!data.is_null()).then_some(data),
+    };
+    let (actor, device) = (actor.to_owned(), device.to_owned());
+    let material = material.clone();
     with_event_submitter(base, api_token.to_owned(), |sub| async move {
-        crate::transport::media::submit_call_signal_v1(
-            &sub,
-            &realm_id,
+        sub.send_scope_signal(
+            scope_ref,
             &actor,
             &device,
-            &call_id,
-            &signal_kind,
-            seq,
-            data,
+            &material,
+            &payload,
+            crate::signal::SignalSequence(seq),
         )
         .await
     })
@@ -435,6 +453,7 @@ pub(super) fn spawn_reject(
             &base,
             &api_token,
             &realm_id,
+            None,
             &call_id,
             &actor,
             &device,
@@ -465,6 +484,7 @@ pub(super) fn end_call(
         base,
         api_token,
         realm_id,
+        None,
         call_id,
         actor,
         device,

@@ -153,7 +153,7 @@ pub fn seal_history_secrets(
     )
     .map_err(|err| format!("seal history secrets to RRK: {err}"))?;
     let scope = arkret_sdk::RealmKeyScope {
-        effective_scope: arkret_sdk::EffectiveScope::Realm {
+        effective_scope: arkret_sdk::ScopeRef::Realm {
             realm_id: realm_id.clone(),
         },
         policy_digest,

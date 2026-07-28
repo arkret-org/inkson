@@ -33,8 +33,8 @@ pub struct CircleScopeRotateDrainFailure {
 fn circle_effective_scope(
     realm_id: &str,
     circle_id: &str,
-) -> Result<arkret_wire::EffectiveScope, String> {
-    Ok(arkret_wire::EffectiveScope::Circle {
+) -> Result<arkret_wire::ScopeRef, String> {
+    Ok(arkret_wire::ScopeRef::Circle {
         realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())
             .map_err(|err| format!("invalid Circle scope Realm id: {err:?}"))?,
         circle_id: arkret_sdk::CircleId::new(circle_id.to_owned())
@@ -73,7 +73,7 @@ fn build_remove_proposal_event(
     .build_sdk_event("inkson")
     .map_err(|err| format!("MLS proposal SDK Event conversion failed: {err}"))?;
     if let Some(circle_id) = circle_id {
-        event.effective_scope = Some(circle_effective_scope(realm_id, circle_id)?);
+        event.scope_ref = circle_effective_scope(realm_id, circle_id)?;
     }
     Ok(event)
 }

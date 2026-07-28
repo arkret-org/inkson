@@ -697,7 +697,9 @@ fn spawn_set_agent_enabled(
             arkret_event_draft::build_agent_resume_event(
                 key_state.agent_id.clone(),
                 key_state.controller_id.clone(),
-                key_state.principal_control_realm_id.clone(),
+                arkret_sdk::ScopeRef::Realm {
+                    realm_id: key_state.principal_control_realm_id.clone(),
+                },
                 key_state.controller_authorization_ref.clone(),
                 None,
                 1,
@@ -708,7 +710,9 @@ fn spawn_set_agent_enabled(
             arkret_event_draft::build_agent_pause_event(
                 key_state.agent_id.clone(),
                 key_state.controller_id.clone(),
-                key_state.principal_control_realm_id.clone(),
+                arkret_sdk::ScopeRef::Realm {
+                    realm_id: key_state.principal_control_realm_id.clone(),
+                },
                 key_state.controller_authorization_ref.clone(),
                 Some("controller_paused".to_owned()),
                 1,
@@ -870,12 +874,17 @@ fn spawn_deactivate_agent(
                 revoked_at: changed_at,
                 reason: Some(reason.clone()),
             };
+            // v1 projects `ak.agent.key.revoke` as `or_set_remove_observed`:
+            // the reducer removes every surviving add dot on the target cell
+            // under the frozen pre-state, so the producer no longer enumerates
+            // the authorized Event refs it is retiring.
             let event = match arkret_event_draft::build_agent_key_revoke_event(
                 &payload,
-                std::slice::from_ref(&authorization.authorized_event_ref),
                 arkret_sdk::EventId::new(arkret_sdk::new_prefixed_uuid7("ak:event:"))
                     .expect("generated Agent key revoke Event id is valid"),
-                key_state.principal_control_realm_id.clone(),
+                arkret_sdk::ScopeRef::Realm {
+                    realm_id: key_state.principal_control_realm_id.clone(),
+                },
                 key_state.agent_id.clone(),
                 key_state.controller_id.clone(),
                 key_state.controller_authorization_ref.clone(),
@@ -914,7 +923,9 @@ fn spawn_deactivate_agent(
         let lifecycle_event = match arkret_event_draft::build_agent_deactivate_event(
             key_state.agent_id.clone(),
             key_state.controller_id.clone(),
-            key_state.principal_control_realm_id.clone(),
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: key_state.principal_control_realm_id.clone(),
+            },
             key_state.controller_authorization_ref.clone(),
             status,
             Some(reason.clone()),

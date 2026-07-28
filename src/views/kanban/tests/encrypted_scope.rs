@@ -801,6 +801,20 @@ fn sidecar_track_patch_encrypts_with_only_the_circle_snapshot() {
         &salt,
     );
     state.save_mls_snapshot_for_effective_scope(realm.to_owned(), Some(circle), snapshot);
+    // A write at an already-accepted epoch (no fresh genesis, no commit) has to
+    // name the accepted `ak.mls.genesis` as `key_ref.group_state_ref`. Without a
+    // recorded ref the client cannot name one and MUST fail closed, so the
+    // "Circle snapshot already exists" scenario has to record it.
+    state
+        .record_mls_group_state_ref_for_effective_scope(
+            realm,
+            Some(circle),
+            &post_state.group_id,
+            post_state.epoch,
+            arkret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-000000000027".to_owned())
+                .unwrap(),
+        )
+        .unwrap();
     let realm_identity = arkret_sdk::ArkretMlsIdentity::new_basic(
         arkret_sdk::Did::new(actor.to_owned()).unwrap(),
         arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),

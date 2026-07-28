@@ -689,9 +689,7 @@ fn refold_sidecar_exchanges_with_decrypt(
             // fail closed to non-echo, so the event's effective-scope Circle
             // is compared against the hint's backing Circle, never just
             // "some Circle scope".
-            let Some(arkret_wire::EffectiveScope::Circle { circle_id, .. }) =
-                event.effective_scope.as_ref()
-            else {
+            let arkret_wire::ScopeRef::Circle { circle_id, .. } = &event.scope_ref else {
                 continue;
             };
             let kind = event.kind.as_str();
@@ -1499,7 +1497,9 @@ mod tests {
         metadata.set_sidecar_exchange_binding(&binding).unwrap();
         let mut event = arkret_sdk::Event::new(
             arkret_sdk::events::EventKind::MESSAGE_CREATE,
-            arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+            },
             arkret_sdk::Did::new(EXCHANGE_AGENT).unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0002-a13f9c2e").unwrap(),
@@ -1511,10 +1511,10 @@ mod tests {
         )
         .unwrap();
         event.event_id = arkret_sdk::EventId::new(EXCHANGE_RESPONSE_EVENT).unwrap();
-        event.effective_scope = Some(arkret_wire::EffectiveScope::Circle {
+        event.scope_ref = arkret_wire::ScopeRef::Circle {
             realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             circle_id: session.backing_scope_circle_id.clone(),
-        });
+        };
         event.refs = vec![arkret_sdk::EventRef::new(EXCHANGE_REQUEST_EVENT, "after")];
         store.append_raw_operation(
             EXCHANGE_RESPONSE_EVENT.to_owned(),
@@ -1594,7 +1594,9 @@ mod tests {
         metadata.set_sidecar_exchange_binding(&binding).unwrap();
         let mut event = arkret_sdk::Event::new(
             arkret_sdk::events::EventKind::MESSAGE_CREATE,
-            arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+            },
             arkret_sdk::Did::new(EXCHANGE_AGENT).unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0002-a13f9c2e").unwrap(),
@@ -1608,11 +1610,11 @@ mod tests {
         .unwrap();
         event.event_id = arkret_sdk::EventId::new(EXCHANGE_RESPONSE_EVENT).unwrap();
         // … but scoped to an unrelated Circle the controller can also read.
-        event.effective_scope = Some(arkret_wire::EffectiveScope::Circle {
+        event.scope_ref = arkret_wire::ScopeRef::Circle {
             realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             circle_id: arkret_sdk::CircleId::new("ak:circle:019f0000-0000-7000-8000-0000000000ff")
                 .unwrap(),
-        });
+        };
         event.refs = vec![arkret_sdk::EventRef::new(EXCHANGE_REQUEST_EVENT, "after")];
         store.append_raw_operation(
             EXCHANGE_RESPONSE_EVENT.to_owned(),
@@ -1660,7 +1662,9 @@ mod tests {
 
         let mut event = arkret_sdk::Event::new(
             arkret_sdk::events::EventKind::MESSAGE_CREATE,
-            arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+            },
             arkret_sdk::Did::new(EXCHANGE_ACCOUNT).unwrap(),
             7,
             arkret_sdk::Hlc::new("01970e589d21-0005-a13f9c2e").unwrap(),
@@ -1672,10 +1676,10 @@ mod tests {
         )
         .unwrap();
         event.event_id = arkret_sdk::EventId::new(EXCHANGE_REQUEST_EVENT).unwrap();
-        event.effective_scope = Some(arkret_wire::EffectiveScope::Circle {
+        event.scope_ref = arkret_wire::ScopeRef::Circle {
             realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             circle_id: session.backing_scope_circle_id.clone(),
-        });
+        };
         store.append_raw_operation(
             EXCHANGE_REQUEST_EVENT.to_owned(),
             Some(session.source_realm_id.clone()),

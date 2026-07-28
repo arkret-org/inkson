@@ -20,7 +20,7 @@
 //! detail view, error-code mapping, the composer banner, and the
 //! chat accent rail wiring inside `views/chat.rs`. The local
 //! `DecryptedScope` enum has been replaced with a re-export of the
-//! SDK's [`arkret_wire::EffectiveScope`]; pattern
+//! SDK's [`arkret_wire::ScopeRef`]; pattern
 //! matching against `effective_scope` now happens against the same
 //! enum the reducer produces.
 use serde::{Deserialize, Serialize};
@@ -252,14 +252,14 @@ impl CircleErrorKind {
     }
 }
 
-/// Re-export the SDK's canonical `EffectiveScope` so client code can
+/// Re-export the SDK's canonical `ScopeRef` so client code can
 /// pattern-match on the same enum the reducer produces. Earlier
 /// rounds shipped a local `DecryptedScope` mirror — that mirror has
 /// been deleted now that the SDK enum is available.
-pub use arkret_wire::EffectiveScope;
+pub use arkret_wire::ScopeRef;
 
 /// Classify the relationship between an envelope's
-/// [`EffectiveScope`] and the payload-level `scope_circle_id`.
+/// [`ScopeRef`] and the payload-level `scope_circle_id`.
 ///
 /// When the two disagree the message body is held in
 /// [`MessageCryptoState::NeedsVerification`] and the UI raises a
@@ -267,7 +267,7 @@ pub use arkret_wire::EffectiveScope;
 /// agree the body decrypts against the matching MLS group (Realm vs
 /// Circle).
 pub fn classify_scope_match(
-    effective: &EffectiveScope,
+    effective: &ScopeRef,
     payload_scope_circle_id: Option<&str>,
 ) -> ScopeMatch {
     match (effective.circle_id(), payload_scope_circle_id) {

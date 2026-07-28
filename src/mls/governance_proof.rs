@@ -68,12 +68,12 @@ pub(crate) fn proof_request(
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty())
     {
-        Some(circle_id) => arkret_wire::EffectiveScope::Circle {
+        Some(circle_id) => arkret_wire::ScopeRef::Circle {
             realm_id: realm_id.clone(),
             circle_id: arkret_sdk::CircleId::new(circle_id.to_owned())
                 .map_err(|error| format!("invalid MLS governance proof Circle id: {error}"))?,
         },
-        None => arkret_wire::EffectiveScope::Realm {
+        None => arkret_wire::ScopeRef::Realm {
             realm_id: realm_id.clone(),
         },
     };
@@ -707,6 +707,19 @@ where
             }
             Ok(())
         },
+        // `arkret-state` must not depend on `arkret-schema` (tools/check-layering),
+        // so the registry projection is injected instead of linked. Routing it
+        // through the one client evaluator keeps the cells the bundle is checked
+        // against identical to the cells the receiver derives.
+        |event| {
+            crate::operation::project_registered_cell_writes(event)
+                .map(|writes| writes.into_iter().map(|write| write.cell).collect())
+                .map_err(|error| {
+                    arkret_sdk::Error::Protocol(format!(
+                        "MLS governance frontier Event cell projection failed: {error}"
+                    ))
+                })
+        },
     )
     .map_err(|error| format!("verify MLS governance proof: {error}"))
 }
@@ -763,13 +776,14 @@ pub(crate) fn seed_test_governance_proof(
     )
     .unwrap();
     let binding = match &request.effective_scope {
-        arkret_wire::EffectiveScope::Realm { realm_id } => {
+        arkret_wire::ScopeRef::Realm { realm_id } => {
             arkret_sdk::MlsGovernanceBindingPayload::realm(
                 realm_id.clone(),
                 request.mls_group_id.clone(),
                 previous_epoch,
                 next_epoch,
                 frontier,
+                vec![anchor.clone()],
                 root.clone(),
                 root.clone(),
                 root,
@@ -777,7 +791,7 @@ pub(crate) fn seed_test_governance_proof(
                 request.reducer_profile.clone(),
             )
         }
-        arkret_wire::EffectiveScope::Circle {
+        arkret_wire::ScopeRef::Circle {
             realm_id,
             circle_id,
         } => arkret_sdk::MlsGovernanceBindingPayload::circle(
@@ -787,6 +801,7 @@ pub(crate) fn seed_test_governance_proof(
             previous_epoch,
             next_epoch,
             frontier,
+            vec![anchor.clone()],
             root.clone(),
             root.clone(),
             root,
@@ -857,8 +872,12 @@ mod tests {
     fn frontier_event(actor: &str) -> arkret_sdk::Event {
         arkret_sdk::Event::new(
             "ak.member.state",
-            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001".to_owned())
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(
+                    "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+                )
                 .unwrap(),
+            },
             arkret_sdk::Did::new(actor.to_owned()).unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e".to_owned()).unwrap(),
@@ -998,7 +1017,7 @@ mod tests {
             covered_event_digests: Vec::new(),
             previous_state_root: None,
             previous_digest_algorithm: None,
-            notary_signature: arkret_sdk::NotarySig::Single(arkret_sdk::MoveSignature {
+            notary_signature: arkret_sdk::NotarySig::Single(arkret_wire::PayloadSignature {
                 alg: "EdDSA".to_owned(),
                 verification_method: format!("{controller}#{device}"),
                 payload_digest: root,
@@ -1113,7 +1132,7 @@ mod tests {
                 covered_event_digests: Vec::new(),
                 previous_state_root: None,
                 previous_digest_algorithm: None,
-                notary_signature: arkret_sdk::NotarySig::Single(arkret_sdk::MoveSignature {
+                notary_signature: arkret_sdk::NotarySig::Single(arkret_wire::PayloadSignature {
                     alg: "EdDSA".to_owned(),
                     verification_method: "did:web:notary.example#key-1".to_owned(),
                     payload_digest: root,
@@ -1187,10 +1206,7 @@ fn target_notary_value(
                     .to_owned(),
             );
         }
-    } else if matches!(
-        bundle.effective_scope,
-        arkret_wire::EffectiveScope::Realm { .. }
-    ) {
+    } else if matches!(bundle.effective_scope, arkret_wire::ScopeRef::Realm { .. }) {
         return Err("Realm-scoped MLS governance proof omits its genesis Event".to_owned());
     }
     Ok(notary)
@@ -1224,14 +1240,15 @@ fn managed_agent_pcr_delegated_controller(
         );
     }
     let create = managed[0];
-    let expected_effects = arkret_bootstrap::realm_create_effects(create)
-        .map_err(|error| format!("derive managed Agent PCR effect set: {error}"))?;
-    if create.effects != expected_effects {
-        return Err(
-            "managed Agent PCR genesis does not carry the canonical Realm create effect set"
-                .to_owned(),
-        );
-    }
+    // v1 carries no producer effect set to compare against. The equivalent
+    // check is that the registered contract projects the canonical four
+    // genesis cells for this create — which `materialize_managed_agent_pcr_control`
+    // asserts through the same injected evaluator the receiver uses.
+    arkret_bootstrap::materialize_managed_agent_pcr_control(
+        std::slice::from_ref(create),
+        &crate::operation::cell_write_projector,
+    )
+    .map_err(|error| format!("managed Agent PCR genesis is not canonical: {error}"))?;
     if create.realm_id != bundle.realm_id
         || create
             .payload

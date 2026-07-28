@@ -1081,6 +1081,7 @@ mod tests {
                 )
                 .unwrap(),
             ],
+            vec![arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "11".repeat(32))).unwrap()],
             policy_root,
             capability_root,
             discussion_metadata_digest,

@@ -1414,6 +1414,7 @@ fn chat_messages_fold_canonical_create_with_streamed_reaction_envelope() {
             "event_id": "ak:event:01904100-0000-7000-8000-000000000101",
             "kind": "ak.message.create",
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
+            "scope_ref": {"kind": "realm", "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001"},
             "actor_id": "did:web:alice.example",
             "actor_seq": 1,
             "created_at": "2026-07-08T01:44:39.000Z",
@@ -1431,6 +1432,7 @@ fn chat_messages_fold_canonical_create_with_streamed_reaction_envelope() {
             "event_id": "ak:event:01904100-0000-7000-8000-000000000102",
             "kind": "ak.reaction.add",
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
+            "scope_ref": {"kind": "realm", "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001"},
             "actor_id": "did:web:bob.example",
             "actor_seq": 2,
             "created_at": "2026-07-08T01:44:43.000Z",
@@ -1473,6 +1475,7 @@ fn durable_reaction_folds_onto_controller_only_create() {
             "event_id": "ak:event:01904100-0000-7000-8000-000000000101",
             "kind": "ak.message.create",
             "realm_id": realm_id,
+            "scope_ref": {"kind": "realm", "realm_id": realm_id},
             "actor_id": "did:web:alice.example",
             "actor_seq": 1,
             "created_at": "2026-07-08T01:44:39.000Z",
@@ -1490,6 +1493,7 @@ fn durable_reaction_folds_onto_controller_only_create() {
             "event_id": "ak:event:01904100-0000-7000-8000-000000000102",
             "kind": "ak.reaction.add",
             "realm_id": realm_id,
+            "scope_ref": {"kind": "realm", "realm_id": realm_id},
             "actor_id": "did:web:bob.example",
             "actor_seq": 2,
             "created_at": "2026-07-08T01:44:43.000Z",
@@ -1546,6 +1550,7 @@ fn durable_redaction_folds_onto_controller_only_create() {
         "event_id": "ak:event:01904100-0000-7000-8000-000000000102",
         "kind": "ak.message.redact",
         "realm_id": realm_id,
+        "scope_ref": {"kind": "realm", "realm_id": realm_id},
         "actor_id": "did:web:alice.example",
         "actor_seq": 2,
         "created_at": "2026-07-08T01:44:43.000Z",
@@ -2249,6 +2254,7 @@ fn moderation_appeal_prompts_survive_sdk_event_round_trip() {
         "event_id": "ak:event:01904100-0000-7000-8000-000000000101",
         "kind": "ak.moderation.decision",
         "realm_id": realm_id,
+        "scope_ref": {"kind": "realm", "realm_id": realm_id},
         "actor_id": "did:web:moderator.example",
         "actor_seq": 1,
         "created_at": "2026-07-19T00:00:00.000Z",
@@ -4142,86 +4148,85 @@ fn presence_maps_from_sync_events_aggregates_live_device_envelopes() {
     );
 }
 
+/// Restates the pre-v1 pair of `*_from_sync_realms` tests.
+///
+/// Their premise died with the plaintext rail: `ak.typing` was a wire envelope
+/// in `body.ephemeral.events[]` on each Realm sync entry, and v1 sync has no
+/// such bucket. `strand_id` / `typing` are now AEAD plaintext, so the input is
+/// the decrypted Signal body list and the assertion moves with it. `expires_at`
+/// is stamped onto each body from the envelope when the Signal is decrypted.
 #[test]
 fn typing_actor_snapshot_filters_expired_and_self_entries() {
     let now = chrono::Utc::now();
     let expired = now - chrono::Duration::seconds(30);
-    let future = now + chrono::Duration::seconds(60);
-    let realms = std::collections::BTreeMap::from([(
-        "ak:realm:demo".to_owned(),
+    let future = now + chrono::Duration::seconds(5);
+    let bodies = vec![
         json!({
-            "ephemeral": { "events": [
-                {
-                    "kind": "ak.typing",
-                    "actor_id": "did:web:alice.example",
-                    "expires_at": arkret_sdk::canonical::format_timestamp_canonical(future),
-                    "payload": { "typing": true, "strand_id": "ak:strand:demo" }
-                },
-                {
-                    "kind": "ak.typing",
-                    "actor_id": "did:web:bob.example",
-                    "expires_at": arkret_sdk::canonical::format_timestamp_canonical(expired),
-                    "payload": { "typing": true, "strand_id": "ak:strand:demo" }
-                },
-                {
-                    "kind": "ak.typing",
-                    "actor_id": "did:web:self.example",
-                    "expires_at": arkret_sdk::canonical::format_timestamp_canonical(future),
-                    "payload": { "typing": true, "strand_id": "ak:strand:demo" }
-                }
-            ] }
+            "kind": "ak.typing",
+            "actor_id": "did:web:alice.example",
+            "expires_at": arkret_sdk::canonical::format_timestamp_canonical(future),
+            "strand_id": "ak:strand:demo",
+            "typing": true
         }),
-    )]);
+        json!({
+            "kind": "ak.typing",
+            "actor_id": "did:web:bob.example",
+            "expires_at": arkret_sdk::canonical::format_timestamp_canonical(expired),
+            "strand_id": "ak:strand:demo",
+            "typing": true
+        }),
+        json!({
+            "kind": "ak.typing",
+            "actor_id": "did:web:self.example",
+            "expires_at": arkret_sdk::canonical::format_timestamp_canonical(future),
+            "strand_id": "ak:strand:demo",
+            "typing": true
+        }),
+    ];
 
-    let snapshot = typing_actor_snapshot_from_sync_realms(
-        &realms,
-        "ak:realm:demo",
-        "ak:strand:demo",
-        "did:web:self.example",
-    );
+    let snapshot =
+        typing_actor_snapshot_from_signals(&bodies, "ak:strand:demo", "did:web:self.example");
 
     assert_eq!(snapshot.actors, vec!["did:web:alice.example".to_owned()]);
     assert_eq!(snapshot.next_expires_at_ms, Some(future.timestamp_millis()));
     assert_eq!(
-        typing_actors_from_sync_realms(
-            &realms,
-            "ak:realm:demo",
-            "ak:strand:demo",
-            "did:web:self.example",
-        ),
+        typing_actors_from_signals(&bodies, "ak:strand:demo", "did:web:self.example"),
         vec!["did:web:alice.example".to_owned()]
     );
 }
 
+/// A body that is not `ak.typing`, or that says `typing:false`, must never
+/// light up the indicator. The kind lives in the ciphertext now, so a header
+/// selector cannot be used to pre-filter these.
 #[test]
-fn typing_actor_snapshot_reads_canonical_ephemeral_envelopes() {
-    let expires_at = chrono::Utc::now() + chrono::Duration::seconds(60);
-    let realms = std::collections::BTreeMap::from([(
-        "ak:realm:demo".to_owned(),
+fn typing_actor_snapshot_reads_decrypted_signal_bodies() {
+    let expires_at = chrono::Utc::now() + chrono::Duration::seconds(5);
+    let bodies = vec![
         json!({
-            "ephemeral": {"events": [
-                {
-                    "kind": "ak.typing",
-                    "actor_id": "did:web:alice.example",
-                    "expires_at": arkret_sdk::canonical::format_timestamp_canonical(expires_at),
-                    "payload": {"strand_id": "ak:strand:demo", "typing": true}
-                },
-                {
-                    "kind": "ak.typing",
-                    "actor_id": "did:web:bob.example",
-                    "expires_at": arkret_sdk::canonical::format_timestamp_canonical(expires_at),
-                    "payload": {"strand_id": "ak:strand:demo", "typing": false}
-                }
-            ]}
+            "kind": "ak.typing",
+            "actor_id": "did:web:alice.example",
+            "expires_at": arkret_sdk::canonical::format_timestamp_canonical(expires_at),
+            "strand_id": "ak:strand:demo",
+            "typing": true
         }),
-    )]);
+        json!({
+            "kind": "ak.typing",
+            "actor_id": "did:web:bob.example",
+            "expires_at": arkret_sdk::canonical::format_timestamp_canonical(expires_at),
+            "strand_id": "ak:strand:demo",
+            "typing": false
+        }),
+        json!({
+            "kind": "ak.presence",
+            "actor_id": "did:web:carol.example",
+            "expires_at": arkret_sdk::canonical::format_timestamp_canonical(expires_at),
+            "strand_id": "ak:strand:demo",
+            "typing": true
+        }),
+    ];
 
-    let snapshot = typing_actor_snapshot_from_sync_realms(
-        &realms,
-        "ak:realm:demo",
-        "ak:strand:demo",
-        "did:web:self.example",
-    );
+    let snapshot =
+        typing_actor_snapshot_from_signals(&bodies, "ak:strand:demo", "did:web:self.example");
 
     assert_eq!(snapshot.actors, vec!["did:web:alice.example".to_owned()]);
     assert_eq!(

@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 
 use crate::operation::{
-    Effect, EventKind, EventRequirements, LatticeOp, LatticeOpType, OperationBuilder, Precondition,
-    Predicate, PredicateOp, trim_realm_id,
+    EventKind, EventRequirements, OperationBuilder, Precondition, Predicate, PredicateOp,
+    trim_realm_id,
 };
 use crate::realm_defaults::{
     RECOMMENDED_REALM_ENCRYPTION_FLOOR, RECOMMENDED_REALM_ENCRYPTION_PROFILE,
@@ -41,41 +41,6 @@ fn head_eq_precondition(cell: &str, value: Value) -> anyhow::Result<Precondition
             value: Some(value),
             values: None,
             predicate_id: None,
-        },
-    })
-}
-
-fn set_effect(cell: &str, value: Value) -> anyhow::Result<Effect> {
-    Ok(Effect {
-        cell: cell_ref(cell)?,
-        op: LatticeOp {
-            op_type: LatticeOpType::Set,
-            tag: None,
-            value: Some(value),
-            from: None,
-            to: None,
-            reason: None,
-            issuer_seq: None,
-        },
-    })
-}
-
-fn transition_effect(
-    cell: &str,
-    from: Value,
-    to: Value,
-    reason: Option<String>,
-) -> anyhow::Result<Effect> {
-    Ok(Effect {
-        cell: cell_ref(cell)?,
-        op: LatticeOp {
-            op_type: LatticeOpType::Transition,
-            tag: None,
-            value: None,
-            from: Some(from),
-            to: Some(to),
-            reason,
-            issuer_seq: None,
         },
     })
 }
@@ -299,23 +264,23 @@ pub fn build_realm_bootstrap_events(
         Some(creator_delivery_binding),
     )?);
 
-    for followup in &events[2..] {
-        let descriptor = followup.kind.descriptor();
-        if descriptor.is_some_and(|descriptor| {
-            descriptor.reducer_input && descriptor.lattice == Some("cas_register")
-        }) {
-            arkret_sdk::schema::validate_single_target_set_event_contract_in_context(
-                followup,
-                arkret_sdk::schema::EventCellContractContext::OrdinaryRealmBootstrap,
+    // Every follow-up in the genesis transaction is checked against its
+    // registered contract, not just the single-target cas_register facets the
+    // deleted `validate_single_target_set_event_contract*` helper knew about.
+    // `OrdinaryRealmBootstrap` is the one context in which a control write may
+    // carry no CBA basis: there is no accepted Seal yet.
+    for followup in &events[1..] {
+        arkret_sdk::schema::validate_registered_cell_writes_in_context(
+            followup,
+            arkret_sdk::schema::EventCellContractContext::OrdinaryRealmBootstrap,
+        )
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "bootstrap Event {} ({}) violates its registry cell contract: {error}",
+                followup.event_id,
+                followup.kind.as_str()
             )
-            .map_err(|error| {
-                anyhow::anyhow!(
-                    "bootstrap Event {} ({}) violates its registry cell contract: {error}",
-                    followup.event_id,
-                    followup.kind.as_str()
-                )
-            })?;
-        }
+        })?;
     }
     arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(&events)
         .map_err(|error| anyhow::anyhow!("{}: {error}", error.reason_code()))?;
@@ -451,7 +416,6 @@ pub fn build_realm_create_event(
     // ak.component.realm.create.v1 is an ordered-log genesis singleton;
     // the bootstrap write asserts head_eq null and sets the realm metadata.
     let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
-    let effects = vec![set_effect(&cell, object.clone())?];
     // The Realm entity itself has no SDK `*CreateObject` strong type yet
     // (the realm schema is large / lives outside the operation_payloads
     // module); the `object` Value above is hand-built. But the `{object}`
@@ -461,7 +425,7 @@ pub fn build_realm_create_event(
     let realm_body = arkret_sdk::ObjectCreatePayload::new(object.clone())
         .to_value()
         .map_err(|e| anyhow::anyhow!("ak.realm.create payload serialize: {e}"))?;
-    let mut event = OperationBuilder::new(
+    OperationBuilder::new(
         realm_id,
         actor_id,
         arkret_sdk::events::kinds::EventKind::RealmCreate,
@@ -469,12 +433,9 @@ pub fn build_realm_create_event(
     .target_ref(realm_id)
     .body(realm_body)
     .preconditions(preconditions)
-    .effects(effects)
     .requirements(event_requirements_with_schema("ak.schema.realm.v1"))
     .created_at(created_at_for_object)
-    .build_sdk_event("inkson")?;
-    event.effects = arkret_bootstrap::realm_create_effects(&event)?;
-    Ok(event)
+    .build_sdk_event("inkson")
 }
 
 /// Build the create-locked Principal Control Realm genesis for a managed
@@ -541,7 +502,6 @@ pub fn build_managed_agent_pcr_create_event(
         .get_mut("object")
         .ok_or_else(|| anyhow::anyhow!("managed Agent PCR create payload omits object"))?;
     patch_object(payload_object);
-    event.effects = arkret_bootstrap::realm_create_effects(&event)?;
     event.executed_by = Some(
         arkret_sdk::Did::new(controller_id.to_owned())
             .map_err(|error| anyhow::anyhow!("invalid managed Agent controller DID: {error}"))?,
@@ -565,8 +525,11 @@ pub fn build_managed_agent_pcr_bootstrap_events(
         trust_domain,
     )?;
     let events = vec![create];
-    arkret_bootstrap::materialize_managed_agent_pcr_control(&events)
-        .map_err(|error| anyhow::anyhow!("managed Agent PCR bootstrap is invalid: {error}"))?;
+    arkret_bootstrap::materialize_managed_agent_pcr_control(
+        &events,
+        &crate::operation::cell_write_projector,
+    )
+    .map_err(|error| anyhow::anyhow!("managed Agent PCR bootstrap is invalid: {error}"))?;
     Ok(events)
 }
 
@@ -786,9 +749,14 @@ pub fn build_space_create_event(
     // `created_at` to construction time).
     object["created_at"] = Value::String(payload_timestamp_wire(created_at));
 
-    let cell = space_cell("ak.component.space.create.v1", space_id);
-    let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
-    let effects = vec![set_effect(&cell, object.clone())?];
+    // No `preconditions`: `ak.space.create` is a DataEvent
+    // (`contract-registry.json` plane `data`), and
+    // `event-envelope.schema.json` forbids a DataEvent from carrying
+    // `preconditions` alongside the `seal_ref` + `auth_context` pair the submit
+    // gate attaches. The pre-v1 builder asserted `head_eq null` on
+    // `ak.component.space.create.v1`, which is not even the cell this kind
+    // writes — the registered contract sets `payload.object` into the
+    // `mv_register` `ak.component.space.metadata.v1`.
     let space_body = arkret_sdk::ObjectCreatePayload::new(object.clone())
         .to_value()
         .map_err(|e| anyhow::anyhow!("ak.space.create payload serialize: {e}"))?;
@@ -799,8 +767,6 @@ pub fn build_space_create_event(
     )
     .target_ref(space_id)
     .body(space_body)
-    .preconditions(preconditions)
-    .effects(effects)
     .requirements(event_requirements_with_schema("ak.schema.space.v1"))
     .created_at(created_at)
     .build_sdk_event("inkson")
@@ -817,7 +783,11 @@ pub fn build_space_lifecycle_event(
     actor_id: &str,
     kind: EventKind,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    let (prior_state, next_state) = match &kind {
+    // Only the prior state is the producer's to assert. The next state is
+    // derived by the receiver from the registered FSM contract for this kind,
+    // so naming it here would just be a second, unsigned copy of the reducer's
+    // own rule.
+    let (prior_state, _) = match &kind {
         EventKind::SpaceArchive => ("active", "archived"),
         EventKind::SpaceRestore => ("archived", "active"),
         // For tombstone, prior state may be either active or archived.
@@ -862,17 +832,10 @@ pub fn build_space_lifecycle_event(
         &cell,
         Value::String(prior_state.to_owned()),
     )?];
-    let effects = vec![transition_effect(
-        &cell,
-        Value::String(prior_state.to_owned()),
-        Value::String(next_state.to_owned()),
-        None,
-    )?];
     OperationBuilder::new(realm_id, actor_id, kind)
         .target_ref(space_id)
         .body(body)
         .preconditions(preconditions)
-        .effects(effects)
         .created_at(created_at)
         .build_sdk_event("inkson")
 }
@@ -918,7 +881,6 @@ pub fn build_realm_state_event(
     let created_at = event_timestamp();
     let cell = arkret_wire::null_subject_cell(cell_family);
     let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
-    let effects = vec![set_effect(&cell, value.clone())?];
     // For the closed enum facets, route authoring through SDK strong types.
     // The generated registry remains the sole source for the target cell.
     // For `ak.realm.history_visibility` the body is the spec
@@ -954,7 +916,6 @@ pub fn build_realm_state_event(
     OperationBuilder::new(realm_id, actor_id, kind)
         .body(body)
         .preconditions(preconditions)
-        .effects(effects)
         .created_at(created_at)
         .build_sdk_event("inkson")
 }
@@ -968,21 +929,18 @@ pub fn build_realm_archive_event(
     reason: Option<&str>,
 ) -> anyhow::Result<arkret_sdk::Event> {
     let created_at = event_timestamp();
-    let cell = arkret_wire::null_subject_cell("ak.component.realm.archive.v1");
     // Strong type: realm_archive_payload (additionalProperties:false).
     let mut typed = arkret_sdk::RealmArchivePayload::new(archived);
     if let Some(reason) = reason.map(str::trim).filter(|value| !value.is_empty()) {
         typed = typed.with_reason(reason);
     }
     let payload = typed.to_value()?;
-    let effects = vec![set_effect(&cell, payload.clone())?];
     OperationBuilder::new(
         realm_id,
         actor_id,
         arkret_sdk::events::kinds::EventKind::RealmArchive,
     )
     .body(payload)
-    .effects(effects)
     .created_at(created_at)
     .build_sdk_event("inkson")
 }
@@ -998,19 +956,16 @@ pub fn build_realm_destroy_event(
         return Err(anyhow::anyhow!("reason is required for ak.realm.destroy"));
     }
     let created_at = event_timestamp();
-    let cell = arkret_wire::null_subject_cell("ak.component.realm.destroy.v1");
     // Strong type: realm_destroy_payload (reason required; verification_stub
     // _required omitted so the reducer applies its default; additionalProperties
     // :false).
     let payload = arkret_sdk::RealmDestroyPayload::new(reason).to_value()?;
-    let effects = vec![set_effect(&cell, payload.clone())?];
     OperationBuilder::new(
         realm_id,
         actor_id,
         arkret_sdk::events::kinds::EventKind::RealmDestroy,
     )
     .body(payload)
-    .effects(effects)
     .created_at(created_at)
     .build_sdk_event("inkson")
 }
@@ -1073,9 +1028,6 @@ pub fn build_plaintext_visible_services_event(
     let cell = arkret_wire::null_subject_cell("ak.component.realm.plaintext_visible_services.v1");
     let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
     let body_value = arkret_sdk::PlaintextVisibleServicesPayload::new(services).to_value()?;
-    let effects = vec![set_effect(&cell, body_value.clone())?];
-    // Builder takes `Value` by move; reuse the value we already built for
-    // the effect rather than cloning `services` a second time.
     let event = OperationBuilder::new(
         realm_id,
         actor_id,
@@ -1083,7 +1035,6 @@ pub fn build_plaintext_visible_services_event(
     )
     .body(body_value)
     .preconditions(preconditions)
-    .effects(effects)
     .created_at(created_at)
     .build_sdk_event("inkson")?;
     Ok(Some(event))
@@ -1173,16 +1124,6 @@ fn build_member_state_transition_event_with_binding(
     } else {
         vec![head_eq_precondition(&cell, Value::Null)?]
     };
-    // Realm membership's normative initial state is `leave`. The CAS
-    // precondition above still uses JSON null for an absent materialized cell,
-    // while the FSM effect starts from its logical initial state.
-    let from_value = Value::String(from_state.unwrap_or("leave").to_owned());
-    let effects = vec![transition_effect(
-        &cell,
-        from_value,
-        Value::String(to_state.to_owned()),
-        Some(reason.to_owned()),
-    )?];
     OperationBuilder::new(
         realm_id,
         actor_id,
@@ -1191,7 +1132,6 @@ fn build_member_state_transition_event_with_binding(
     .target_ref(member_actor_id)
     .body(payload)
     .preconditions(preconditions)
-    .effects(effects)
     .build_sdk_event("inkson")
 }
 
@@ -1393,24 +1333,32 @@ mod notary_derivation_tests {
             object_created_at,
             arkret_sdk::canonical::format_timestamp_canonical(event.created_at)
         );
+        // v1 carries no producer `effects[]`. The genesis leaf set is what the
+        // receiver derives from the registered `ak.realm.create` contract, so
+        // assert the projection itself: the canonical four genesis cells, with
+        // the create-log entry appending this Realm id at issuer_seq 0.
+        let writes = crate::operation::direct_registered_cell_writes(&event).unwrap();
         assert_eq!(
-            event.effects,
-            arkret_bootstrap::realm_create_effects(&event).unwrap()
+            writes
+                .iter()
+                .map(|write| write.cell.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                arkret_bootstrap::REALM_METADATA_CELL,
+                &format!(
+                    "ak:cell:ak.component.member.state.v1:{}",
+                    event.actor_id.as_str()
+                ),
+                arkret_bootstrap::REALM_CREATE_CELL,
+                arkret_bootstrap::REALM_NOTARY_CELL,
+            ]
         );
-        assert_eq!(event.effects.len(), 4);
+        assert_eq!(writes[2].op.op_type, arkret_sdk::LatticeOpType::Append);
         assert_eq!(
-            event.effects[2].cell.as_str(),
-            arkret_bootstrap::REALM_CREATE_CELL
-        );
-        assert_eq!(
-            event.effects[2].op.op_type,
-            arkret_sdk::LatticeOpType::Append
-        );
-        assert_eq!(
-            event.effects[2].op.value.as_ref(),
+            writes[2].op.value.as_ref(),
             Some(&Value::String(event.realm_id.to_string()))
         );
-        assert_eq!(event.effects[2].op.issuer_seq, Some(0));
+        assert_eq!(writes[2].op.issuer_seq, Some(0));
     }
 
     #[test]
@@ -1434,7 +1382,13 @@ mod notary_derivation_tests {
             events[0].authorization_ref.as_deref(),
             Some("did:web:agent.example#managed-controller")
         );
-        assert!(arkret_bootstrap::materialize_managed_agent_pcr_control(&events).is_ok());
+        assert!(
+            arkret_bootstrap::materialize_managed_agent_pcr_control(
+                &events,
+                &crate::operation::cell_write_projector,
+            )
+            .is_ok()
+        );
     }
 
     #[test]

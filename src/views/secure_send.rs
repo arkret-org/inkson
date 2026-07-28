@@ -116,8 +116,8 @@ pub(crate) fn run_local_mls_encrypt(
 fn circle_effective_scope(
     realm_id: &str,
     circle_id: &str,
-) -> Result<arkret_wire::EffectiveScope, String> {
-    Ok(arkret_wire::EffectiveScope::Circle {
+) -> Result<arkret_wire::ScopeRef, String> {
+    Ok(arkret_wire::ScopeRef::Circle {
         realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())
             .map_err(|error| format!("invalid MLS scope Realm id: {error:?}"))?,
         circle_id: arkret_sdk::CircleId::new(circle_id.to_owned())
@@ -269,7 +269,7 @@ pub(crate) fn build_secure_send(
                 .map_err(|err| format!("MLS commit SDK Event conversion failed: {err}"))?;
             commit_event.event_id = commit_event_id_typed;
             if let Some(circle_id) = circle_id {
-                commit_event.effective_scope = Some(circle_effective_scope(realm_id, circle_id)?);
+                commit_event.scope_ref = circle_effective_scope(realm_id, circle_id)?;
             }
             (commit_event_id, Some(commit_event))
         } else {
@@ -328,7 +328,7 @@ pub(crate) fn build_secure_send(
     let mut message_event = message_envelope
         .map_err(|err| format!("Send Secure SDK Event conversion failed: {err}"))?;
     if let Some(circle_id) = circle_id {
-        message_event.effective_scope = Some(circle_effective_scope(realm_id, circle_id)?);
+        message_event.scope_ref = circle_effective_scope(realm_id, circle_id)?;
     }
 
     Ok(SecureSendBuild {

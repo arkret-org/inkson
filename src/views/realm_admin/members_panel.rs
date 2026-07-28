@@ -1327,11 +1327,15 @@ fn PendingInviteRow(
                                         &base,
                                         api_token,
                                         |sub| async move {
-                                            crate::transport::realm_write::reject_realm_invite(
+                                            crate::transport::realm_write::cancel_realm_invite(
                                                 &sub,
                                                 &request_realm,
                                                 &actor,
                                                 &request_invite_id,
+                                                // An admin withdrawing an open
+                                                // invite is `revoked`, not the
+                                                // invitee's `rejected`.
+                                                "revoked",
                                                 Some("admin_cancel"),
                                             )
                                             .await
@@ -5671,7 +5675,7 @@ mod tests {
         let realm = TEST_REALM;
         let request = arkret_sdk::RealmKeyRequestPayload {
             key_scope: arkret_sdk::RealmKeyRequestScope {
-                effective_scope: arkret_wire::EffectiveScope::Realm {
+                effective_scope: arkret_wire::ScopeRef::Realm {
                     realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
                 },
                 policy_digest: None,
@@ -5721,7 +5725,7 @@ mod tests {
         let realm = TEST_REALM;
         let request = arkret_sdk::RealmKeyRequestPayload {
             key_scope: arkret_sdk::RealmKeyRequestScope {
-                effective_scope: arkret_wire::EffectiveScope::Realm {
+                effective_scope: arkret_wire::ScopeRef::Realm {
                     realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
                 },
                 policy_digest: None,
@@ -5766,7 +5770,7 @@ mod tests {
         let realm = TEST_REALM;
         let request = arkret_sdk::RealmKeyRequestPayload {
             key_scope: arkret_sdk::RealmKeyRequestScope {
-                effective_scope: arkret_wire::EffectiveScope::Realm {
+                effective_scope: arkret_wire::ScopeRef::Realm {
                     realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
                 },
                 policy_digest: None,
@@ -5809,7 +5813,7 @@ mod tests {
         let realm = TEST_REALM;
         let request = arkret_sdk::RealmKeyRequestPayload {
             key_scope: arkret_sdk::RealmKeyRequestScope {
-                effective_scope: arkret_wire::EffectiveScope::Realm {
+                effective_scope: arkret_wire::ScopeRef::Realm {
                     realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
                 },
                 policy_digest: None,
@@ -5852,7 +5856,7 @@ mod tests {
     fn rejects_realm_key_request_when_envelope_realm_mismatches_payload() {
         let request = arkret_sdk::RealmKeyRequestPayload {
             key_scope: arkret_sdk::RealmKeyRequestScope {
-                effective_scope: arkret_wire::EffectiveScope::Realm {
+                effective_scope: arkret_wire::ScopeRef::Realm {
                     realm_id: arkret_sdk::RealmId::new(TEST_REALM).unwrap(),
                 },
                 policy_digest: None,

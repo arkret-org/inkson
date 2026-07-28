@@ -15,11 +15,52 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 pub use arkret_sdk::events::kinds::EventKind;
 pub use arkret_sdk::{
-    Audience as EventProofAudience, CriticalExtension, Effect, Event, EventRef as SemanticRef,
+    Audience as EventProofAudience, CriticalExtension, Event, EventRef as SemanticRef,
     EventRequirements, LatticeOp, LatticeOpType, Precondition, Predicate, PredicateOp,
-    Proof as EventProof, SealBasis,
+    ProjectedCellWrite, ProjectionEffect, Proof as EventProof, ScopeRef, SealBasis,
 };
 use serde_json::Value;
+
+/// Single registry projection evaluator for this client.
+///
+/// v1 removed the producer-written `effects[]` channel: what an Event writes
+/// is derived from `kind + payload` through the generated reducer contract
+/// (`models/event-and-patch.md` §2.4.2). Every inkson call site — authoring
+/// pre-checks, MLS governance state roots and the SDK crates that sit below
+/// `arkret-schema` and take an injected projector — routes through this one
+/// function so no surface can grow a private table of cell writes.
+pub fn project_registered_cell_writes(
+    event: &Event,
+) -> Result<Vec<ProjectedCellWrite>, EventCellProjectionError> {
+    arkret_sdk::schema::project_registered_cell_writes(
+        event,
+        arkret_sdk::canonical::DigestSuite::Sha256,
+    )
+}
+
+pub type EventCellProjectionError = arkret_sdk::schema::EventCellContractError;
+
+/// [`project_registered_cell_writes`] adapted to the SDK's injected
+/// `CellWriteProjector` callback shape (`Result<_, String>`).
+pub fn cell_write_projector(event: &Event) -> Result<Vec<ProjectedCellWrite>, String> {
+    project_registered_cell_writes(event).map_err(|error| error.to_string())
+}
+
+/// Every registered write of `event` that is fully determined by the signed
+/// Event, i.e. needs no frozen pre-state.
+///
+/// `transition_to` / `apply_patch` / `remove_observed` deliberately stay
+/// unresolved: only a reducer holding accepted pre-state may resolve them, and
+/// a client that invented an operand would be re-asserting a pre-state it never
+/// observed.
+pub fn direct_registered_cell_writes(
+    event: &Event,
+) -> Result<Vec<ProjectionEffect>, EventCellProjectionError> {
+    Ok(project_registered_cell_writes(event)?
+        .iter()
+        .filter_map(ProjectedCellWrite::as_direct)
+        .collect())
+}
 
 /// Active client-side proof attachment mode. Retained so the settings UI
 /// can surface which signer backend is wired and so the signer bootstrap
@@ -98,13 +139,19 @@ pub(crate) fn trim_realm_id(value: &str) -> String {
 }
 
 /// Builder for creating typed event envelopes. Callers attach
-/// preconditions / effects / seal_ref / requirements after `new()`
-/// and before `build_sdk_event()`; the SDK event submit path requires an active
-/// signer to attach the detached JWS proof before going on the wire.
+/// preconditions / seal_ref / requirements after `new()` and before
+/// `build_sdk_event()`; the SDK event submit path requires an active signer to
+/// attach the detached JWS proof before going on the wire.
+///
+/// There is no `effects` setter: the Event wire has no producer-written cell
+/// writes in v1. Everything this Event writes is derived by the receiver from
+/// `kind + payload` through the registered reducer contract, and the builder
+/// only pre-checks that the contract is evaluable.
 #[derive(Debug)]
 pub struct OperationBuilder {
     event_id: Option<arkret_sdk::EventId>,
     realm_id: String,
+    circle_id: Option<String>,
     actor: String,
     op_type: EventKind,
     target_ref: Option<String>,
@@ -113,7 +160,6 @@ pub struct OperationBuilder {
     executed_by: Option<String>,
     authorization_ref: Option<String>,
     preconditions: Vec<Precondition>,
-    effects: Vec<Effect>,
     causal_refs: Vec<arkret_sdk::Hash>,
     refs: Vec<SemanticRef>,
     seal_ref: Option<String>,
@@ -128,6 +174,7 @@ impl OperationBuilder {
         Self {
             event_id: None,
             realm_id: realm_id.into(),
+            circle_id: None,
             actor: actor.into(),
             op_type,
             target_ref: None,
@@ -136,7 +183,6 @@ impl OperationBuilder {
             executed_by: None,
             authorization_ref: None,
             preconditions: Vec::new(),
-            effects: Vec::new(),
             causal_refs: Vec::new(),
             refs: Vec::new(),
             seal_ref: None,
@@ -184,8 +230,13 @@ impl OperationBuilder {
         self
     }
 
-    pub fn effects(mut self, effects: Vec<Effect>) -> Self {
-        self.effects = effects;
+    /// Narrow the signed `scope_ref` from the Realm default to a Circle.
+    ///
+    /// `scope_ref` is producer-signed and part of the canonical digest, so this
+    /// must come from the target's accepted projection — never from
+    /// user-supplied payload text.
+    pub fn circle_id(mut self, circle_id: impl Into<String>) -> Self {
+        self.circle_id = Some(circle_id.into());
         self
     }
 
@@ -283,6 +334,14 @@ impl OperationBuilder {
             .collect::<anyhow::Result<Vec<_>>>()?;
         let realm_id = arkret_sdk::RealmId::new(realm_id)
             .map_err(|err| anyhow::anyhow!("invalid realm_id: {err}"))?;
+        let scope_ref = match self.circle_id {
+            Some(circle_id) => ScopeRef::Circle {
+                realm_id,
+                circle_id: arkret_sdk::CircleId::new(circle_id)
+                    .map_err(|err| anyhow::anyhow!("invalid circle_id: {err}"))?,
+            },
+            None => ScopeRef::Realm { realm_id },
+        };
         let actor_id = arkret_sdk::Did::new(self.actor)
             .map_err(|err| anyhow::anyhow!("invalid actor_id DID: {err}"))?;
         let hlc = arkret_sdk::Hlc::new("000000000000-0000-00000000")
@@ -292,7 +351,7 @@ impl OperationBuilder {
             arkret_sdk::Event::new_with_id_at(
                 event_id,
                 self.op_type.as_str(),
-                realm_id,
+                scope_ref,
                 actor_id,
                 1,
                 hlc,
@@ -302,7 +361,7 @@ impl OperationBuilder {
         } else {
             arkret_sdk::Event::new_at(
                 self.op_type.as_str(),
-                realm_id,
+                scope_ref,
                 actor_id,
                 1,
                 hlc,
@@ -315,7 +374,6 @@ impl OperationBuilder {
         event.refs = self.refs;
         event.causal_refs = self.causal_refs;
         event.preconditions = self.preconditions;
-        event.effects = self.effects;
         event.seal_ref = self
             .seal_ref
             .map(arkret_sdk::SealId::new)
@@ -331,30 +389,22 @@ impl OperationBuilder {
             .map_err(|err| anyhow::anyhow!("invalid executed_by DID: {err}"))?;
         event.authorization_ref = self.authorization_ref;
         event.unsigned = unsigned;
-        if event.kind.as_str() == arkret_sdk::events::EventKind::CAPABILITY_GRANT
-            && event.effects.is_empty()
-        {
-            arkret_sdk::schema::materialize_capability_grant_event_contract(&mut event).map_err(
-                |error| anyhow::anyhow!("capability grant effect derivation failed: {error}"),
-            )?;
-        }
-        // These reducer-input kinds have a complete registry projection, so a
-        // producer failure must abort authoring. Swallowing the error here
-        // would recreate the effect-less RSVP defect this path is meant to
-        // prevent.
-        if event.effects.is_empty()
-            && matches!(
-                event.kind.as_str(),
-                arkret_sdk::events::EventKind::CALL_STATE
-                    | arkret_sdk::events::EventKind::CALL_RECORDING_START
-                    | arkret_sdk::events::EventKind::RSVP_SET
+        // Authoring pre-check. All 163 active reducer-input kinds carry a
+        // complete `cell_writes[]` contract, so the receiver can always derive
+        // this Event's writes from `kind + payload`. A projection that does not
+        // evaluate here would be rejected at admission, and shipping it anyway
+        // is exactly the effect-less-Event defect the old producer `effects[]`
+        // path kept re-creating. The CBA plane check is deliberately NOT run:
+        // `seal_basis` / `seal_ref` / `auth_context` are attached after
+        // authoring, so it belongs to the submit gate.
+        //
+        // Non-reducer-input kinds project no writes and pass trivially.
+        project_registered_cell_writes(&event).map_err(|error| {
+            anyhow::anyhow!(
+                "{} has no evaluable registered cell-write contract: {error}",
+                event.kind.as_str()
             )
-        {
-            arkret_sdk::schema::materialize_registered_cell_writes(&mut event)
-                .map_err(|error| anyhow::anyhow!("Event cell-effect derivation failed: {error}"))?;
-            arkret_sdk::schema::validate_registered_cell_writes(&event)
-                .map_err(|error| anyhow::anyhow!("Event cell-effect validation failed: {error}"))?;
-        }
+        })?;
         Ok(event)
     }
 }

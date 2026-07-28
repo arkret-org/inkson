@@ -431,16 +431,21 @@ pub async fn set_realm_durability_policy(
     Ok(())
 }
 
-/// Reject an invite via `ak.invite.cancel` event (spec-canonical).
-pub async fn reject_realm_invite(
+/// Close an open invite via `ak.invite.cancel` (spec-canonical).
+///
+/// `target_state` names which closed state the lifecycle FSM lands in and is
+/// part of the signed payload: `rejected` when the invitee declines,
+/// `revoked` when the inviter or an admin withdraws.
+pub async fn cancel_realm_invite(
     submitter: &EventSubmitter,
     realm_id: &str,
     actor_id: &str,
     invite_id: &str,
+    target_state: &str,
     reason: Option<&str>,
 ) -> anyhow::Result<SubmitEventResult> {
-    let event =
-        ak_ops::invite_cancel(realm_id, actor_id, invite_id, reason)?.build_sdk_event("inkson")?;
+    let event = ak_ops::invite_cancel(realm_id, actor_id, invite_id, target_state, reason)?
+        .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }
 

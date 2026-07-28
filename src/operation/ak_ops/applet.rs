@@ -32,9 +32,17 @@ pub fn applet_discovery(
         arkret_sdk::events::kinds::EventKind::AppletDiscovery,
     )
     .target_ref(service_id)
+    // `resource_discovery_state_payload` is closed over
+    // `{resource_id, value, state, reason}`: `resource_id` is the stable cell
+    // subject the registered contract derives the
+    // `ak.component.applet.discovery.v1` cell from, and the manifest is
+    // schema-versioned discovery state inside `value`.
     .body(json!({
-        "service_id": service_id,
-        "manifest": manifest,
+        "resource_id": service_id,
+        "value": {
+            "service_id": service_id,
+            "manifest": manifest,
+        },
     }))
 }
 

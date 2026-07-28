@@ -30,7 +30,10 @@ mod tests {
     fn account_data_event(payload: serde_json::Value) -> arkret_sdk::Event {
         arkret_sdk::Event::new(
             "ak.account_data.set",
-            arkret_sdk::RealmId::new("ak:realm:0196419b-0000-7000-8000-000000000001").unwrap(),
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: arkret_sdk::RealmId::new("ak:realm:0196419b-0000-7000-8000-000000000001")
+                    .unwrap(),
+            },
             arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),

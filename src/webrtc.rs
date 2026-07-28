@@ -5,11 +5,10 @@
 //! the spec's three signaling event kinds so the renderer can publish into the
 //! durable event chain without re-discovering the body shape:
 //!
-//! - `ak.call.signal` — ephemeral SDP / ICE candidate exchange (classified `ephemeral_event`;
-//!   reducers MUST NOT use it as state input). Round 4 wire shape; carries `device_id` + `proof`
-//!   + `payload.{call_id, signal_kind, seq}`. Receivers use [`CallSignalReceiver`] to reject
-//!     replay/rollback per `(realm, call, actor, device)` and SHOULD emit `hangup` for that call on
-//!     a rollback.
+//! - `ak.call.signal` — SDP / ICE candidate exchange. In v1 this is not a wire object at all: it is
+//!   AEAD plaintext inside a `SignalEnvelope` (`crate::signal`). Receivers decrypt first, then use
+//!   [`CallSignalReceiver`] to reject replay/rollback per `(realm, call, actor, device)` and SHOULD
+//!   emit `hangup` for that call on a rollback.
 //! - `ak.call.state` — durable call state transitions (start / answer / end).
 //! - `ak.call.recording.start` — durable opt-in recording marker.
 
@@ -17,15 +16,14 @@ use serde_json::json;
 
 use crate::operation::OperationBuilder;
 
-// NOTE: `ak.call.signal` is an ephemeral kind and MUST route through
-// `EphemeralEnvelope` (`ak.schema.ephemeral_envelope.v1`), NOT through
-// `ak.self.events.command.submit`. The canonical builder lives in
-// `crate::ephemeral::build_call_signal_envelope_v1` and accepts the v1
-// canonical signal_kind values (`invite`, `answer`, `candidate`,
-// `renegotiate`, `hangup`, `ack`, `reject`, `mute_state`, `media_state`,
-// `speaking`, `focus_join`, `focus_leave`, `error`). Do
-// NOT re-introduce a durable `OperationBuilder`-based helper or a parallel
-// `CallSignalKind` enum here — it would violate the wire spec.
+// NOTE: `ak.call.signal` MUST route through the encrypted Signal rail
+// (`crate::signal::SignalPayload::CallSignal` -> `POST /_arkret/self/signal`),
+// NOT through `ak.self.events.command.submit`. The signal kind is one of the
+// canonical values (`invite`, `answer`, `candidate`, `renegotiate`, `hangup`,
+// `ack`, `reject`, `mute_state`, `media_state`, `speaking`, `focus_join`,
+// `focus_leave`, `moderation`, `error`) and lives in the ciphertext. Do NOT
+// re-introduce a durable `OperationBuilder`-based helper, a plaintext
+// envelope, or a parallel `CallSignalKind` enum here.
 
 /// Call lifecycle state for `ak.call.state`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,73 +76,122 @@ pub fn build_call_state(
     }))
 }
 
-/// Round 4 — outcome of feeding an incoming `ak.call.signal` envelope
-/// through the receiver. Carries the canonical
-/// [`arkret_sdk::CallSignalPayload`] when accepted; on a seq rollback
-/// the renderer SHOULD emit a local `hangup` for the offending call.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Decrypted `ak.call.signal` body.
+///
+/// The pre-v1 rail carried this as the plaintext `payload` of a wire envelope.
+/// In v1 it only ever exists after a `SignalEnvelope` has been decrypted, so it
+/// is a local type rather than an SDK wire type.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CallSignalBody {
+    pub call_id: String,
+    pub signal_kind: String,
+    pub sequence: u64,
+    pub data: Option<serde_json::Value>,
+}
+
+impl CallSignalBody {
+    /// Parse and validate a decrypted Signal plaintext body.
+    pub fn from_plaintext(body: &serde_json::Value) -> Result<Self, String> {
+        if body.get("kind").and_then(serde_json::Value::as_str) != Some("ak.call.signal") {
+            return Err("decrypted signal is not ak.call.signal".to_owned());
+        }
+        let call_id = body
+            .get("call_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "ak.call.signal body omits call_id".to_owned())?
+            .to_owned();
+        let signal_kind = body
+            .get("signal_kind")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "ak.call.signal body omits signal_kind".to_owned())?
+            .to_owned();
+        if !arkret_sdk::CALL_SIGNAL_KINDS.contains(&signal_kind.as_str()) {
+            return Err(format!(
+                "ak.call.signal signal_kind {signal_kind:?} is not in the canonical enum"
+            ));
+        }
+        let sequence = body
+            .get("payload_sequence")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| "ak.call.signal body omits payload_sequence".to_owned())?;
+        Ok(Self {
+            call_id,
+            signal_kind,
+            sequence,
+            data: body.get("data").cloned(),
+        })
+    }
+}
+
+/// Outcome of feeding a decrypted `ak.call.signal` body through the receiver.
+#[derive(Clone, Debug, PartialEq)]
 pub enum CallSignalIngestOutcome {
-    /// Envelope passed Round 4 validation, the proof was present, and the
-    /// per-`(realm, call, actor, device)` seq advanced strictly forward.
-    Accepted {
-        payload: arkret_sdk::CallSignalPayload,
-    },
-    /// `payload.seq` rolled back or repeated — the receiver drops the
-    /// signal and SHOULD emit a local `hangup` for `call_id`. The
-    /// `seq` field carries the offending value for telemetry.
+    /// The body validated and the per-`(realm, call, actor, device)` sequence
+    /// advanced strictly forward.
+    Accepted { body: CallSignalBody },
+    /// `payload_sequence` rolled back or repeated — the receiver drops the
+    /// signal and SHOULD emit a local `hangup` for `call_id`.
     SeqRollback { call_id: String, seq: u64 },
-    /// Envelope failed Round 4 validation (missing device_id / proof,
-    /// non-canonical signal_kind, malformed payload). The receiver drops
-    /// the signal; UI MAY surface a "remote sent malformed signal" toast.
+    /// The decrypted body failed validation (wrong payload type, non-canonical
+    /// signal_kind, missing sequence).
     Rejected { reason: String },
 }
 
-/// Round 4 — typed receiver for incoming `ak.call.signal` envelopes.
+/// Dedupe key. `signal.md` §2 makes the receiver dedupe on
+/// `(sender_device_id, scope_ref, payload_sequence)`; the call id is kept in
+/// the key as well so two concurrent calls on one scope do not share a counter.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CallSignalSeqKey {
+    pub realm_id: String,
+    pub call_id: String,
+    pub sender_actor_id: String,
+    pub sender_device_id: String,
+}
+
+/// Monotonicity guard over decrypted call-signal sequences.
 ///
-/// Wraps [`arkret_sdk::CallSignalState`] so the renderer can plug a
-/// single state into the signal stream and get back a typed outcome
-/// without touching the SDK's mutable `observe` method directly.
+/// This replaces the deleted `arkret_sdk::CallSignalState`. The sequence is
+/// inside the ciphertext now, so only a receiver that has already decrypted can
+/// run this check — a service can suppress replays by envelope digest alone.
 pub struct CallSignalReceiver {
-    state: arkret_sdk::CallSignalState,
+    seen: std::collections::BTreeMap<CallSignalSeqKey, u64>,
 }
 
 impl CallSignalReceiver {
     pub fn new() -> Self {
         Self {
-            state: arkret_sdk::CallSignalState::new(),
+            seen: std::collections::BTreeMap::new(),
         }
     }
 
-    /// Run the Round 4 envelope validator + per-key monotonicity guard. The
-    /// caller is responsible for the proof-verification step BEFORE
-    /// invoking this (the SDK only asserts `proof.is_some()`).
-    pub fn ingest(&mut self, envelope: &arkret_sdk::EphemeralEnvelope) -> CallSignalIngestOutcome {
-        let payload = match arkret_sdk::validate_call_signal_envelope(envelope) {
-            Ok(p) => p,
-            Err(err) => {
-                return CallSignalIngestOutcome::Rejected {
-                    reason: format!("{err}"),
-                };
-            }
+    /// Validate a decrypted body and advance the per-key sequence.
+    ///
+    /// The caller is responsible for verifying the envelope proof and the
+    /// sender's Seal-relative device authorization BEFORE decrypting.
+    pub fn ingest(
+        &mut self,
+        key: CallSignalSeqKey,
+        body: &serde_json::Value,
+    ) -> CallSignalIngestOutcome {
+        let body = match CallSignalBody::from_plaintext(body) {
+            Ok(body) => body,
+            Err(reason) => return CallSignalIngestOutcome::Rejected { reason },
         };
-        let device_id = &envelope.device_id;
-        let key = arkret_sdk::CallSignalSeqKey::new(
-            envelope.realm_id.clone(),
-            payload.call_id.clone(),
-            envelope.actor_id.clone(),
-            device_id.clone(),
-        );
-        if let Err(err) = self.state.observe(&key, payload.seq) {
+        if let Some(previous) = self.seen.get(&key)
+            && body.sequence <= *previous
+        {
             tracing::warn!(
                 target: "inkson::webrtc",
-                "ak.call.signal seq rollback: {err}"
+                "ak.call.signal sequence rollback: {} <= {previous}",
+                body.sequence
             );
             return CallSignalIngestOutcome::SeqRollback {
-                call_id: payload.call_id.as_str().to_owned(),
-                seq: payload.seq,
+                call_id: body.call_id,
+                seq: body.sequence,
             };
         }
-        CallSignalIngestOutcome::Accepted { payload }
+        self.seen.insert(key, body.sequence);
+        CallSignalIngestOutcome::Accepted { body }
     }
 }
 
@@ -199,12 +246,20 @@ pub fn build_call_recording_start(
 mod tests {
     use super::*;
 
+    /// Restates `call_signal_classifies_as_ephemeral_in_registry`.
+    ///
+    /// The `ephemeral_event` wire scope existed to classify the plaintext rail
+    /// v1 deleted. `ak.call.signal` is not an Event kind at all now — it is a
+    /// Signal payload type inside the ciphertext — so the registry must not
+    /// know it, and any code that resolved it as a registered kind would be
+    /// reaching for the deleted rail.
     #[test]
-    fn call_signal_classifies_as_ephemeral_in_registry() {
+    fn call_signal_is_not_a_registered_event_kind() {
         assert_eq!(
             arkret_sdk::events::kinds::event_wire_scope("ak.call.signal"),
-            arkret_sdk::events::kinds::EventWireScope::EphemeralEvent
+            arkret_sdk::events::kinds::EventWireScope::Custom
         );
+        assert!(arkret_sdk::CALL_SIGNAL_KINDS.contains(&"invite"));
     }
 
     #[test]
@@ -276,63 +331,118 @@ mod tests {
         );
     }
 
-    fn make_v1_envelope(seq: u64, signal_kind: &str) -> arkret_sdk::EphemeralEnvelope {
-        crate::ephemeral::build_call_signal_envelope_v1(
-            "ak:realm:01904100-0000-7000-8000-000000000001",
-            "did:web:alice.example",
-            "ak:device:01904100-0000-7000-8000-000000000002",
-            "ak:call:01904100-0000-7000-8000-000000000003",
-            signal_kind,
-            seq,
-            serde_json::json!({}),
+    const TEST_ACTOR: &str = "did:web:alice.example";
+    const TEST_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000002";
+    const TEST_CALL: &str = "ak:call:01904100-0000-7000-8000-000000000003";
+
+    /// Produce a decrypted `ak.call.signal` body the way the sender does.
+    ///
+    /// The pre-v1 form of this helper built a plaintext wire envelope. In v1
+    /// there is no such object: the body only exists as the AEAD plaintext the
+    /// sender encodes, so the fixture goes through the real sender encoder and
+    /// the receiver parses what would actually come out of the AEAD.
+    fn call_signal_body(seq: u64, signal_kind: &str) -> serde_json::Value {
+        let bytes = crate::signal::SignalPayload::CallSignal {
+            call_id: arkret_sdk::CallId::new(TEST_CALL).unwrap(),
+            signal_kind: signal_kind.to_owned(),
+            data: Some(serde_json::json!({})),
+        }
+        .to_plaintext(
+            &arkret_sdk::Did::new(TEST_ACTOR).unwrap(),
+            &arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),
+            crate::signal::SignalSequence(seq),
+            crate::clock::now_utc(),
         )
-        .expect("envelope must build")
+        .expect("call signal plaintext must encode");
+        serde_json::from_slice(&bytes).unwrap()
     }
 
-    #[test]
-    fn v1_builder_accepts_canonical_signal_kinds() {
-        for st in arkret_sdk::CALL_SIGNAL_KINDS {
-            let env = make_v1_envelope(1, st);
-            assert_eq!(env.kind, "ak.call.signal");
-            assert!(!env.device_id.as_str().is_empty());
+    fn seq_key() -> CallSignalSeqKey {
+        CallSignalSeqKey {
+            realm_id: "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+            call_id: TEST_CALL.to_owned(),
+            sender_actor_id: TEST_ACTOR.to_owned(),
+            sender_device_id: TEST_DEVICE.to_owned(),
         }
     }
 
     #[test]
-    fn v1_builder_rejects_unknown_signal_kind() {
-        let err = crate::ephemeral::build_call_signal_envelope_v1(
-            "ak:realm:01904100-0000-7000-8000-000000000001",
-            "did:web:alice.example",
-            "ak:device:01904100-0000-7000-8000-000000000002",
-            "ak:call:01904100-0000-7000-8000-000000000003",
-            "sdp_offer",
-            1,
-            serde_json::json!({}),
+    fn every_canonical_signal_kind_round_trips_sender_to_receiver() {
+        for kind in arkret_sdk::CALL_SIGNAL_KINDS {
+            let body = CallSignalBody::from_plaintext(&call_signal_body(1, kind))
+                .expect("canonical signal_kind must parse");
+            assert_eq!(body.signal_kind, *kind);
+            assert_eq!(body.call_id, TEST_CALL);
+            assert_eq!(body.sequence, 1);
+        }
+    }
+
+    #[test]
+    fn non_canonical_signal_kind_is_rejected_on_both_sides() {
+        // Sender side: the encoder refuses to seal it.
+        let sender_error = crate::signal::SignalPayload::CallSignal {
+            call_id: arkret_sdk::CallId::new(TEST_CALL).unwrap(),
+            signal_kind: "sdp_offer".to_owned(),
+            data: None,
+        }
+        .to_plaintext(
+            &arkret_sdk::Did::new(TEST_ACTOR).unwrap(),
+            &arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),
+            crate::signal::SignalSequence(1),
+            crate::clock::now_utc(),
         )
         .expect_err("non-canonical signal_kind must be rejected");
-        assert!(err.to_string().contains("signal_kind"));
+        assert!(sender_error.to_string().contains("signal_kind"));
+
+        // Receiver side: a peer that sealed it anyway is still refused, since
+        // the ciphertext is authenticated but not trusted.
+        let mut hostile = call_signal_body(1, "invite");
+        hostile["signal_kind"] = serde_json::json!("sdp_offer");
+        assert!(CallSignalBody::from_plaintext(&hostile).is_err());
     }
 
     #[test]
     fn receiver_accepts_then_rejects_seq_rollback() {
         let mut rx = CallSignalReceiver::new();
-        let outcome = rx.ingest(&make_v1_envelope(1, "invite"));
+        let outcome = rx.ingest(seq_key(), &call_signal_body(1, "invite"));
         assert!(matches!(outcome, CallSignalIngestOutcome::Accepted { .. }));
 
-        let outcome = rx.ingest(&make_v1_envelope(2, "answer"));
+        let outcome = rx.ingest(seq_key(), &call_signal_body(2, "answer"));
         assert!(matches!(outcome, CallSignalIngestOutcome::Accepted { .. }));
 
-        let outcome = rx.ingest(&make_v1_envelope(2, "candidate"));
+        let outcome = rx.ingest(seq_key(), &call_signal_body(2, "candidate"));
         match outcome {
             CallSignalIngestOutcome::SeqRollback { seq, .. } => assert_eq!(seq, 2),
             other => panic!("expected SeqRollback, got {other:?}"),
         }
     }
 
+    /// Restates `wire_decode_rejects_envelope_without_proof`.
+    ///
+    /// Its premise died with the plaintext envelope: a call signal is no longer
+    /// a wire object whose `proof` can be stripped, and envelope-level proof
+    /// coverage now lives on `SignalEnvelope`
+    /// (`signal::signal_proof_binds_the_header_and_verifies_under_the_device_key`
+    /// and `device_directory::verify_signal_envelope_proof`). What remains at
+    /// this layer is the plaintext contract: a body that omits the dedupe
+    /// sequence, or that is not a call signal at all, must not reach the FSM.
     #[test]
-    fn wire_decode_rejects_envelope_without_proof() {
-        let mut value = serde_json::to_value(make_v1_envelope(1, "invite")).unwrap();
-        value.as_object_mut().unwrap().remove("proof");
-        assert!(serde_json::from_value::<arkret_sdk::EphemeralEnvelope>(value).is_err());
+    fn plaintext_missing_the_dedupe_sequence_is_rejected() {
+        let mut without_sequence = call_signal_body(1, "invite");
+        without_sequence
+            .as_object_mut()
+            .unwrap()
+            .remove("payload_sequence");
+        assert!(CallSignalBody::from_plaintext(&without_sequence).is_err());
+
+        let mut wrong_kind = call_signal_body(1, "invite");
+        wrong_kind["kind"] = serde_json::json!("ak.typing");
+        assert!(CallSignalBody::from_plaintext(&wrong_kind).is_err());
+
+        let mut rx = CallSignalReceiver::new();
+        assert!(matches!(
+            rx.ingest(seq_key(), &without_sequence),
+            CallSignalIngestOutcome::Rejected { .. }
+        ));
     }
 }

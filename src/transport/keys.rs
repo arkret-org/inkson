@@ -101,7 +101,7 @@ pub async fn submit_realm_key_request(
     let device_id = arkret_sdk::DeviceId::new(device_id.trim().to_owned())?;
     let payload = arkret_sdk::RealmKeyRequestPayload {
         key_scope: arkret_sdk::RealmKeyRequestScope {
-            effective_scope: arkret_wire::EffectiveScope::Realm {
+            effective_scope: arkret_wire::ScopeRef::Realm {
                 realm_id: realm_id.clone(),
             },
             policy_digest: None,

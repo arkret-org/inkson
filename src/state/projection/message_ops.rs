@@ -190,7 +190,10 @@ mod tests {
     fn typed_event(kind: &str, payload: Value) -> arkret_sdk::Event {
         let mut event = arkret_sdk::Event::new(
             kind,
-            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001")
+                    .unwrap(),
+            },
             arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
@@ -231,9 +234,12 @@ mod tests {
 
     #[test]
     fn typed_message_raw_operation_ignores_non_message_events() {
+        // The pre-v1 fixture used `ak.presence`, which is not an Event kind at
+        // all any more — presence is Signal ciphertext. Any durable kind
+        // outside the discussion allow-list makes the same point.
         let event = typed_event(
-            arkret_sdk::events::EventKind::PRESENCE,
-            json!({"state": "online"}),
+            arkret_sdk::events::EventKind::MEMBER_STATE,
+            json!({"state": "join"}),
         );
         let value = serde_json::to_value(&event).unwrap();
 

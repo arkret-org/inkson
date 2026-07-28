@@ -107,8 +107,8 @@ fn projection_creator_matches_actor(projection: &Value, actor_id: &str) -> bool 
 pub(crate) fn circle_effective_scope(
     realm_id: &str,
     circle_id: &str,
-) -> Result<arkret_wire::EffectiveScope, String> {
-    Ok(arkret_wire::EffectiveScope::Circle {
+) -> Result<arkret_wire::ScopeRef, String> {
+    Ok(arkret_wire::ScopeRef::Circle {
         realm_id: arkret_sdk::RealmId::new(trim_realm_id(realm_id))
             .map_err(|err| format!("invalid Circle scope Realm id: {err:?}"))?,
         circle_id: arkret_sdk::CircleId::new(circle_id.to_owned())
@@ -271,7 +271,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
     if let Some(event) = event.as_mut() {
         event.event_id = event_id_typed;
         if let Some(circle_id) = circle {
-            event.effective_scope = Some(circle_effective_scope(realm_id, circle_id)?);
+            event.scope_ref = circle_effective_scope(realm_id, circle_id)?;
         }
     }
     Ok(event)
@@ -489,7 +489,7 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
             .map_err(|err| format!("MLS commit SDK Event conversion failed: {err}"))?;
     event.event_id = event_id_typed;
     if let Some(circle_id) = circle {
-        event.effective_scope = Some(circle_effective_scope(realm_id, circle_id)?);
+        event.scope_ref = circle_effective_scope(realm_id, circle_id)?;
     }
     Ok(event)
 }

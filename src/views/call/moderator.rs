@@ -51,7 +51,7 @@ pub(super) fn ModeratorControls(
                                     continue;
                                 };
                                 emit_async(
-                                    &base, &token(), &realm_id, &call_id, &actor, &device,
+                                    &base, &token(), &realm_id, None, &call_id, &actor, &device,
                                     "mute_state",
                                     json!({
                                         "audio_muted": true,
@@ -78,7 +78,7 @@ pub(super) fn ModeratorControls(
                         let call_id = call_id.clone();
                         move |_| {
                             emit_async(
-                                &base, &token(), &realm_id, &call_id, &actor, &device,
+                                &base, &token(), &realm_id, None, &call_id, &actor, &device,
                                 "moderation",
                                 json!({ "signal_kind": "moderation", "data": { "action": "end_for_all" } }),
                                 call_seq,
@@ -117,7 +117,7 @@ pub(super) fn ModeratorControls(
                                             return;
                                         };
                                         emit_async(
-                                            &base, &token(), &realm_id, &call_id, &actor, &device,
+                                            &base, &token(), &realm_id, None, &call_id, &actor, &device,
                                             "moderation",
                                             json!({
                                                 "signal_kind": "moderation",
@@ -149,7 +149,7 @@ pub(super) fn ModeratorControls(
                                             return;
                                         };
                                         emit_async(
-                                            &base, &token(), &realm_id, &call_id, &actor, &device,
+                                            &base, &token(), &realm_id, None, &call_id, &actor, &device,
                                             "moderation",
                                             json!({
                                                 "signal_kind": "moderation",

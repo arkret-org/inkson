@@ -211,11 +211,13 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    pub fn save_presence_projection(&mut self, events: &[arkret_sdk::EphemeralEnvelope]) {
-        let events = events
-            .iter()
-            .filter_map(|event| serde_json::to_value(event).ok())
-            .collect::<Vec<_>>();
+    /// Replace the local presence projection with decrypted Signal bodies.
+    ///
+    /// v1 removed the plaintext presence bucket from account sync; presence now
+    /// arrives as `ak.presence` AEAD plaintext inside a `SignalEnvelope`, so
+    /// this takes already-decrypted bodies rather than wire envelopes.
+    pub fn save_presence_projection(&mut self, bodies: &[serde_json::Value]) {
+        let events = bodies.to_vec();
         self.ensure_cached_loaded();
         if self.cached.presence_projection == events {
             return;

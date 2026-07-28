@@ -521,10 +521,13 @@ fn server_description_gates_event_envelope_write_plane() {
     assert!(service_is_v1_principal_server_ready(&events_ready));
     assert!(missing_event_envelope_write_requirements(&events_ready).is_empty());
 
+    // `service-describe.schema.json` closes the compat-surface object
+    // (`additionalProperties: false`) precisely so a product-private route root
+    // cannot be smuggled in through extension keys, so the free-form
+    // `base_path` / `status` members the pre-v1 fixture attached no longer
+    // exist. `notes` is the one free-text member left.
     let external_compat_surface = serde_json::to_value(
         arkret_sdk::CompatSurfaceEntry::external_interop("external_mimi_provider")
-            .with_extra_string("base_path", "https://mimi.example.com/_arkret/open/mimi")
-            .with_extra_string("status", "external_interop")
             .with_notes("external interop surfaces must not redefine principal-server routes"),
     )
     .unwrap();
@@ -562,6 +565,16 @@ fn server_description_gates_event_envelope_write_plane() {
     assert_eq!(
         described_with_external_compat_surface.compat_surfaces[0].name,
         "external_mimi_provider"
+    );
+    // And the closure is load-bearing: an entry that carries its own route root
+    // as an extension key MUST NOT parse.
+    assert!(
+        serde_json::from_value::<arkret_sdk::CompatSurfaceEntry>(json!({
+            "name": "external_mimi_provider",
+            "kind": "external_interop",
+            "base_path": "https://mimi.example.com/_arkret/open/mimi"
+        }))
+        .is_err()
     );
 
     // A partial / pre-v2 describe payload now fails to deserialize at all —
@@ -735,7 +748,9 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .body(json!({
-        "body": "hello",
+        "strand_id": "ak:strand:01904100-0000-7000-8000-0000000000ce",
+        "track_name": "discussion",
+        "content": {"kind": "ak.content.text", "body": "hello"},
         "mentions": [{
             "kind": "mention",
             "subject_id": contact_remark.subject.did,
