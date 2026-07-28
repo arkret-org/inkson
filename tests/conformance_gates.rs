@@ -133,8 +133,29 @@ const TEST_ROOT_HASH: &str =
 /// (CBA basis + Ed25519 proof) so the envelope satisfies the reducer-input
 /// rules baked into event-envelope.schema.json.
 fn stamp_wire_fields(envelope: &mut Event) {
-    if should_stamp_control_move_basis(envelope) && envelope.seal_basis.is_none() {
-        envelope.seal_basis = Some(test_seal_basis());
+    match reducer_input_plane(envelope) {
+        // Control Move: `seal_basis` and nothing from the data-plane pair.
+        Some("control") if !cba_exempt_reducer_kind(&envelope.kind) => {
+            if envelope.seal_basis.is_none() {
+                envelope.seal_basis = Some(test_seal_basis());
+            }
+        }
+        // DataEvent: the schema requires `seal_ref` AND `auth_context`
+        // together, and forbids `seal_basis` alongside them. Both are attached
+        // by the submit pipeline, not by the typed builder, so the gate has to
+        // stamp them before validating what actually goes on the wire.
+        Some("data") => {
+            if envelope.seal_ref.is_none() {
+                envelope.seal_ref = Some(
+                    arkret_sdk::SealId::new(TEST_ANCHOR_REF.to_owned())
+                        .expect("test seal id is canonical"),
+                );
+            }
+            if envelope.auth_context.is_none() {
+                envelope.auth_context = Some(test_auth_context());
+            }
+        }
+        _ => {}
     }
     let signer_did = TEST_ACTOR_ID;
     let key_id = format!("{signer_did}#device");
@@ -143,8 +164,19 @@ fn stamp_wire_fields(envelope: &mut Event) {
         .expect("Ed25519 sign succeeds for schema-conformant envelope");
 }
 
-fn should_stamp_control_move_basis(envelope: &Event) -> bool {
-    !envelope.effects.is_empty() && !cba_exempt_reducer_kind(&envelope.kind)
+/// Whether a real submitter would attach `seal_basis` to this envelope.
+///
+/// The pre-v1 test read the producer-written `effects[]`. That channel is gone:
+/// what an Event writes — and on which CBA plane — comes from the registered
+/// contract, so the plane is read from the registry here exactly as
+/// `arkret_schema::validate_registered_cell_writes_in_context` reads it at
+/// admission. Guessing from the kind name would fork the rule.
+fn reducer_input_plane(envelope: &Event) -> Option<&'static str> {
+    envelope
+        .kind
+        .descriptor()
+        .filter(|descriptor| descriptor.reducer_input)
+        .and_then(|descriptor| descriptor.plane)
 }
 
 fn cba_exempt_reducer_kind(kind: &EventKind) -> bool {
@@ -158,6 +190,22 @@ fn cba_exempt_reducer_kind(kind: &EventKind) -> bool {
             | EventKind::RealmPlaintextVisibleServices
             | EventKind::RealmPolicyBundle
     )
+}
+
+/// The `{did, key_id, key_epoch}` a DataEvent pins so the receiver knows which
+/// signing key to verify authorization with at `seal_ref`. Effective
+/// capabilities are still derived from the accepted basis; this only names the
+/// key, it never selects a capability.
+fn test_auth_context() -> arkret_sdk::AuthContext {
+    arkret_sdk::AuthContext {
+        did: arkret_sdk::Did::new(TEST_ACTOR_ID.to_owned()).expect("test actor DID is canonical"),
+        // `key_id` is the bare verification-method fragment (the schema
+        // pattern forbids `#`), which is what `data_event_key_id_for`
+        // produces from the active signer's device id.
+        key_id: "device".to_owned(),
+        key_epoch: 0,
+        credential_epoch: None,
+    }
 }
 
 fn test_seal_basis() -> arkret_sdk::SealBasis {
@@ -247,8 +295,9 @@ fn assert_envelope_matches_schema(label: &str, envelope: &Event) {
             .is_some_and(|hlc| !hlc.as_str().is_empty()),
         "{label}: builder produced empty hlc — should be `<12>-<4>-<8>` hex"
     );
-    let value = serde_json::to_value(envelope)
+    let mut value = serde_json::to_value(envelope)
         .unwrap_or_else(|err| panic!("{label}: serialize envelope: {err}"));
+    let value = value;
     let validator = event_schema_validator();
     if !validator.is_valid(&value) {
         let errors: Vec<String> = validator

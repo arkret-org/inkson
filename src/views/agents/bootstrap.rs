@@ -944,8 +944,11 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current(
         return Err(current.expect_err("checked managed PCR signed-head receipt error"));
     }
     let accepted_events = submitter.backfill(realm_id).await?.events;
-    let material = arkret_bootstrap::materialize_managed_agent_pcr_control(&accepted_events)
-        .map_err(|error| anyhow::anyhow!("managed Agent PCR materialization failed: {error}"))?;
+    let material = arkret_bootstrap::materialize_managed_agent_pcr_control(
+        &accepted_events,
+        &crate::operation::cell_write_projector,
+    )
+    .map_err(|error| anyhow::anyhow!("managed Agent PCR materialization failed: {error}"))?;
 
     let submitted = match current {
         Ok((view, head)) => {

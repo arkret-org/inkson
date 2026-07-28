@@ -257,10 +257,6 @@ pub(super) struct ConnectContext {
     /// first full account-subscribe snapshot on the same render.
     pub(super) sync_bootstrap_complete: Signal<bool>,
     pub(super) session_boot_state: Signal<SessionBootState>,
-    /// Receive-side call-signaling hub. The full boot sync routes inbound
-    /// `ak.call.signal` envelopes into it (dedup → incoming ring / per-call
-    /// inbox); `CallPanel` drains it. See `crate::views::call_signals`.
-    pub(super) call_signal_hub: crate::views::call_signals::CallSignalHub,
     /// Session DID-resolution cache handle. The boot sync's Tier-2 device-key
     /// chain verification (`device-lifecycle.md` §8.3) anchors the published
     /// PSK against the actor's DID document through a resolver backed by a
@@ -1238,7 +1234,6 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 &server_set,
                             );
                             store.save_notification_projection(notification_projection);
-                            store.save_presence_projection(&sync.updates.presence);
                             store.ingest_to_device_messages(&sync.updates.to_device);
                             // `/account/subscribe` carries the actor's complete
                             // account_data projection on every successful frame.
@@ -1488,44 +1483,19 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 last_error.set(Some(format!("local state not saved: {message}")));
                             }
                         }
-                        // Receive side of `ak.call.signal`: route every realm
-                        // body's inbound call-signal envelopes into the hub
-                        // (dedup → incoming ring / per-call inbox). Done after
-                        // the `store` write guard above is dropped so the hub
-                        // Signal writes don't nest inside the store borrow.
-                        //
-                        // Receiver proof verification (`webrtc-signaling.md`
-                        // §5.1, fail-closed): each inbound envelope's `proof` is
-                        // verified against the sender's authoritative directory
-                        // verify key (resolved via `device_directory`) before any
-                        // ring / inbox side effect. The routing is async because
-                        // a directory cache miss resolves through `keys/query`.
-                        {
-                            let mut hub = ctx.call_signal_hub;
-                            // Tier-2 (device-lifecycle.md §8.3): resolver-backed
-                            // DID anchor over a snapshot of the session DID
-                            // cache, so the receiver verifies the sender device
-                            // key's full cross-signing chain (not just soland's
-                            // assertion). Cache back-fills are written back.
-                            let mut did_cache = ctx.did_cache;
-                            let anchor =
-                                crate::identity::did_resolver::ResolverDidAnchor::from_profile(
-                                    crate::identity::did_resolver::DeploymentProfile::PersonalNode,
-                                    did_cache.read().clone(),
-                                );
-                            for (id, body) in &sync.realm_projections {
-                                crate::views::call_signals::route_realm_call_signals(
-                                    &mut hub,
-                                    id,
-                                    body,
-                                    &canonical_actor,
-                                    Some(&api),
-                                    &anchor,
-                                )
-                                .await;
-                            }
-                            *did_cache.write() = anchor.into_cache();
-                        }
+                        // The receive side of `ak.call.signal` used to live here,
+                        // reading each Realm body's `ephemeral.events[]`. v1
+                        // deleted that bucket from Realm sync: a call signal is
+                        // AEAD plaintext inside a `SignalEnvelope` delivered on
+                        // the Signal rail, so nothing about it can be recovered
+                        // from a sync body. Routing now belongs to the Signal
+                        // subscribe path
+                        // (`views::call_signals::route_decrypted_call_signals`),
+                        // which this client cannot open until the SDK exposes the
+                        // `ak.signal-v1` exporter derivation
+                        // (`crate::signal::encrypt_signal_payload`). Leaving a
+                        // no-op pass over sync bodies here would only look like
+                        // the feature still worked.
                         crate::sync_engine::prefetch_persistent_event_sender_keys(
                             &authed,
                             &sync,

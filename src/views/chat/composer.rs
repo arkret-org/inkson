@@ -516,24 +516,49 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 } else {
                                     selected_strand.clone()
                                 };
+                                // Signal key material comes from the scope's
+                                // accepted MLS state. No material means the
+                                // Signal capability is withdrawn for this
+                                // scope; v1 has no plaintext branch to fall
+                                // back to, so simply do not send.
+                                let Ok(material) = crate::signal::key_material_for_scope(
+                                    &state_store.read(),
+                                    &realm,
+                                    None,
+                                    crate::signal::next_signal_sequence().0,
+                                ) else {
+                                    return;
+                                };
                                 typing_throttle.on_keystroke(move |is_typing| {
                                     let base = base.clone();
                                     let realm = realm.clone();
                                     let actor = actor.clone();
                                     let device = device.clone();
                                     let strand_id = strand_id.clone();
+                                    let material = material.clone();
+                                    let sequence = crate::signal::next_signal_sequence();
                                     let api_token = token();
                                     spawn(async move {
                                         let _ = crate::transport::auth::with_event_submitter(
                                             &base,
                                             api_token,
                                             |sub| async move {
-                                                sub.send_typing(
-                                                    &realm,
+                                                sub.send_scope_signal(
+                                                    arkret_sdk::ScopeRef::Realm {
+                                                        realm_id: arkret_sdk::RealmId::new(
+                                                            realm.clone(),
+                                                        )?,
+                                                    },
                                                     &actor,
                                                     &device,
-                                                    &strand_id,
-                                                    is_typing,
+                                                    &material,
+                                                    &crate::signal::SignalPayload::Typing {
+                                                        strand_id: arkret_sdk::StrandId::new(
+                                                            strand_id.clone(),
+                                                        )?,
+                                                        typing: is_typing,
+                                                    },
+                                                    sequence,
                                                 )
                                                 .await
                                             },

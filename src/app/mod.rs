@@ -560,11 +560,13 @@ fn AppBootstrap() -> Element {
     // backup prompt on directly, WITHOUT relying on the fragile boot-time
     // detection effect (X11). See `maybe_auto_backup_mls_after_encrypted_write`.
     use_context_provider(|| crate::components::MlsBackupSignal(needs_mls_backup));
-    // Call-signaling hub — the receive side of `ak.call.signal`. Provided
-    // once at the app root; the sync apply paths route inbound envelopes into
-    // it and `CallPanel` drains it to drive the transport / call FSM. See
-    // `crate::views::call_signals`.
-    let call_signal_hub = use_context_provider(crate::views::call_signals::CallSignalHub::new);
+    // Call-signaling hub — the receive side of `ak.call.signal`. Provided once
+    // at the app root and drained by `CallPanel` to drive the transport / call
+    // FSM. Nothing fills it yet: the sync apply paths used to, from the
+    // plaintext `ephemeral.events[]` bucket v1 deleted, and the Signal
+    // subscribe rail that replaces them cannot be opened until the SDK exposes
+    // the `ak.signal-v1` exporter derivation. See `crate::views::call_signals`.
+    let _call_signal_hub = use_context_provider(crate::views::call_signals::CallSignalHub::new);
     let mls_restore_payload_cache = use_signal(|| Option::<Value>::None);
     let mls_unlock_detection_key_seen = use_signal(|| Option::<String>::None);
 
@@ -1642,7 +1644,6 @@ fn AppBootstrap() -> Element {
                                     account_has_other_devices,
                                     sync_bootstrap_complete,
                                     session_boot_state,
-                                    call_signal_hub,
                                     did_cache,
                                     did_resolution_health,
                                 },
@@ -1829,8 +1830,7 @@ fn AppBootstrap() -> Element {
                                                         account_has_other_devices,
                                                         sync_bootstrap_complete,
                                                         session_boot_state,
-                                                        call_signal_hub,
-                                                        did_cache,
+                                                                            did_cache,
                                                         did_resolution_health,
                                                     },
                                                 );

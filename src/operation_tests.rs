@@ -76,7 +76,11 @@ fn operation_builder_generates_valid_envelope() {
         "did:web:alice",
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
-    .body(json!({"content": {"kind": "ak.content.text", "body": "hello"}}))
+    .body(json!({
+        "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
+        "track_name": "discussion",
+        "content": {"kind": "ak.content.text", "body": "hello"}
+    }))
     .build("test_node");
 
     assert!(!op.local_operation_id().is_empty());
@@ -106,7 +110,11 @@ fn operation_builder_delegates_event_time_normalization_to_the_sdk() {
         "did:web:alice",
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
-    .body(json!({"content": {"kind": "ak.content.text", "body": "hello"}}))
+    .body(json!({
+        "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
+        "track_name": "discussion",
+        "content": {"kind": "ak.content.text", "body": "hello"}
+    }))
     .created_at("2026-07-18T10:20:30.987654Z".parse().unwrap())
     .build_sdk_event("test_node")
     .unwrap();
@@ -124,7 +132,11 @@ fn operation_round_trip_serde() {
         "did:web:bob",
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
-    .body(json!({"content": {"kind": "ak.content.text", "body": "hello world"}}))
+    .body(json!({
+        "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
+        "track_name": "discussion",
+        "content": {"kind": "ak.content.text", "body": "hello world"}
+    }))
     .build("node");
     let json = serde_json::to_string(&op).unwrap();
     let parsed: Event = serde_json::from_str(&json).unwrap();
@@ -138,7 +150,11 @@ fn operation_builder_can_emit_signed_authorization_binding() {
         "did:web:bob",
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
-    .body(json!({"content": {"kind": "ak.content.text", "body": "hello world"}}))
+    .body(json!({
+        "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
+        "track_name": "discussion",
+        "content": {"kind": "ak.content.text", "body": "hello world"}
+    }))
     .executed_by("did:web:agent.example")
     .authorization_ref("ak:grant:0196419b-0000-7000-8000-000000000001")
     .build("node");
@@ -172,14 +188,22 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
         "did:web:bob",
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
-    .body(json!({"content": {"kind": "ak.content.text", "body": "hello world"}}))
+    .body(json!({
+        "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
+        "track_name": "discussion",
+        "content": {"kind": "ak.content.text", "body": "hello world"}
+    }))
     .build("node");
     let mut value = serde_json::to_value(&op).unwrap();
-    let object = value.as_object_mut().unwrap();
-    object.insert(
+    // The top-level `effective_scope` field is deleted in v1; a wire object
+    // that still carries it MUST be rejected rather than silently ignored.
+    let mut with_stale_field = value.clone();
+    with_stale_field.as_object_mut().unwrap().insert(
         "effective_scope".to_owned(),
         json!({"kind": "realm", "realm_id": "ak:realm:0196419b-0000-7000-8000-0000000000ab"}),
     );
+    assert!(serde_json::from_value::<Event>(with_stale_field).is_err());
+    let object = value.as_object_mut().unwrap();
     object.insert("executed_by".to_owned(), json!("did:web:agent.example"));
     object.insert(
         "authorization_ref".to_owned(),
@@ -188,14 +212,17 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
     object.insert("actor_kind".to_owned(), json!("agent"));
 
     let parsed: Event = serde_json::from_value(value).unwrap();
+    // `scope_ref` is a REQUIRED producer-signed field in v1 (the wire has no
+    // reducer-stamped `effective_scope` any more), and the envelope `realm_id`
+    // is derived from it.
     assert_eq!(
-        parsed.effective_scope,
-        Some(arkret_wire::EffectiveScope::Realm {
+        parsed.scope_ref,
+        arkret_wire::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(
                 "ak:realm:0196419b-0000-7000-8000-0000000000ab".to_owned()
             )
             .unwrap(),
-        })
+        }
     );
     assert_eq!(
         parsed.executed_by.as_ref().map(|did| did.as_str()),
@@ -218,7 +245,11 @@ fn event_envelope_rejects_unknown_top_level_fields() {
         "did:web:bob",
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
-    .body(json!({"content": {"kind": "ak.content.text", "body": "hello world"}}))
+    .body(json!({
+        "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
+        "track_name": "discussion",
+        "content": {"kind": "ak.content.text", "body": "hello world"}
+    }))
     .build("node");
     let mut value = serde_json::to_value(&op).unwrap();
     value
@@ -297,6 +328,7 @@ fn mls_commit_builder_matches_registered_payload_schema() {
             arkret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-000000000002".to_owned())
                 .unwrap(),
         ],
+        vec![arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "11".repeat(32))).unwrap()],
         arkret_sdk::Hash::new(
             "sha256:2222222222222222222222222222222222222222222222222222222222222222".to_owned(),
         )
@@ -525,16 +557,20 @@ fn object_patch_family_builders_match_registered_payload_schema() {
 
     for event in &events {
         assert!(event.payload.get("patch").is_some(), "{}", event.kind);
-        if event.kind == "ak.strand.tracks.update" {
-            assert_eq!(event.payload["strand_id"], strand_id);
-            assert!(event.payload.get("target_ref").is_none(), "{}", event.kind);
-        } else if event.kind == "ak.space.update" {
+        if event.kind == "ak.space.update" {
             assert_eq!(event.payload["space_id"], space_id);
             assert!(event.payload.get("target_ref").is_none(), "{}", event.kind);
         } else {
+            // Everything else — including `ak.strand.tracks.update`, whose
+            // registered contract derives its cell subject from
+            // `payload.target_ref` — single-sources the target there.
             assert!(event.payload.get("target_ref").is_some(), "{}", event.kind);
         }
         assert_registered_payload_valid(event);
+        // Every one of these is a reducer-input kind, so the registry must be
+        // able to derive its writes from `kind + payload` alone.
+        crate::operation::project_registered_cell_writes(event)
+            .unwrap_or_else(|err| panic!("{} projection: {err}", event.kind));
     }
 }
 
@@ -661,15 +697,25 @@ fn canonical_digest_is_stable_across_key_order() {
         "did:web:alice",
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
-    .body(json!({"b": 2, "a": 1}))
+    .body(json!({
+        "track_name": "discussion",
+        "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
+        "content": {"kind": "ak.content.text", "body": "hello"}
+    }))
     .build("node");
     op_a.event_id =
         arkret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-0000000000ff").unwrap();
     op_a.hlc = Some(arkret_sdk::Hlc::new("000000000000-0000-00000000".to_owned()).unwrap());
     op_a.actor_seq = 1;
 
+    // Same members, different source order.
     let mut op_b = op_a.clone();
-    op_b.payload = serde_json::from_value(json!({"a": 1, "b": 2})).unwrap();
+    op_b.payload = serde_json::from_value(json!({
+        "content": {"body": "hello", "kind": "ak.content.text"},
+        "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
+        "track_name": "discussion"
+    }))
+    .unwrap();
 
     assert_eq!(
         op_a.canonical_digest().unwrap(),
@@ -685,7 +731,11 @@ fn sign_ed25519_attaches_typed_proof() {
         "did:web:alice",
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
-    .body(json!({"body": "hi"}))
+    .body(json!({
+        "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
+        "track_name": "discussion",
+        "content": {"kind": "ak.content.text", "body": "hi"}
+    }))
     .build("node");
     let signing_key = SigningKey::from_bytes(&[7u8; 32]);
     op.sign_ed25519("did:web:alice", "did:web:alice#k1", &signing_key)
@@ -706,7 +756,11 @@ fn sdk_event_conversion_accepts_unsigned_builder_for_signing() {
         "did:web:alice.example",
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
-    .body(json!({"kind": "ak.content.text", "body": "hi"}))
+    .body(json!({
+        "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
+        "track_name": "discussion",
+        "content": {"kind": "ak.content.text", "body": "hi"}
+    }))
     .build("node");
 
     let sdk_event = op.clone();
@@ -725,7 +779,11 @@ fn sdk_submit_event_conversion_preserves_signed_digest() {
         "did:web:alice.example",
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
-    .body(json!({"kind": "ak.content.text", "body": "hi"}))
+    .body(json!({
+        "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
+        "track_name": "discussion",
+        "content": {"kind": "ak.content.text", "body": "hi"}
+    }))
     .build("node");
     let signing_key = SigningKey::from_bytes(&[7u8; 32]);
     op.sign_ed25519(
@@ -749,7 +807,11 @@ fn require_proof_fails_when_unsigned() {
         "did:web:alice",
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
-    .body(json!({"body": "hi"}))
+    .body(json!({
+        "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
+        "track_name": "discussion",
+        "content": {"kind": "ak.content.text", "body": "hi"}
+    }))
     .build("node");
     op.proofs.clear();
     assert!(op.require_proof().is_err());
@@ -805,8 +867,22 @@ fn invite_helpers_emit_canonical_kinds() {
     assert!(create.payload.get("state").is_none());
     assert!(create.payload.get("x_member_delivery_binding").is_none());
     assert_registered_payload_valid(&create);
-    arkret_sdk::schema::validate_registered_cell_writes(&create)
+    // `validate_registered_cell_writes` also runs the CBA plane check, and
+    // `ak.invite.create` is control-plane: its `seal_basis` is attached by the
+    // submit gate, not by authoring. The authoring-time claim is that the
+    // registry can derive the writes at all.
+    let writes = crate::operation::project_registered_cell_writes(&create)
         .expect("direct invite create must carry both registered FSM writes");
+    assert_eq!(
+        writes
+            .iter()
+            .map(|write| write.cell.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            format!("ak:cell:ak.component.invite.lifecycle.v1:{invite_id}").as_str(),
+            "ak:cell:ak.component.member.state.v1:did:web:bob.example",
+        ]
+    );
 
     let accept = ak_ops::invite_accept(
         "ak:realm:01904100-0000-7000-8000-000000000010",
@@ -819,13 +895,15 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(accept.payload["invite_id"], invite_id);
     assert!(accept.payload.get("state").is_none());
     assert_registered_payload_valid(&accept);
-    arkret_sdk::schema::validate_registered_cell_writes(&accept)
+    let accept_writes = crate::operation::project_registered_cell_writes(&accept)
         .expect("invite accept must atomically advance invite and member FSMs");
+    assert_eq!(accept_writes.len(), 2);
 
     let cancel = ak_ops::invite_cancel(
         "ak:realm:01904100-0000-7000-8000-000000000010",
         "did:web:alice.example",
         invite_id,
+        "revoked",
         Some("expired"),
     )
     .expect("builds")
@@ -833,8 +911,31 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(cancel.kind.as_str(), "ak.invite.cancel");
     assert_eq!(cancel.payload["invite_id"], invite_id);
     assert_eq!(cancel.payload["reason"], "expired");
+    // `target_state` is the signed operand of the lifecycle `transition_to`
+    // projection; without it the cancel has no derivable cell write.
+    assert_eq!(cancel.payload["target_state"], "revoked");
     assert!(cancel.payload.get("state").is_none());
     assert_registered_payload_valid(&cancel);
+    assert_eq!(
+        crate::operation::project_registered_cell_writes(&cancel)
+            .expect("cancel must project its lifecycle write")[0]
+            .cell
+            .as_str(),
+        format!("ak:cell:ak.component.invite.lifecycle.v1:{invite_id}")
+    );
+    // `event-envelope.schema.json` restricts the enum to rejected / revoked on
+    // this kind, so the builder refuses anything else rather than shipping an
+    // Event that would be rejected at admission.
+    assert!(
+        ak_ops::invite_cancel(
+            "ak:realm:01904100-0000-7000-8000-000000000010",
+            "did:web:alice.example",
+            invite_id,
+            "expired",
+            None,
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -906,8 +1007,17 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
     let disc =
         ak_ops::applet_discovery(realm, actor, service_id, json!({"version": 1})).build("node");
     assert_eq!(disc.kind.as_str(), "ak.applet.discovery");
-    assert_eq!(disc.payload["manifest"]["version"], 1);
+    // The manifest is discovery *state* inside `value`; `resource_id` is what
+    // the registry turns into the cell subject.
+    assert_eq!(disc.payload["resource_id"], service_id);
+    assert_eq!(disc.payload["value"]["manifest"]["version"], 1);
     assert_eq!(disc.local_target_ref(), Some(service_id));
+    assert_eq!(
+        crate::operation::direct_registered_cell_writes(&disc).unwrap()[0]
+            .cell
+            .as_str(),
+        format!("ak:cell:ak.component.applet.discovery.v1:{service_id}")
+    );
 
     let err = ak_ops::applet_bridge_error(
         realm,

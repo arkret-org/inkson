@@ -6,7 +6,7 @@
 //! ## Why a cache exists
 //!
 //! The authoritative key lives behind soland's async `keys/query` endpoint, but
-//! the call-signal receive routing (`views::call_signals::route_realm_call_signals`)
+//! the call-signal receive routing (`views::call_signals::route_decrypted_call_signals`)
 //! runs on the *synchronous* sync-apply path with no `.await` seam. This module
 //! bridges that gap with a process-wide cache:
 //!
@@ -539,23 +539,6 @@ pub async fn resolve_device_signing_key_with_http(
     Ok(key)
 }
 
-/// Prime the cache for a batch of `(actor, device)` pairs (e.g. a realm's
-/// members on load / sync). Pairs already covered by a fresh cache entry are
-/// skipped. Best-effort: a per-pair query error is swallowed (left uncached for
-/// retry) so one unreachable device never blocks the rest.
-pub async fn prefetch_device_keys(
-    api: &TransportClient,
-    anchor: &dyn DidAnchor,
-    pairs: &[(String, String)],
-) {
-    for (actor, device) in pairs {
-        if !matches!(cached_device_signing_key(actor, device), CacheLookup::Miss) {
-            continue;
-        }
-        let _ = resolve_device_signing_key(api, anchor, actor, device).await;
-    }
-}
-
 /// Refresh keys for proof-bearing persistent Events even when a short-lived
 /// negative cache entry exists. Federation can make a previously absent
 /// remote authorization available immediately before the Event arrives; a
@@ -665,69 +648,63 @@ pub fn verify_proof_value_for_signer_result(
     .map_err(|error| error.to_string())
 }
 
-/// Maximum accepted age of an ephemeral (call-signal) proof's `created_at`
-/// relative to now. Ephemeral signaling frames are transient, so bounding the
-/// `created_at` window caps how long a captured, already-signed frame can be
-/// replayed onto the routing path. The window is intentionally generous (an
-/// hour) so legitimately delayed or clock-skewed signaling is never dropped —
-/// persistent Events are NOT subject to this gate (they may be legitimately old
-/// during backfill/sync), which is why the check lives here and not in the
-/// shared [`verify_proof_value`].
-const EPHEMERAL_PROOF_MAX_AGE_SECS: i64 = 3600;
-/// Maximum accepted forward clock skew for an ephemeral proof's `created_at`.
-const EPHEMERAL_PROOF_MAX_FUTURE_SKEW_SECS: i64 = 300;
-
-/// Fail-closed freshness check for an ephemeral proof's `created_at`: it MUST be
-/// present, RFC 3339, and within [`EPHEMERAL_PROOF_MAX_AGE_SECS`] in the past /
-/// [`EPHEMERAL_PROOF_MAX_FUTURE_SKEW_SECS`] in the future of `now`.
-fn ephemeral_proof_created_at_fresh(
-    proof_value: &serde_json::Value,
-    now: chrono::DateTime<chrono::Utc>,
-) -> bool {
-    let Some(created_at) = proof_value.get("created_at").and_then(|v| v.as_str()) else {
-        return false;
-    };
-    let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(created_at) else {
-        return false;
-    };
-    let age = now
-        .signed_duration_since(parsed.with_timezone(&chrono::Utc))
-        .num_seconds();
-    (-EPHEMERAL_PROOF_MAX_FUTURE_SKEW_SECS..=EPHEMERAL_PROOF_MAX_AGE_SECS).contains(&age)
-}
-
-/// Verify an ephemeral call-signal envelope's `proof` (single object).
+/// Verify an encrypted `SignalEnvelope`'s device `proof`.
 ///
-/// Decodes the typed envelope, then delegates to the SDK's ephemeral verifier.
-/// Returns `false` (fail-closed) when the envelope carries no `actor_id` or no
-/// `proof`, or when the proof's `created_at` is stale/absent (replay window).
-pub fn verify_ephemeral_envelope_proof(
-    envelope: &serde_json::Value,
+/// The transcript is `ak.signal-proof-v1` over `envelope_digest` plus the
+/// sender binding; it is domain-separated from a durable Event proof. Returns
+/// `false` (fail-closed) when the envelope is malformed, the `created_at`
+/// binding is stale, or the signature does not verify.
+///
+/// This is only the signature half. `signal.md` §1 also requires
+/// `verification_method` to resolve, under the envelope's `seal_ref`, to an
+/// active signing method the sender actor authorized for `sender_device_id` —
+/// a string comparison against the device id fragment is explicitly NOT a
+/// substitute. That check needs accepted state and belongs to the caller.
+pub fn verify_signal_envelope_proof(
+    envelope: &arkret_wire::SignalEnvelope,
     public_key: &PublicKeyMaterial,
 ) -> bool {
-    verify_ephemeral_envelope_proof_at(envelope, public_key, chrono::Utc::now())
+    verify_signal_envelope_proof_at(envelope, public_key, chrono::Utc::now())
 }
 
-/// [`verify_ephemeral_envelope_proof`] with an injectable clock for tests.
-pub fn verify_ephemeral_envelope_proof_at(
-    envelope: &serde_json::Value,
+/// [`verify_signal_envelope_proof`] with an injectable clock for tests.
+pub fn verify_signal_envelope_proof_at(
+    envelope: &arkret_wire::SignalEnvelope,
     public_key: &PublicKeyMaterial,
     now: chrono::DateTime<chrono::Utc>,
 ) -> bool {
-    let proof_value = match envelope.get("proof") {
-        Some(proof) => proof.clone(),
-        None => return false,
-    };
-    // Bound the replay window before signature work.
-    if !ephemeral_proof_created_at_fresh(&proof_value, now) {
+    if envelope.validate_structural().is_err() {
         return false;
     }
-    let Ok(typed_envelope) =
-        serde_json::from_value::<arkret_sdk::EphemeralEnvelope>(envelope.clone())
-    else {
+    // Necessary, not sufficient: the controller of the verification method must
+    // at least be the declared sender. The authorization half (does this method
+    // resolve, under `seal_ref`, to an ACTIVE signing key the sender authorized
+    // for `sender_device_id`) needs accepted state and is the caller's.
+    if verification_method_controller(&envelope.proof.verification_method)
+        != envelope.sender_actor_id.as_str()
+    {
+        return false;
+    }
+    // A Signal is momentary: its own `expires_at` is the replay window, and it
+    // is already bounded by the class TTL ceiling that `validate_structural`
+    // enforces. Nothing older than that is worth a signature check.
+    if envelope.expires_at <= now {
+        return false;
+    }
+    let Ok(expected_digest) = envelope.envelope_digest() else {
         return false;
     };
-    arkret_sdk::signatures::verify_eddsa_detached_jws_ephemeral_proof(&typed_envelope, public_key)
+    if envelope.proof.envelope_digest != expected_digest {
+        return false;
+    }
+    let Ok(binding_bytes) = envelope.proof_binding_bytes() else {
+        return false;
+    };
+    if envelope.proof.alg != "EdDSA" {
+        return false;
+    }
+    arkret_sdk::signatures::proof::Ed25519DetachedJwsVerifier::new()
+        .verify_detached_jws(&envelope.proof.jws, &binding_bytes, public_key)
         .is_ok()
 }
 
@@ -1386,14 +1363,18 @@ mod tests {
     }
 
     #[test]
-    fn persistent_event_proof_ignores_reducer_stamped_projection_context() {
+    fn persistent_event_proof_ignores_projection_stamped_actor_kind() {
         let actor = "did:web:projection-context.example";
         let seed = [77_u8; 32];
         let signer = crate::event_signer::build_ed25519_signer(seed, actor);
         let mut event = arkret_sdk::Event::new(
             "ak.member.state",
-            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001".to_owned())
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(
+                    "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+                )
                 .unwrap(),
+            },
             arkret_sdk::Did::new(actor.to_owned()).unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e".to_owned()).unwrap(),
@@ -1408,14 +1389,26 @@ mod tests {
             .unwrap();
 
         let mut projected = serde_json::to_value(event).unwrap();
-        projected["effective_scope"] = serde_json::json!({
-            "kind": "realm",
-            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001"
-        });
+        // `actor_kind` is projection-stamped and outside the signed transcript,
+        // so it must not disturb verification.
         projected["actor_kind"] = serde_json::json!("human");
         let public_key = public_key_from_directory_value(&test_did_key(77)).unwrap();
 
         assert!(verify_persistent_envelope_proofs(&projected, &public_key));
+
+        // The reducer-stamped `effective_scope` this test was named for is
+        // deleted: v1 signs `scope_ref` on the envelope instead. A projection
+        // that still carries the old member is not a decodable Event, so it
+        // fails closed rather than being ignored as before.
+        let mut with_deleted_field = projected.clone();
+        with_deleted_field["effective_scope"] = serde_json::json!({
+            "kind": "realm",
+            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001"
+        });
+        assert!(!verify_persistent_envelope_proofs(
+            &with_deleted_field,
+            &public_key
+        ));
 
         projected["actor_seq"] = serde_json::json!(2);
         assert!(!verify_persistent_envelope_proofs(&projected, &public_key));

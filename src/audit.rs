@@ -118,9 +118,17 @@ pub fn build_disclosure_policy(realm_id: &str, actor: &str, policy: Value) -> Op
 
 /// Build a `ak.identity.presentation_request` event — request a verifiable
 /// presentation from a connection holder.
+///
+/// `request_id` is the stable presentation correlation subject: the registered
+/// contract derives the `ak.component.identity.presentation.v1` log cell from
+/// it, and the response / disclosure receipt cite the same id. The registered
+/// `identity_presentation_request_state_payload` is closed over
+/// `{request_id, value, state, reason}`, so the product content travels inside
+/// `value` rather than as sibling members.
 pub fn build_presentation_request(
     realm_id: &str,
     actor: &str,
+    request_id: &str,
     target: &str,
     requested_claims: Vec<String>,
 ) -> OperationBuilder {
@@ -129,10 +137,13 @@ pub fn build_presentation_request(
         actor,
         arkret_sdk::events::kinds::EventKind::IdentityPresentationRequest,
     )
-    .target_ref(target)
+    .target_ref(request_id)
     .body(json!({
-        "target": target,
-        "requested_claims": requested_claims,
+        "request_id": request_id,
+        "value": {
+            "target": target,
+            "requested_claims": requested_claims,
+        },
     }))
 }
 
@@ -152,15 +163,20 @@ pub fn build_presentation_response(
     .target_ref(request_id)
     .body(json!({
         "request_id": request_id,
-        "presentation": presentation,
+        "value": {"presentation": presentation},
     }))
 }
 
 /// Build a `ak.identity.disclosure_receipt` event — actor-private record of
 /// what was disclosed and to whom (audit trail for the principal).
+/// `holder_did` is the stable log subject the registered contract derives the
+/// `ak.component.identity.disclosure_receipt.v1` cell from; the closed
+/// `identity_disclosure_receipt_state_payload` carries everything else inside
+/// `value`.
 pub fn build_disclosure_receipt(
     realm_id: &str,
     actor: &str,
+    holder_did: &str,
     request_id: &str,
     counterparty: &str,
     disclosed_claims: Vec<String>,
@@ -172,9 +188,12 @@ pub fn build_disclosure_receipt(
     )
     .target_ref(request_id)
     .body(json!({
-        "request_id": request_id,
-        "counterparty": counterparty,
-        "disclosed_claims": disclosed_claims,
+        "holder_did": holder_did,
+        "value": {
+            "request_id": request_id,
+            "counterparty": counterparty,
+            "disclosed_claims": disclosed_claims,
+        },
     }))
 }
 
@@ -228,31 +247,54 @@ mod tests {
         assert!(op.payload.get("source_event_id").is_none());
     }
 
+    /// The closed `identity_presentation_request_state_payload` keeps only
+    /// `request_id` at the top level; the requested claims are product content
+    /// inside `value`, and `request_id` is what the registered contract turns
+    /// into the log cell subject.
     #[test]
-    fn presentation_request_carries_claim_list() {
+    fn presentation_request_carries_claim_list_under_the_correlation_subject() {
         let op = build_presentation_request(
             "ak:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
+            "ak:event:0196419b-0000-7000-8000-0000000000d1",
             "did:web:bob",
             vec!["display_name".into(), "avatar".into()],
         )
         .build("node");
         assert_eq!(op.kind, "ak.identity.presentation_request");
-        assert_eq!(op.payload["requested_claims"][0], "display_name");
+        assert_eq!(
+            op.payload["request_id"],
+            "ak:event:0196419b-0000-7000-8000-0000000000d1"
+        );
+        assert_eq!(op.payload["value"]["requested_claims"][0], "display_name");
+        let writes = crate::operation::direct_registered_cell_writes(&op).unwrap();
+        assert_eq!(
+            writes[0].cell.as_str(),
+            "ak:cell:ak.component.identity.presentation.v1:ak:event:0196419b-0000-7000-8000-0000000000d1"
+        );
     }
 
+    /// The receipt's log subject is the holder DID, not the request id: one
+    /// holder accumulates an append-only disclosure history across requests.
     #[test]
-    fn disclosure_receipt_records_counterparty() {
+    fn disclosure_receipt_records_counterparty_under_the_holder_subject() {
         let op = build_disclosure_receipt(
             "ak:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
-            "ak:event:req",
+            "did:web:alice",
+            "ak:event:0196419b-0000-7000-8000-0000000000d1",
             "did:web:bob",
             vec!["email".into()],
         )
         .build("node");
         assert_eq!(op.kind, "ak.identity.disclosure_receipt");
-        assert_eq!(op.payload["counterparty"], "did:web:bob");
+        assert_eq!(op.payload["holder_did"], "did:web:alice");
+        assert_eq!(op.payload["value"]["counterparty"], "did:web:bob");
+        let writes = crate::operation::direct_registered_cell_writes(&op).unwrap();
+        assert_eq!(
+            writes[0].cell.as_str(),
+            "ak:cell:ak.component.identity.disclosure_receipt.v1:did:web:alice"
+        );
     }
 
     #[test]

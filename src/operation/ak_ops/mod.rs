@@ -159,15 +159,22 @@ pub(super) fn strand_object_patch_payload_value(
     object_patch_payload_value(strand_id, patch)
 }
 
+/// `ak.strand.tracks.update` body.
+///
+/// The registered contract derives the `ak.component.strand.tracks.v1` cell
+/// subject from `payload.target_ref` and applies `payload.patch`, so this is
+/// the `object_patch_payload` shape, not the SDK
+/// `StrandTracksUpdatePayload`'s `{strand_id, patch}` — a `strand_id`-keyed
+/// body has no derivable cell write and would be rejected at admission.
 pub(super) fn strand_tracks_update_payload_value(
     strand_id: &str,
     patch: arkret_sdk::Patch,
 ) -> anyhow::Result<Value> {
-    arkret_sdk::StrandTracksUpdatePayload::with_patch(strand_id_value(strand_id)?, patch)
-        .and_then(|payload| payload.to_value())
-        .map_err(|err| {
-            anyhow::anyhow!("invalid ak.strand.tracks.update payload for {strand_id}: {err}")
-        })
+    // Validate the id even though the wire member is `target_ref`: an
+    // `object_ref` that is not a canonical Strand id would still fail closed at
+    // the receiver, and failing here names the actual problem.
+    let strand_id = strand_id_value(strand_id)?;
+    object_patch_payload_value(strand_id.as_str(), patch)
 }
 
 pub(super) fn strand_watch_level_value(
@@ -278,26 +285,61 @@ pub(super) fn object_lifecycle_payload_value(target_ref: &str) -> anyhow::Result
         .map_err(|err| anyhow::anyhow!("invalid object_lifecycle_payload for {target_ref}: {err}"))
 }
 
-/// Build the canonical `relation_create_payload` body (flat
-/// `{relation_id, kind, from_ref, to_ref}` form) via the SDK strong type.
+/// Build the canonical `relation_create_payload` body via the SDK strong type.
+///
+/// `relation_create_payload` is a `oneOf` over two branches: the object branch
+/// `{relation}` and the flat branch `{relation_id, kind, from_ref, to_ref}`.
+/// Only the object branch is authored here, because the registered
+/// `ak.relation.create` contract projects
+/// `set value = {"field": "payload.relation"}` — a flat-branch Event is
+/// schema-valid but has no derivable cell write, so a receiver could not apply
+/// it. The `cell_subject` coalesce still reads either branch.
 pub(super) fn relation_create_payload_value(
+    realm_id: &str,
+    actor: &str,
     relation_id: &str,
     kind: &str,
     from_ref: &str,
     to_ref: &str,
+    scope_circle_id: Option<&str>,
 ) -> anyhow::Result<Value> {
-    arkret_sdk::RelationCreatePayload::new(
-        relation_id,
-        kind,
-        from_ref.to_owned(),
-        to_ref.to_owned(),
-    )
-    .to_value()
-    .map_err(|err| {
-        anyhow::anyhow!(
-            "invalid relation_create_payload ({relation_id} {kind} {from_ref}->{to_ref}): {err}"
-        )
-    })
+    let relation = arkret_sdk::Relation {
+        schema: arkret_wire::RELATION_SCHEMA.to_owned(),
+        id: arkret_sdk::RelationId::new(relation_id.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid relation id {relation_id:?}: {err}"))?,
+        realm_id: arkret_sdk::RealmId::new(trim_realm_id(realm_id))
+            .map_err(|err| anyhow::anyhow!("invalid relation realm_id {realm_id:?}: {err}"))?,
+        scope_circle_id: scope_circle_id
+            .map(|circle_id| {
+                arkret_sdk::CircleId::new(circle_id.to_owned()).map_err(|err| {
+                    anyhow::anyhow!("invalid relation scope_circle_id {circle_id:?}: {err}")
+                })
+            })
+            .transpose()?,
+        // `effective_scope` on a Relation is the object's own scope member and
+        // survives v1; it is not the deleted Event envelope field.
+        effective_scope: None,
+        relation_kind: serde_json::from_value(Value::String(kind.to_owned()))
+            .map_err(|err| anyhow::anyhow!("invalid relation_kind {kind:?}: {err}"))?,
+        from_ref: from_ref.to_owned(),
+        to_ref: to_ref.to_owned(),
+        rank: None,
+        fields: std::collections::BTreeMap::new(),
+        state: Some(arkret_sdk::RelationState::Active),
+        state_changed_at: None,
+        created_by: arkret_sdk::Did::new(actor.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid relation created_by {actor:?}: {err}"))?,
+        created_at: crate::clock::now_utc(),
+        updated_by: None,
+        updated_at: None,
+    };
+    Ok(serde_json::json!({
+        "relation": serde_json::to_value(&relation).map_err(|err| {
+            anyhow::anyhow!(
+                "invalid relation_create_payload ({relation_id} {kind} {from_ref}->{to_ref}): {err}"
+            )
+        })?
+    }))
 }
 
 pub(super) fn patch_from_value(patch: Value) -> anyhow::Result<arkret_sdk::Patch> {

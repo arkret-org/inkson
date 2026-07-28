@@ -1,6 +1,3 @@
-use serde_json::Value;
-
-use crate::ephemeral::{attach_broadcast_ephemeral_proof, build_call_signal_envelope_v1};
 use crate::event_submit::EventSubmitter;
 use crate::models::{MediaIceConfigOutcome, MediaIceConfigRequestBody, SubmitEventResult};
 
@@ -34,30 +31,6 @@ impl<'a> MediaEndpoints<'a> {
             .await
             .map_err(anyhow::Error::from)
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub async fn submit_call_signal_v1(
-    submitter: &EventSubmitter,
-    realm_id: &str,
-    actor_id: &str,
-    device_id: &str,
-    call_id: &str,
-    signal_kind: &str,
-    seq: u64,
-    data: Value,
-) -> anyhow::Result<arkret_sdk::EphemeralSubmitOutcome> {
-    let mut envelope = build_call_signal_envelope_v1(
-        realm_id,
-        actor_id,
-        device_id,
-        call_id,
-        signal_kind,
-        seq,
-        data,
-    )?;
-    attach_broadcast_ephemeral_proof(&mut envelope)?;
-    submitter.submit_ephemeral_envelope(&envelope).await
 }
 
 pub async fn submit_call_recording_start(

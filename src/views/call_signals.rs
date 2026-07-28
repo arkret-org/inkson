@@ -1,17 +1,17 @@
 //! App-level call-signaling hub — the receive side of `ak.call.signal`.
 //!
-//! soland delivers inbound call signaling inline on each Realm sync body as
-//! canonical `body.ephemeral.events[]` envelopes. Each item is the full signed
-//! `{kind, realm_id, actor_id, device_id, sent_at, expires_at,
-//!   payload:{call_id, signal_kind, seq, data}, proof}` shape submitted by the
-//! sender side (`submit_call_signal_v1`).
+//! v1 removed the plaintext ephemeral bucket from Realm sync. Inbound call
+//! signalling arrives on the Signal rail (`GET /_arkret/self/signal/subscribe`)
+//! as encrypted `SignalEnvelope`s whose outer header exposes only the scope and
+//! `signal_class`; `call_id`, `signal_kind` and the sender sequence exist only
+//! after decryption.
 //!
-//! This module owns the cross-component plumbing that turns those envelopes
+//! This module owns the cross-component plumbing that turns decrypted signals
 //! into FSM/transport drive signals:
 //!   * [`CallSignalHub`] is `provide_context`-ed once at the app root.
-//!   * The sync apply paths (`app.rs` full boot sync + `sync_engine.rs` incremental sync) call
-//!     [`route_realm_call_signals`] for every realm body, which dedups, sets `incoming_call` on a
-//!     fresh `invite`, and queues every other signal type into the per-call inbox.
+//!   * The Signal receive path calls [`route_decrypted_call_signals`], which dedups, sets
+//!     `incoming_call` on a fresh `invite`, and queues every other signal type into the per-call
+//!     inbox.
 //!   * `CallPanel` (`views/call.rs`) pulls the hub via `use_context`, drains its `active_call_id`
 //!     inbox in an effect, and applies each item to the `MediaTransport` / call FSM.
 
@@ -39,7 +39,7 @@ pub struct IncomingCallInfo {
 /// A non-invite signal queued for the active `CallPanel` to apply. Carries
 /// the decoded routing fields plus the raw `payload.data` object so the panel
 /// can read SDP / candidate / mute fields with the exact shape the sender
-/// side wrote (`submit_call_signal_v1` / `relay_local_signals`).
+/// side wrote (`signal::SignalPayload::CallSignal` / `relay_local_signals`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct CallSignalInboxItem {
     pub realm_id: String,
@@ -157,61 +157,35 @@ pub struct DecodedCallSignal {
     pub sender_device: String,
     pub video: bool,
     pub data: Value,
-    /// The full signed envelope `Value` (kind / realm_id / actor_id /
-    /// device_id / sent_at / expires_at / payload / proof). Retained so the
-    /// receive path can verify the ephemeral `proof` (`webrtc-signaling.md`
-    /// §5.1) against the sender's directory verify key before any UI side
-    /// effect. `Null` only in unit-test constructors that bypass decoding.
-    pub envelope: Value,
+    /// The encrypted envelope this body was decrypted from, retained so the
+    /// receive path can verify the device `proof` against the sender's
+    /// directory verify key before any UI side effect. `None` only in unit-test
+    /// constructors that bypass the rail.
+    pub envelope: Option<Box<arkret_wire::SignalEnvelope>>,
 }
 
-/// Decode the canonical `EphemeralEnvelope[]` carried by one Realm sync entry.
+/// Decode one already-decrypted call Signal.
 ///
-/// Receiver-side proof verification (spec §5 — the receiver MUST verify the
-/// envelope's `proof`) is intentionally not performed in this structural
-/// decoder. [`route_realm_call_signals`] is the only public receive entrypoint
-/// used by sync apply; it verifies each decoded envelope fail-closed before any
-/// ring or inbox side effect.
-pub fn decode_realm_call_signals(realm_id: &str, body: &Value) -> Vec<DecodedCallSignal> {
-    crate::models::realm_ephemeral_events(body)
-        .iter()
-        .filter_map(|envelope| decode_call_signal_envelope(realm_id, envelope))
-        .collect()
-}
-
-/// Decode a single signed `ak.call.signal` envelope. Returns `None` when the
-/// envelope is structurally invalid (wrong kind, missing
-/// `payload.{call_id,signal_kind,seq}` / `actor_id`).
-fn decode_call_signal_envelope(realm_id: &str, envelope: &Value) -> Option<DecodedCallSignal> {
-    let kind = envelope.get("kind").and_then(Value::as_str)?;
-    if kind != "ak.call.signal" {
-        return None;
-    }
-    let sender_actor = envelope.get("actor_id").and_then(Value::as_str)?.to_owned();
-    let sender_device = envelope
-        .get("device_id")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    let payload = envelope.get("payload")?;
-    let call_id = payload.get("call_id").and_then(Value::as_str)?.to_owned();
-    let signal_kind = payload
-        .get("signal_kind")
-        .and_then(Value::as_str)?
-        .to_owned();
-    let seq = payload.get("seq").and_then(Value::as_u64).unwrap_or(0);
-    let data = payload.get("data").cloned().unwrap_or(Value::Null);
-    let video = invite_wants_video(&data);
+/// Returns `None` when the plaintext is not an `ak.call.signal` body or omits
+/// a required field. Proof verification is intentionally not performed here;
+/// [`route_decrypted_call_signals`] is the receive entrypoint and verifies
+/// fail-closed before any ring or inbox side effect.
+pub fn decode_call_signal(
+    envelope: &arkret_wire::SignalEnvelope,
+    plaintext: &Value,
+) -> Option<DecodedCallSignal> {
+    let body = crate::webrtc::CallSignalBody::from_plaintext(plaintext).ok()?;
+    let data = body.data.clone().unwrap_or(Value::Null);
     Some(DecodedCallSignal {
-        realm_id: realm_id.to_owned(),
-        call_id,
-        signal_kind,
-        seq,
-        sender_actor,
-        sender_device,
-        video,
+        realm_id: envelope.realm_id.as_str().to_owned(),
+        call_id: body.call_id,
+        signal_kind: body.signal_kind,
+        seq: body.sequence,
+        sender_actor: envelope.sender_actor_id.as_str().to_owned(),
+        sender_device: envelope.sender_device_id.as_str().to_owned(),
+        video: invite_wants_video(&data),
         data,
-        envelope: envelope.clone(),
+        envelope: Some(Box::new(envelope.clone())),
     })
 }
 
@@ -244,15 +218,17 @@ fn invite_wants_video(data: &Value) -> bool {
 ///
 /// When `api` is `None` (no authenticated client yet) a cache Miss cannot be
 /// resolved and the signal is dropped fail-closed.
-pub async fn route_realm_call_signals(
+pub async fn route_decrypted_call_signals(
     hub: &mut CallSignalHub,
-    realm_id: &str,
-    body: &Value,
+    signals: &[(arkret_wire::SignalEnvelope, Value)],
     local_actor: &str,
     api: Option<&TransportClient>,
     did_anchor: &dyn crate::identity::device_directory::DidAnchor,
 ) {
-    for decoded in decode_realm_call_signals(realm_id, body) {
+    for (envelope, plaintext) in signals {
+        let Some(decoded) = decode_call_signal(envelope, plaintext) else {
+            continue;
+        };
         // Self-echo: skip verification + routing entirely (we trust our own
         // outbound frames and never resolve our own key here).
         if !local_actor.is_empty() && decoded.sender_actor == local_actor {
@@ -268,14 +244,14 @@ pub async fn route_realm_call_signals(
                 {
                     route_verified_decoded_signal(hub, decoded, local_actor);
                 }
-                // verify failed → fail-closed drop.
+                // verify failed -> fail-closed drop.
             }
             crate::identity::device_directory::CacheLookup::NegativeHit => {
-                // Revoked / absent / no key → fail-closed drop.
+                // Revoked / absent / no key -> fail-closed drop.
             }
             crate::identity::device_directory::CacheLookup::Miss => {
                 let Some(api) = api else {
-                    // No client to resolve with → fail-closed drop.
+                    // No client to resolve with -> fail-closed drop.
                     continue;
                 };
                 if let Ok(Some(key)) =
@@ -303,7 +279,9 @@ fn verify_decoded_proof(
     decoded: &DecodedCallSignal,
     key: &arkret_sdk::signatures::PublicKeyMaterial,
 ) -> bool {
-    crate::identity::device_directory::verify_ephemeral_envelope_proof(&decoded.envelope, key)
+    decoded.envelope.as_ref().is_some_and(|envelope| {
+        crate::identity::device_directory::verify_signal_envelope_proof(envelope, key)
+    })
 }
 
 async fn moderator_signal_authorized(
@@ -627,87 +605,115 @@ mod tests {
 
     use super::*;
 
-    fn envelope(
+    const TEST_REALM: &str = "ak:realm:0196419b-0000-7000-8000-000000000000";
+    const TEST_CALL: &str = "ak:call:01964200-0000-7000-8000-000000000001";
+    const PEER_ACTOR: &str = "did:web:bob.example";
+    const PEER_DEVICE: &str = "ak:device:01904100-0000-7000-8000-b0b0b0000001";
+
+    /// A real signed `SignalEnvelope` and the plaintext body a receiver gets
+    /// out of it.
+    ///
+    /// The pre-v1 fixture hand-wrote a plaintext wire envelope with
+    /// `payload.{call_id,signal_kind,seq}` on the header. That object no longer
+    /// exists: `signal.md` §6 makes exactly those fields ciphertext, so the
+    /// fixture now goes through the production sender path and the assertions
+    /// move to the decrypted body.
+    fn sealed_call_signal(
+        seed: u8,
         actor: &str,
         device: &str,
-        call: &str,
         signal_kind: &str,
         seq: u64,
         data: Value,
-    ) -> Value {
-        json!({
-            "kind": "ak.call.signal",
-            "realm_id": "ak:realm:r",
-            "actor_id": actor,
-            "device_id": device,
-            "sent_at": 1,
-            "expires_at": 2,
-            "payload": {
-                "call_id": call,
-                "signal_kind": signal_kind,
-                "seq": seq,
-                "data": data,
+    ) -> (arkret_wire::SignalEnvelope, Value) {
+        let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
+            [seed; 32], actor, device,
+        ));
+        let _guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
+        crate::signal::test_support::sealed_signal(
+            &crate::signal::SignalPayload::CallSignal {
+                call_id: arkret_sdk::CallId::new(TEST_CALL).unwrap(),
+                signal_kind: signal_kind.to_owned(),
+                data: Some(data),
             },
-            "proof": { "sig": "deadbeef" },
-        })
-    }
-
-    fn body_with(envelopes: Vec<Value>) -> Value {
-        json!({
-            "ephemeral": { "events": envelopes }
-        })
+            &arkret_sdk::RealmId::new(TEST_REALM).unwrap(),
+            &arkret_sdk::Did::new(actor).unwrap(),
+            &arkret_sdk::DeviceId::new(device).unwrap(),
+            crate::signal::SignalSequence(seq),
+        )
+        .expect("fixture signal must seal")
     }
 
     #[test]
     fn decodes_invite_and_video_flag() {
-        let body = body_with(vec![envelope(
-            "did:web:bob",
-            "dev-b",
-            "ak:call:1",
+        let (envelope, plaintext) = sealed_call_signal(
+            41,
+            PEER_ACTOR,
+            PEER_DEVICE,
             "invite",
             1,
             json!({
                 "media": { "audio": true, "video": true, "screen": false },
                 "participants": ["did:web:alice"]
             }),
-        )]);
-        let decoded = decode_realm_call_signals("ak:realm:r", &body);
-        assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].signal_kind, "invite");
-        assert_eq!(decoded[0].call_id, "ak:call:1");
-        assert_eq!(decoded[0].sender_actor, "did:web:bob");
-        assert_eq!(decoded[0].sender_device, "dev-b");
-        assert!(decoded[0].video);
+        );
+
+        let decoded = decode_call_signal(&envelope, &plaintext).expect("decodes");
+
+        assert_eq!(decoded.signal_kind, "invite");
+        assert_eq!(decoded.call_id, TEST_CALL);
+        assert_eq!(decoded.sender_actor, PEER_ACTOR);
+        assert_eq!(decoded.sender_device, PEER_DEVICE);
+        assert_eq!(decoded.realm_id, TEST_REALM);
+        assert!(decoded.video);
     }
 
+    /// Restates `decodes_canonical_ephemeral_container`: there is no
+    /// `body.ephemeral.events[]` container in v1 sync, so the surviving
+    /// assertion is that the dedupe sequence survives the plaintext boundary.
     #[test]
-    fn decodes_canonical_ephemeral_container() {
-        let envelope = envelope(
-            "did:web:bob",
-            "dev-b",
-            "ak:call:1",
+    fn decoded_signal_carries_the_in_ciphertext_sequence() {
+        let (envelope, plaintext) = sealed_call_signal(
+            42,
+            PEER_ACTOR,
+            PEER_DEVICE,
             "candidate",
             2,
             json!({"candidate": "candidate:1"}),
         );
-        let body = json!({"ephemeral": {"events": [envelope]}});
 
-        let decoded = decode_realm_call_signals("ak:realm:r", &body);
+        let decoded = decode_call_signal(&envelope, &plaintext).expect("decodes");
 
-        assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].signal_kind, "candidate");
-        assert_eq!(decoded[0].seq, 2);
+        assert_eq!(decoded.signal_kind, "candidate");
+        assert_eq!(decoded.seq, 2);
+        // The outer header exposes only the scope and the class — never the
+        // call id or the signal kind (`signal.md` §6).
+        let header = serde_json::to_value(&envelope).unwrap();
+        assert!(header.get("call_id").is_none());
+        assert!(header.get("signal_kind").is_none());
+        assert_eq!(header["signal_class"], "session");
     }
 
     #[test]
-    fn decode_skips_non_call_ephemeral_and_bad_kind() {
-        let body = json!({
-            "ephemeral": { "events": [
-                { "kind": "ak.typing", "actor_id": "x" },
-                { "kind": "ak.not.call", "actor_id": "y", "payload": {} }
-            ] }
-        });
-        assert!(decode_realm_call_signals("ak:realm:r", &body).is_empty());
+    fn decode_skips_plaintext_that_is_not_a_call_signal() {
+        let (envelope, _) = sealed_call_signal(43, PEER_ACTOR, PEER_DEVICE, "invite", 1, json!({}));
+
+        // A typing body decrypted out of the same rail is not a call signal.
+        assert!(decode_call_signal(&envelope, &json!({"kind": "ak.typing"})).is_none());
+        // Neither is a call body whose signal_kind is outside the canonical
+        // enum, even though the envelope authenticated.
+        assert!(
+            decode_call_signal(
+                &envelope,
+                &json!({
+                    "kind": "ak.call.signal",
+                    "call_id": TEST_CALL,
+                    "signal_kind": "sdp_offer",
+                    "payload_sequence": 1
+                })
+            )
+            .is_none()
+        );
     }
 
     fn decoded(signal_kind: &str, seq: u64, data: Value) -> DecodedCallSignal {
@@ -720,7 +726,7 @@ mod tests {
             sender_device: "dev-b".into(),
             video: invite_wants_video(&data),
             data,
-            envelope: Value::Null,
+            envelope: None,
         }
     }
 
@@ -866,61 +872,7 @@ mod tests {
         );
     }
 
-    // ── Receiver proof verification (device-identity Phase 2) ──────────
-
-    /// Build a real signed `ak.call.signal` envelope the same way the sender
-    /// (`ephemeral::attach_broadcast_ephemeral_proof`) does: a detached JWS
-    /// over the SDK's authoritative proof binding object (which folds in the
-    /// `context = "ak.ephemeral-proof-v1"` domain tag), with `event_digest` =
-    /// canonical hash of the envelope without `proof`.
-    fn signed_call_signal_envelope(
-        signer: &crate::event_signer::InksonEventSigner,
-        actor_id: &str,
-        device_id: &str,
-    ) -> Value {
-        let mut envelope = json!({
-            "kind": "ak.call.signal",
-            "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
-            "actor_id": actor_id,
-            "device_id": device_id,
-            "sent_at": "2026-06-16T00:00:00.000Z",
-            "expires_at": "2026-06-16T00:01:00.000Z",
-            "payload": {
-                "call_id": "ak:call:01964200-0000-7000-8000-000000000001",
-                "signal_kind": "invite",
-                "seq": 1,
-                "data": { "media": { "audio": true, "video": true, "screen": false } }
-            }
-        });
-        let canonical_bytes = crate::canonical::canonical_json_bytes(&envelope).unwrap();
-        let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
-        // Binding transcript via the SDK's authoritative
-        // `canonical_ephemeral_binding_bytes`
-        // (context tag folded in), matching the production ephemeral sender and the
-        // receiver-side verifier — so this test can never drift from the wire binding.
-        // Use a fresh `created_at` so the receiver-side ephemeral replay-window gate
-        // (`verify_ephemeral_envelope_proof`) accepts these fixtures.
-        let created_at = chrono::Utc::now();
-        let did = arkret_sdk::Did::new(actor_id.to_owned()).unwrap();
-        let mut proof = arkret_sdk::Proof {
-            kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
-            alg: signer.algorithm().to_owned(),
-            verification_method: format!("{actor_id}#{device_id}"),
-            event_digest: arkret_sdk::Hash::new(event_digest).unwrap(),
-            created_at,
-            domain: None,
-            audience: None,
-            proof_purpose: None,
-            jws: String::new(),
-        };
-        let binding_bytes = proof.canonical_ephemeral_binding_bytes(&did).unwrap();
-        proof.jws = signer.detached_jws_over(&binding_bytes).unwrap();
-        envelope
-            .as_object_mut()
-            .unwrap()
-            .insert("proof".to_owned(), serde_json::to_value(&proof).unwrap());
-        envelope
-    }
+    // -- Receiver proof verification (device-identity Phase 2) ----------
 
     fn pubkey_material(seed: u8) -> arkret_sdk::signatures::PublicKeyMaterial {
         let sk = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
@@ -933,21 +885,20 @@ mod tests {
         let actor = "did:web:caller.example";
         let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
         let seed = 71u8;
-        let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
-        let envelope = signed_call_signal_envelope(&signer, actor, device);
+        let (envelope, plaintext) = sealed_call_signal(
+            seed,
+            actor,
+            device,
+            "invite",
+            1,
+            json!({ "media": { "audio": true, "video": true, "screen": false } }),
+        );
         let key = pubkey_material(seed);
 
-        // Verifies under the correct key.
-        let typed: arkret_sdk::EphemeralEnvelope =
-            serde_json::from_value(envelope.clone()).expect("fixture is a typed envelope");
-        arkret_sdk::signatures::verify_eddsa_detached_jws_ephemeral_proof(&typed, &key)
-            .expect("fixture uses the ephemeral proof transcript");
-        assert!(
-            crate::identity::device_directory::verify_ephemeral_envelope_proof(&envelope, &key)
-        );
+        assert!(crate::identity::device_directory::verify_signal_envelope_proof(&envelope, &key));
 
         // And a verified invite produces a Ring decision.
-        let decoded = decode_call_signal_envelope("ak:realm:r", &envelope).expect("decodes");
+        let decoded = decode_call_signal(&envelope, &plaintext).expect("decodes");
         assert!(verify_decoded_proof(&decoded, &key));
         match decide_route(&decoded, "did:web:me", false, &RouteState::default()) {
             RouteDecision::Ring(info) => assert_eq!(info.peer_actor, actor),
@@ -959,14 +910,11 @@ mod tests {
     fn call_proof_fails_closed_under_wrong_key() {
         let actor = "did:web:caller.example";
         let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
-        let signer = crate::event_signer::build_ed25519_signer([71u8; 32], actor);
-        let envelope = signed_call_signal_envelope(&signer, actor, device);
+        let (envelope, _) = sealed_call_signal(71, actor, device, "invite", 1, json!({}));
         // A different device's key MUST NOT verify the proof.
         let wrong_key = pubkey_material(99);
         assert!(
-            !crate::identity::device_directory::verify_ephemeral_envelope_proof(
-                &envelope, &wrong_key
-            )
+            !crate::identity::device_directory::verify_signal_envelope_proof(&envelope, &wrong_key)
         );
     }
 
@@ -975,61 +923,69 @@ mod tests {
         let actor = "did:web:caller.example";
         let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
         let seed = 71u8;
-        let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
-        let mut envelope = signed_call_signal_envelope(&signer, actor, device);
-        // Flip the JWS tail → signature no longer matches the binding object.
+        let (mut envelope, _) = sealed_call_signal(seed, actor, device, "invite", 1, json!({}));
+        // Flip the JWS tail -> signature no longer matches the binding object.
         // Replace the last base64url char with a guaranteed-different one (a bare
         // "always set to 'A'" is a no-op when the signature already ends in 'A',
-        // which flaked once the binding — and thus the signature — changed).
-        let jws = envelope["proof"]["jws"].as_str().unwrap().to_owned();
+        // which flaked once the binding -- and thus the signature -- changed).
+        let jws = envelope.proof.jws.clone();
         let last = jws.chars().next_back().unwrap();
         let replacement = if last == 'A' { 'B' } else { 'A' };
-        let tampered = format!("{}{}", &jws[..jws.len() - 1], replacement);
-        envelope["proof"]["jws"] = json!(tampered);
+        envelope.proof.jws = format!("{}{}", &jws[..jws.len() - 1], replacement);
         let key = pubkey_material(seed);
-        assert!(
-            !crate::identity::device_directory::verify_ephemeral_envelope_proof(&envelope, &key)
-        );
+        assert!(!crate::identity::device_directory::verify_signal_envelope_proof(&envelope, &key));
     }
 
+    /// Restates the S-4 replay test.
+    ///
+    /// The deleted rail had its own out-of-band freshness window
+    /// (`EPHEMERAL_PROOF_MAX_AGE_SECS`) because a plaintext envelope carried no
+    /// binding lifetime. A Signal does: `signal.md` §2 caps
+    /// `expires_at - sent_at` at the class ceiling and `proof.created_at` MUST
+    /// equal `sent_at`, so the envelope's own expiry IS the replay window and
+    /// the assertion is now against a spec-normative bound rather than a
+    /// client-chosen hour.
     #[test]
-    fn call_proof_fails_closed_when_replayed_outside_freshness_window() {
-        // S-4: a valid, correctly-signed call-signal proof that is presented
-        // long after its `created_at` MUST be dropped by the ephemeral replay
-        // window, even though the signature still verifies.
+    fn call_proof_fails_closed_when_replayed_after_the_envelope_expires() {
         let actor = "did:web:caller.example";
         let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
         let seed = 71u8;
-        let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
-        let envelope = signed_call_signal_envelope(&signer, actor, device);
+        let (envelope, _) = sealed_call_signal(seed, actor, device, "invite", 1, json!({}));
         let key = pubkey_material(seed);
-        // Fresh at signing time.
-        assert!(
-            crate::identity::device_directory::verify_ephemeral_envelope_proof(&envelope, &key)
+        // `invite` is a setup-class signal: 120 seconds, and no longer.
+        assert_eq!(
+            (envelope.expires_at - envelope.sent_at).num_seconds(),
+            120,
+            "setup class TTL ceiling"
         );
-        // Replayed two hours later → rejected by the freshness gate.
-        let later = chrono::Utc::now() + chrono::Duration::hours(2);
         assert!(
-            !crate::identity::device_directory::verify_ephemeral_envelope_proof_at(
-                &envelope, &key, later
+            crate::identity::device_directory::verify_signal_envelope_proof_at(
+                &envelope,
+                &key,
+                envelope.sent_at + chrono::Duration::seconds(1)
+            )
+        );
+        // Replayed one second past expiry -> rejected before any signature work.
+        assert!(
+            !crate::identity::device_directory::verify_signal_envelope_proof_at(
+                &envelope,
+                &key,
+                envelope.expires_at + chrono::Duration::seconds(1)
             )
         );
     }
 
     #[test]
     fn call_proof_fails_closed_when_controller_differs_from_actor() {
-        // verification_method controller != envelope actor_id → reject, even if
+        // verification_method controller != sender_actor_id -> reject, even if
         // the signature itself is valid for the embedded method.
         let actor = "did:web:caller.example";
         let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
         let seed = 71u8;
-        let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
-        let mut envelope = signed_call_signal_envelope(&signer, actor, device);
-        envelope["proof"]["verification_method"] = json!("did:web:someone-else.example#device");
+        let (mut envelope, _) = sealed_call_signal(seed, actor, device, "invite", 1, json!({}));
+        envelope.proof.verification_method = "did:web:someone-else.example#device".to_owned();
         let key = pubkey_material(seed);
-        assert!(
-            !crate::identity::device_directory::verify_ephemeral_envelope_proof(&envelope, &key)
-        );
+        assert!(!crate::identity::device_directory::verify_signal_envelope_proof(&envelope, &key));
     }
 
     #[test]

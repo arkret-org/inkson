@@ -24,7 +24,6 @@ pub(super) fn SyncEffects(
     } = SessionContext::get();
     let runtime_services = use_context::<crate::runtime::services::RuntimeServices>();
     let did_cache = use_context::<Signal<arkret_sdk::identity::DidResolutionCache>>();
-    let call_signal_hub = use_context::<crate::views::call_signals::CallSignalHub>();
 
     let sync_effects = runtime_services.effects.clone();
     let sync_session = runtime_services.session.clone();
@@ -57,7 +56,6 @@ pub(super) fn SyncEffects(
             selected_realm_id: runtime_adapter::value_reader(selected_realm_id),
             realm_live_epoch: runtime_adapter::value_cell(realm_live_epoch),
             did_cache: runtime_adapter::value_cell(did_cache),
-            call_signal_hub,
             session: sync_session.clone(),
             client_runtime: sync_client_runtime.clone(),
             effect: effect.clone(),

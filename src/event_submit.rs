@@ -25,14 +25,8 @@ use tokio::sync::OnceCell;
 
 #[cfg(test)]
 use crate::api_error::TransportClientError;
-use crate::ephemeral::{
-    attach_broadcast_ephemeral_proof, build_presence_envelope, build_receipt_read_envelope,
-    build_typing_envelope, ensure_events_submit_accepted,
-    validate_outgoing_registered_event_payload,
-};
-use crate::models::{
-    BackfillView, PresenceResult, ReceiptResult, ServiceDescribe, SubmitEventResult, TypingResult,
-};
+use crate::ephemeral::{ensure_events_submit_accepted, validate_outgoing_registered_event_payload};
+use crate::models::{BackfillView, ServiceDescribe, SubmitEventResult};
 use crate::operation::uuid_v7;
 
 /// Authenticated durable/ephemeral event submission engine extracted from the
@@ -55,7 +49,7 @@ pub(crate) struct EventIntent {
     pub(crate) event_id: arkret_sdk::EventId,
     pub(crate) kind: arkret_sdk::events::EventKind,
     pub(crate) realm_id: arkret_sdk::RealmId,
-    pub(crate) effective_scope: Option<arkret_sdk::EffectiveScope>,
+    pub(crate) scope_ref: arkret_sdk::ScopeRef,
     pub(crate) actor_id: arkret_sdk::Did,
     pub(crate) executed_by: Option<arkret_sdk::Did>,
     pub(crate) authorization_ref: Option<String>,
@@ -66,8 +60,6 @@ pub(crate) struct EventIntent {
     pub(crate) refs: Vec<arkret_sdk::EventRef>,
     pub(crate) causal_refs: Vec<arkret_sdk::Hash>,
     pub(crate) preconditions: Vec<arkret_sdk::Precondition>,
-    pub(crate) effects: Vec<arkret_sdk::Effect>,
-    pub(crate) conflict_keys_digest: Option<arkret_sdk::Hash>,
     pub(crate) seal_basis: Option<arkret_sdk::SealBasis>,
     pub(crate) payload: BTreeMap<String, Value>,
     pub(crate) redacts: Option<arkret_sdk::EventId>,
@@ -81,7 +73,7 @@ impl EventIntent {
             event_id,
             kind,
             realm_id,
-            effective_scope,
+            scope_ref,
             actor_id,
             executed_by,
             authorization_ref,
@@ -95,9 +87,7 @@ impl EventIntent {
             refs,
             causal_refs,
             preconditions,
-            effects,
             seal_ref: _,
-            conflict_keys_digest,
             auth_context: _,
             seal_basis,
             payload,
@@ -114,7 +104,7 @@ impl EventIntent {
             event_id,
             kind,
             realm_id,
-            effective_scope,
+            scope_ref,
             actor_id,
             executed_by,
             authorization_ref,
@@ -125,8 +115,6 @@ impl EventIntent {
             refs,
             causal_refs,
             preconditions,
-            effects,
-            conflict_keys_digest,
             seal_basis,
             payload,
             redacts,
@@ -140,7 +128,7 @@ impl EventIntent {
             event_id: self.event_id.clone(),
             kind: self.kind.clone(),
             realm_id: self.realm_id.clone(),
-            effective_scope: self.effective_scope.clone(),
+            scope_ref: self.scope_ref.clone(),
             actor_id: self.actor_id.clone(),
             executed_by: self.executed_by.clone(),
             authorization_ref: self.authorization_ref.clone(),
@@ -154,9 +142,7 @@ impl EventIntent {
             refs: self.refs.clone(),
             causal_refs: self.causal_refs.clone(),
             preconditions: self.preconditions.clone(),
-            effects: self.effects.clone(),
             seal_ref: None,
-            conflict_keys_digest: self.conflict_keys_digest.clone(),
             auth_context: None,
             seal_basis: self.seal_basis.clone(),
             payload: self.payload.clone(),
@@ -541,15 +527,26 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                             ))
                         })?;
                     let duplicate = result.status == "duplicate";
+                    // The receipts travel with the outcome, not in the untyped
+                    // blob: they are the proof the Event landed inside its
+                    // authorization-lease window, and the queue refuses an
+                    // acceptance that carries none.
+                    let ingress_receipts = result.ingress_receipts.clone();
                     self.results
                         .accepted
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
                         .insert(item.transaction_id, result);
                     if duplicate {
-                        Ok(OutboundSubmitOutcome::Duplicate { event_id })
+                        Ok(OutboundSubmitOutcome::Duplicate {
+                            event_id,
+                            ingress_receipts,
+                        })
                     } else {
-                        Ok(OutboundSubmitOutcome::Accepted { event_id })
+                        Ok(OutboundSubmitOutcome::Accepted {
+                            event_id,
+                            ingress_receipts,
+                        })
                     }
                 }
                 Err(error) => {
@@ -762,6 +759,9 @@ fn completed_outbound_result(item: &garth::SendQueueItem) -> SubmitEventResult {
         status: "accepted".to_owned(),
         cursor: String::new(),
         receipt: Value::Null,
+        // The queue is the durable holder of the receipts once an item is
+        // Sent; replay them from the item rather than dropping the evidence.
+        ingress_receipts: item.ingress_receipts.clone(),
     }
 }
 
@@ -1083,76 +1083,60 @@ impl EventSubmitter {
     /// Stream the canonical `/_arkret/self/events/subscribe` NDJSON response and
     /// invoke `on_frame` once per parsed frame.
     ///
-    /// Round R2/R3 (T02) — typing notifications are wire-scope-ephemeral
-    /// (`ak.typing`). They MUST strand through the canonical
-    /// `ak.self.ephemeral.command.send` operation (`POST /_arkret/self/ephemeral`), never
-    /// through `ak.self.events.command.submit` or a deployment-local typing shim.
-    pub async fn send_typing(
+    /// Send one Signal (`ak.self.signal.command.send`).
+    ///
+    /// Typing, presence, read receipts and call signalling all travel this one
+    /// encrypted rail: the product payload type and its target are AEAD
+    /// plaintext inside `encrypted_payload`, and the outer header exposes only
+    /// `scope_ref` plus the three-value `signal_class`. There is no plaintext
+    /// branch, so a scope whose Signal key material cannot be derived fails
+    /// closed here instead of degrading (`signal.md` §3).
+    /// [`send_signal`](Self::send_signal) with the Realm-scope header assembled
+    /// from the current accepted Seal view.
+    ///
+    /// `seal_ref` is what the receiver resolves the sending device's live-send
+    /// eligibility under, so it is fetched rather than remembered.
+    pub async fn send_scope_signal(
         &self,
-        realm_id: &str,
-        actor: &str,
+        scope_ref: arkret_sdk::ScopeRef,
+        actor_id: &str,
         device_id: &str,
-        strand_id: &str,
-        typing: bool,
-    ) -> anyhow::Result<TypingResult> {
-        let mut envelope = build_typing_envelope(realm_id, actor, device_id, strand_id, typing)?;
-        attach_broadcast_ephemeral_proof(&mut envelope)?;
-        let response = self.submit_ephemeral_envelope(&envelope).await?;
-        Ok(TypingResult {
-            ok: response.accepted,
-        })
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+        sequence: crate::signal::SignalSequence,
+    ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
+        let seal_ref = self.current_seal_for(scope_ref.realm_id().as_str()).await?;
+        let header = crate::signal::SignalHeader::new(
+            scope_ref,
+            arkret_sdk::Did::new(actor_id)
+                .map_err(|error| anyhow::anyhow!("invalid signal actor_id: {error}"))?,
+            arkret_sdk::DeviceId::new(device_id)
+                .map_err(|error| anyhow::anyhow!("invalid signal device_id: {error}"))?,
+            arkret_sdk::SealId::new(seal_ref)
+                .map_err(|error| anyhow::anyhow!("invalid signal seal_ref: {error}"))?,
+            payload.signal_class(),
+            crate::clock::now_utc(),
+        );
+        self.send_signal(header, material, payload, sequence).await
     }
 
-    pub async fn send_presence(
+    pub async fn send_signal(
         &self,
-        realm_id: &str,
-        actor: &str,
-        device_id: &str,
-        state: &str,
-        status_message: Option<&str>,
-        last_active_at: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> anyhow::Result<PresenceResult> {
-        let mut envelope = build_presence_envelope(
-            realm_id,
-            actor,
-            device_id,
-            state,
-            status_message,
-            last_active_at,
+        header: crate::signal::SignalHeader,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+        sequence: crate::signal::SignalSequence,
+    ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
+        let plaintext = payload.to_plaintext(
+            &header.sender_actor_id,
+            header.scope_ref.realm_id(),
+            sequence,
+            header.sent_at,
         )?;
-        attach_broadcast_ephemeral_proof(&mut envelope)?;
-        let response = self.submit_ephemeral_envelope(&envelope).await?;
-        Ok(PresenceResult {
-            ok: response.accepted,
-        })
-    }
-
-    /// Round R2/R3 (T02) — read receipts (`ak.receipt.read`) are wire-scope-
-    /// ephemeral. They MUST strand through `ak.self.ephemeral.command.send`; the
-    /// `ak.self.events.command.submit` durable path and deployment-local `/receipts`
-    /// shims MUST NOT be used.
-    pub async fn send_receipt(
-        &self,
-        realm_id: &str,
-        actor: &str,
-        device_id: &str,
-        strand_id: &str,
-        event_id: &str,
-        receipt_kind: &str,
-    ) -> anyhow::Result<ReceiptResult> {
-        // Only `ak.receipt.read` is an ephemeral receipt; other receipt
-        // types (delivered/franking/etc.) stay on their own paths. Guard
-        // the kind here so we don't accidentally widen the contract.
-        if receipt_kind != "ak.receipt.read" {
-            anyhow::bail!("unsupported ephemeral receipt_kind {receipt_kind:?}");
-        }
-        let mut envelope =
-            build_receipt_read_envelope(realm_id, actor, device_id, strand_id, event_id)?;
-        attach_broadcast_ephemeral_proof(&mut envelope)?;
-        let response = self.submit_ephemeral_envelope(&envelope).await?;
-        Ok(ReceiptResult {
-            ok: response.accepted,
-        })
+        let encrypted_payload =
+            crate::signal::encrypt_signal_payload(&header, material, &plaintext)?;
+        let envelope = crate::signal::seal_signal_envelope(header, encrypted_payload)?;
+        self.submit_signal_envelope(&envelope).await
     }
 
     /// `GET /_arkret/self/events/frontier?realm_id=` — Realm Seal view
@@ -1287,10 +1271,11 @@ impl EventSubmitter {
         idempotency_key: String,
     ) -> anyhow::Result<SubmitEventResult> {
         validate_signed_sdk_event_for_submit(signed)?;
+        let submission = crate::authorization_lease::initial_submission(signed)?;
         let response: arkret_sdk::EventsSubmitOutcome = self
             .http
             .events_submit_with_options(
-                signed,
+                &submission,
                 &arkret_sdk::http_client::ClientRequestOptions::new()
                     .request_id(idempotency_key.clone())
                     .idempotency_key(idempotency_key),
@@ -1311,11 +1296,19 @@ impl EventSubmitter {
         if arkret_sdk::canonical::canonical_json_bytes(signed)? != canonical_body_bytes {
             anyhow::bail!("persisted signed Event bytes do not match the queued Event");
         }
+        // What is persisted is the signed Event, which is what the receiver
+        // dedupes on. The publication wrapper is rebuilt on every attempt: the
+        // lease is not part of the Event and it can expire while the write is
+        // queued, and an Event first published after its lease expired is
+        // permanently rejected (`offline-publication.md` §2). Replaying a
+        // stale wrapper would hide that from the user instead of prompting a
+        // re-authorization.
+        let submission = crate::authorization_lease::initial_submission(signed)?;
         let response: arkret_sdk::EventsSubmitOutcome = self
             .http
-            .post_canonical_bytes_with_options(
+            .post_with_options(
                 "/_arkret/self/events",
-                canonical_body_bytes,
+                &submission,
                 &arkret_sdk::http_client::ClientRequestOptions::new()
                     .request_id(idempotency_key)
                     .idempotency_key(idempotency_key),
@@ -1792,12 +1785,14 @@ impl EventSubmitter {
         if event.seal_ref.is_some()
             || event.auth_context.is_some()
             || event.seal_basis.is_some()
-            || event.effects.is_empty()
             || cba_exempt_reducer_kind(&event.kind)
         {
             return Ok(());
         }
-        match cba_effect_plane_for_event(event)? {
+        let Some(plane) = cba_effect_plane_for_event(event)? else {
+            return Ok(());
+        };
+        match plane {
             CbaEffectPlane::Control => {
                 let seal_view = self
                     .events_frontier_realm_seal_view(event.realm_id.as_str())
@@ -1807,7 +1802,7 @@ impl EventSubmitter {
             CbaEffectPlane::Data => {
                 if !event.preconditions.is_empty() {
                     anyhow::bail!(
-                        "DataEvent {} carries preconditions; CBA DataEvents must use effects + seal_ref + auth_context only",
+                        "DataEvent {} carries preconditions; CBA DataEvents must use seal_ref + auth_context only",
                         event.event_id
                     );
                 }
@@ -1871,9 +1866,13 @@ impl EventSubmitter {
         for sdk_event in sdk_events {
             validate_signed_sdk_event_for_submit(sdk_event)?;
         }
+        // `idempotency_key` is not a body field in v1: it travels only in the
+        // `Idempotency-Key` header.
         let body = arkret_sdk::EventsSubmitBatchRequestBody {
-            events: sdk_events.to_vec(),
-            idempotency_key: idempotency_key.map(ToOwned::to_owned),
+            events: sdk_events
+                .iter()
+                .map(crate::authorization_lease::initial_submission)
+                .collect::<anyhow::Result<Vec<_>>>()?,
         };
         let idem = idempotency_key
             .map(ToOwned::to_owned)
@@ -1928,11 +1927,19 @@ impl EventSubmitter {
             && events.get(1).is_some_and(|event| {
                 event.kind.as_str() == arkret_sdk::events::EventKind::DEVICE_AUTHORIZE
             })
-            && arkret_bootstrap::validate_self_principal_bootstrap_unit(&events[0], &events[1])
-                .is_ok();
+            && arkret_bootstrap::validate_self_principal_bootstrap_unit(
+                &events[0],
+                &events[1],
+                &crate::operation::cell_write_projector,
+            )
+            .is_ok();
         let is_managed_agent_pcr_create = first_is_realm_create
             && events.len() == 1
-            && arkret_bootstrap::materialize_managed_agent_pcr_control(&events).is_ok();
+            && arkret_bootstrap::materialize_managed_agent_pcr_control(
+                &events,
+                &crate::operation::cell_write_projector,
+            )
+            .is_ok();
         let is_ordinary_realm_bootstrap =
             if first_is_realm_create && !is_identity_anchor_unit && !is_managed_agent_pcr_create {
                 arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(&events)
@@ -2002,41 +2009,26 @@ impl EventSubmitter {
         Ok(events)
     }
 
-    /// Round R2/R3 (T02) — POST a broadcast ephemeral signal to the
-    /// canonical ephemeral channel (`POST /_arkret/self/ephemeral`) instead of the
-    /// durable `/_arkret/self/events` endpoint. The envelope MUST validate against
-    /// `ak.schema.ephemeral_envelope.v1` (kind in
-    /// {`ak.call.signal`, `ak.presence`, `ak.typing`, `ak.receipt.read`}, and
-    /// `expires_at - sent_at <= 300_000` ms). The four broadcast ephemeral
-    /// signal kinds MUST NOT travel via `ak.self.events.command.submit`; this method is
-    /// the single approved network path.
-    pub async fn submit_ephemeral_envelope(
+    /// `POST /_arkret/self/signal` — `ak.self.signal.command.send`.
+    ///
+    /// The Signal Extension rail is encrypted-only: the exact signal kind and
+    /// target live inside `encrypted_payload` and are never on the outer
+    /// header, so this method can only re-check the structural envelope. The
+    /// plaintext ephemeral rail (`POST /_arkret/self/ephemeral`) does not exist
+    /// in v1 and a Signal MUST NOT travel via `ak.self.events.command.submit`.
+    pub async fn submit_signal_envelope(
         &self,
-        envelope: &arkret_sdk::EphemeralEnvelope,
-    ) -> anyhow::Result<arkret_sdk::EphemeralSubmitOutcome> {
-        // Defensive re-validation. The constructor already enforced this,
-        // but a caller could mutate a raw envelope in place between build
-        // and submit. Fail fast with the canonical error code rather than
-        // shipping a non-conformant payload to the wire.
-        if !arkret_sdk::events::is_ephemeral_kind(&envelope.kind) {
-            anyhow::bail!(
-                "ephemeral submit: kind {:?} is not in the broadcast ephemeral allowlist",
-                envelope.kind
-            );
-        }
-        let window_ms = envelope
-            .expires_at
-            .signed_duration_since(envelope.sent_at)
-            .num_milliseconds();
-        if window_ms <= 0
-            || (window_ms as u64) > arkret_sdk::EPHEMERAL_ABSOLUTE_HARD_CEILING_MS as u64
-        {
-            anyhow::bail!(
-                "ephemeral submit: expires_at - sent_at = {window_ms} ms violates 5-minute ceiling"
-            );
-        }
+        envelope: &arkret_wire::SignalEnvelope,
+    ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
+        // Defensive re-validation. The builder already enforced this, but a
+        // caller could mutate a raw envelope in place between build and submit.
+        // `validate_structural` carries the per-class TTL ceilings
+        // (setup 120s / moderation 60s / session 30s) and the AAD binding.
+        envelope
+            .validate_structural()
+            .map_err(|error| anyhow::anyhow!("signal submit rejected locally: {error}"))?;
         self.http
-            .post("/_arkret/self/ephemeral", envelope)
+            .post("/_arkret/self/signal", envelope)
             .await
             .map_err(anyhow::Error::from)
     }
@@ -2208,44 +2200,61 @@ fn cba_exempt_reducer_kind(kind: &arkret_sdk::events::kinds::EventKind) -> bool 
     matches!(kind, arkret_sdk::events::kinds::EventKind::RealmCreate)
 }
 
-fn cba_effect_plane_for_event(event: &arkret_sdk::Event) -> anyhow::Result<CbaEffectPlane> {
-    let mut observed = None;
-    for effect in &event.effects {
-        let cell = arkret_sdk::CellId::from_ref(&effect.cell)
-            .map_err(|error| anyhow::anyhow!("effects[].cell is invalid: {error}"))?;
-        let plane = cba_cell_family_plane(cell.component()).ok_or_else(|| {
+/// CBA plane this Event's registered contract routes it through.
+///
+/// v1 reads the plane from the event-kind registry instead of scanning a
+/// producer-supplied `effects[]` array: the plane is a property of the kind,
+/// and letting a producer imply it by choosing cells was exactly the
+/// reducer-instruction channel v1 removed. `None` means the kind is not a
+/// reducer input and needs no CBA basis at all.
+///
+/// The derived cell families are still cross-checked against the registry's
+/// per-family plane, so a registry row whose kind plane and cell-family plane
+/// disagree fails closed here rather than at the receiver.
+fn cba_effect_plane_for_event(event: &arkret_sdk::Event) -> anyhow::Result<Option<CbaEffectPlane>> {
+    let Some(descriptor) = event.kind.descriptor().filter(|row| row.reducer_input) else {
+        return Ok(None);
+    };
+    let plane = match descriptor.plane {
+        Some("control") => CbaEffectPlane::Control,
+        Some("data") => CbaEffectPlane::Data,
+        other => anyhow::bail!(
+            "reducer-input kind {} declares no known CBA plane ({other:?})",
+            event.kind.as_str()
+        ),
+    };
+    for write in crate::operation::project_registered_cell_writes(event)
+        .map_err(|error| anyhow::anyhow!("cell-write projection failed: {error}"))?
+    {
+        let cell = arkret_sdk::CellId::from_ref(&write.cell)
+            .map_err(|error| anyhow::anyhow!("projected cell is invalid: {error}"))?;
+        let cell_plane = cba_cell_family_plane(cell.component()).ok_or_else(|| {
             anyhow::anyhow!(
-                "effects[].cell references unknown cell family {}",
+                "projected cell references unknown cell family {}",
                 cell.component()
             )
         })?;
-        match observed {
-            Some(existing) if existing != plane => {
-                anyhow::bail!(
-                    "event {} mixes data-plane and control-plane effects",
-                    event.event_id
-                );
-            }
-            Some(_) => {}
-            None => observed = Some(plane),
+        if cell_plane != plane {
+            anyhow::bail!(
+                "event {} projects a {cell_plane:?} cell on the {plane:?} plane",
+                event.event_id
+            );
         }
     }
-    observed.ok_or_else(|| anyhow::anyhow!("event {} has no effects", event.event_id))
+    Ok(Some(plane))
 }
 
+/// The `auth_context` a DataEvent pins alongside `seal_ref`.
+///
+/// It names the signing DID and key epoch the receiver verifies authorization
+/// with **at `seal_ref`** — nothing more. `models/event-and-patch.md` §75 lists
+/// `effects`, `conflict_keys_digest` and producer-selected
+/// `auth_context.capability_refs` together as members that are NOT v1 wire
+/// fields and that a receiver MUST reject with `schema_violation`. Effective
+/// capabilities are derived from the accepted governance basis, so a producer
+/// that listed its own grants would be selecting the authorization it is
+/// supposed to be constrained by.
 fn data_event_auth_context(event: &arkret_sdk::Event) -> anyhow::Result<arkret_sdk::AuthContext> {
-    let Some(authorization_ref) = event.authorization_ref.as_deref() else {
-        anyhow::bail!(
-            "DataEvent {} requires authorization_ref so auth_context.capability_refs can be pinned",
-            event.event_id
-        );
-    };
-    if !authorization_ref.starts_with("ak:grant:") {
-        anyhow::bail!(
-            "DataEvent {} authorization_ref must be a ak:grant:* capability ref for auth_context",
-            event.event_id
-        );
-    }
     let did = event
         .executed_by
         .clone()
@@ -2256,7 +2265,6 @@ fn data_event_auth_context(event: &arkret_sdk::Event) -> anyhow::Result<arkret_s
         key_id,
         key_epoch: 0,
         credential_epoch: None,
-        capability_refs: vec![authorization_ref.to_owned()],
     })
 }
 
@@ -2485,6 +2493,17 @@ mod tests {
                 Vec::new(),
             )
             .unwrap();
+        // An acceptance now has to carry its ingress receipts: they are the
+        // only evidence the Event landed inside its authorization-lease window,
+        // and the queue refuses a `Sent` transition without them.
+        let issued_at = chrono::Utc::now();
+        let lease = crate::authorization_lease::test_support::lease(
+            realm.clone(),
+            actor,
+            "ak.message.create",
+            issued_at,
+            issued_at + chrono::Duration::hours(1),
+        );
         queue
             .mark_sent(
                 &sent_transaction,
@@ -2492,6 +2511,10 @@ mod tests {
                     "ak:event:01904100-0000-7000-8000-000000000099".to_owned(),
                 )
                 .unwrap(),
+                vec![crate::authorization_lease::test_support::receipt(
+                    &lease,
+                    issued_at + chrono::Duration::minutes(1),
+                )],
             )
             .unwrap();
 
@@ -2508,6 +2531,7 @@ mod tests {
             "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
             "kind": "ak.presence",
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
+            "scope_ref": {"kind": "realm", "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001"},
             "actor_id": actor_id,
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00.000Z",
@@ -2532,6 +2556,7 @@ mod tests {
             "event_id": event_id,
             "kind": kind,
             "realm_id": realm_id,
+            "scope_ref": {"kind": "realm", "realm_id": realm_id},
             "actor_id": actor_id,
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00.000Z",
@@ -2778,21 +2803,41 @@ mod tests {
         assert_eq!(event.prev_refs, vec![frontier_event_id]);
     }
 
+    /// The envelope `actor_seq` and a cell-local `ordered_log` `issuer_seq`
+    /// are different sequences. v1 has no producer `effects[]` for the frontier
+    /// stamp to overwrite, so the invariant is now asserted where the value
+    /// actually comes from: the registered projection, which pins
+    /// `ak.realm.create`'s create-log append at `issuer_seq 0` regardless of
+    /// how far the actor chain has advanced.
     #[test]
-    fn apply_actor_frontier_does_not_rebind_cell_local_ordered_log_sequence() {
-        let mut event = sdk_event_without_proof("did:web:alice.example");
-        event.effects = vec![arkret_sdk::Effect {
-            cell: arkret_sdk::CellRef::new(arkret_bootstrap::REALM_CREATE_CELL).unwrap(),
-            op: arkret_sdk::LatticeOp {
-                op_type: arkret_sdk::LatticeOpType::Append,
-                tag: None,
-                value: Some(serde_json::json!("entry")),
-                from: None,
-                to: None,
-                reason: None,
-                issuer_seq: Some(3),
-            },
-        }];
+    fn actor_frontier_stamp_does_not_move_cell_local_ordered_log_sequence() {
+        let mut event = crate::event_builders::build_realm_create_event(
+            "ak:realm:01904100-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "did:web:alice.example",
+            "Frontier",
+            None,
+            "invite_only",
+            "invite",
+            "shared",
+            "plaintext",
+            "standard",
+            "open",
+            "single_did",
+            "sha256",
+            "ak:trust_domain:did.web.example",
+            &[],
+            None,
+            None,
+        )
+        .unwrap();
+        let before = crate::operation::direct_registered_cell_writes(&event).unwrap();
+        let create_log = before
+            .iter()
+            .find(|write| write.cell.as_str() == arkret_bootstrap::REALM_CREATE_CELL)
+            .expect("realm.create projects the create-log append");
+        assert_eq!(create_log.op.issuer_seq, Some(0));
+
         let frontier = arkret_sdk::RealmActorFrontierView::new(
             event.realm_id.clone(),
             event.actor_id.clone(),
@@ -2803,11 +2848,13 @@ mod tests {
             arkret_sdk::canonical::DigestSuite::Sha256,
         )
         .unwrap();
-
         apply_actor_frontier_to_sdk_event(&mut event, &frontier).unwrap();
 
         assert_eq!(event.actor_seq, 8);
-        assert_eq!(event.effects[0].op.issuer_seq, Some(3));
+        assert_eq!(
+            crate::operation::direct_registered_cell_writes(&event).unwrap(),
+            before
+        );
     }
 
     #[test]

@@ -153,17 +153,22 @@ fn calendar_rsvp_operation_carries_the_complete_entry_and_effect() {
             .collect::<Vec<_>>(),
         vec![basis.as_str()]
     );
-    // The builder derives the registered cell effect; the pre-closure client
-    // sent none at all, so the Event never reached its CBA cell.
-    assert_eq!(event.effects.len(), 1);
+    // v1 ships no producer `effects[]`. The receiver derives the write from the
+    // registered `ak.rsvp.set` contract, whose `effect_projection` is
+    // `set value = {"field": "payload.entry"}` over the `mv_register` facet —
+    // so asserting the projection is the successor to the old array, and a
+    // stronger claim: the pre-closure client shipped no effect at all and the
+    // Event never reached its cell.
+    let writes = crate::operation::direct_registered_cell_writes(&event).unwrap();
+    assert_eq!(writes.len(), 1);
     assert!(
-        event.effects[0]
+        writes[0]
             .cell
             .as_str()
             .starts_with("ak:cell:ak.component.calendar.rsvp.v1:")
     );
     assert_eq!(
-        event.effects[0].op.value.as_ref().unwrap(),
+        writes[0].op.value.as_ref().unwrap(),
         &event.payload["entry"]
     );
     assert_registered_payload_valid(&event);

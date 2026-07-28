@@ -67,7 +67,13 @@ fn stamp_invite_join_seal_basis(
     event: &mut arkret_sdk::Event,
     candidate: &RealmJoinCandidate,
 ) -> anyhow::Result<()> {
-    if event.effects.is_empty() || event.seal_basis.is_some() {
+    // Only a reducer-input Event needs a CBA basis at all.
+    if event.seal_basis.is_some()
+        || event
+            .kind
+            .descriptor()
+            .is_none_or(|descriptor| !descriptor.reducer_input)
+    {
         return Ok(());
     }
     if event.seal_ref.is_some() {

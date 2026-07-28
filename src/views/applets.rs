@@ -32,7 +32,7 @@ use arkret_models_integration::{
     AppletActorPolicy, AppletApprovalRequest, AppletBotMembership, AppletGhostActorMode,
     AppletInstallPreviewRequestBody, AppletInstallRequestBody, ScopeGrant,
 };
-use arkret_wire::{AppletRevokeMode, EffectiveScope};
+use arkret_wire::{AppletRevokeMode, ScopeRef};
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::Value;
@@ -58,17 +58,14 @@ pub fn applet_package_from_manifest(kind: &ManifestInputKind) -> Option<arkret_s
 /// only (spec §4b: a single install carries exactly one `effective_scope`, and a
 /// Circle install MUST NOT widen to a Realm-wide grant). soland gates the write
 /// on `ak.realm.admin` over the resolved scope either way.
-pub fn applet_effective_scope(
-    realm_id: &str,
-    circle_id: Option<&str>,
-) -> Result<EffectiveScope, String> {
+pub fn applet_effective_scope(realm_id: &str, circle_id: Option<&str>) -> Result<ScopeRef, String> {
     let realm_id = crate::operation::trim_realm_id(realm_id);
     let realm = arkret_sdk::RealmId::new(realm_id.clone())
         .map_err(|err| format!("invalid Realm id {realm_id:?}: {err:?}"))?;
     match circle_id.map(str::trim).filter(|value| !value.is_empty()) {
-        None => Ok(EffectiveScope::Realm { realm_id: realm }),
+        None => Ok(ScopeRef::Realm { realm_id: realm }),
         Some(circle) => arkret_sdk::CircleId::new(circle.to_owned())
-            .map(|circle_id| EffectiveScope::Circle {
+            .map(|circle_id| ScopeRef::Circle {
                 realm_id: realm,
                 circle_id,
             })
@@ -870,7 +867,7 @@ mod tests {
             applet_effective_scope("ak:realm:01904100-0000-7000-8000-000000000010", None).unwrap();
         assert!(matches!(
             scope,
-            arkret_wire::EffectiveScope::Realm { ref realm_id }
+            arkret_wire::ScopeRef::Realm { ref realm_id }
                 if realm_id.as_str() == "ak:realm:01904100-0000-7000-8000-000000000010"
         ));
     }
@@ -884,7 +881,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             scope,
-            arkret_wire::EffectiveScope::Circle { ref realm_id, ref circle_id }
+            arkret_wire::ScopeRef::Circle { ref realm_id, ref circle_id }
                 if realm_id.as_str() == "ak:realm:01904100-0000-7000-8000-000000000010"
                     && circle_id.as_str() == "ak:circle:01904100-0000-7000-8000-0000000000c1"
         ));
@@ -892,7 +889,7 @@ mod tests {
         assert!(matches!(
             applet_effective_scope("ak:realm:01904100-0000-7000-8000-000000000010", Some("  "))
                 .unwrap(),
-            arkret_wire::EffectiveScope::Realm { .. }
+            arkret_wire::ScopeRef::Realm { .. }
         ));
     }
 

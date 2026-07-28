@@ -113,16 +113,20 @@ fn card_assignment_mutations_create_and_tombstone_relation_events() {
         .expect("create mutation");
     assert_eq!(create.actor_id(), "did:web:alice.example");
     assert_eq!(create.operation().kind.as_str(), "ak.relation.create");
-    assert_eq!(create.operation().payload["kind"], json!("assigned_to"));
-    assert_eq!(create.operation().payload["from_ref"], json!(current.id));
+    // `relation_create_payload` has two branches; only the object branch is
+    // projectable, because the registered contract sets
+    // `value = {"field": "payload.relation"}` into the relation cell.
+    let relation = &create.operation().payload["relation"];
+    assert_eq!(relation["relation_kind"], json!("assigned_to"));
+    assert_eq!(relation["from_ref"], json!(current.id));
+    assert_eq!(relation["to_ref"], json!("did:web:alice.example"));
+    assert_eq!(relation["id"], json!(create.relation_id()));
+    let writes = crate::operation::direct_registered_cell_writes(create.operation()).unwrap();
     assert_eq!(
-        create.operation().payload["to_ref"],
-        json!("did:web:alice.example")
+        writes[0].cell.as_str(),
+        format!("ak:cell:ak.component.relation.v1:{}", create.relation_id())
     );
-    assert_eq!(
-        create.operation().payload["relation_id"],
-        json!(create.relation_id())
-    );
+    assert_eq!(writes[0].op.value.as_ref(), Some(relation));
     assert_eq!(
         create.operation().local_target_ref(),
         Some(create.relation_id())

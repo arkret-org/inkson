@@ -123,11 +123,6 @@ pub struct SyncEngineContext {
     /// related actor DIDs when `ak.cross_signing.reset` / `ak.device.revoke`
     /// arrive, and `clear` on logout / trust-bundle reset.
     pub did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
-    /// Receive side of `ak.call.signal`. The engine routes inbound
-    /// call-signal envelopes from each incremental sync body into this hub
-    /// (dedup → incoming ring / per-call inbox). `Copy`, zero-cost to hold.
-    /// See `crate::views::call_signals`.
-    pub call_signal_hub: crate::views::call_signals::CallSignalHub,
     pub session: crate::runtime::session::SessionCoordinator,
     pub client_runtime: crate::client_core::InksonClientRuntime,
     pub effect: crate::runtime::effects::EffectHandle,
@@ -369,7 +364,6 @@ fn account_updates_are_empty(updates: &arkret_sdk::SyncUpdates) -> bool {
         && !updates.to_device_lost
         && updates.device_lists.changed.is_empty()
         && updates.device_lists.left.is_empty()
-        && updates.presence.is_empty()
         && updates.account_data.is_empty()
         && updates.notifications.is_empty()
         && updates.agent_signer_evidence.is_empty()
@@ -681,7 +675,6 @@ impl AccountPostCommitHook<crate::client_core::InksonAccountTransport> for Inkso
             }
         }
 
-        route_inbound_call_signals(&api, &response, &self.ctx).await;
         let agent_evidence_changed =
             crate::identity::agent_signer_evidence::prefetch_from_realm_projections(
                 http,
@@ -1503,51 +1496,6 @@ async fn run_idle_self_update_pass(
     }
 }
 
-/// Async receiver pass for inbound `ak.call.signal`: for each realm body,
-/// verify every call-signal envelope's `proof` against the sender's
-/// authoritative directory verify key (`device_directory`) and route only
-/// verified signals into the call-signal hub (fail-closed). Runs after the
-/// synchronous `apply_response` because directory resolution needs `keys/query`.
-async fn route_inbound_call_signals(
-    api: &TransportClient,
-    response: &AccountSyncStep,
-    ctx: &SyncEngineContext,
-) {
-    let account_did = ctx.account_did.clone();
-    let mut hub = ctx.call_signal_hub;
-    let did_cache = ctx.did_cache.clone();
-
-    // Tier-2 (device-lifecycle.md §8.3): the call-signal receiver verifies the
-    // sender device key's full cross-signing chain, which needs the sender's
-    // DID document. Build a resolver-backed anchor from a snapshot of the
-    // session DID cache so the SAME authority-grade resolver / cache that login
-    // and trust UI use also governs device-key trust. The anchor back-fills
-    // resolved documents into its private cache copy; write it back afterwards
-    // so subsequent iterations reuse it.
-    let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
-        crate::identity::did_resolver::DeploymentProfile::PersonalNode,
-        did_cache.get(),
-    );
-
-    for (id, body) in &response.realm_projections {
-        // Retained in `views::call_signals` on purpose: this router operates
-        // on `&mut CallSignalHub`, which owns Dioxus `Signal` state and is
-        // deliberately kept in the view layer (YGN-ARCH-01). Relocating the
-        // router without the hub would gain nothing, so both stay together.
-        crate::views::call_signals::route_realm_call_signals(
-            &mut hub,
-            id,
-            body,
-            &account_did,
-            Some(api),
-            &anchor,
-        )
-        .await;
-    }
-
-    did_cache.set(anchor.into_cache());
-}
-
 /// Prime the same device-directory cache used by the synchronous chat proof
 /// verifier for proof-bearing persistent events in the current sync response.
 /// Chat projection cannot await `keys/query` inline, so `apply_response` first
@@ -1970,7 +1918,6 @@ pub fn apply_response(
 
             synced_theme = apply_account_data(store, response, &account_did);
             apply_notification_projection(store, response, is_full_sync, invite_notifications);
-            store.save_presence_projection(&response.updates.presence);
             store.ingest_to_device_messages(&response.updates.to_device);
             if cursor_can_advance {
                 store.save_sync_cursor(response.cursor.clone());
@@ -1988,15 +1935,6 @@ pub fn apply_response(
 
     // Receive side of `ak.call.signal`: route inbound call-signal envelopes
     // from each realm body into the hub (dedup → incoming ring / per-call
-    // inbox). Done after the `store` write guard is dropped so the hub Signal
-    // writes don't nest inside the store borrow.
-    //
-    // NB: receiver proof verification + directory resolve for inbound
-    // `ak.call.signal` is async (needs `keys/query`); it cannot run here
-    // because `apply_response` is synchronous and holds no authenticated
-    // client. The async routing pass lives in `InksonAccountPostCommit`
-    // (`route_inbound_call_signals`) after this durable commit returns.
-
     // Realm tree nodes are derived in the app projection adapter from the
     // canonical local-state projection; the engine only computes a snapshot
     // for status and selected-Realm bookkeeping.
@@ -3017,7 +2955,6 @@ mod tests {
                     changed: Vec::new(),
                     left: Vec::new(),
                 },
-                presence: Vec::new(),
                 account_data: Vec::new(),
                 notifications: Vec::new(),
                 agent_signer_evidence: Vec::new(),
@@ -3041,17 +2978,27 @@ mod tests {
         assert!(!should_bootstrap_invites(false));
     }
 
+    /// Restates `circle_scan_ignores_ephemeral_only_realm_updates`.
+    ///
+    /// Its premise died with the plaintext rail: a Realm sync entry can no
+    /// longer carry an `ephemeral` bucket at all — the SDK type rejects the
+    /// member outright. What survives is the rule the test was protecting: a
+    /// sync entry with no durable projection must not trigger a Circle scan.
     #[test]
-    fn circle_scan_ignores_ephemeral_only_realm_updates() {
+    fn circle_scan_ignores_realm_updates_without_a_durable_projection() {
         let realm_id = sdk_realm_id();
-        let ephemeral_only = arkret_sdk::RealmUpdate {
-            realm_id: realm_id.clone(),
-            entry: serde_json::from_value(json!({
+        assert!(
+            serde_json::from_value::<arkret_sdk::RealmSyncEntry>(json!({
                 "ephemeral": {"events": []}
             }))
-            .expect("ephemeral-only Realm update"),
+            .is_err(),
+            "the deleted plaintext ephemeral bucket must not decode on a Realm sync entry"
+        );
+        let projection_empty = arkret_sdk::RealmUpdate {
+            realm_id: realm_id.clone(),
+            entry: serde_json::from_value(json!({})).expect("empty Realm update"),
         };
-        assert!(!realm_update_has_durable_projection(&ephemeral_only));
+        assert!(!realm_update_has_durable_projection(&projection_empty));
 
         let durable = arkret_sdk::RealmUpdate {
             realm_id,
@@ -3276,7 +3223,9 @@ mod tests {
     fn sdk_event(kind: &str, payload: Value) -> arkret_sdk::Event {
         arkret_sdk::Event::new(
             kind,
-            sdk_realm_id(),
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: sdk_realm_id(),
+            },
             sdk_actor_id(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),

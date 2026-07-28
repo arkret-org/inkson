@@ -1,9 +1,6 @@
 use serde_json::json;
 
-use crate::ephemeral::{
-    attach_broadcast_ephemeral_proof, build_presence_envelope, build_receipt_read_envelope,
-    build_typing_envelope, validate_outgoing_registered_event_payload,
-};
+use crate::ephemeral::validate_outgoing_registered_event_payload;
 use crate::event_builders::{
     build_device_message_envelope, build_member_state_transition_event,
     build_realm_bootstrap_events, build_realm_create_event, build_realm_state_event,
@@ -82,180 +79,13 @@ fn lifecycle_projection_response_accepts_spec_keys() {
     );
 }
 
-#[test]
-fn typing_envelope_uses_spec_ephemeral_shape() {
-    let envelope = build_typing_envelope(
-        "ak:realm:0196419b-0000-7000-8000-000000000000",
-        "did:web:alice.example",
-        "ak:device:01904100-0000-7000-8000-a11ce0000001",
-        "ak:strand:01964200-0000-7000-8000-000000000001",
-        true,
-    )
-    .unwrap();
-
-    assert_eq!(envelope.kind, "ak.typing");
-    assert_eq!(
-        envelope.realm_id.to_string(),
-        "ak:realm:0196419b-0000-7000-8000-000000000000"
-    );
-    assert_eq!(
-        envelope.payload["strand_id"],
-        "ak:strand:01964200-0000-7000-8000-000000000001"
-    );
-    assert!(envelope.payload.get("scope_id").is_none());
-    assert_eq!(
-        envelope.payload["realm_id"],
-        "ak:realm:0196419b-0000-7000-8000-000000000000"
-    );
-    assert_eq!(envelope.payload["actor_id"], "did:web:alice.example");
-    assert_eq!(envelope.payload["track_name"], "discussion");
-    assert_eq!(envelope.payload["typing"], true);
-    assert!(
-        !serde_json::to_value(&envelope)
-            .unwrap()
-            .as_object()
-            .unwrap()
-            .contains_key("schema")
-    );
-}
-
-#[test]
-fn read_receipt_envelope_uses_actor_not_event_as_sender() {
-    let envelope = build_receipt_read_envelope(
-        "ak:realm:0196419b-0000-7000-8000-000000000000",
-        "did:web:alice.example",
-        "ak:device:01904100-0000-7000-8000-a11ce0000001",
-        "ak:strand:01964200-0000-7000-8000-000000000001",
-        "ak:event:01904100-0000-7000-8000-4a4116cba4e8",
-    )
-    .unwrap();
-
-    assert_eq!(envelope.kind, "ak.receipt.read");
-    assert_eq!(envelope.actor_id.to_string(), "did:web:alice.example");
-    assert_eq!(
-        envelope.realm_id.to_string(),
-        "ak:realm:0196419b-0000-7000-8000-000000000000"
-    );
-    assert_eq!(envelope.payload["actor_id"], "did:web:alice.example");
-    assert_eq!(
-        envelope.payload["read_scope"],
-        json!({
-            "kind": "strand",
-            "object_ref": "ak:strand:01964200-0000-7000-8000-000000000001",
-            "track_name": "discussion"
-        })
-    );
-    assert_eq!(
-        envelope.payload["event_id"],
-        "ak:event:01904100-0000-7000-8000-4a4116cba4e8"
-    );
-    assert_eq!(envelope.payload["schema"], "ak.schema.read_receipt.v1");
-    assert!(
-        !serde_json::to_value(&envelope)
-            .unwrap()
-            .as_object()
-            .unwrap()
-            .contains_key("schema")
-    );
-}
-
-#[test]
-fn presence_envelope_buckets_last_active_at_to_hour() {
-    let last_active_at = chrono::DateTime::parse_from_rfc3339("2026-06-22T10:34:56.789Z")
-        .unwrap()
-        .with_timezone(&chrono::Utc);
-    let envelope = build_presence_envelope(
-        "ak:realm:0196419b-0000-7000-8000-000000000000",
-        "did:web:alice.example",
-        "ak:device:01904100-0000-7000-8000-a11ce0000001",
-        "online",
-        Some("On vacation until May 5"),
-        Some(last_active_at),
-    )
-    .unwrap();
-
-    assert_eq!(envelope.kind, "ak.presence");
-    assert_eq!(
-        envelope.payload["realm_id"],
-        "ak:realm:0196419b-0000-7000-8000-000000000000"
-    );
-    assert_eq!(envelope.payload["actor_id"], "did:web:alice.example");
-    assert_eq!(envelope.payload["state"], "online");
-    assert_eq!(
-        envelope.payload["status_message"],
-        "On vacation until May 5"
-    );
-    assert_eq!(
-        envelope.payload["last_active_at"],
-        "2026-06-22T10:00:00.000Z/PT1H"
-    );
-    assert_eq!(envelope.payload["ttl_ms"], 30000);
-}
-
-#[test]
-fn presence_proof_round_trips_through_ephemeral_sdk_verifier() {
-    use std::sync::Arc;
-
-    use arkret_sdk::signatures::PublicKeyMaterial;
-    use ed25519_dalek::SigningKey;
-
-    use crate::event_signer::{ActiveSignerTestGuard, build_ed25519_device_signer};
-
-    let seed = [15u8; 32];
-    let actor_id = "did:web:alice.example";
-    let device_id = "ak:device:01904100-0000-7000-8000-a11ce0000001";
-    let signer = Arc::new(build_ed25519_device_signer(seed, actor_id, device_id));
-    let _guard = ActiveSignerTestGuard::replace(Some(signer));
-    let mut envelope = build_presence_envelope(
-        "ak:realm:0196419b-0000-7000-8000-000000000000",
-        actor_id,
-        device_id,
-        "online",
-        None,
-        None,
-    )
-    .unwrap();
-
-    attach_broadcast_ephemeral_proof(&mut envelope).unwrap();
-
-    let public_key = PublicKeyMaterial::Ed25519Raw {
-        bytes: SigningKey::from_bytes(&seed)
-            .verifying_key()
-            .to_bytes()
-            .to_vec(),
-    };
-    arkret_sdk::signatures::verify_eddsa_detached_jws_ephemeral_proof(&envelope, &public_key)
-        .expect("presence proof must use the ephemeral binding context");
-}
-
-#[test]
-fn presence_envelope_rejects_non_canonical_state_and_bad_status_message() {
-    // Matrix-legacy `unavailable` is not a closed-set v1 state.
-    assert!(
-        build_presence_envelope(
-            "ak:realm:0196419b-0000-7000-8000-000000000000",
-            "did:web:alice.example",
-            "ak:device:01904100-0000-7000-8000-a11ce0000001",
-            "unavailable",
-            None,
-            None,
-        )
-        .is_err()
-    );
-    // status_message over 256 code points fails closed at build time.
-    let long = "字".repeat(257);
-    assert!(
-        build_presence_envelope(
-            "ak:realm:0196419b-0000-7000-8000-000000000000",
-            "did:web:alice.example",
-            "ak:device:01904100-0000-7000-8000-a11ce0000001",
-            "dnd",
-            Some(long.as_str()),
-            None,
-        )
-        .is_err()
-    );
-}
+// The five plaintext `EphemeralEnvelope` builder tests that lived here
+// (`ak.typing` / `ak.receipt.read` / `ak.presence` shape, presence
+// `last_active_at` bucketing, presence state + status_message rejection, and
+// the ephemeral proof round-trip) tested a wire object v1 deleted. Their
+// substance moved to `crate::signal`: those bodies are now AEAD plaintext, and
+// the proof round-trip is asserted against the `ak.signal-proof-v1` transcript
+// and the AAD binding instead of the deleted ephemeral binding context.
 
 #[test]
 fn canonical_space_join_rule_keeps_v1_invite_value() {
@@ -346,18 +176,25 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         create.payload["object"]["notary"]["recovery_controller_organizations"][0],
         "did:web:server.example:recovery",
     );
+    // v1 has no producer `effects[]`: the genesis leaf set is what the
+    // registered `ak.realm.create` contract projects.
+    let create_writes = crate::operation::direct_registered_cell_writes(create).unwrap();
+    assert_eq!(create_writes.len(), 4);
     assert_eq!(
-        create.effects,
-        arkret_bootstrap::realm_create_effects(create).unwrap()
-    );
-    assert_eq!(create.effects.len(), 4);
-    assert_eq!(
-        create.effects[0].cell.as_str(),
+        create_writes[0].cell.as_str(),
         arkret_bootstrap::REALM_METADATA_CELL
     );
-    assert_eq!(create.effects[0].op.op_type, arkret_sdk::LatticeOpType::Set);
+    assert_eq!(create_writes[0].op.op_type, arkret_sdk::LatticeOpType::Set);
     for event in &events {
-        arkret_sdk::schema::validate_registered_cell_writes(event).unwrap_or_else(|error| {
+        // `OrdinaryRealmBootstrap` is the one context in which a control write
+        // may carry no CBA basis: the genesis transaction predates any accepted
+        // Seal. The `Standard` context would demand a `seal_basis` the submit
+        // gate has not attached yet.
+        arkret_sdk::schema::validate_registered_cell_writes_in_context(
+            event,
+            arkret_sdk::schema::EventCellContractContext::OrdinaryRealmBootstrap,
+        )
+        .unwrap_or_else(|error| {
             panic!(
                 "bootstrap Event {} ({}) violates the registry cell contract: {error}",
                 event.event_id,
@@ -367,10 +204,10 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     }
     for facet in &events[2..9] {
         assert!(
-            facet
-                .effects
+            crate::operation::project_registered_cell_writes(facet)
+                .unwrap()
                 .iter()
-                .all(|effect| effect.cell.as_str().ends_with(":null")),
+                .all(|write| write.cell.as_str().ends_with(":null")),
             "Realm singleton facet {} must use the canonical null subject",
             facet.kind.as_str()
         );
@@ -695,13 +532,19 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
         "ak:cell:ak.component.member.state.v1:did:web:bob.example"
     );
     assert_eq!(event.preconditions[0].predicate.value, Some(json!("join")));
-    assert_eq!(event.effects.len(), 1);
+    // `ak.member.state` registers a `transition_to` projection: `to` comes from
+    // the signed payload, `from` is resolved by the reducer against the frozen
+    // pre-state rather than asserted by the producer.
+    let writes = crate::operation::project_registered_cell_writes(&event).unwrap();
+    assert_eq!(writes.len(), 1);
     assert_eq!(
-        event.effects[0].cell.as_str(),
+        writes[0].cell.as_str(),
         "ak:cell:ak.component.member.state.v1:did:web:bob.example"
     );
-    assert_eq!(event.effects[0].op.from, Some(json!("join")));
-    assert_eq!(event.effects[0].op.to, Some(json!("ban")));
+    assert_eq!(
+        writes[0].op,
+        arkret_sdk::ProjectedOp::TransitionTo { to: json!("ban") }
+    );
 }
 
 #[test]

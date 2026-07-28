@@ -1929,14 +1929,6 @@ pub(crate) fn poll_cards_from_sync_realms_with_sidecar(
     cards
 }
 
-pub(crate) fn normalize_sync_realm_id(realm_id: &str) -> String {
-    realm_id.trim().to_owned()
-}
-
-pub(crate) fn sync_realm_ids_match(left: &str, right: &str) -> bool {
-    normalize_sync_realm_id(left) == normalize_sync_realm_id(right)
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TypingActorSnapshot {
     pub(crate) actors: Vec<String>,
@@ -1944,62 +1936,57 @@ pub(crate) struct TypingActorSnapshot {
 }
 
 #[cfg(test)]
-pub(crate) fn typing_actors_from_sync_realms(
-    realms: &std::collections::BTreeMap<String, Value>,
-    realm_id: &str,
+pub(crate) fn typing_actors_from_signals(
+    bodies: &[Value],
     strand_id: &str,
     account_did: &str,
 ) -> Vec<String> {
-    typing_actor_snapshot_from_sync_realms(realms, realm_id, strand_id, account_did).actors
+    typing_actor_snapshot_from_signals(bodies, strand_id, account_did).actors
 }
 
-pub(crate) fn typing_actor_snapshot_from_sync_realms(
-    realms: &std::collections::BTreeMap<String, Value>,
-    realm_id: &str,
+/// Active typing actors from the decrypted `ak.typing` Signal projection.
+///
+/// v1 removed the plaintext `ephemeral.events[]` bucket from Realm sync, so
+/// this no longer reads a Realm projection body: typing arrives as AEAD
+/// plaintext inside a `SignalEnvelope`, and `strand_id` / `typing` live in that
+/// plaintext. The envelope's own `expires_at` is the TTL, and it is copied onto
+/// each stored body as `expires_at` when the Signal is decrypted.
+pub(crate) fn typing_actor_snapshot_from_signals(
+    bodies: &[Value],
     strand_id: &str,
     account_did: &str,
 ) -> TypingActorSnapshot {
     let mut actors = std::collections::BTreeSet::<String>::new();
     let mut next_expires_at_ms: Option<i64> = None;
     let now = chrono::Utc::now();
-    for (candidate_realm_id, body) in realms {
-        if !sync_realm_ids_match(candidate_realm_id, realm_id) {
+    for body in bodies {
+        if value_string_at(body, &["kind"]).unwrap_or_default() != "ak.typing" {
             continue;
         }
-        for item in crate::models::realm_ephemeral_events(body) {
-            let kind = value_string_at(item, &["kind"]).unwrap_or_default();
-            if kind != "ak.typing" {
-                continue;
-            }
-            let Some(payload) = item.get("payload") else {
-                continue;
-            };
-            if payload.get("typing").and_then(Value::as_bool) == Some(false)
-                || value_string_at(payload, &["strand_id"]).unwrap_or_default() != strand_id
-            {
-                continue;
-            }
-            let Some(expires_at) = value_string_at(item, &["expires_at"])
-                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
-                .map(|value| value.with_timezone(&chrono::Utc))
-            else {
-                continue;
-            };
-            if expires_at <= now {
-                continue;
-            }
-            let actor = value_string_at(item, &["actor_id"])
-                .unwrap_or_default()
-                .trim();
-            if !actor.is_empty() && actor != account_did {
-                actors.insert(actor.to_owned());
-                let expires_at_ms = expires_at.timestamp_millis();
-                next_expires_at_ms = Some(
-                    next_expires_at_ms
-                        .map(|current| current.min(expires_at_ms))
-                        .unwrap_or(expires_at_ms),
-                );
-            }
+        if body.get("typing").and_then(Value::as_bool) == Some(false)
+            || value_string_at(body, &["strand_id"]).unwrap_or_default() != strand_id
+        {
+            continue;
+        }
+        let Some(expires_at) = value_string_at(body, &["expires_at"])
+            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+            .map(|value| value.with_timezone(&chrono::Utc))
+        else {
+            continue;
+        };
+        if expires_at <= now {
+            continue;
+        }
+        let actor = value_string_at(body, &["actor_id"])
+            .unwrap_or_default()
+            .trim();
+        if !actor.is_empty() && actor != account_did {
+            actors.insert(actor.to_owned());
+            let expires_at_ms = expires_at.timestamp_millis();
+            next_expires_at_ms = Some(match next_expires_at_ms {
+                Some(current) => current.min(expires_at_ms),
+                None => expires_at_ms,
+            });
         }
     }
     TypingActorSnapshot {
@@ -2019,7 +2006,7 @@ fn sync_presence_payload(event: &Value) -> &Value {
     event.get("payload").unwrap_or(event)
 }
 
-/// Presence state from an account-subscribe ephemeral envelope. Flat
+/// Presence state from a decrypted `ak.presence` Signal body. Flat
 /// projection-shaped values remain readable for existing local fixtures.
 /// Values outside the closed v1 set (`online` / `idle` / `dnd` / `offline`)
 /// fail closed to `None` — the caller renders `offline`, never a guessed

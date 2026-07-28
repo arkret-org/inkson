@@ -59,7 +59,9 @@ fn golden_event(
 ) -> arkret_sdk::Event {
     let mut event = arkret_sdk::Event::new(
         kind,
-        golden_realm_id(),
+        arkret_sdk::ScopeRef::Realm {
+            realm_id: golden_realm_id(),
+        },
         golden_actor(),
         actor_seq,
         arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),

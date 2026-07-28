@@ -589,10 +589,11 @@ async fn materialize_direct_conversation(
         &mut founding_grant_event,
         &signer,
     )?;
-    arkret_sdk::schema::materialize_capability_grant_event_contract(&mut founding_grant_event)
-        .map_err(|error| {
-            anyhow::anyhow!("materialize direct conversation founding grant effect: {error}")
-        })?;
+    // The grant's OR-Set write is derived from the registered contract; the
+    // producer only has to be sure it evaluates before the Event ships.
+    crate::operation::project_registered_cell_writes(&founding_grant_event).map_err(|error| {
+        anyhow::anyhow!("direct conversation founding grant has no evaluable contract: {error}")
+    })?;
     let founding_grant_id = founding_grant_event
         .payload
         .get("grant_id")
@@ -606,10 +607,13 @@ async fn materialize_direct_conversation(
         &mut main_strand_grant_event,
         &signer,
     )?;
-    arkret_sdk::schema::materialize_capability_grant_event_contract(&mut main_strand_grant_event)
-        .map_err(|error| {
-        anyhow::anyhow!("materialize direct conversation main Strand grant effect: {error}")
-    })?;
+    crate::operation::project_registered_cell_writes(&main_strand_grant_event).map_err(
+        |error| {
+            anyhow::anyhow!(
+                "direct conversation main Strand grant has no evaluable contract: {error}"
+            )
+        },
+    )?;
     let main_strand_grant_id = main_strand_grant_event
         .payload
         .get("grant_id")
@@ -1559,6 +1563,7 @@ mod tests {
             "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
             "kind": "ak.capability.grant",
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002",
+            "scope_ref": {"kind": "realm", "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002"},
             "actor_id": actor,
             "actor_seq": 2,
             "created_at": "2026-07-21T08:00:00.000Z",

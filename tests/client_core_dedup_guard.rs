@@ -132,8 +132,10 @@ fn ordinary_event_submit_uses_garth_durable_outbound() {
     assert!(
         submit.contains("async fn submit_sdk_event_direct")
             && submit.contains(".submit_sdk_event_direct(")
-            && submit.contains("&queued.transport_idempotency_key")
-            && submit.contains("&queued.canonical_body_bytes")
+            // The exact bytes come off the immutable authored attempt that the
+            // queue persisted, never off a freshly re-serialized envelope.
+            && submit.contains("&attempt.transport_idempotency_key")
+            && submit.contains("&attempt.canonical_body_bytes")
             && submit.contains(
                 "self.post_persisted_signed_sdk_event(event, idempotency_key, canonical_body_bytes)"
             )

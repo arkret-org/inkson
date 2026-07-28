@@ -204,19 +204,35 @@ pub(super) fn ChatEffects(
             let realm = realm.clone();
             let actor = actor.clone();
             let device = device.clone();
+            // No accepted MLS state for the scope means the Signal capability
+            // is withdrawn there. v1 has no plaintext read-receipt branch.
+            let Ok(material) = crate::signal::key_material_for_scope(
+                &state_store.read(),
+                &realm,
+                None,
+                crate::signal::next_signal_sequence().0,
+            ) else {
+                return;
+            };
+            let sequence = crate::signal::next_signal_sequence();
             spawn(async move {
                 let _ = crate::transport::auth::with_event_submitter(
                     &base,
                     api_token,
                     |submitter| async move {
                         submitter
-                            .send_receipt(
-                                &realm,
+                            .send_scope_signal(
+                                arkret_sdk::ScopeRef::Realm {
+                                    realm_id: arkret_sdk::RealmId::new(realm.clone())?,
+                                },
                                 &actor,
                                 &device,
-                                &strand_id,
-                                &top_event,
-                                "ak.receipt.read",
+                                &material,
+                                &crate::signal::SignalPayload::ReadReceipt {
+                                    strand_id: arkret_sdk::StrandId::new(strand_id.clone())?,
+                                    event_id: arkret_sdk::EventId::new(top_event.clone())?,
+                                },
+                                sequence,
                             )
                             .await
                     },
@@ -284,18 +300,36 @@ pub(super) fn ChatEffects(
             }
             presence_announce_key_seen.set(announce_key);
             let base = base.clone();
+            // Presence is an ordinary `session` Signal. Without accepted MLS
+            // state for the scope the capability is withdrawn; there is no
+            // plaintext presence broadcast in v1.
+            let Ok(material) = crate::signal::key_material_for_scope(
+                &state_store_for_presence.read(),
+                &realm,
+                None,
+                crate::signal::next_signal_sequence().0,
+            ) else {
+                return;
+            };
+            let sequence = crate::signal::next_signal_sequence();
             spawn(async move {
                 let _ = crate::transport::auth::with_event_submitter(
                     &base,
                     api_token,
                     |sub| async move {
-                        sub.send_presence(
-                            &realm,
+                        sub.send_scope_signal(
+                            arkret_sdk::ScopeRef::Realm {
+                                realm_id: arkret_sdk::RealmId::new(realm.clone())?,
+                            },
                             &actor,
                             &device,
-                            &state,
-                            status_message.as_deref(),
-                            None,
+                            &material,
+                            &crate::signal::SignalPayload::Presence {
+                                state: state.clone(),
+                                status_message: status_message.clone(),
+                                last_active_at: None,
+                            },
+                            sequence,
                         )
                         .await
                     },
@@ -416,12 +450,8 @@ pub(super) fn ChatEffects(
             }
             presence_sync_key_seen.set(next_sync_key);
 
-            let active_typing = typing_actor_snapshot_from_sync_realms(
-                &snapshot.realm_tree_projections,
-                &realm,
-                &strand,
-                &actor,
-            );
+            let active_typing =
+                typing_actor_snapshot_from_signals(&snapshot.presence_projection, &strand, &actor);
             if typing_actors_for_sync.peek().as_slice() != active_typing.actors.as_slice()
                 || *typing_next_expires_at_ms_for_sync.peek() != active_typing.next_expires_at_ms
             {
@@ -562,7 +592,6 @@ pub(super) fn ChatEffects(
                     {
                         let mut store = state_store.write();
                         store.save_sync_cursor(sync.cursor.clone());
-                        store.save_presence_projection(&sync.updates.presence);
                         for (realm_id, projection) in &sync.realm_projections {
                             store.save_realm_tree_projection(realm_id.clone(), projection.clone());
                         }

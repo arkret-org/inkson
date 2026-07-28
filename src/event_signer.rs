@@ -51,7 +51,8 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use arkret_sdk::signatures::proof::{EventSigner as SdkEventSigner, ProofType};
-use arkret_sdk::{Did, Hash, Move, MoveSignature, MoveSigner, UnsignedMove, WireError};
+use arkret_sdk::{Did, Hash, PayloadSigner, WireError};
+use arkret_wire::PayloadSignature;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, Utc};
@@ -137,34 +138,13 @@ pub struct InksonEventSigner {
     last_signed_at: Mutex<Option<DateTime<Utc>>>,
 }
 
-struct InksonMoveSignerAdapter<'a> {
+struct InksonPayloadSignerAdapter<'a> {
     owner: &'a InksonEventSigner,
     did: Did,
     verification_method: String,
 }
 
-impl MoveSigner for InksonMoveSignerAdapter<'_> {
-    fn sign_move(&self, unsigned: &UnsignedMove) -> Result<Move, WireError> {
-        if unsigned.issuer != self.did {
-            return Err(WireError::Protocol(format!(
-                "Move issuer {} does not match signer DID {}",
-                unsigned.issuer, self.did
-            )));
-        }
-        let bytes = unsigned.canonical_bytes()?;
-        Ok(Move {
-            id: Move::id_from_canonical_bytes(&bytes)?,
-            issuer: unsigned.issuer.clone(),
-            realm_id: unsigned.realm_id.clone(),
-            preconditions: unsigned.preconditions.clone(),
-            effects: unsigned.effects.clone(),
-            seal_basis: unsigned.seal_basis.clone(),
-            refs: unsigned.refs.clone(),
-            hlc: unsigned.hlc.clone(),
-            sig: self.sign_payload(&bytes)?,
-        })
-    }
-
+impl PayloadSigner for InksonPayloadSignerAdapter<'_> {
     fn signer_did(&self) -> &Did {
         &self.did
     }
@@ -173,7 +153,7 @@ impl MoveSigner for InksonMoveSignerAdapter<'_> {
         &self.verification_method
     }
 
-    fn sign_payload(&self, canonical_bytes: &[u8]) -> Result<MoveSignature, WireError> {
+    fn sign_payload(&self, canonical_bytes: &[u8]) -> Result<PayloadSignature, WireError> {
         let signature = self
             .owner
             .inner
@@ -182,7 +162,7 @@ impl MoveSigner for InksonMoveSignerAdapter<'_> {
         let header = serde_json::to_vec(&serde_json::json!({
             "alg": self.owner.algorithm(),
         }))?;
-        Ok(MoveSignature {
+        Ok(PayloadSignature {
             alg: self.owner.algorithm().to_owned(),
             verification_method: self.verification_method.clone(),
             payload_digest: Hash::new(arkret_sdk::canonical::sha256_digest(canonical_bytes))?,
@@ -298,10 +278,10 @@ impl InksonEventSigner {
     /// session binds that same key to `<principal>#<device_id>`. Protocol
     /// authoring that commits to the account principal must use the latter
     /// identity, not the local key DID.
-    pub(crate) fn move_signer_adapter_for_principal(
+    pub(crate) fn payload_signer_adapter_for_principal(
         &self,
         principal_id: &Did,
-    ) -> Result<impl MoveSigner + '_, EventSignerError> {
+    ) -> Result<impl PayloadSigner + '_, EventSignerError> {
         let verification_method = match self.device_id.as_deref() {
             Some(device_id) => format!("{principal_id}#{device_id}"),
             None if self.signer_did == principal_id.as_str() => self.verification_method.clone(),
@@ -311,7 +291,7 @@ impl InksonEventSigner {
                 )));
             }
         };
-        Ok(InksonMoveSignerAdapter {
+        Ok(InksonPayloadSignerAdapter {
             owner: self,
             did: principal_id.clone(),
             verification_method,
@@ -370,7 +350,7 @@ impl InksonEventSigner {
                 .map_err(|err| EventSignerError::Encoding(err.to_string()))
             })
             .transpose()?;
-        let signer = InksonMoveSignerAdapter {
+        let signer = InksonPayloadSignerAdapter {
             owner: self,
             did: Did::new(self.signer_did.clone())
                 .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
@@ -409,13 +389,19 @@ impl InksonEventSigner {
                 "principal bootstrap Seal requires a bound device_id".to_owned(),
             )
         })?;
-        let signer = InksonMoveSignerAdapter {
+        let signer = InksonPayloadSignerAdapter {
             owner: self,
             did: create.actor_id.clone(),
             verification_method: format!("{}#{device_id}", create.actor_id),
         };
-        arkret_bootstrap::build_self_principal_bootstrap_seal(create, authorize, hlc, &signer)
-            .map_err(|error| EventSignerError::Backend(error.to_string()))
+        arkret_bootstrap::build_self_principal_bootstrap_seal(
+            create,
+            authorize,
+            hlc,
+            &signer,
+            &crate::operation::cell_write_projector,
+        )
+        .map_err(|error| EventSignerError::Backend(error.to_string()))
     }
 
     /// Sign a managed Agent PCR Seal as the controller device named by the
@@ -433,13 +419,19 @@ impl InksonEventSigner {
                 "managed Agent PCR Seal requires a bound device_id".to_owned(),
             )
         })?;
-        let signer = InksonMoveSignerAdapter {
+        let signer = InksonPayloadSignerAdapter {
             owner: self,
             did: controller_id.clone(),
             verification_method: format!("{controller_id}#{device_id}"),
         };
-        arkret_bootstrap::build_managed_agent_pcr_event_seal(events, predecessor, hlc, &signer)
-            .map_err(|error| EventSignerError::Backend(error.to_string()))
+        arkret_bootstrap::build_managed_agent_pcr_event_seal(
+            events,
+            predecessor,
+            hlc,
+            &signer,
+            &crate::operation::cell_write_projector,
+        )
+        .map_err(|error| EventSignerError::Backend(error.to_string()))
     }
 
     /// Produce a detached JWS (`<b64u header>..<b64u sig>`) over `bytes`
@@ -1053,7 +1045,7 @@ mod tests {
         let controller = Did::new("did:web:controller.example").unwrap();
 
         let adapter = signer
-            .move_signer_adapter_for_principal(&controller)
+            .payload_signer_adapter_for_principal(&controller)
             .unwrap();
 
         assert_eq!(adapter.signer_did(), &controller);
@@ -1148,7 +1140,11 @@ mod tests {
             "did:web:bob.example",
             arkret_sdk::events::kinds::EventKind::MessageCreate,
         )
-        .body(json!({"body": "hi"}))
+        .body(json!({
+            "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
+            "track_name": "discussion",
+            "content": {"kind": "ak.content.text", "body": "hi"}
+        }))
         .build("test_node");
         set_proof_mode(prior_mode);
 
@@ -1191,7 +1187,11 @@ mod tests {
             "did:web:alice.example",
             arkret_sdk::events::kinds::EventKind::MessageCreate,
         )
-        .body(json!({"body": "actor-rooted"}))
+        .body(json!({
+            "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
+            "track_name": "discussion",
+            "content": {"kind": "ak.content.text", "body": "actor-rooted"}
+        }))
         .build("test_node");
         set_proof_mode(prior_mode);
 
@@ -1230,7 +1230,11 @@ mod tests {
             "did:web:carol.example",
             arkret_sdk::events::kinds::EventKind::MessageCreate,
         )
-        .body(json!({"body": "verifiable"}))
+        .body(json!({
+            "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
+            "track_name": "discussion",
+            "content": {"kind": "ak.content.text", "body": "verifiable"}
+        }))
         .build("test_node");
         set_proof_mode(prior_mode);
 
@@ -1286,7 +1290,11 @@ mod tests {
             "did:web:carol.example",
             arkret_sdk::events::kinds::EventKind::MessageCreate,
         )
-        .body(json!({"body": "bound"}))
+        .body(json!({
+            "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
+            "track_name": "discussion",
+            "content": {"kind": "ak.content.text", "body": "bound"}
+        }))
         .build("test_node");
         set_proof_mode(prior_mode);
 
@@ -1337,6 +1345,7 @@ mod tests {
             "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
             "kind": "ak.message.create",
             "realm_id": TEST_REALM_ID,
+            "scope_ref": {"kind": "realm", "realm_id": TEST_REALM_ID},
             "actor_id": "did:web:sdk.example",
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00.000Z",
@@ -1377,6 +1386,7 @@ mod tests {
             "event_id": "ak:event:01904100-0000-7000-8000-000000000011",
             "kind": "ak.message.create",
             "realm_id": TEST_REALM_ID,
+            "scope_ref": {"kind": "realm", "realm_id": TEST_REALM_ID},
             "actor_id": "did:web:sdk.example",
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00.000Z",
@@ -1414,6 +1424,7 @@ mod tests {
             "event_id": "ak:event:01904100-0000-7000-8000-000000000012",
             "kind": "ak.message.create",
             "realm_id": TEST_REALM_ID,
+            "scope_ref": {"kind": "realm", "realm_id": TEST_REALM_ID},
             "actor_id": "did:web:sdk.example",
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00.000Z",
@@ -1532,7 +1543,11 @@ mod tests {
             "did:web:dave.example",
             arkret_sdk::events::kinds::EventKind::MessageCreate,
         )
-        .body(json!({"body": "auto"}))
+        .body(json!({
+            "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
+            "track_name": "discussion",
+            "content": {"kind": "ak.content.text", "body": "auto"}
+        }))
         .build("test_node");
         sign_with_active(&mut event).expect("auto sign");
         set_proof_mode(prior_mode);
@@ -1556,7 +1571,11 @@ mod tests {
             "did:web:eve.example",
             arkret_sdk::events::kinds::EventKind::MessageCreate,
         )
-        .body(json!({"body": "no"}))
+        .body(json!({
+            "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
+            "track_name": "discussion",
+            "content": {"kind": "ak.content.text", "body": "no"}
+        }))
         .build("test_node");
         let err = sign_with_active(&mut event).unwrap_err();
         assert!(matches!(err, EventSignerError::MissingSigner { .. }));

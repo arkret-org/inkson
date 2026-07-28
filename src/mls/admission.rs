@@ -228,9 +228,8 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
         .map_err(|err| format!("MLS Welcome SDK Event conversion failed: {err}"))?;
         let mut welcome = welcome;
         if let Some(circle_id) = circle_id {
-            welcome.effective_scope = Some(crate::mls::group_events::circle_effective_scope(
-                realm_id, circle_id,
-            )?);
+            welcome.scope_ref =
+                crate::mls::group_events::circle_effective_scope(realm_id, circle_id)?;
         }
         welcomes.push(welcome);
     }
@@ -290,7 +289,7 @@ pub(crate) fn build_realm_key_share_event(
         arkret_sdk::GrantId::new(authorization_grant_ref.trim().to_owned())
             .map_err(|err| format!("invalid realm_key.share authorization grant ref: {err:?}"))?;
     let key_scope = arkret_sdk::RealmKeyScope {
-        effective_scope: arkret_wire::EffectiveScope::Realm {
+        effective_scope: arkret_wire::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(trim_realm_id(realm_id))
                 .map_err(|err| format!("invalid realm_key.share Realm id: {err:?}"))?,
         },
@@ -338,7 +337,7 @@ pub(crate) fn build_realm_key_share_event(
         .ok_or_else(|| "ak.realm_key.share requires an active sender device signer".to_owned())?;
     let body = serde_json::to_value(&payload)
         .map_err(|err| format!("serialize ak.realm_key.share payload: {err}"))?;
-    let mut event = crate::operation::OperationBuilder::new(
+    let event = crate::operation::OperationBuilder::new(
         realm_id,
         actor_id,
         arkret_sdk::events::kinds::EventKind::RealmKeyShare,
@@ -347,8 +346,12 @@ pub(crate) fn build_realm_key_share_event(
     .authorization_ref(authorization_grant_ref.as_str())
     .build_sdk_event("inkson")
     .map_err(|err| format!("ak.realm_key.share SDK Event conversion failed: {err}"))?;
-    arkret_sdk::schema::materialize_single_target_append_event_contract(&mut event, digest_suite)
-        .map_err(|err| format!("ak.realm_key.share effect derivation failed: {err}"))?;
+    // The delivery-log append is derived from the registered contract, so the
+    // producer no longer stamps it. `digest_suite` still has to be the one the
+    // key scope's policy digest names, because the projection hashes the
+    // delivery entry under it.
+    arkret_sdk::schema::project_registered_cell_writes(&event, digest_suite)
+        .map_err(|err| format!("ak.realm_key.share cell-write projection failed: {err}"))?;
     Ok(event)
 }
 
@@ -385,7 +388,7 @@ pub(crate) fn wrap_realm_key_share_payload_event(
         .ok_or_else(|| "ak.realm_key.share requires an active sender device signer".to_owned())?;
     let body = serde_json::to_value(&payload)
         .map_err(|err| format!("serialize ak.realm_key.share payload: {err}"))?;
-    let mut event = crate::operation::OperationBuilder::new(
+    let event = crate::operation::OperationBuilder::new(
         realm_id,
         actor_id,
         arkret_sdk::events::kinds::EventKind::RealmKeyShare,
@@ -394,8 +397,12 @@ pub(crate) fn wrap_realm_key_share_payload_event(
     .authorization_ref(authorization_grant_ref.as_str())
     .build_sdk_event("inkson")
     .map_err(|err| format!("ak.realm_key.share SDK Event conversion failed: {err}"))?;
-    arkret_sdk::schema::materialize_single_target_append_event_contract(&mut event, digest_suite)
-        .map_err(|err| format!("ak.realm_key.share effect derivation failed: {err}"))?;
+    // The delivery-log append is derived from the registered contract, so the
+    // producer no longer stamps it. `digest_suite` still has to be the one the
+    // key scope's policy digest names, because the projection hashes the
+    // delivery entry under it.
+    arkret_sdk::schema::project_registered_cell_writes(&event, digest_suite)
+        .map_err(|err| format!("ak.realm_key.share cell-write projection failed: {err}"))?;
     Ok(event)
 }
 
@@ -804,8 +811,11 @@ mod tests {
             event.authorization_ref.as_deref(),
             Some("ak:grant:01904100-0000-7000-8000-0000000000e8")
         );
-        assert_eq!(event.effects.len(), 1);
-        let cell = arkret_sdk::CellId::from_ref(&event.effects[0].cell).unwrap();
+        // v1 derives the delivery-log write from the registry instead of
+        // shipping it: assert the projection, which is what the receiver runs.
+        let writes = crate::operation::direct_registered_cell_writes(&event).unwrap();
+        assert_eq!(writes.len(), 1);
+        let cell = arkret_sdk::CellId::from_ref(&writes[0].cell).unwrap();
         assert_eq!(cell.component(), "ak.component.realm_key.delivery.v1");
         assert_eq!(
             arkret_sdk::events::cba_cell_family_plane(cell.component()),

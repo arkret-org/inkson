@@ -188,18 +188,30 @@ mod tests {
             serde_json::to_value(arkret_sdk::current_capability_action_registry_digest().unwrap())
                 .unwrap()
         );
-        assert_eq!(event.effects.len(), 1);
+        // v1 derives the OR-Set write from the registered contract instead of
+        // shipping it. The dot is `<event_id>:<write_index>` and the element
+        // value is the WHOLE payload (`{"field":"payload"}`), not the inner
+        // `grant` object the producer-side table used to stamp.
+        let writes = crate::operation::direct_registered_cell_writes(&event).unwrap();
+        assert_eq!(writes.len(), 1);
         assert_eq!(
-            event.effects[0].cell.as_str(),
+            writes[0].cell.as_str(),
             "ak:cell:ak.component.capability.grant.v1:ak:grant:019f9000-0000-7000-8000-000000000002"
         );
+        assert_eq!(writes[0].op.op_type, arkret_sdk::LatticeOpType::Add);
         assert_eq!(
-            event.effects[0].op.tag.as_deref(),
+            writes[0].op.tag.as_deref(),
             Some(format!("{}:0", event.event_id).as_str())
         );
         assert_eq!(
-            event.effects[0].op.value.as_ref(),
-            Some(&event.payload["grant"])
+            writes[0].op.value.as_ref(),
+            Some(&Value::Object(
+                event
+                    .payload
+                    .clone()
+                    .into_iter()
+                    .collect::<serde_json::Map<_, _>>()
+            ))
         );
     }
 }

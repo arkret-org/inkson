@@ -172,17 +172,21 @@ mod tests {
             "ak:realm:0196419b-0000-7000-8000-000000000001"
         );
         assert_eq!(ops[1].payload["object"]["scope_circle_id"], ids.circle_id);
-        assert_eq!(ops[2].payload["kind"], "confidential_discussion_of");
-        // relation_create_payload is additionalProperties:false — the private
-        // scope is carried by the Circle-scoped Strand (ops[1]), NOT by an
-        // illegal `scope_circle_id` key on the relation payload.
+        // The relation travels on the object branch, the only one the
+        // registered `ak.relation.create` contract can project into a cell.
+        let relation = &ops[2].payload["relation"];
+        assert_eq!(relation["relation_kind"], "confidential_discussion_of");
+        // The object branch has a `scope_circle_id` member, so the private
+        // scope is now stated on the Relation fact itself as well as by the
+        // Circle-scoped Strand (ops[1]).
+        assert_eq!(relation["scope_circle_id"], ids.circle_id);
         assert!(
             ops[2].payload.get("scope_circle_id").is_none(),
-            "scope_circle_id is not a relation_create_payload field"
+            "the flat branch member must not appear beside the object branch"
         );
-        assert_eq!(ops[2].payload["from_ref"], ids.discussion_strand_id);
+        assert_eq!(relation["from_ref"], ids.discussion_strand_id);
         assert_eq!(
-            ops[2].payload["to_ref"],
+            relation["to_ref"],
             "ak:strand:0196419b-0000-7000-8000-000000000003"
         );
         for event in &ops {

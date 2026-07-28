@@ -22,6 +22,7 @@ pub mod account_health;
 pub mod api_error;
 pub mod app;
 pub mod audit;
+pub mod authorization_lease;
 pub mod avatar_crop;
 pub mod blob;
 pub mod build_info;
@@ -131,6 +132,7 @@ pub async fn run_browser_account_persist_fault_contract() -> anyhow::Result<()> 
 pub mod security_state;
 pub mod service_parse;
 pub mod sidecar;
+pub mod signal;
 pub mod snapshot;
 /// Sync projection layer (account/realm wire payloads -> local projection
 /// models); moved out of `views/` (YGN-ARCH-01 step 3).

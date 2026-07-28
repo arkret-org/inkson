@@ -286,10 +286,11 @@ pub async fn bootstrap_principal(
             created_at,
             hlc: arkret_sdk::Hlc::new(checkpoint.bootstrap_hlc.clone())?,
         },
+        &crate::operation::cell_write_projector,
     )?;
     let root_did =
         arkret_sdk::Did::new(format!("did:key:{}", checkpoint.root_public_key_multibase))?;
-    let root_signer = arkret_sdk::Ed25519MoveSigner::from_did_key_seed(
+    let root_signer = arkret_sdk::Ed25519PayloadSigner::from_did_key_seed(
         key_material.root_seed,
         root_did,
         checkpoint.root_verification_method.clone(),
@@ -325,7 +326,16 @@ pub async fn bootstrap_principal(
         .sign_self_principal_bootstrap_seal(&create, &authorize, seal_hlc)
         .map_err(|error| anyhow!(error.to_string()))?;
     let expected_digests = seal.delta.clone();
-    let batch = arkret_bootstrap::self_principal_bootstrap_submit_request(create, authorize)?;
+    // The closed bootstrap pair travels as two `EventInitialSubmission`s: the
+    // lease bounds the revocation window and is not derivable from the Events.
+    let batch = arkret_bootstrap::self_principal_bootstrap_submit_request(
+        crate::authorization_lease::initial_submission(&create)?,
+        crate::authorization_lease::initial_submission(&authorize)?,
+        &crate::operation::cell_write_projector,
+    )?;
+    let arkret_sdk::EventsSubmitRequestBody::Batch(batch) = batch else {
+        anyhow::bail!("self principal bootstrap must submit as a batch");
+    };
     let response = principal_client.events_submit_batch(&batch.events).await?;
     crate::ephemeral::ensure_events_submit_accepted(&response)?;
     let seal_outcome = principal_client.events_submit_seal(&seal).await?;

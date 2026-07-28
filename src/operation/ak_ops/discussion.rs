@@ -117,10 +117,6 @@ pub fn confidential_discussion_relation_create(
     public_seal_ref: &str,
     circle_id: &str,
 ) -> anyhow::Result<OperationBuilder> {
-    // `circle_id` is unused on the wire: relation_create_payload is
-    // additionalProperties:false and the private-side scope is already
-    // carried by the Circle-scoped Strand itself.
-    let _ = circle_id;
     let relation_id = format!("ak:relation:{}", crate::operation::uuid_v7());
     Ok(OperationBuilder::new(
         realm_id,
@@ -129,9 +125,14 @@ pub fn confidential_discussion_relation_create(
     )
     .target_ref(&relation_id)
     .body(relation_create_payload_value(
+        realm_id,
+        actor,
         &relation_id,
         "confidential_discussion_of",
         private_strand_id,
         public_seal_ref,
+        // The object branch carries the private side's Circle scope, which the
+        // flat branch had nowhere to put.
+        Some(circle_id),
     )?))
 }

@@ -2,10 +2,12 @@
 //! Move/Seal write pipeline.
 //!
 //! The full Move construction + signing surface (`build_*_move`,
-//! `sign_unsigned_move`, `UnsignedMove`, …) has been removed: all writes
-//! now go through `ak.self.events.command.submit` via the Event Envelope path
-//! (`operation.rs` / `api/events.rs`), with `effects[]` inlined in the
-//! envelope. Only the few standalone helpers that other modules still
+//! `sign_unsigned_move`, `UnsignedMove`, …) has been removed: a Control Move
+//! is just an Event carrying `seal_basis`, so all writes go through
+//! `ak.self.events.command.submit` via the Event Envelope path
+//! (`operation.rs` / `api/events.rs`). The envelope carries no cell writes at
+//! all — the receiver derives them from `kind + payload` through the registered
+//! reducer contract. Only the few standalone helpers that other modules still
 //! depend on survive here:
 //!
 //! - [`StrandPositionEffect`] / [`StrandPositionExpectation`] / [`strand_position_cell_id`] —

@@ -25,6 +25,7 @@ fn genesis_governance_binding(group_id: &str) -> arkret_sdk::MlsGovernanceBindin
         0,
         0,
         frontier,
+        vec![arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "11".repeat(32))).unwrap()],
         policy_root,
         capability_root,
         discussion_metadata_digest,

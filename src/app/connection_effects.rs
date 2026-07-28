@@ -75,7 +75,6 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
     } = SessionContext::get();
     let runtime_services = use_context::<crate::runtime::services::RuntimeServices>();
     let navigator = use_navigator();
-    let call_signal_hub = use_context::<crate::views::call_signals::CallSignalHub>();
     let did_cache = use_context::<Signal<arkret_sdk::identity::DidResolutionCache>>();
     let mut device_authorization_recheck_key = use_signal(String::new);
     let mut device_authorization_recheck_attempt = use_signal(|| 0_u32);
@@ -283,7 +282,6 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
                     account_has_other_devices,
                     sync_bootstrap_complete,
                     session_boot_state,
-                    call_signal_hub,
                     did_cache,
                     did_resolution_health,
                 },

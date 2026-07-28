@@ -38,7 +38,7 @@ pub fn build_agent_provision_event_drafts(
         controller_id.as_str(),
         controller_realm_id.as_str(),
     )?;
-    let move_signer = signer.move_signer_adapter_for_principal(controller_id)?;
+    let move_signer = signer.payload_signer_adapter_for_principal(controller_id)?;
     Ok(arkret_bootstrap::build_agent_provision_event_drafts(
         controller_id,
         controller_realm_id,
@@ -736,7 +736,7 @@ pub fn build_agent_key_authorization_for_pairing(
     let mut event = arkret_event_draft::build_agent_key_authorize_event(
         &payload,
         authorize_event_id,
-        realm_id,
+        arkret_sdk::ScopeRef::Realm { realm_id },
         request.agent_id.clone(),
         controller,
         authorization_ref,
