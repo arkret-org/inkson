@@ -1,5 +1,18 @@
 # Regression Review
 
+## 2026-07-29 — browser leader gate did not compile for WASM
+
+- Surface: `app::web_leader` Web Lock acquisition and storage-lease renewal.
+- Regression: the Web Lock callback parameter was not explicit enough for the WASM closure
+  conversion, and the nested browser module did not import `WritableExt` for `Signal::set`.
+- Detection: the isolated federated cotest environment failed while building the real Inkson
+  browser bundle.
+- Resolution: type the callback input as `JsValue` and import the signal write extension in the
+  module that performs lease state transitions.
+- Prevention dimension: browser-only coordination paths must be compiled as part of the joint
+  end-to-end preparation gate, even when native test targets do not exercise them.
+- Status: resolved; verified by the joint-e2e web build.
+
 ## 2026-07-28 — recovery receipt retry did not preserve its idempotency identity
 
 - Surface: `record_completed_recovery_receipt` and device recovery partial retry.

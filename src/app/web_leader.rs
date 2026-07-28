@@ -122,7 +122,7 @@ mod browser {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use dioxus::prelude::{Signal, spawn};
+    use dioxus::prelude::{Signal, WritableExt, spawn};
     use js_sys::{Function, Object, Promise, Reflect};
     use serde::{Deserialize, Serialize};
     use wasm_bindgen::JsCast;
@@ -195,7 +195,7 @@ mod browser {
 
         let outcome = Rc::new(RefCell::new(None::<bool>));
         let outcome_for_callback = Rc::clone(&outcome);
-        let callback = Closure::<dyn FnMut(JsValue) -> Promise>::new(move |lock| {
+        let callback = Closure::<dyn FnMut(JsValue) -> Promise>::new(move |lock: JsValue| {
             let acquired = !(lock.is_null() || lock.is_undefined());
             *outcome_for_callback.borrow_mut() = Some(acquired);
             if acquired {
