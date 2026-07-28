@@ -1463,13 +1463,17 @@ async fn tier3_history_decrypt_reads_provider_exporter_aead_content() {
     alice_group.self_update_commit().unwrap();
     let epoch = alice_group.epoch();
 
-    // Provider encrypts content via exporter-aead, binding the shared
-    // `history_content_aad_bytes(realm, epoch)` AAD (constraint ①), and exports
-    // the epoch's history secret.
-    let aad_bytes = history_content_aad_bytes(realm, epoch).unwrap();
+    // Provider encrypts content via exporter-aead, binding the typed routing
+    // AAD, key reference and epoch in the immutable header, then exports the
+    // epoch's history secret.
+    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(
+        arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+        "ak.strand.update",
+    );
+    let key_ref = arkret_sdk::KeyRefObject::mls_exporter_aead(alice_group.group_id(), epoch);
     let plaintext = br#"{"body":"pre-join history"}"#;
-    let nonce_and_ct = alice_group
-        .encrypt_content_exporter_aead(realm, &aad_bytes, plaintext)
+    let payload = alice_group
+        .encrypt_payload_exporter_aead("application/json", realm, key_ref, aad, plaintext)
         .unwrap();
     let history_secret = alice_group
         .export_history_secret_range(epoch, epoch)
@@ -1477,27 +1481,6 @@ async fn tier3_history_decrypt_reads_provider_exporter_aead_content() {
         .find(|(e, _)| *e == epoch)
         .map(|(_, secret)| secret)
         .expect("retained history secret for the current epoch");
-
-    // Wrap the exporter-aead blob as the `EncryptedPayload` a content event
-    // would carry (epoch + base64url(nonce||ct)).
-    let payload = arkret_sdk::EncryptedPayload {
-        scheme: arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1,
-        group_id: mls_group_id_for_realm(realm),
-        epoch,
-        content_type: "application/json".to_owned(),
-        ciphertext: arkret_sdk::base64url_encode(&nonce_and_ct),
-        aad: None,
-        payload_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&nonce_and_ct))
-            .unwrap(),
-        key_ref: None,
-        // The payload really is exporter-aead content: it is asserted below to
-        // open through the tier-3 history path, which is the standalone
-        // exporter-aead decrypt. Labelling it mls_rfc9420 made the negative
-        // assertion pass on a scheme mismatch instead of on the missing
-        // history secret.
-        purpose: Some(arkret_sdk::mls::MLS_EXPORTER_AEAD_CONTENT_PURPOSE.to_owned()),
-        aead_profile: Some(arkret_sdk::mls::ARKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned()),
-    };
 
     // Before the share: bob cannot decrypt (no history secret; live ratchet
     // cannot open exporter-aead content).
@@ -1559,10 +1542,14 @@ async fn tier3_history_decrypt_works_without_local_snapshot() {
     let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
     let epoch = alice_group.epoch();
 
-    let aad_bytes = history_content_aad_bytes(realm, epoch).unwrap();
+    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(
+        arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+        "ak.strand.update",
+    );
+    let key_ref = arkret_sdk::KeyRefObject::mls_exporter_aead(alice_group.group_id(), epoch);
     let plaintext = br#"{"body":"no-snapshot history"}"#;
-    let nonce_and_ct = alice_group
-        .encrypt_content_exporter_aead(realm, &aad_bytes, plaintext)
+    let payload = alice_group
+        .encrypt_payload_exporter_aead("application/json", realm, key_ref, aad, plaintext)
         .unwrap();
     let history_secret = alice_group
         .export_history_secret_range(epoch, epoch)
@@ -1570,25 +1557,6 @@ async fn tier3_history_decrypt_works_without_local_snapshot() {
         .find(|(e, _)| *e == epoch)
         .map(|(_, secret)| secret)
         .expect("retained history secret for the current epoch");
-
-    let payload = arkret_sdk::EncryptedPayload {
-        scheme: arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1,
-        group_id: mls_group_id_for_realm(realm),
-        epoch,
-        content_type: "application/json".to_owned(),
-        ciphertext: arkret_sdk::base64url_encode(&nonce_and_ct),
-        aad: None,
-        payload_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&nonce_and_ct))
-            .unwrap(),
-        key_ref: None,
-        // The payload really is exporter-aead content: it is asserted below to
-        // open through the tier-3 history path, which is the standalone
-        // exporter-aead decrypt. Labelling it mls_rfc9420 made the negative
-        // assertion pass on a scheme mismatch instead of on the missing
-        // history secret.
-        purpose: Some(arkret_sdk::mls::MLS_EXPORTER_AEAD_CONTENT_PURPOSE.to_owned()),
-        aead_profile: Some(arkret_sdk::mls::ARKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned()),
-    };
 
     // No snapshot for the realm: the live-ratchet path cannot even instantiate
     // a group, but the granted history secret still opens the content.

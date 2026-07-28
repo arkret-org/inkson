@@ -4,22 +4,18 @@
 //! [`crate::transport::TransportClient`] that drive the REC-1 recovery strand:
 //!
 //! - 6.1: fetch + parse the active recovery policy.
-//! - 6.3: open a recovery session, sign + submit a `principal_signing` proof, then complete with
-//!   client-supplied `ak.device.authorize` material.
+//! - 6.3: open a recovery session and sign + submit a `principal_signing` proof.
 //!
-//! The wire shapes match `arkret-spec` `recovery-session.schema.json`
-//! (`create_request` / `proof_submit_request` / `complete_request`).
+//! Recovery completion is a durable protocol operation and is deliberately not
+//! exposed here as a direct HTTP side effect.
 
 use arkret_models_crypto::{
     RecoveryHpkeSuite, RecoveryKeyAgreementAlgorithm, RecoveryKeyAgreementEntry,
     RecoveryKeyAgreementUse, RecoveryKeyEntry, RecoveryKeySignatureAlgorithm, RecoveryPolicy,
     RecoveryPolicyActiveOutcome, RecoveryPolicyAuthData, RecoveryPolicyRef, RecoveryPolicySummary,
-    RecoveryProofKind, RecoverySessionCompleteRequestBody, RecoverySessionCreateRequestBody,
-    RecoverySessionProofSubmitRequestBody,
+    RecoveryProofKind, RecoverySessionCreateRequestBody, RecoverySessionProofSubmitRequestBody,
 };
-use arkret_sdk::{
-    DeviceId, Did, DidUrl, EventId, NonEmptyString, PolicyId, ReceiptId, TypedTrustDomainId,
-};
+use arkret_sdk::{DeviceId, Did, DidUrl, NonEmptyString, PolicyId, TypedTrustDomainId};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::SigningKey;
@@ -672,103 +668,6 @@ pub async fn submit_principal_signing_proof(
     Ok(serde_json::to_value(
         &api.submit_recovery_proof(session_id, &body).await?,
     )?)
-}
-
-/// Accepted artifacts required to complete a recovery session. The variants
-/// enforce the protocol's mutually exclusive Model A and Model B shapes before
-/// serialization.
-pub enum RecoveryCompletionArtifacts<'a> {
-    CrossSigning {
-        device_list_update_event_id: &'a str,
-    },
-    EnrollmentAuthority {
-        reanchor_event_id: &'a str,
-        reanchor_batch_receipt_id: &'a str,
-    },
-}
-
-/// 6.3 — complete a verified session by referencing the model-specific durable
-/// control artifacts the client already submitted. The server resolves and
-/// verifies each reference; it does not author control events.
-pub async fn complete_recovery_session(
-    api: &TransportClient,
-    recovery_session_id: &str,
-    authorization_event_id: &str,
-    artifacts: RecoveryCompletionArtifacts<'_>,
-) -> anyhow::Result<Value> {
-    let (device_list_update_event_id, reanchor_event_id, reanchor_batch_receipt_id) =
-        match artifacts {
-            RecoveryCompletionArtifacts::CrossSigning {
-                device_list_update_event_id,
-            } => (
-                Some(EventId::new(device_list_update_event_id.trim().to_owned())?),
-                None,
-                None,
-            ),
-            RecoveryCompletionArtifacts::EnrollmentAuthority {
-                reanchor_event_id,
-                reanchor_batch_receipt_id,
-            } => (
-                None,
-                Some(EventId::new(reanchor_event_id.trim().to_owned())?),
-                Some(ReceiptId::new(reanchor_batch_receipt_id.trim().to_owned())?),
-            ),
-        };
-    let body = RecoverySessionCompleteRequestBody {
-        authorization_event_id: EventId::new(authorization_event_id.trim().to_owned())?,
-        device_list_update_event_id,
-        reanchor_event_id,
-        reanchor_batch_receipt_id,
-        idempotency_key: None,
-    };
-    body.validate()?;
-    Ok(serde_json::to_value(
-        &api.complete_recovery_session(recovery_session_id, &body)
-            .await?,
-    )?)
-}
-
-/// 6.3 — `principal_signing` recovery driver: open session → sign + submit proof
-/// → complete by referencing the already-submitted authorize + list_update event
-/// ids. (Submitting those two control events to `POST /events` — the
-/// SSK-signed `ak.device.authorize` + `ak.device.list_update` with the next
-/// principal-control-stream actor_seq — is the caller's step; this returns the
-/// `complete_response`.)
-#[allow(clippy::too_many_arguments)]
-pub async fn run_principal_signing_recovery(
-    api: &TransportClient,
-    principal_id: &str,
-    requesting_device_id: &str,
-    trust_domain: &str,
-    verification_method: &str,
-    principal_signing_key: &SigningKey,
-    authorization_event_id: &str,
-    device_list_update_event_id: &str,
-    expected_recovery_policy_ref: Option<(&str, u64)>,
-) -> anyhow::Result<Value> {
-    let session = open_recovery_session(
-        api,
-        principal_id,
-        requesting_device_id,
-        trust_domain,
-        expected_recovery_policy_ref,
-    )
-    .await?;
-    submit_principal_signing_proof(api, &session, verification_method, principal_signing_key)
-        .await?;
-    let session_id = session
-        .get("recovery_session_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("session missing recovery_session_id"))?;
-    complete_recovery_session(
-        api,
-        session_id,
-        authorization_event_id,
-        RecoveryCompletionArtifacts::CrossSigning {
-            device_list_update_event_id,
-        },
-    )
-    .await
 }
 
 #[cfg(test)]

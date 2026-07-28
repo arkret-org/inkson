@@ -260,23 +260,6 @@ impl crate::transport::TransportClient {
             .map_err(anyhow::Error::from)
     }
 
-    /// 6.3 — finalize a verified recovery session. `body` carries exactly the
-    /// A-model list-update reference or B-model re-anchor references alongside
-    /// the accepted device authorization.
-    pub async fn complete_recovery_session(
-        &self,
-        recovery_session_id: &str,
-        body: &arkret_models_crypto::RecoverySessionCompleteRequestBody,
-    ) -> anyhow::Result<arkret_sdk::RecoverySessionCompleteOutcome> {
-        self.sdk_http_client()?
-            .post(
-                &format!("/_arkret/root/identity/recovery-sessions/{recovery_session_id}/complete"),
-                body,
-            )
-            .await
-            .map_err(anyhow::Error::from)
-    }
-
     /// AKP B-C / spec head 37ce729 — `LIST?series_id=` query path the
     /// recovery strand uses to rebuild a backup series by sequence. When
     /// `series_id` is `None` and `backup_kind` is `None`, this lists all

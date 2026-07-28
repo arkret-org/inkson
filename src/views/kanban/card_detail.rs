@@ -456,61 +456,78 @@ pub(super) fn dispatch_calendar_rsvp(
     mut state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
-    // The schedule the responder observed has to be signed into the entry, so
-    // the card must carry the calendar subtree and the schedule revision
-    // frontier. Both come from the projection; when the frontier is not yet
-    // exposed the helper fails closed instead of signing a claim we cannot
-    // back.
-    let calendar = match calendar_event_fields_from_draft(&card.calendar) {
-        Ok(calendar) => calendar,
-        Err(err) => {
-            board_status.set(format!("cannot build RSVP: {err}"));
-            return;
-        }
-    };
-    let op = match calendar_rsvp_operation(
-        &realm_id,
-        &actor_id,
-        &card.primary_strand_id,
-        status,
-        &occurrence,
-        card.calendar_schedule_basis_refs(),
-        &calendar,
-    ) {
-        Ok(op) => op,
-        Err(err) => {
-            board_status.set(format!("cannot build RSVP: {err:#}"));
-            return;
-        }
-    };
-    let operation_id = sdk_event_local_operation_id(&op).to_owned();
-    state_store.write().enqueue_local_projection_command(
-        operation_id.clone(),
-        Some(realm_id.clone()),
-        serde_json::json!({
-            "kind": op.kind.as_str(),
-            "operation_id": operation_id.clone(),
-            "actor_id": op.actor_id.to_string(),
-            "created_at": arkret_sdk::canonical::format_timestamp_canonical(op.created_at),
-            "write_state": "queued",
-            "body": op.payload.clone(),
-            "activity_summary": format!("RSVP {status}"),
-        }),
-    );
-    board_status.set(format!(
-        "submitting RSVP {}",
-        short_protocol_id(&operation_id)
-    ));
+    if card.security_encrypted == Some(true) {
+        board_status.set(
+            "cannot build RSVP: encrypted calendar responses require the Realm MLS key".to_owned(),
+        );
+        return;
+    }
+    board_status.set("refreshing calendar schedule before RSVP".to_owned());
     let api_token = token();
-    let kind = op.kind.as_str().to_owned();
-    let event = op;
+    let submit_token = api_token.clone();
+    let strand_id = card.primary_strand_id.clone();
+    let calendar = card.calendar.clone();
+    let build_base = base_url.clone();
+    let build_realm_id = realm_id.clone();
+    let build_actor_id = actor_id.clone();
     spawn(async move {
-        match with_authed_api(&base_url, api_token, |api| async move {
-            api.event_submitter()?.submit_sdk_event(&event).await
+        let built = with_authed_api(&build_base, api_token, |api| async move {
+            let events = api
+                .http()
+                .events_query_all_pages(&build_realm_id)
+                .await?
+                .events;
+            let schedule_heads = calendar_schedule_revision_heads(&events, &strand_id)?;
+            let frontier = api
+                .event_submitter()?
+                .events_frontier_actor(&build_actor_id, &build_realm_id)
+                .await?;
+            let hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
+                &build_actor_id,
+                &build_realm_id,
+            )?;
+            calendar_rsvp_operation(
+                &build_realm_id,
+                &build_actor_id,
+                &strand_id,
+                status,
+                &occurrence,
+                &calendar,
+                schedule_heads,
+                frontier.next_actor_seq,
+                hlc,
+            )
         })
-        .await
-        {
-            Ok(response) => {
+        .await;
+        match built {
+            Ok(event) => {
+                let operation_id = sdk_event_local_operation_id(&event).to_owned();
+                let kind = event.kind.as_str().to_owned();
+                state_store.write().enqueue_local_projection_command(
+                    operation_id.clone(),
+                    Some(realm_id.clone()),
+                    serde_json::json!({
+                        "kind": kind,
+                        "operation_id": operation_id.clone(),
+                        "actor_id": event.actor_id.to_string(),
+                        "created_at": arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
+                        "write_state": "queued",
+                        "body": event.payload.clone(),
+                        "activity_summary": format!("RSVP {status}"),
+                    }),
+                );
+                board_status.set(format!(
+                    "submitting RSVP {}",
+                    short_protocol_id(&operation_id)
+                ));
+                let submitted = with_authed_api(&base_url, submit_token, |api| async move {
+                    api.event_submitter()?.submit_sdk_event(&event).await
+                })
+                .await;
+                let Ok(response) = submitted else {
+                    board_status.set(format!("RSVP failed: {submitted:#?}"));
+                    return;
+                };
                 board_status.set(format!(
                     "{} accepted as {}",
                     kind,
@@ -518,7 +535,7 @@ pub(super) fn dispatch_calendar_rsvp(
                 ));
             }
             Err(err) => {
-                board_status.set(format!("RSVP failed: {err:#?}"));
+                board_status.set(format!("cannot build RSVP: {err:#?}"));
             }
         }
     });

@@ -94,27 +94,14 @@ fn calendar_rsvp_operation_carries_the_complete_entry_and_effect() {
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
     .unwrap();
-    let calendar = arkret_sdk::CalendarEventFields {
+    let calendar = CalendarCardFields {
         start: "2026-06-20T09:00:00".to_owned(),
         end: "2026-06-20T10:00:00".to_owned(),
         timezone: "Asia/Shanghai".to_owned(),
         tzdb_version: "2025a".to_owned(),
-        all_day: false,
-        status: arkret_sdk::CalendarStatus::Confirmed,
-        recurrence: Some(arkret_sdk::CalendarRecurrence {
-            frequency: arkret_sdk::RecurrenceFrequency::Weekly,
-            interval: None,
-            by_day: Vec::new(),
-            by_month: None,
-            by_month_day: None,
-            by_set_position: None,
-            first_day_of_week: None,
-            count: Some(10),
-            until: None,
-        }),
-        location: None,
-        call_id: None,
-        attendees: Vec::new(),
+        recurrence_frequency: "weekly".to_owned(),
+        recurrence_count: "10".to_owned(),
+        ..CalendarCardFields::default()
     };
 
     let event = calendar_rsvp_operation(
@@ -123,16 +110,15 @@ fn calendar_rsvp_operation_carries_the_complete_entry_and_effect() {
         TEST_CALENDAR_STRAND_ID,
         "accepted",
         "2026-06-20T09:00:00[Asia/Shanghai]",
-        vec![basis.clone()],
         &calendar,
+        vec![basis.clone()],
+        2,
+        arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
     )
     .unwrap();
 
     assert_eq!(event.kind.as_str(), "ak.rsvp.set");
-    assert_eq!(
-        sdk_event_local_target_ref(&event),
-        Some(TEST_CALENDAR_STRAND_ID)
-    );
+    assert_eq!(sdk_event_local_target_ref(&event), None);
     assert_eq!(event.payload["event_ref"], TEST_CALENDAR_STRAND_ID);
     assert_eq!(
         event.payload["occurrence"],
@@ -176,17 +162,12 @@ fn calendar_rsvp_operation_carries_the_complete_entry_and_effect() {
 
 #[test]
 fn calendar_rsvp_without_an_observed_schedule_fails_closed() {
-    let calendar = arkret_sdk::CalendarEventFields {
+    let calendar = CalendarCardFields {
         start: "2026-06-20T09:00:00".to_owned(),
         end: "2026-06-20T10:00:00".to_owned(),
         timezone: "Asia/Shanghai".to_owned(),
         tzdb_version: "2025a".to_owned(),
-        all_day: false,
-        status: arkret_sdk::CalendarStatus::Confirmed,
-        recurrence: None,
-        location: None,
-        call_id: None,
-        attendees: Vec::new(),
+        ..CalendarCardFields::default()
     };
     // No frontier means we cannot claim to have observed the schedule, so
     // authoring refuses instead of signing an unbacked basis.
@@ -197,8 +178,10 @@ fn calendar_rsvp_without_an_observed_schedule_fails_closed() {
             TEST_CALENDAR_STRAND_ID,
             "accepted",
             "",
-            Vec::new(),
             &calendar,
+            Vec::new(),
+            2,
+            arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
         )
         .is_err()
     );

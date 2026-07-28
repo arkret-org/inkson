@@ -81,22 +81,6 @@ struct WelcomeMessageEntry {
     welcome_event_id: Option<String>,
 }
 
-/// Canonical exporter-aead `aad_bytes` for `(realm_id, epoch)`, bound into the
-/// `mls_exporter_aead_v1` content AEAD AAD on both the provider encrypt and the
-/// receiver tier-3 decrypt paths (`encryption-and-audit.md` history sharing,
-/// constraint ①: the epoch MUST be encoded so a key from epoch N can only open
-/// content authored at epoch N). MUST be reconstructed byte-identically on both
-/// ends — the SDK binds it verbatim into the AEAD AAD.
-pub fn history_content_aad_bytes(realm_id: &str, epoch: u64) -> anyhow::Result<Vec<u8>> {
-    let aad = serde_json::json!({
-        "purpose": "ak.realm_key.history_content.v1",
-        "realm_id": realm_id.trim(),
-        "epoch": epoch,
-    });
-    arkret_sdk::canonical::canonical_json_bytes(&aad)
-        .map_err(|err| anyhow::anyhow!("history content AAD canonicalization failed: {err:?}"))
-}
-
 /// True when `realm_id` declares the §2.10 `mls_exporter_aead_v1` content scheme
 /// (capability axis), so authored content uses the history-shareable exporter
 /// AEAD path instead of forward-secret `mls_rfc9420`. Normalizes case and
@@ -248,13 +232,25 @@ pub fn decrypt_application_payload_for_effective_scope(
             if payload.scheme == arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
                 && snapshot.epoch == payload.epoch
                 && let Ok(secret) = group.derive_and_retain_history_secret(realm_id)
+                && let Some(key_ref) = payload.key_ref.as_ref()
+                && let Some(payload_aad) = payload.aad.as_ref()
+                && payload.purpose.as_deref()
+                    == Some(arkret_sdk::mls::MLS_EXPORTER_AEAD_CONTENT_PURPOSE)
+                && payload_aad.realm_id.as_str() == realm_id
+                && key_ref
+                    == &arkret_sdk::KeyRefObject::mls_exporter_aead(
+                        payload.group_id.clone(),
+                        payload.epoch,
+                    )
                 && let Ok(nonce_and_ct) =
                     arkret_sdk::base64url_decode(payload.ciphertext.as_bytes())
+                && payload.verify_mls_payload_digest(&nonce_and_ct).is_ok()
                 && let Ok(plaintext) = group.decrypt_content_exporter_aead(
                     &secret,
-                    realm_id,
+                    key_ref,
+                    payload.epoch,
                     &nonce_and_ct,
-                    &history_content_aad_bytes(realm_id, payload.epoch).ok()?,
+                    payload_aad,
                 )
             {
                 return Some(plaintext);
@@ -411,14 +407,11 @@ pub fn ordinary_agent_mls_author_view(
     })
 }
 
-/// Tier-3 history decrypt: try every granted `history_secret` for this Realm
-/// against `payload`, decrypting the ciphertext as `mls_exporter_aead_v1`
-/// content (`encryption-and-audit.md` history sharing). The provider that
-/// authored the content bound `history_content_aad_bytes(realm_id, epoch)` into
-/// the AEAD AAD, so the receiver reconstructs the same value here. Returns the
-/// first secret that opens the payload, else `None` (a device that was not
-/// granted the epoch's key, or a non-exporter-aead payload). Does NOT touch
-/// the receive ratchet.
+/// Tier-3 history decrypt: use the exact granted `history_secret` named by an
+/// `mls_exporter_aead_v1` payload. The provider binds the payload's typed AAD,
+/// key reference and epoch into the immutable AEAD header. A malformed payload
+/// or missing exact-epoch secret returns `None`; this path never scans other
+/// epoch keys. Does NOT touch the receive ratchet.
 ///
 /// Group-free: uses the SDK's
 /// [`arkret_sdk::mls::decrypt_content_exporter_aead_standalone`] so a device
@@ -430,37 +423,39 @@ fn try_history_decrypt_standalone(
     realm_id: &str,
     payload: &arkret_sdk::EncryptedPayload,
 ) -> Option<Vec<u8>> {
+    if payload.scheme != arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
+        || payload.group_id.trim().is_empty()
+        || payload.purpose.as_deref() != Some(arkret_sdk::mls::MLS_EXPORTER_AEAD_CONTENT_PURPOSE)
+    {
+        return None;
+    }
     let nonce_and_ct = arkret_sdk::base64url_decode(payload.ciphertext.as_bytes()).ok()?;
+    payload.verify_mls_payload_digest(&nonce_and_ct).ok()?;
+    let key_ref = payload.key_ref.as_ref()?;
+    if key_ref
+        != &arkret_sdk::KeyRefObject::mls_exporter_aead(payload.group_id.clone(), payload.epoch)
+    {
+        return None;
+    }
+    let aad = payload.aad.as_ref()?;
+    if aad.realm_id.as_str() != realm_id {
+        return None;
+    }
     // There is no local group snapshot on this path, so the suite has to come
     // from the envelope. `encryption-and-audit.md` §2.10.2 requires the producer
     // to carry it; a payload without it is not decryptable here rather than
     // decryptable under a guessed suite.
     let aead_profile = payload.aead_profile.as_deref()?;
-    // The payload's own epoch is the only key that can open it; prefer the exact
-    // match, but fall back to scanning all granted secrets so a payload whose
-    // epoch field drifted from the keyed epoch still resolves.
-    let exact = state_store.history_secret_for(realm_id, payload.epoch);
-    let scan = state_store.history_secrets_for(realm_id);
-    let candidates = exact
-        .into_iter()
-        .map(|secret| (payload.epoch, secret))
-        .chain(
-            scan.into_iter()
-                .filter(|(epoch, _)| *epoch != payload.epoch),
-        );
-    for (epoch, secret) in candidates {
-        let aad_bytes = history_content_aad_bytes(realm_id, epoch).ok()?;
-        if let Ok(plaintext) = arkret_sdk::mls::decrypt_content_exporter_aead_standalone(
-            &secret,
-            realm_id,
-            aead_profile,
-            &nonce_and_ct,
-            &aad_bytes,
-        ) {
-            return Some(plaintext);
-        }
-    }
-    None
+    let secret = state_store.history_secret_for(realm_id, payload.epoch)?;
+    arkret_sdk::mls::decrypt_content_exporter_aead_standalone(
+        &secret,
+        key_ref,
+        payload.epoch,
+        aead_profile,
+        &nonce_and_ct,
+        aad,
+    )
+    .ok()
 }
 
 /// Provider-side: derive + retain the **current** epoch `history_secret` for a
@@ -1663,20 +1658,18 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     // history-shareable exporter-aead scheme so a late joiner granted the
     // epoch's `history_secret` can decrypt it. Otherwise keep the default
     // forward-secret `mls_rfc9420` PrivateMessage path. The epoch is read AFTER
-    // any forced commit above, so the AEAD aad binds the epoch the content
-    // actually rides; it MUST match the decrypt-side `history_content_aad_bytes`.
+    // any forced commit above and is bound with key_ref + typed routing AAD in
+    // the SDK's closed immutable header.
     let mut encrypted_values = Vec::with_capacity(plaintext_values.len());
-    let exporter_aad = use_exporter_aead
-        .then(|| history_content_aad_bytes(realm_id, group.epoch()))
-        .transpose()
-        .map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
+    let exporter_key_ref = use_exporter_aead
+        .then(|| arkret_sdk::KeyRefObject::mls_exporter_aead(group.group_id(), group.epoch()));
     for plaintext in plaintext_values {
-        let encrypted = if let Some(aad_bytes) = exporter_aad.as_deref() {
+        let encrypted = if let Some(key_ref) = exporter_key_ref.as_ref() {
             group.encrypt_payload_exporter_aead(
                 content_type,
                 realm_id,
-                aad_bytes,
-                Some(aad.clone()),
+                key_ref.clone(),
+                aad.clone(),
                 plaintext,
             )
         } else {
@@ -1842,20 +1835,17 @@ pub(crate) fn encrypt_message_with_device_snapshot(
         None
     };
     // §2.10 content scheme dispatch — see `encrypt_values_with_device_snapshot`.
-    // The routing `aad` rides the envelope (`EncryptedPayload.aad` + digest); the
-    // AEAD itself binds the epoch via `history_content_aad_bytes`, matching the
-    // decrypt-side `try_history_decrypt_standalone`.
-    let exporter_aad_bytes = use_exporter_aead
-        .then(|| history_content_aad_bytes(realm_id, group.epoch()))
-        .transpose()
-        .map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
+    // The routing `aad`, exact key reference, epoch, purpose and suite are all
+    // bound by the exporter-AEAD immutable header.
+    let exporter_key_ref = use_exporter_aead
+        .then(|| arkret_sdk::KeyRefObject::mls_exporter_aead(group.group_id(), group.epoch()));
     let encrypt_one = |group: &mut arkret_sdk::ArkretMlsGroup, bytes: &[u8]| {
-        if let Some(aad_bytes) = exporter_aad_bytes.as_deref() {
+        if let Some(key_ref) = exporter_key_ref.as_ref() {
             group.encrypt_payload_exporter_aead(
                 content_type,
                 realm_id,
-                aad_bytes,
-                Some(aad.clone()),
+                key_ref.clone(),
+                aad.clone(),
                 bytes,
             )
         } else {

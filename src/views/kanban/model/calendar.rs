@@ -259,8 +259,16 @@ pub(crate) fn calendar_patch_entries(
 pub(crate) fn calendar_event_fields_from_draft(
     draft: &CalendarCardFields,
 ) -> Result<arkret_sdk::CalendarEventFields, String> {
-    let start = required_calendar_field("start", &draft.start)?;
-    let end = required_calendar_field("end", &draft.end)?;
+    let start = canonical_calendar_date_time(
+        "start",
+        &required_calendar_field("start", &draft.start)?,
+        draft.all_day,
+    )?;
+    let end = canonical_calendar_date_time(
+        "end",
+        &required_calendar_field("end", &draft.end)?,
+        draft.all_day,
+    )?;
     let timezone = required_calendar_field("timezone", &draft.timezone)?;
     validate_calendar_time_order(&start, &end, draft.all_day)?;
     let tzdb_version = if draft.tzdb_version.trim().is_empty() {
@@ -283,52 +291,171 @@ pub(crate) fn calendar_event_fields_from_draft(
     })
 }
 
-/// Builds an `ak.rsvp.set` Event for the card's calendar.
-///
-/// `schedule_basis_refs` is the schedule revision frontier this client actually
-/// observed. It is mandatory: the entry basis is part of the signed cell value,
-/// and a receiver admits it only as a subset of the envelope causal edges. When
-/// the frontier is unknown we fail closed rather than sign an RSVP that claims
-/// to have observed a schedule it did not.
+fn canonical_calendar_date_time(field: &str, value: &str, all_day: bool) -> Result<String, String> {
+    if all_day {
+        return value
+            .split('T')
+            .next()
+            .filter(|date| date.len() == 10)
+            .map(str::to_owned)
+            .ok_or_else(|| format!("calendar {field} must be YYYY-MM-DD"));
+    }
+    let mut local = value.trim().trim_end_matches('Z').to_owned();
+    if let Some(dot) = local.find('.') {
+        let suffix = local[dot..].to_owned();
+        let offset = suffix
+            .find(|character| matches!(character, '+' | '-'))
+            .map(|index| suffix[index..].to_owned());
+        local.truncate(dot);
+        if let Some(offset) = offset {
+            local.push_str(&offset);
+        }
+    }
+    if let Some(index) = local.rfind('+')
+        && index > 10
+    {
+        local.truncate(index);
+    }
+    if let Some(index) = local.rfind('-')
+        && index > 10
+    {
+        local.truncate(index);
+    }
+    (local.len() == 19)
+        .then_some(local)
+        .ok_or_else(|| format!("calendar {field} must be YYYY-MM-DDTHH:mm:ss"))
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn calendar_rsvp_operation(
     realm_id: &str,
     actor_id: &str,
     strand_id: &str,
     status: &str,
     occurrence: &str,
+    calendar: &CalendarCardFields,
     schedule_basis_refs: Vec<arkret_sdk::Hash>,
-    calendar: &arkret_sdk::CalendarEventFields,
+    actor_seq: u64,
+    hlc: arkret_sdk::Hlc,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    if schedule_basis_refs.is_empty() {
-        anyhow::bail!(
-            "cannot send an RSVP before the observed schedule revision is known;              the calendar projection must expose schedule_revision_heads first"
-        );
-    }
-    // The projection endpoint currently exposes the canonical frontier but not
-    // schedule plaintext per head. One head is therefore decidably settled;
-    // multiple heads are conservatively treated as conflicting until the
-    // projection can prove their canonical schedule bytes are equal.
-    let schedule = arkret_sdk::CalendarScheduleProjection::from_heads(
-        &schedule_basis_refs
-            .iter()
-            .cloned()
-            .map(|digest| {
-                let bytes = digest.as_str().as_bytes().to_vec();
-                (digest, Some(bytes))
-            })
-            .collect::<Vec<_>>(),
-    );
-    crate::operation::ak_ops::rsvp_set(
-        realm_id,
-        actor_id,
+    let calendar_fields = calendar_event_fields_from_draft(calendar).map_err(anyhow::Error::msg)?;
+    let schedule_bytes = arkret_sdk::canonical::canonical_json_bytes(&calendar_fields)?;
+    let schedule = if schedule_basis_refs.len() == 1 {
+        arkret_sdk::CalendarScheduleProjection::from_heads(&[(
+            schedule_basis_refs[0].clone(),
+            Some(schedule_bytes),
+        )])
+    } else {
+        arkret_sdk::CalendarScheduleProjection::from_heads(
+            &schedule_basis_refs
+                .iter()
+                .cloned()
+                .map(|head| (head, None))
+                .collect::<Vec<_>>(),
+        )
+    };
+    let mut authoring = crate::operation::ak_ops::rsvp_authoring(
         strand_id,
         status,
-        (!occurrence.trim().is_empty()).then_some(occurrence.trim()),
-        schedule_basis_refs,
-        calendar,
+        (!occurrence.trim().is_empty() && !calendar.recurrence_frequency.trim().is_empty())
+            .then_some(occurrence.trim()),
+    )?;
+    authoring.schedule_basis_refs = schedule_basis_refs.clone();
+    Ok(arkret_sdk::calendar::build_rsvp_set_event(
+        authoring,
+        &calendar_fields,
         &schedule,
-    )
-    .and_then(|builder| builder.build_sdk_event("inkson"))
+        arkret_sdk::EventId::new(format!("ak:event:{}", crate::operation::uuid_v7()))?,
+        arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
+        },
+        arkret_sdk::Did::new(actor_id.to_owned())?,
+        actor_seq,
+        hlc,
+        schedule_basis_refs,
+    )?)
+}
+
+pub(crate) fn calendar_schedule_revision_heads(
+    events: &[arkret_sdk::Event],
+    strand_id: &str,
+) -> anyhow::Result<Vec<arkret_sdk::Hash>> {
+    let mut by_digest = std::collections::BTreeMap::new();
+    let mut revisions = std::collections::BTreeSet::new();
+    for event in events {
+        let digest = arkret_sdk::Hash::new(event.event_digest()?)?;
+        if calendar_event_revises_schedule(event, strand_id) {
+            revisions.insert(digest.as_str().to_owned());
+        }
+        by_digest.insert(digest.as_str().to_owned(), event);
+    }
+    let mut consumed = std::collections::BTreeSet::new();
+    for revision in &revisions {
+        let Some(event) = by_digest.get(revision) else {
+            continue;
+        };
+        let mut pending = event
+            .causal_refs
+            .iter()
+            .map(|reference| reference.as_str().to_owned())
+            .collect::<Vec<_>>();
+        let mut visited = std::collections::BTreeSet::new();
+        while let Some(reference) = pending.pop() {
+            if !visited.insert(reference.clone()) {
+                continue;
+            }
+            if revisions.contains(&reference) {
+                consumed.insert(reference.clone());
+            }
+            if let Some(ancestor) = by_digest.get(&reference) {
+                pending.extend(
+                    ancestor
+                        .causal_refs
+                        .iter()
+                        .map(|parent| parent.as_str().to_owned()),
+                );
+            }
+        }
+    }
+    let heads = revisions
+        .difference(&consumed)
+        .map(|digest| arkret_sdk::Hash::new(digest.clone()))
+        .collect::<Result<Vec<_>, _>>()?;
+    if heads.is_empty() {
+        anyhow::bail!("calendar schedule has no visible revision head");
+    }
+    Ok(heads)
+}
+
+fn calendar_event_revises_schedule(event: &arkret_sdk::Event, strand_id: &str) -> bool {
+    match event.kind.as_str() {
+        "ak.strand.create" => {
+            let object = event.payload.get("object");
+            object
+                .and_then(|object| object.get("id"))
+                .and_then(Value::as_str)
+                == Some(strand_id)
+                && object
+                    .and_then(|object| object.get("metadata"))
+                    .and_then(|metadata| metadata.get("fields"))
+                    .and_then(Value::as_object)
+                    .is_some_and(fields_have_calendar_keys)
+        }
+        "ak.strand.update" => {
+            event.payload.get("target_ref").and_then(Value::as_str) == Some(strand_id)
+                && event
+                    .payload
+                    .get("patch")
+                    .and_then(Value::as_object)
+                    .is_some_and(|patch| {
+                        patch.keys().any(|path| {
+                            path == CALENDAR_SUBTREE_PATH
+                                || path.starts_with(&format!("{CALENDAR_SUBTREE_PATH}."))
+                        })
+                    })
+        }
+        _ => false,
+    }
 }
 
 /// Canonical instance key for the card's base occurrence.
@@ -445,13 +572,6 @@ fn recurrence_from_card(
         count,
         until,
     }))
-}
-
-fn recurrence_value_from_card(calendar: &CalendarCardFields) -> Result<Option<Value>, String> {
-    recurrence_from_card(calendar)?
-        .map(serde_json::to_value)
-        .transpose()
-        .map_err(|err| format!("recurrence serialize failed: {err}"))
 }
 
 fn parse_recurrence_frequency(value: &str) -> Result<arkret_sdk::RecurrenceFrequency, String> {
@@ -596,21 +716,6 @@ fn set_if_changed(
     }
 }
 
-fn set_value_if_changed(
-    patch: &mut Map<String, Value>,
-    path: &str,
-    current: Option<Value>,
-    next: Option<Value>,
-) {
-    set_if_changed(patch, path, current, next);
-}
-
-fn set_string_if_changed(patch: &mut Map<String, Value>, path: &str, current: &str, next: &str) {
-    let current = (!current.trim().is_empty()).then(|| json!(current.trim()));
-    let next = (!next.trim().is_empty()).then(|| json!(next.trim()));
-    set_if_changed(patch, path, current, next);
-}
-
 fn set_location_if_changed(
     patch: &mut Map<String, Value>,
     current: &CalendarCardFields,
@@ -622,18 +727,6 @@ fn set_location_if_changed(
     }
     let current_value = location_json_from_text(&current.location);
     set_if_changed(patch, CALENDAR_LOCATION_PRIVATE_PATH, current_value, next);
-}
-
-fn current_profile_value(current: &CalendarCardFields) -> Option<Value> {
-    current
-        .has_schedule()
-        .then(|| json!(arkret_sdk::PROFILE_CALENDAR_EVENT))
-}
-
-fn current_profile_refs_value(current: &CalendarCardFields) -> Option<Value> {
-    current
-        .has_schedule()
-        .then(|| json!([arkret_sdk::PROFILE_CALENDAR_EVENT]))
 }
 
 /// Card-level RSVP display state.
