@@ -312,11 +312,11 @@ pub async fn standard_initial_submission(
             .map_err(anyhow::Error::from)?
             .member_receipt
         };
-        submission.control_proposal_receipt =
-            Some(arkret_wire::ControlProposalReceipt::from_member_receipts(
-                vec![member_receipt],
-                arkret_wire::ControlProposalDecisionPolicy::protocol_maximum(),
-            )?);
+        submission.control_proposal_receipt = Some(
+            arkret_wire::ControlProposalReceipt::from_member_receipts_protocol_bounds(vec![
+                member_receipt,
+            ])?,
+        );
     }
     submission
         .validate_structural_in_context(arkret_wire::EventSubmitContext::Standard)
