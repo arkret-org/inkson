@@ -1,19 +1,23 @@
 # Regression Review
 
-## 2026-07-29 — Sidecar Chrome/Edge matrix no longer reaches the seeded Realm
+## 2026-07-29 — Sidecar Chrome/Edge matrix no longer reached the seeded Realm
 
 - Surface: `inkson.strands.kanban.spec.ts` Sidecar browser matrix and its Arkret mock harness.
-- Regression: Chrome and Edge both load the client shell, but the mocked account/Realm bootstrap
-  leaves the UI at `No Realm tree loaded`; the executed Sidecar cases then time out waiting for the
-  seeded Kanban card, and the full matrix cannot finish. It supplies no current browser acceptance
-  evidence.
+- Regression: Chrome and Edge both loaded the client shell, but the mocked account/Realm bootstrap
+  left the UI at `No Realm tree loaded`; the executed Sidecar cases then timed out waiting for the
+  seeded Kanban card, and the full matrix could not finish.
 - Detection: Sidecar completion-gate verification against the real WASM bundle on Chrome and Edge.
-- Required correction: update the mock subscribe/sync fixtures to the current accepted account and
-  Realm frame contract, assert the Realm tree is present before entering Kanban, then rerun all
-  Sidecar display-mode, multi-Agent, narrow-layout, long-history, and state-preservation cases.
+- Resolution: the mock account subscribe and Realm bootstrap fixtures now emit the current
+  accepted frame shape, expose a stable reload bootstrap, and fail fast when the seeded Realm tree
+  is absent. The matrix also covers explicit publish cancel/confirm, immutable retry payloads,
+  source-route and draft preservation, long-history dedupe, scroll restoration, multi-Agent
+  addressing, narrow layout, and pending-access fail-closed behavior.
+- Verification: the stable joint-e2e WASM bundle passed all eight Sidecar cases in installed Chrome
+  and Edge twice. The request-count assertion proves mode/track changes do not replay the source
+  Realm history, and each case runs with trace capture enabled.
 - Prevention dimension: E2E bootstrap helpers must fail early on missing seeded Realm state instead
   of letting every product assertion consume the full test timeout.
-- Status: open.
+- Status: resolved.
 
 ## 2026-07-29 — the Playwright dev-server port was not configurable
 
