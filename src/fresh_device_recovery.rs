@@ -17,6 +17,8 @@ use arkret_models_crypto::{
     RecoverySessionState, RecoveryWelcomeRealmSummary, TypedClientStepAttestation,
     TypedSecurityTransactionContinueRequest,
 };
+#[cfg(debug_assertions)]
+use arkret_wire::RecoveryAuthorityTicket;
 use arkret_wire::security_transaction::PreparedEventSubmissionBatch;
 use arkret_wire::{
     Audience, AuthorizationLease, AuthorizationLeaseId, BackupObjectRef, BackupRotationBinding,
@@ -26,11 +28,11 @@ use arkret_wire::{
     EventInitialSubmission, EventsSubmitBatchRequestBody, GrantId, Hash, NonEmptyString,
     PayloadProof, PolicyId, PreparedEventUnit, PromoteRecoverySessionGrantOutcome,
     PromoteRecoverySessionGrantRequest, ProposalMemberReceipt, ReceiptId,
-    RecoveryAuthorityHolderProof, RecoveryAuthorityTicket, RecoveryAuthorityTicketId,
-    RecoveryBinding, RecoveryPreparedPlan, RecoveryTransactionCreateRequest, RiskTier,
-    SecurityRotationTransactionCreateRequest, SecurityTransaction, SecurityTransactionBinding,
-    SecurityTransactionCreateRequest, SecurityTransactionPreparedPlan, SecurityTransactionState,
-    SecurityTransactionStep, TransactionId, TypedTrustDomainId, proof_kind,
+    RecoveryAuthorityHolderProof, RecoveryAuthorityTicketId, RecoveryBinding, RecoveryPreparedPlan,
+    RecoveryTransactionCreateRequest, RiskTier, SecurityRotationTransactionCreateRequest,
+    SecurityTransaction, SecurityTransactionBinding, SecurityTransactionCreateRequest,
+    SecurityTransactionPreparedPlan, SecurityTransactionState, SecurityTransactionStep,
+    TransactionId, TypedTrustDomainId, proof_kind,
 };
 use chrono::{DateTime, Utc};
 use garth::{SecurityTransactionEngine, SecurityTransactionStore, SecurityTransactionTransport};

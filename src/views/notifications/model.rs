@@ -118,8 +118,22 @@ pub(crate) fn notification_value_read_by_cursor(
     )
 }
 
-pub(crate) fn joined_realm_ids(response: &AccountSyncStep) -> BTreeSet<String> {
-    response.realm_projections.keys().cloned().collect()
+pub(crate) fn joined_realm_ids(response: &AccountSyncStep, actor_id: &str) -> BTreeSet<String> {
+    response
+        .realm_entries
+        .iter()
+        .filter(|(_, entry)| actor_is_joined_member(entry, actor_id))
+        .map(|(realm_id, _)| realm_id.as_str().to_owned())
+        .collect()
+}
+
+pub(crate) fn actor_is_joined_member(entry: &arkret_sdk::RealmSyncEntry, actor_id: &str) -> bool {
+    entry.members.as_ref().is_some_and(|members| {
+        members.iter().any(|member| {
+            member.actor_id.as_str() == actor_id
+                && member.membership == arkret_sdk::MembershipState::Join
+        })
+    })
 }
 
 pub(crate) fn apply_sync_projection_to_store(

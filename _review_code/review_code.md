@@ -118,3 +118,18 @@
   `ControlProposalReceipt::from_member_receipts`.
 - Prevention dimension: canonical signed protocol artifacts must have one SDK authoring primitive;
   product clients choose authority context and signer but do not copy transcript construction.
+
+## 2026-07-30 — visible Realm previews incorrectly suppressed pending invite notifications
+
+- Severity: P1 functional regression.
+- Status: resolved; covered by notification projection unit tests and the live joint invite gate.
+- Evidence: an invitee's account snapshot contained the target Realm with
+  `members[].membership = invite`, but `joined_realm_ids` classified every
+  `realm_projections` key as joined. The refresh path then removed the pending
+  invite even though `/_arkret/self/authz/invites` returned it.
+- Resolution: invite suppression now requires a typed roster entry for the
+  current actor whose membership is exactly `join`; discoverable previews and
+  `invite`/`knock` states remain visible to the notification fold.
+- Prevention dimension: projection visibility is not authorization or
+  membership. UI gates must consume the typed membership state rather than
+  infer it from object presence.

@@ -5,10 +5,10 @@ mod tests {
     use serde_json::json;
 
     use super::super::model::{
-        UiNotificationAction, append_invite_notifications, drop_joined_invite_notifications,
-        hydrate_notifications, notification_eval_context, notification_overrides_realm_mute,
-        raw_notifications_from_sources, read_cursor_targets, realm_is_muted,
-        realm_title_hints_from_invites,
+        UiNotificationAction, actor_is_joined_member, append_invite_notifications,
+        drop_joined_invite_notifications, hydrate_notifications, notification_eval_context,
+        notification_overrides_realm_mute, raw_notifications_from_sources, read_cursor_targets,
+        realm_is_muted, realm_title_hints_from_invites,
     };
     use crate::notification_rules::WatchLevel;
     use crate::state::projection::notifications::{test_event_notification, test_invite};
@@ -112,6 +112,28 @@ mod tests {
         append_invite_notifications(&mut raw, vec![invite], &joined_realms);
         drop_joined_invite_notifications(&mut raw, &joined_realms);
         assert!(raw.is_empty(), "joined Realm invites should be hidden");
+    }
+
+    #[test]
+    fn visible_realm_preview_does_not_masquerade_as_joined_membership() {
+        let actor_id = "did:webvh:z6mkfixture:bob.example";
+        let entry = |membership: &str| {
+            serde_json::from_value::<arkret_sdk::RealmSyncEntry>(json!({
+                "members": [{
+                    "actor_id": actor_id,
+                    "membership": membership
+                }]
+            }))
+            .expect("valid typed Realm sync entry")
+        };
+
+        assert!(actor_is_joined_member(&entry("join"), actor_id));
+        assert!(!actor_is_joined_member(&entry("invite"), actor_id));
+        assert!(!actor_is_joined_member(&entry("knock"), actor_id));
+        assert!(!actor_is_joined_member(
+            &arkret_sdk::RealmSyncEntry::default(),
+            actor_id
+        ));
     }
 
     #[test]
