@@ -292,37 +292,14 @@ fn local_state_store_persists_private_read_cursors() {
     const REALM_ID: &str = "ak:realm:01964137-0000-7000-8000-000000000010";
     const EVENT_ID: &str = "ak:event:01964137-0000-7000-8000-000000000020";
     let marker = store
-        .save_read_cursor("did:web:alice.example", DEVICE_ID, REALM_ID, None, EVENT_ID)
+        .build_read_cursor_candidate("did:web:alice.example", DEVICE_ID, REALM_ID, None, EVENT_ID)
         .unwrap();
+    store.seed_read_cursor_projection(marker.clone()).unwrap();
 
-    assert_eq!(marker.marker_type, "ak.read_cursor.advance");
     assert_eq!(marker.body.realm_id, REALM_ID);
     assert_eq!(marker.body.position.event_id.as_str(), EVENT_ID);
     assert_eq!(marker.body.read_scope.kind.as_str(), "strand");
     assert_eq!(marker.body.read_scope.track.as_deref(), Some("discussion"));
-    assert_eq!(
-        marker.ak_read_cursor_operation(),
-        serde_json::json!({
-            "kind": "ak.read_cursor.advance",
-            "payload": {
-                "id": &marker.body.id,
-                "schema": "ak.schema.read_cursor.v1",
-                "actor_id": "did:web:alice.example",
-                "device_id": DEVICE_ID,
-                "realm_id": REALM_ID,
-                "read_scope": {
-                    "kind": "strand",
-                    "container_ref": "ak:strand:01964137-0000-7000-8000-000000000010",
-                    "track_name": "discussion"
-                },
-                "position": {
-                    "event_id": EVENT_ID,
-                    "hlc": &marker.body.position.hlc
-                },
-                "updated_at": arkret_sdk::canonical::format_timestamp_canonical(marker.updated_at),
-            },
-        })
-    );
 
     let reader = LocalStateStore::with_path(path);
     let persisted = reader
@@ -332,6 +309,42 @@ fn local_state_store_persists_private_read_cursors() {
     assert_eq!(persisted.actor, "did:web:alice.example");
     assert_eq!(persisted.device_id, DEVICE_ID);
     assert_eq!(persisted.body.position.event_id.as_str(), EVENT_ID);
+}
+
+#[test]
+fn local_state_store_persists_canonical_read_cursor_outcome() {
+    let path = temp_state_path("read-cursor-outcome");
+    let mut store = LocalStateStore::with_path(path.clone());
+    let outcome = arkret_sdk::ReadMarkerOutcome {
+        realm_id: arkret_sdk::RealmId::new("ak:realm:01964137-0000-7000-8000-000000000010")
+            .unwrap(),
+        actor_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+        device_id: arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001")
+            .unwrap(),
+        read_scope: read_scope_for_cursor("ak:realm:01964137-0000-7000-8000-000000000010", None),
+        position: ReadCursorPosition {
+            event_id: arkret_sdk::EventId::new("ak:event:01964137-0000-7000-8000-000000000020")
+                .unwrap(),
+            hlc: arkret_sdk::Hlc::new("019641370000-0001-deadbeef").unwrap(),
+        },
+        updated_at: chrono::DateTime::parse_from_rfc3339("2026-07-30T00:00:00.000Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc),
+    };
+
+    store.apply_read_cursor_outcome(outcome).unwrap();
+
+    let persisted = LocalStateStore::with_path(path)
+        .read_cursor_for("ak:realm:01964137-0000-7000-8000-000000000010", None)
+        .expect("canonical read cursor outcome persisted");
+    assert_eq!(
+        persisted.body.position.event_id.as_str(),
+        "ak:event:01964137-0000-7000-8000-000000000020"
+    );
+    assert_eq!(
+        persisted.updated_at.to_rfc3339(),
+        "2026-07-30T00:00:00+00:00"
+    );
 }
 
 #[test]
@@ -569,8 +582,8 @@ fn local_state_store_keeps_thread_read_cursors_separate() {
     const TOPIC_EVENT_ID: &str = "ak:event:01964137-0000-7000-8000-000000000021";
     const THREAD_ID: &str = "ak:thread:01964137-0000-7000-8000-000000000031";
     const THREAD_EVENT_ID: &str = "ak:event:01964137-0000-7000-8000-000000000022";
-    store
-        .save_read_cursor(
+    let topic_marker = store
+        .build_read_cursor_candidate(
             "did:web:alice.example",
             "ak:device:01964137-0000-7000-8000-000000000001",
             REALM_ID,
@@ -578,8 +591,9 @@ fn local_state_store_keeps_thread_read_cursors_separate() {
             TOPIC_EVENT_ID,
         )
         .unwrap();
-    store
-        .save_read_cursor(
+    store.seed_read_cursor_projection(topic_marker).unwrap();
+    let thread_marker = store
+        .build_read_cursor_candidate(
             "did:web:alice.example",
             "ak:device:01964137-0000-7000-8000-000000000001",
             REALM_ID,
@@ -587,6 +601,7 @@ fn local_state_store_keeps_thread_read_cursors_separate() {
             THREAD_EVENT_ID,
         )
         .unwrap();
+    store.seed_read_cursor_projection(thread_marker).unwrap();
 
     assert_eq!(
         store

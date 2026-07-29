@@ -152,7 +152,6 @@ mod tests {
         local_state.read_cursors.insert(
             "cursor".to_owned(),
             ReadMarkerRecord {
-                marker_type: "ak.read_cursor.advance".to_owned(),
                 body: ReadMarkerBody {
                     id: "ak:read_cursor:01904100-0000-7000-8000-000000000006".to_owned(),
                     schema: "ak.schema.read_cursor.v1".to_owned(),
@@ -193,6 +192,50 @@ mod tests {
 
         assert_eq!(notifications.len(), 2);
         assert!(notifications.iter().all(|notification| notification.read));
+    }
+
+    #[test]
+    fn hydrate_notifications_does_not_order_missing_cursor_target_by_event_id() {
+        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000002";
+        let strand_id = "ak:strand:01904100-0000-7000-8000-000000000003";
+        let mut local_state = ClientLocalState::default();
+        local_state.read_cursors.insert(
+            "cursor".to_owned(),
+            ReadMarkerRecord {
+                body: ReadMarkerBody {
+                    id: "ak:read_cursor:01904100-0000-7000-8000-000000000006".to_owned(),
+                    schema: "ak.schema.read_cursor.v1".to_owned(),
+                    realm_id: realm_id.to_owned(),
+                    read_scope: read_scope_for_cursor(realm_id, Some(strand_id)),
+                    position: ReadCursorPosition {
+                        event_id: arkret_sdk::EventId::new(
+                            "ak:event:01904100-0000-7000-8000-000000000009",
+                        )
+                        .unwrap(),
+                        hlc: arkret_sdk::Hlc::new("019041000000-0001-deadbeef").unwrap(),
+                    },
+                },
+                actor: "did:web:bob.example".to_owned(),
+                device_id: "ak:device:01904100-0000-7000-8000-000000000007".to_owned(),
+                updated_at: chrono::Utc::now(),
+            },
+        );
+
+        let notifications = hydrate_notifications(
+            vec![event(
+                1,
+                arkret_sdk::NotificationKind::Mention,
+                realm_id,
+                Some("ak:event:01904100-0000-7000-8000-000000000004"),
+                json!({"strand_id": strand_id, "body": "target is not in this page"}),
+            )],
+            &local_state,
+            None,
+            None,
+        );
+
+        assert_eq!(notifications.len(), 1);
+        assert!(!notifications[0].read);
     }
 
     #[test]
@@ -404,9 +447,10 @@ mod tests {
     }
 
     #[test]
-    fn read_cursor_targets_pick_latest_event_per_realm() {
+    fn read_cursor_targets_pick_latest_event_per_read_scope() {
         let realm_a = "ak:realm:01904100-0000-7000-8000-000000000002";
         let strand_a = "ak:strand:01904100-0000-7000-8000-000000000003";
+        let strand_b = "ak:strand:01904100-0000-7000-8000-000000000008";
         let realm_b = "ak:realm:01904100-0000-7000-8000-000000000004";
         let raw = vec![
             event(
@@ -424,6 +468,13 @@ mod tests {
                 json!({"strand_id": strand_a}),
             ),
             event(
+                4,
+                arkret_sdk::NotificationKind::Message,
+                realm_a,
+                Some("ak:event:01904100-0000-7000-8000-000000000009"),
+                json!({"strand_id": strand_b}),
+            ),
+            event(
                 3,
                 arkret_sdk::NotificationKind::Mention,
                 realm_b,
@@ -435,11 +486,13 @@ mod tests {
         let notifications = hydrate_notifications(raw, &ClientLocalState::default(), None, None);
         let targets = read_cursor_targets(&notifications);
 
-        assert_eq!(targets.len(), 2);
+        assert_eq!(targets.len(), 3);
         let target_a = targets
             .iter()
-            .find(|target| target.realm_id == realm_a)
-            .expect("realm A target");
+            .find(|target| {
+                target.realm_id == realm_a && target.strand_id.as_deref() == Some(strand_a)
+            })
+            .expect("realm A strand A target");
         assert_eq!(
             target_a.event_id,
             "ak:event:01904100-0000-7000-8000-000000000006"
@@ -447,13 +500,23 @@ mod tests {
         assert_eq!(target_a.strand_id.as_deref(), Some(strand_a));
         let target_b = targets
             .iter()
+            .find(|target| {
+                target.realm_id == realm_a && target.strand_id.as_deref() == Some(strand_b)
+            })
+            .expect("realm A strand B target");
+        assert_eq!(
+            target_b.event_id,
+            "ak:event:01904100-0000-7000-8000-000000000009"
+        );
+        let realm_b_target = targets
+            .iter()
             .find(|target| target.realm_id == realm_b)
             .expect("realm B target");
         assert_eq!(
-            target_b.event_id,
+            realm_b_target.event_id,
             "ak:event:01904100-0000-7000-8000-000000000007"
         );
-        assert!(target_b.strand_id.is_none());
+        assert!(realm_b_target.strand_id.is_none());
     }
 
     #[test]

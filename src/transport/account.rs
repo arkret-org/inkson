@@ -9,8 +9,8 @@
 //! facade path while dropping the per-domain facade method.
 //!
 //! The account-data resource writes (`set_account_data`,
-//! `update_account_data_with_merge`, `delete_account_data`, plus the
-//! event-authored `submit_read_cursor_advance`) are free functions taking an
+//! `update_account_data_with_merge`, `delete_account_data`, plus
+//! `submit_read_cursor_advance`) are free functions taking an
 //! [`crate::event_submit::EventSubmitter`], reached through
 //! [`crate::transport::auth::with_event_submitter`]; the account-data actor-scope
 //! lookup they need runs through `submitter.http()`.
@@ -28,7 +28,6 @@ use serde_json::Value;
 use crate::event_submit::EventSubmitter;
 use crate::models::{
     ContactListView, CurrentAccount, IdentityDescribeOutcome, IdentityResolveOutcome,
-    SubmitEventResult,
 };
 
 pub(crate) fn did_for_request_field(field: &str, value: &str) -> anyhow::Result<arkret_sdk::Did> {
@@ -1471,9 +1470,17 @@ pub async fn delete_account_data(submitter: &EventSubmitter, type_key: &str) -> 
 pub async fn submit_read_cursor_advance(
     submitter: &EventSubmitter,
     marker: &crate::state::ReadMarkerRecord,
-) -> anyhow::Result<SubmitEventResult> {
-    let event = crate::ephemeral::build_read_cursor_advance_event(marker)?;
-    submitter.submit_sdk_event(&event).await
+) -> anyhow::Result<arkret_sdk::ReadMarkerOutcome> {
+    let body = arkret_sdk::ReadCursorAdvanceRequestBody {
+        realm_id: arkret_sdk::RealmId::new(marker.body.realm_id.clone())?,
+        read_scope: marker.body.read_scope.clone(),
+        position: marker.body.position.clone(),
+    };
+    submitter
+        .http()
+        .post("/_arkret/self/read-cursors", &body)
+        .await
+        .map_err(anyhow::Error::from)
 }
 
 #[cfg(test)]

@@ -1,14 +1,11 @@
 //! Durable outgoing-Event helpers for the self client: outgoing-payload schema
-//! validation, read-cursor advance events, and the events-batch acceptance
-//! gate.
+//! validation and the events-batch acceptance gate.
 //!
 //! The `ak.typing` / `ak.receipt.read` / `ak.presence` / `ak.call.signal`
 //! plaintext broadcast envelopes used to live here. v1 deleted that rail: the
 //! successor is the encrypted-only Signal Extension in [`crate::signal`].
 
 use serde::Serialize;
-
-use crate::operation::{EventKind, OperationBuilder};
 
 pub(crate) fn validate_outgoing_registered_event_payload<T: Serialize>(
     kind: &str,
@@ -28,20 +25,6 @@ pub(crate) fn validate_outgoing_registered_event_payload<T: Serialize>(
             "outgoing event kind '{kind}' payload violates registered payload schema: {err}"
         )
     })
-}
-
-pub fn build_read_cursor_advance_event(
-    marker: &crate::state::ReadMarkerRecord,
-) -> anyhow::Result<arkret_sdk::Event> {
-    let kind = EventKind::try_new(&marker.marker_type).ok_or_else(|| {
-        anyhow::anyhow!(
-            "read marker kind {:?} is not in the SDK event-kind registry",
-            marker.marker_type
-        )
-    })?;
-    OperationBuilder::new(&marker.body.realm_id, &marker.actor, kind)
-        .body(marker.ak_read_cursor_payload())
-        .build_sdk_event(&marker.device_id)
 }
 
 pub(crate) fn ensure_events_submit_accepted(

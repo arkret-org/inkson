@@ -132,7 +132,7 @@ pub(crate) fn mark_all_notifications_read(
             read_targets
                 .into_iter()
                 .map(|target| {
-                    store.save_read_cursor(
+                    store.build_read_cursor_candidate(
                         actor_id.clone(),
                         device_id.clone(),
                         target.realm_id,
@@ -164,16 +164,32 @@ pub(crate) fn mark_all_notifications_read(
     spawn(async move {
         let marker_count = markers.len();
         match with_event_submitter(&base_url, session_credential, |sub| async move {
+            let mut outcomes = Vec::with_capacity(markers.len());
             for marker in markers {
-                crate::transport::account::submit_read_cursor_advance(&sub, &marker).await?;
+                outcomes.push(
+                    crate::transport::account::submit_read_cursor_advance(&sub, &marker).await?,
+                );
             }
-            Ok::<_, anyhow::Error>(())
+            Ok::<_, anyhow::Error>(outcomes)
         })
         .await
         {
-            Ok(()) => status_msg.set(format!(
-                "All loaded notifications marked read; synced {marker_count} read cursor(s)."
-            )),
+            Ok(outcomes) => {
+                let persisted = outcomes.into_iter().try_for_each(|outcome| {
+                    state_store
+                        .write()
+                        .apply_read_cursor_outcome(outcome)
+                        .map(|_| ())
+                });
+                match persisted {
+                    Ok(()) => status_msg.set(format!(
+                        "All loaded notifications marked read; synced {marker_count} read cursor(s)."
+                    )),
+                    Err(error) => status_msg.set(format!(
+                        "Read cursors synced but local projection update failed: {error:#}"
+                    )),
+                }
+            }
             Err(err) => status_msg.set(format!(
                 "All loaded notifications marked read locally; read cursor sync failed: {}",
                 err.display()
@@ -213,7 +229,7 @@ pub(crate) fn mark_notification_read_state(
         } else if let Some(event_id) = notification.source_event_id.clone()
             && !notification.realm_id.trim().is_empty()
         {
-            match store.save_read_cursor(
+            match store.build_read_cursor_candidate(
                 actor_id.clone(),
                 device_id.clone(),
                 notification.realm_id.clone(),
@@ -244,12 +260,16 @@ pub(crate) fn mark_notification_read_state(
     status_msg.set("Notification marked read; syncing read cursor...".to_owned());
     spawn(async move {
         match with_event_submitter(&base_url, session_credential, |sub| async move {
-            crate::transport::account::submit_read_cursor_advance(&sub, &marker).await?;
-            Ok::<_, anyhow::Error>(())
+            crate::transport::account::submit_read_cursor_advance(&sub, &marker).await
         })
         .await
         {
-            Ok(()) => status_msg.set("Notification marked read and synced.".to_owned()),
+            Ok(outcome) => match state_store.write().apply_read_cursor_outcome(outcome) {
+                Ok(_) => status_msg.set("Notification marked read and synced.".to_owned()),
+                Err(error) => status_msg.set(format!(
+                    "Read cursor synced but local projection update failed: {error:#}"
+                )),
+            },
             Err(err) => status_msg.set(format!(
                 "Notification marked read locally; read cursor sync failed: {}",
                 err.display()

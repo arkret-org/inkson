@@ -77,7 +77,7 @@ pub(crate) struct UiNotificationReadTarget {
 pub(crate) fn read_cursor_targets(
     notifications: &[UiNotification],
 ) -> Vec<UiNotificationReadTarget> {
-    let mut latest_by_realm = BTreeMap::<String, UiNotificationReadTarget>::new();
+    let mut latest_by_scope = BTreeMap::<(String, Option<String>), UiNotificationReadTarget>::new();
     for notification in notifications {
         let Some(event_id) = notification.source_event_id.clone() else {
             continue;
@@ -91,14 +91,15 @@ pub(crate) fn read_cursor_targets(
             event_id,
             timestamp: notification.timestamp.clone(),
         };
-        match latest_by_realm.get(&target.realm_id) {
+        let key = (target.realm_id.clone(), target.strand_id.clone());
+        match latest_by_scope.get(&key) {
             Some(existing) if existing.timestamp >= target.timestamp => {}
             _ => {
-                latest_by_realm.insert(target.realm_id.clone(), target);
+                latest_by_scope.insert(key, target);
             }
         }
     }
-    latest_by_realm.into_values().collect()
+    latest_by_scope.into_values().collect()
 }
 
 pub(crate) fn notification_value_read_by_cursor(
@@ -396,7 +397,7 @@ fn read_cursor_position_covers_event(
     {
         return notification_timestamp <= target_timestamp.as_str();
     }
-    source_event_id <= cursor_event_id
+    false
 }
 
 /// T4.4 — Resolve the wire-safe reason code for a watch-suppressed

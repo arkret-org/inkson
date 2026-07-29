@@ -276,8 +276,8 @@ fn retain_realm_tree_projections_prunes_per_realm_caches() {
         store.set_realm_muted(id, true);
     }
     // Independently keyed records that should follow the prune.
-    store
-        .save_read_cursor(
+    let drop_marker = store
+        .build_read_cursor_candidate(
             "did:web:tester.example",
             "ak:device:01964137-0000-7000-8000-000000000001",
             DROP_A,
@@ -285,8 +285,9 @@ fn retain_realm_tree_projections_prunes_per_realm_caches() {
             "ak:event:01964137-0000-7000-8000-000000000021",
         )
         .unwrap();
-    store
-        .save_read_cursor(
+    store.seed_read_cursor_projection(drop_marker).unwrap();
+    let keep_marker = store
+        .build_read_cursor_candidate(
             "did:web:tester.example",
             "ak:device:01964137-0000-7000-8000-000000000001",
             KEEP,
@@ -294,6 +295,7 @@ fn retain_realm_tree_projections_prunes_per_realm_caches() {
             "ak:event:01964137-0000-7000-8000-000000000022",
         )
         .unwrap();
+    store.seed_read_cursor_projection(keep_marker).unwrap();
 
     let pruned = store.retain_realm_tree_projections(|id| id == KEEP);
     assert_eq!(pruned.len(), 2);

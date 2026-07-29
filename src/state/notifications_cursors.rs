@@ -47,15 +47,14 @@ impl LocalStateStore {
             .unwrap_or_default()
     }
 
-    pub fn save_read_cursor(
-        &mut self,
+    pub fn build_read_cursor_candidate(
+        &self,
         actor: impl Into<String>,
         device_id: impl Into<String>,
         realm_id: impl Into<String>,
         topic_id: Option<String>,
         event_id: impl Into<String>,
     ) -> anyhow::Result<ReadMarkerRecord> {
-        self.ensure_cached_loaded();
         let actor = actor.into();
         let realm_id = realm_id.into();
         let device_id = device_id.into();
@@ -67,7 +66,6 @@ impl LocalStateStore {
             hlc: crate::signing_stamp::issue_protocol_hlc(&actor, &device_id, &realm_id)?,
         };
         let marker = ReadMarkerRecord {
-            marker_type: "ak.read_cursor.advance".to_owned(),
             body: ReadMarkerBody {
                 id: new_read_cursor_id(),
                 schema: "ak.schema.read_cursor.v1".to_owned(),
@@ -79,11 +77,44 @@ impl LocalStateStore {
             device_id,
             updated_at: Utc::now(),
         };
-        self.cached
-            .read_cursors
-            .insert(read_cursor_key(&realm_id, &read_scope), marker.clone());
+        Ok(marker)
+    }
+
+    pub fn apply_read_cursor_outcome(
+        &mut self,
+        outcome: arkret_sdk::ReadMarkerOutcome,
+    ) -> anyhow::Result<ReadMarkerRecord> {
+        self.ensure_cached_loaded();
+        let marker = ReadMarkerRecord {
+            body: ReadMarkerBody {
+                id: new_read_cursor_id(),
+                schema: "ak.schema.read_cursor.v1".to_owned(),
+                realm_id: outcome.realm_id.to_string(),
+                read_scope: outcome.read_scope,
+                position: outcome.position,
+            },
+            actor: outcome.actor_id.to_string(),
+            device_id: outcome.device_id.to_string(),
+            updated_at: outcome.updated_at,
+        };
+        self.replace_read_cursor_projection(marker.clone());
         self.flush()?;
         Ok(marker)
+    }
+
+    fn replace_read_cursor_projection(&mut self, marker: ReadMarkerRecord) {
+        let key = read_cursor_key(&marker.body.realm_id, &marker.body.read_scope);
+        self.cached.read_cursors.insert(key, marker);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn seed_read_cursor_projection(
+        &mut self,
+        marker: ReadMarkerRecord,
+    ) -> anyhow::Result<()> {
+        self.ensure_cached_loaded();
+        self.replace_read_cursor_projection(marker);
+        self.flush()
     }
 
     pub fn read_cursor_for(
@@ -147,7 +178,6 @@ impl LocalStateStore {
             .map(|value| value.with_timezone(&Utc))
             .unwrap_or_else(Utc::now);
         let marker = ReadMarkerRecord {
-            marker_type: "ak.read_cursor.advance".to_owned(),
             body: ReadMarkerBody {
                 id: content
                     .get("id")
@@ -163,11 +193,10 @@ impl LocalStateStore {
             device_id: device_id.to_owned(),
             updated_at,
         };
-        let key = read_cursor_key(realm_id, &read_scope);
         // This account-stream update is emitted only after Soland has applied
         // the causal read-cursor reducer. Its payload is the persisted winner,
         // so the client must not run a second, HLC-only merge.
-        self.cached.read_cursors.insert(key, marker);
+        self.replace_read_cursor_projection(marker);
         true
     }
 

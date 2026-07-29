@@ -6,7 +6,7 @@ use chime::PushRegistrationState;
 use chrono::{DateTime, Utc};
 use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use zeroize::Zeroize;
 
 // Sibling-module types (`LocalSealView`, the `move_tracking` / `mls_sidecar`
@@ -202,34 +202,10 @@ pub struct ReadMarkerBody {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadMarkerRecord {
-    #[serde(rename = "type")]
-    pub marker_type: String,
     pub body: ReadMarkerBody,
     pub actor: String,
     pub device_id: String,
     pub updated_at: DateTime<Utc>,
-}
-
-impl ReadMarkerRecord {
-    pub fn ak_read_cursor_payload(&self) -> Value {
-        json!({
-            "id": &self.body.id,
-            "schema": &self.body.schema,
-            "actor_id": &self.actor,
-            "device_id": &self.device_id,
-            "realm_id": &self.body.realm_id,
-            "read_scope": &self.body.read_scope,
-            "position": &self.body.position,
-            "updated_at": arkret_sdk::canonical::format_timestamp_canonical(self.updated_at),
-        })
-    }
-
-    pub fn ak_read_cursor_operation(&self) -> Value {
-        json!({
-            "kind": &self.marker_type,
-            "payload": self.ak_read_cursor_payload(),
-        })
-    }
 }
 
 /// Server-declared `ak.realm.read_receipt_policy` snapshot for a Realm, as
