@@ -352,16 +352,16 @@ fn inkson_accepts_server_contract_payloads() {
     assert_eq!(authz.decision, arkret_wire::AuthzDecision::Allow);
 
     // `GrantList` is the SDK authoritative wire type (soland serialises it
-    // verbatim), so rows must be full `ak.schema.capability_grant.v1`
-    // grants rather than free-form objects.
+    // verbatim), so rows must be full canonical capability grants rather than
+    // free-form objects.
     let grants: inkson::models::GrantList = serde_json::from_value(json!({
         "grants": [{
             "id": "ak:grant:0196419b-0000-7000-8000-000000000000",
-            "schema": "ak.schema.capability_grant.v1",
+            "schema": arkret_wire::CAPABILITY_SCHEMA,
             "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
             "issuer": "did:web:server.local",
             "subject": "did:web:alice.example",
-            "actions": ["ak.space.write_message"],
+            "actions": ["ak.message.create"],
             "resources": [
                 {"kind": "realm", "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001"}
             ],

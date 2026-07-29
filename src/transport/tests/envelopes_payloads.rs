@@ -141,6 +141,17 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             "ak.member.state",
         ]
     );
+    assert_eq!(
+        events[1].payload["grant"]["actions"],
+        json!(arkret_policy::realm_bootstrap::REALM_FOUNDING_GRANT_ACTIONS),
+        "Realm builder must use the SDK-owned closed founding action set"
+    );
+    assert!(
+        events[1].payload["grant"]["actions"]
+            .as_array()
+            .is_some_and(|actions| actions.iter().any(|action| action == "ak.message.create")),
+        "founding grant must make the creator's first message capability reachable"
+    );
 
     let create = &events[0];
     assert_eq!(create.payload["object"]["schema"], "ak.schema.realm.v1");
