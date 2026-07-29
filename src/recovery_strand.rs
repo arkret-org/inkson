@@ -219,10 +219,12 @@ pub fn build_signed_genesis_recovery_policy_for_session_device(
         anyhow::bail!("device_id is required");
     }
     if let Some(signer) = crate::event_signer::active_signer() {
-        let verification_method =
-            principal_scoped_recovery_policy_verification_method(principal_id, &signer)
-                .map(str::to_owned)
-                .unwrap_or_else(|_| format!("{principal_id}#{device_id}"));
+        if signer.device_id() != Some(device_id) {
+            anyhow::bail!(
+                "active signer is not bound to current session device `{device_id}`"
+            );
+        }
+        let verification_method = format!("{principal_id}#{device_id}");
         return build_signed_genesis_recovery_policy_with_raw_signer(
             principal_id,
             trust_domain,
