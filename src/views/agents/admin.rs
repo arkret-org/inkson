@@ -758,7 +758,12 @@ fn spawn_set_agent_enabled(
                 }
                 Err(error) => return Err(error),
             };
-            let (lifecycle_event, _) = submitter.prepare_sdk_event_for_submit(&draft).await?;
+            let lifecycle_event = submitter
+                .prepare_initial_submissions(vec![draft])
+                .await?
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("lifecycle submission is missing"))?;
             let outcome = if enabled {
                 let body = AgentResumeRequestBody {
                     sidecar_exposure_ack: None,
@@ -953,7 +958,7 @@ fn spawn_deactivate_agent(
                 signer.as_ref(),
                 signer_account_scope.as_deref(),
             )?;
-            let mut prepared = submitter.prepare_sdk_events_batch(drafts).await?;
+            let mut prepared = submitter.prepare_initial_submissions(drafts).await?;
             let lifecycle_event = prepared
                 .pop()
                 .ok_or_else(|| anyhow::anyhow!("deactivation lifecycle Event is missing"))?;
