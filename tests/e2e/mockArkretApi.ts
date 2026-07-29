@@ -1927,10 +1927,10 @@ export async function mockArkretApi(
                       title: "Arkret Demo Realm",
                       summary: "Shared demo Realm served by mocked server",
                     },
-                    // Match Soland's real account snapshot: the window-start
-                    // epoch hint can be null even though the create-locked
-                    // Realm profile in state is MLS-backed.
-                    e2ee_epoch: null,
+                    e2ee_epoch: {
+                      epoch: 0,
+                      key_ref: `mock-key:${DEMO_REALM}`,
+                    },
                   },
                   summary: { joined_member_count: 2 },
                   members: [
@@ -2034,7 +2034,7 @@ export async function mockArkretApi(
       return route.fulfill({
         status: 200,
         contentType: "application/x-ndjson",
-        body: `${canonicalNdjsonLine(frame)}\n${canonicalNdjsonLine({ kind: "catchup_complete", cursor: "ak:cursor:e2e-2" })}\n`,
+        body: `${canonicalNdjsonLine(withRequiredEventScopeRefs(frame))}\n${canonicalNdjsonLine({ kind: "catchup_complete", cursor: "ak:cursor:e2e-2" })}\n`,
       });
     }
 
@@ -3688,10 +3688,36 @@ function mimiProviderDirectory() {
   };
 }
 
+function withRequiredEventScopeRefs(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(withRequiredEventScopeRefs);
+  }
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  const record = Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [
+      key,
+      withRequiredEventScopeRefs(child),
+    ]),
+  );
+  const isEvent =
+    typeof record.event_id === "string" &&
+    typeof record.kind === "string" &&
+    typeof record.realm_id === "string";
+  if (isEvent && record.scope_ref === undefined) {
+    record.scope_ref = {
+      kind: "realm",
+      realm_id: record.realm_id,
+    };
+  }
+  return record;
+}
+
 function json(route: Route, body: unknown, status = 200) {
   return route.fulfill({
     status,
     contentType: "application/json",
-    body: JSON.stringify(body),
+    body: JSON.stringify(withRequiredEventScopeRefs(body)),
   });
 }

@@ -382,6 +382,14 @@ async fn fetch_authoritative_active_series(
         .events_query_all_pages(realm_id.as_str())
         .await
         .map_err(|error| anyhow!("read key backup active-series control stream: {error}"))?;
+    let mut active_events = events
+        .events
+        .iter()
+        .filter(|event| event.kind.as_str() == "ak.key_backup.active_series")
+        .collect::<Vec<_>>();
+    if active_events.is_empty() {
+        return Ok(Vec::new());
+    }
     let viewer = api
         .http()
         .account_viewer()
@@ -422,11 +430,6 @@ async fn fetch_authoritative_active_series(
             arkret_sdk::KeyBackupActiveSeries,
         ),
     >::new();
-    let mut active_events = events
-        .events
-        .iter()
-        .filter(|event| event.kind.as_str() == "ak.key_backup.active_series")
-        .collect::<Vec<_>>();
     active_events.sort_by_key(|event| event.actor_seq);
     for event in active_events {
         let record = serde_json::from_value::<arkret_sdk::KeyBackupActiveSeries>(
