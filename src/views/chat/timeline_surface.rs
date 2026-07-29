@@ -1,5 +1,26 @@
 use super::*;
 
+thread_local! {
+    static CHAT_FEED_SCROLL_OFFSETS: std::cell::RefCell<
+        std::collections::BTreeMap<String, f64>,
+    > = std::cell::RefCell::new(std::collections::BTreeMap::new());
+}
+
+pub(super) fn chat_feed_scroll_offset(key: &str) -> f64 {
+    CHAT_FEED_SCROLL_OFFSETS.with(|offsets| offsets.borrow().get(key).copied().unwrap_or_default())
+}
+
+fn preserve_chat_feed_scroll_offset(key: &str, scroll_top: f64) {
+    CHAT_FEED_SCROLL_OFFSETS.with(|offsets| {
+        let mut offsets = offsets.borrow_mut();
+        // A newly mounted browser element emits a synthetic zero before the
+        // saved offset can be restored. Do not let that erase a real position.
+        if scroll_top > 0.0 || !offsets.contains_key(key) {
+            offsets.insert(key.to_owned(), scroll_top);
+        }
+    });
+}
+
 #[derive(Clone, PartialEq)]
 pub(super) struct ChatTimelineContext {
     pub embedded: bool,
@@ -54,6 +75,8 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
         sync_cursor,
         frontier_state,
     } = context;
+    let scroll_offset_key = format!("{selected_realm_id}\u{1f}{selected_channel_value}");
+    let scroll_offset_key_for_event = scroll_offset_key.clone();
     let state_store = crate::app::SessionContext::get().state_store;
     let command_context = ChatCommandContext {
         base_url: base_url.clone(),
@@ -109,6 +132,26 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
 
     rsx! {
                 div { class: "discussion-chat-feed", "data-testid": "message-list",
+                    onscroll: move |event: ScrollEvent| {
+                        preserve_chat_feed_scroll_offset(
+                            &scroll_offset_key_for_event,
+                            event.data().scroll_top(),
+                        );
+                    },
+                    onmounted: move |event: MountedEvent| {
+                        let scroll_offset_key = scroll_offset_key.clone();
+                        async move {
+                            let scroll_top = chat_feed_scroll_offset(&scroll_offset_key);
+                            if scroll_top > 0.0 {
+                                let _ = event
+                                    .scroll(
+                                        dioxus::html::geometry::PixelsVector2D::new(0.0, scroll_top),
+                                        ScrollBehavior::Instant,
+                                    )
+                                    .await;
+                            }
+                        }
+                    },
                     for prompt in visible_moderation_appeal_prompts {
                         {
                             let current_state = moderation_prompt_state(&prompt);

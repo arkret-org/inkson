@@ -1936,6 +1936,10 @@ export async function mockArkretApi(
                   members: [
                     { actor_id: accountPrincipalId, membership: "join" },
                     { actor_id: activeAssistantId, membership: "join" },
+                    ...(options.additionalActiveAgents ?? []).map((agent) => ({
+                      actor_id: agent.agent_id,
+                      membership: "join",
+                    })),
                   ],
                   timeline: { events: demoProjectionEvents, limited: false },
                   state: {

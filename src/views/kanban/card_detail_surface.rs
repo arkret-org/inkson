@@ -867,9 +867,17 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         role: "tab",
                                                         "aria-selected": "{active_detail_tab == CardDetailContentTab::Description}",
                                                         disabled: editing_card_detail(),
-                                                        onclick: move |_| {
-                                                            card_detail_tab.set(CardDetailContentTab::Description);
-                                                            replace_card_detail_tab_query(CardDetailContentTab::Description);
+                                                        onclick: {
+                                                            let realm_id = selected_realm_id.clone();
+                                                            let strand_id = card.primary_strand_id.clone();
+                                                            move |_| {
+                                                                crate::views::chat::capture_chat_feed_scroll_position(
+                                                                    &realm_id,
+                                                                    &strand_id,
+                                                                );
+                                                                card_detail_tab.set(CardDetailContentTab::Description);
+                                                                replace_card_detail_tab_query(CardDetailContentTab::Description);
+                                                            }
                                                         },
                                                         "Description"
                                                     }
@@ -880,9 +888,17 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         role: "tab",
                                                         "aria-selected": "{active_detail_tab == CardDetailContentTab::Synthesis}",
                                                         disabled: editing_card_detail(),
-                                                        onclick: move |_| {
-                                                            card_detail_tab.set(CardDetailContentTab::Synthesis);
-                                                            replace_card_detail_tab_query(CardDetailContentTab::Synthesis);
+                                                        onclick: {
+                                                            let realm_id = selected_realm_id.clone();
+                                                            let strand_id = card.primary_strand_id.clone();
+                                                            move |_| {
+                                                                crate::views::chat::capture_chat_feed_scroll_position(
+                                                                    &realm_id,
+                                                                    &strand_id,
+                                                                );
+                                                                card_detail_tab.set(CardDetailContentTab::Synthesis);
+                                                                replace_card_detail_tab_query(CardDetailContentTab::Synthesis);
+                                                            }
                                                         },
                                                         "Synthesis"
                                                     }
@@ -895,10 +911,15 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         disabled: editing_card_detail(),
                                                         onclick: {
                                                             let strand_id = card.primary_strand_id.clone();
+                                                            let realm_id = selected_realm_id.clone();
                                                             move |_| {
                                                                 card_detail_discussion_mounted_for.set(Some(strand_id.clone()));
                                                                 card_detail_tab.set(CardDetailContentTab::Discussion);
                                                                 replace_card_detail_tab_query(CardDetailContentTab::Discussion);
+                                                                crate::views::chat::restore_chat_feed_scroll_position(
+                                                                    &realm_id,
+                                                                    &strand_id,
+                                                                );
                                                             }
                                                         },
                                                         "Discussion"

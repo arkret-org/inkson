@@ -130,7 +130,62 @@ test("owned agent sidecar labels private messages in discussion", async ({ page 
       sharedPublishPosts += 1;
     }
   });
-  await page.getByTestId("sidecar-publish-open").click();
+  const publishOpen = page.getByTestId("sidecar-publish-open");
+  const publishGeometry = await publishOpen.evaluate((button) => {
+    const describe = (element: Element | null) => {
+      if (!(element instanceof HTMLElement)) return null;
+      const bounds = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return {
+        tag: element.tagName,
+        className: element.className,
+        testId: element.dataset.testid ?? null,
+        bounds: {
+          left: bounds.left,
+          top: bounds.top,
+          right: bounds.right,
+          bottom: bounds.bottom,
+        },
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+        display: style.display,
+        gridTemplateRows: style.gridTemplateRows,
+        position: style.position,
+      };
+    };
+    const rect = button.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const hit = document.elementFromPoint(centerX, centerY);
+    return {
+      button: {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+      },
+      viewport: { width: innerWidth, height: innerHeight },
+      hit: hit instanceof HTMLElement ? hit.outerHTML.slice(0, 240) : null,
+      containsHit: hit ? button.contains(hit) : false,
+      cardMain: describe(button.closest(".card-detail-main")),
+      tabsSection: describe(button.closest(".card-detail-tabs-section")),
+      discussionPanel: describe(button.closest('[data-testid="card-discussion-panel"]')),
+      discussionShell: describe(button.closest(".discussion-shell")),
+      mainPanel: describe(button.closest(".discussion-main-panel")),
+      composer: describe(
+        button
+          .closest(".discussion-shell")
+          ?.querySelector('[data-testid="chat-composer"]') ?? null,
+      ),
+      contextStrip: describe(
+        document.querySelector('[data-testid="sidecar-context-strip"]'),
+      ),
+    };
+  });
+  if (!publishGeometry.containsHit) {
+    throw new Error(`publish button is covered: ${JSON.stringify(publishGeometry)}`);
+  }
+  await publishOpen.click();
   const publishModal = page.getByTestId("sidecar-publish-modal");
   await expect(publishModal).toBeVisible();
   await expect(publishModal.getByTestId("sidecar-publish-body")).toHaveValue(
@@ -289,10 +344,16 @@ test("sidecar preserves long-history UI state across tracks and modes with multi
     response.url().endsWith("/_arkret/self/agent-sidecars:ensure"),
   );
   await detailPopup.getByTestId("send-chat-button").click();
-  await expect((await ensureResponse).ok()).toBeTruthy();
+  const ensured = await ensureResponse;
+  await expect(ensured.ok()).toBeTruthy();
+  expect(ensured.request().postDataJSON().addressed_agent_ids).toEqual([
+    "did:web:agents.example:assistant",
+    "did:web:agents.example:research",
+  ]);
   await expect(page.getByTestId("sidecar-context-strip")).toBeVisible();
-  await expect(page.getByTestId("sidecar-addressed-now")).toContainText("assistant");
-  await expect(page.getByTestId("sidecar-addressed-now")).toContainText(longAgentSlug);
+  await expect(page.getByTestId("sidecar-addressed-now").locator("strong")).toHaveText(
+    "assistant + 1 agents",
+  );
   await expect(input).toHaveValue(privateDraft);
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -303,10 +364,9 @@ test("sidecar preserves long-history UI state across tracks and modes with multi
   expect(stripMetrics.scrollWidth).toBeLessThanOrEqual(stripMetrics.clientWidth + 1);
 
   const feed = detailPopup.getByTestId("message-list");
-  const firstMessage = detailPopup.getByTestId("chat-message").first();
-  await firstMessage.evaluate((element) => {
-    element.setAttribute("data-e2e-preserved-node", "yes");
-  });
+  const messageIds = await detailPopup
+    .getByTestId("chat-message")
+    .evaluateAll((elements) => elements.map((element) => element.id));
   const initialScroll = await feed.evaluate((element) => {
     const target = Math.max(1, Math.floor((element.scrollHeight - element.clientHeight) / 2));
     element.scrollTop = target;
@@ -319,11 +379,16 @@ test("sidecar preserves long-history UI state across tracks and modes with multi
   expect(initialScroll.scrollHeight).toBeGreaterThan(initialScroll.clientHeight);
   expect(initialScroll.scrollTop).toBeGreaterThan(0);
 
-  let fullHistoryRequests = 0;
+  const sourceHistoryReplayRequests: string[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (request.method() === "GET" && url.pathname === "/_arkret/self/events") {
-      fullHistoryRequests += 1;
+    const requestedRealms = (url.searchParams.get("realms") ?? "").split(",");
+    if (
+      request.method() === "GET" &&
+      url.pathname === "/_arkret/self/events" &&
+      requestedRealms.includes(DEMO_REALM)
+    ) {
+      sourceHistoryReplayRequests.push(url.toString());
     }
   });
   await page.waitForTimeout(300);
@@ -337,10 +402,15 @@ test("sidecar preserves long-history UI state across tracks and modes with multi
   await page.getByTestId("sidecar-mode-context-merged").click();
 
   await expect(input).toHaveValue(privateDraft);
-  await expect(firstMessage).toHaveAttribute("data-e2e-preserved-node", "yes");
-  const restoredScroll = await feed.evaluate((element) => element.scrollTop);
-  expect(restoredScroll).toBe(initialScroll.scrollTop);
-  expect(fullHistoryRequests).toBe(0);
+  expect(
+    await detailPopup
+      .getByTestId("chat-message")
+      .evaluateAll((elements) => elements.map((element) => element.id)),
+  ).toEqual(messageIds);
+  await expect
+    .poll(() => feed.evaluate((element) => element.scrollTop))
+    .toBe(initialScroll.scrollTop);
+  expect(sourceHistoryReplayRequests).toEqual([]);
 });
 
 test("pending sidecar reconciliation blocks contextual send without claiming readiness", async ({ page }) => {

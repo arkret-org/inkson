@@ -1628,6 +1628,10 @@ pub fn HostedSidecarContextBar(base_url: String, api_token: String, device_id: S
                     "data-testid": "sidecar-mode-context-merged",
                     onclick: move |_| {
                         if let Some(mut current) = hosted_state() {
+                            crate::views::chat::capture_chat_feed_scroll_position(
+                                &current.source_realm_id,
+                                &current.source_strand_id,
+                            );
                             current.display_mode = arkret_sdk::AgentSidecarDisplayMode::ContextMerged;
                             push_sidecar_display_mode(
                                 &mut state_store.write(),
@@ -1637,7 +1641,13 @@ pub fn HostedSidecarContextBar(base_url: String, api_token: String, device_id: S
                                 merged_device.clone(),
                                 &current,
                             );
+                            let realm_id = current.source_realm_id.clone();
+                            let strand_id = current.source_strand_id.clone();
                             hosted_state.set(Some(current));
+                            crate::views::chat::restore_chat_feed_scroll_position(
+                                &realm_id,
+                                &strand_id,
+                            );
                         }
                     },
                     "Original Strand + Sidecar"
@@ -1648,6 +1658,10 @@ pub fn HostedSidecarContextBar(base_url: String, api_token: String, device_id: S
                     "data-testid": "sidecar-mode-sidecar-only",
                     onclick: move |_| {
                         if let Some(mut current) = hosted_state() {
+                            crate::views::chat::capture_chat_feed_scroll_position(
+                                &current.source_realm_id,
+                                &current.source_strand_id,
+                            );
                             current.display_mode = arkret_sdk::AgentSidecarDisplayMode::SidecarOnly;
                             push_sidecar_display_mode(
                                 &mut state_store.write(),
@@ -1657,7 +1671,13 @@ pub fn HostedSidecarContextBar(base_url: String, api_token: String, device_id: S
                                 sidecar_device.clone(),
                                 &current,
                             );
+                            let realm_id = current.source_realm_id.clone();
+                            let strand_id = current.source_strand_id.clone();
                             hosted_state.set(Some(current));
+                            crate::views::chat::restore_chat_feed_scroll_position(
+                                &realm_id,
+                                &strand_id,
+                            );
                         }
                     },
                     "Sidecar only"

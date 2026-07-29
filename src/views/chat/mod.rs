@@ -103,6 +103,49 @@ use model::*;
 use timeline::*;
 use timeline_surface::{ChatTimeline, ChatTimelineContext};
 
+pub(crate) fn capture_chat_feed_scroll_position(realm_id: &str, strand_id: &str) {
+    let key = serde_json::to_string(&format!("{realm_id}\u{1f}{strand_id}"))
+        .expect("chat scroll key must serialize");
+    let script = format!(
+        r#"
+window.__inksonChatFeedScrollOffsets ||= {{}};
+const panels = document.querySelectorAll('[data-testid="chat-panel"]');
+const panel = panels[panels.length - 1];
+const feed = panel && panel.querySelector('[data-testid="message-list"]');
+if (feed && feed.clientHeight > 0) {{
+  const previous = window.__inksonChatFeedScrollOffsets[{key}];
+  if (feed.scrollTop > 0 || !Number.isFinite(previous)) {{
+    window.__inksonChatFeedScrollOffsets[{key}] = feed.scrollTop;
+  }}
+}}
+"#
+    );
+    let _ = document::eval(&script);
+}
+
+pub(crate) fn restore_chat_feed_scroll_position(realm_id: &str, strand_id: &str) {
+    let offset_key = format!("{realm_id}\u{1f}{strand_id}");
+    let scroll_top = timeline_surface::chat_feed_scroll_offset(&offset_key);
+    if scroll_top > 0.0 {
+        timeline::scroll_chat_feed_to_offset(scroll_top);
+    }
+    let key = serde_json::to_string(&offset_key).expect("chat scroll key must serialize");
+    let script = format!(
+        r#"
+setTimeout(() => {{
+  const panels = document.querySelectorAll('[data-testid="chat-panel"]');
+  const panel = panels[panels.length - 1];
+  const feed = panel && panel.querySelector('[data-testid="message-list"]');
+  const scrollTop = window.__inksonChatFeedScrollOffsets?.[{key}];
+  if (feed && Number.isFinite(scrollTop)) {{
+    feed.scrollTop = scrollTop;
+  }}
+}}, 0);
+"#
+    );
+    let _ = document::eval(&script);
+}
+
 fn moderation_prompt_state(prompt: &ModerationAppealPrompt) -> AppealState {
     match prompt.state.as_str() {
         "submitted" => AppealState::Submitted,
@@ -2037,7 +2080,7 @@ pub fn ChatPanel(
             // Receive-side Event-truth fold: decrypt exchange bindings and
             // durable control Events from the synced private-Strand history
             // and refresh the local fold cache (`zh/models/sidecar.md` §7.2.4).
-            let refold = crate::sidecar::refold_sidecar_exchanges_from_history(
+            crate::sidecar::refold_sidecar_exchanges_from_history(
                 &mut store,
                 &account_did,
                 &device_id,
@@ -2053,37 +2096,6 @@ pub fn ChatPanel(
             .filter(|intent| intent.accepted_control_event_id.is_none())
             .collect::<Vec<_>>();
             drop(store);
-            if refold.backfill_required {
-                let base = close_base_url.clone();
-                let credential = token();
-                let realm = selected_realm_id.clone();
-                let mut store = state_store;
-                let mut live_epoch = realm_live_epoch;
-                spawn(async move {
-                    let outcome = async {
-                        let api =
-                            crate::transport::auth::authed_api_with_sync(&base, credential, None)?;
-                        let backfill = api.event_submitter()?.backfill(&realm).await?;
-                        Ok::<_, anyhow::Error>(backfill.event_values())
-                    }
-                    .await;
-                    match outcome {
-                        Ok(events) => {
-                            let changed = crate::sync_engine::ingest_message_projection_events(
-                                &mut store.write(),
-                                &realm,
-                                &events,
-                            );
-                            if changed > 0 {
-                                live_epoch.set(live_epoch().wrapping_add(1));
-                            }
-                        }
-                        Err(error) => {
-                            tracing::warn!(%error, "Sidecar union-history backfill failed");
-                        }
-                    }
-                });
-            }
             let Some(session) = active_sidecar.as_ref() else {
                 return;
             };

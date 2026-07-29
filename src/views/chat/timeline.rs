@@ -216,3 +216,19 @@ setTimeout(() => {
 "#;
     let _ = document::eval(script);
 }
+
+pub(super) fn scroll_chat_feed_to_offset(scroll_top: f64) {
+    let script = format!(
+        r#"
+setTimeout(() => {{
+  const panels = document.querySelectorAll('[data-testid="chat-panel"]');
+  const panel = panels[panels.length - 1];
+  const feed = panel && panel.querySelector('[data-testid="message-list"]');
+  if (feed) {{
+    feed.scrollTop = {scroll_top};
+  }}
+}}, 0);
+"#
+    );
+    let _ = document::eval(&script);
+}

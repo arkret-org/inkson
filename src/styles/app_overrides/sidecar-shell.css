@@ -26,8 +26,14 @@
   z-index: 1;
 }
 
-.card-detail-main:has(> .sidecar-context-strip) {
-  grid-template-rows: auto auto minmax(0, 1fr);
+.card-detail-main:has(.sidecar-context-strip) {
+  grid-template-rows: auto auto minmax(40rem, 1fr);
+}
+
+.card-detail-main
+  > .sidecar-context-strip
+  + .card-detail-tabs-section {
+  min-height: 40rem;
 }
 
 .sidecar-context-main,
@@ -83,11 +89,23 @@
   margin: 0.6rem 1rem 0;
 }
 
-.sidecar-mode > .discussion-main-panel > .sidecar-publish-action {
-  flex: 0 0 auto;
-  margin: 0.6rem 1rem 0;
+.sidecar-mode > .discussion-main-panel {
   position: relative;
-  z-index: 2;
+}
+
+.sidecar-mode > .discussion-main-panel > .sidecar-publish-action {
+  position: absolute;
+  right: 1rem;
+  bottom: 0.75rem;
+  left: 1rem;
+  z-index: 4;
+  margin: 0;
+}
+
+.sidecar-mode
+  > .discussion-main-panel:has(> .sidecar-publish-action)
+  > .discussion-chat-feed {
+  padding-bottom: 9rem;
 }
 
 .sidecar-mode .discussion-users-panel .discussion-detail-section:not(.sidecar-access-section),
