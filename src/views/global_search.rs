@@ -111,7 +111,7 @@ pub fn local_decrypted_index_search(
         .collect::<std::collections::BTreeSet<_>>();
     let events =
         projection_events_from_sync_realms(realms, Some(store), Some((actor_id, device_id)));
-    let sidecar_private_strands = crate::sidecar::known_sidecar_private_strand_ids(store, actor_id);
+    let sidecar_privacy = crate::sidecar::SidecarPrivacyGate::from_store(store, actor_id);
     let mut results = Vec::new();
     for event in events {
         if results.len() >= limit {
@@ -123,11 +123,18 @@ pub fn local_decrypted_index_search(
         if !realm_filter.is_empty() && !realm_filter.contains(realm_id) {
             continue;
         }
-        if event
-            .strand_id
-            .as_ref()
-            .is_some_and(|strand_id| sidecar_private_strands.contains(strand_id))
-        {
+        let disclosure_probe = serde_json::json!({
+            "event_id": event.event_id.as_deref(),
+            "strand_id": event.strand_id.as_deref(),
+            "body": event.body.as_str(),
+        });
+        if event.strand_id.as_ref().is_some_and(|strand_id| {
+            !sidecar_privacy
+                .allows_strand(crate::sidecar::SidecarDisclosureSurface::Search, strand_id)
+        }) || !sidecar_privacy.allows_serialized(
+            crate::sidecar::SidecarDisclosureSurface::Search,
+            &disclosure_probe,
+        ) {
             continue;
         }
         let Some(body) = searchable_message_body(&event.body, event.redacted) else {

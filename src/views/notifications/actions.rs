@@ -9,9 +9,10 @@ use dioxus::prelude::*;
 
 use super::model::{
     UiNotification, UiNotificationAction, append_invite_notifications,
-    apply_sync_projection_to_store, drop_joined_invite_notifications, hydrate_notifications,
-    joined_realm_ids, merge_invite_notifications, notification_id_for_dedupe,
-    raw_notifications_from_sources, read_cursor_targets, realm_title_hints_from_invites,
+    apply_sync_projection_to_store, drop_joined_invite_notifications,
+    hydrate_notifications_with_privacy_gate, joined_realm_ids, merge_invite_notifications,
+    notification_id_for_dedupe, raw_notifications_from_sources, read_cursor_targets,
+    realm_title_hints_from_invites,
 };
 use crate::api_error::is_auth_expired_error;
 use crate::notification_rules::{dnd_settings_from_account_data, push_rules_from_account_data};
@@ -78,11 +79,14 @@ pub(crate) fn refresh_notifications(
                         .notification_dnd_settings
                         .as_ref()
                         .or(account_dnd.as_ref());
-                    hydrate_notifications(
+                    let privacy_gate =
+                        crate::sidecar::SidecarPrivacyGate::from_store(&store, &account_did);
+                    hydrate_notifications_with_privacy_gate(
                         raw_notifications,
                         &local_state,
                         push_rules.as_ref(),
                         effective_dnd,
+                        &privacy_gate,
                     )
                 };
                 notifications.set(hydrated);
@@ -385,11 +389,15 @@ fn accept_invite_notification(
                         .notification_dnd_settings
                         .as_ref()
                         .or(account_dnd.as_ref());
-                    hydrate_notifications(
+                    let account_did = store.active_account_did().unwrap_or_default();
+                    let privacy_gate =
+                        crate::sidecar::SidecarPrivacyGate::from_store(&store, &account_did);
+                    hydrate_notifications_with_privacy_gate(
                         raw_notifications,
                         &local_state,
                         push_rules.as_ref(),
                         effective_dnd,
+                        &privacy_gate,
                     )
                 };
                 notifications.set(hydrated);

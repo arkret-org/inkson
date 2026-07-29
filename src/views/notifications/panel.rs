@@ -10,7 +10,7 @@ use super::actions::{
     run_notification_action,
 };
 use super::model::{
-    UiNotificationGroup, hydrate_notifications, notification_kind_enabled,
+    UiNotificationGroup, hydrate_notifications_with_privacy_gate, notification_kind_enabled,
     notification_overrides_realm_mute, notification_scope_kind, realm_is_muted,
 };
 use crate::components::{EmptyState, EmptyStateKind, UiIcon};
@@ -26,12 +26,19 @@ pub fn NotificationsPanel(
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
-    let initial_state = state_store.read().load();
-    let initial_notifications = hydrate_notifications(
+    let (initial_state, initial_privacy_gate) = {
+        let store = state_store.read();
+        (
+            store.load(),
+            crate::sidecar::SidecarPrivacyGate::from_store(&store, &account_did),
+        )
+    };
+    let initial_notifications = hydrate_notifications_with_privacy_gate(
         initial_state.notification_projection.clone(),
         &initial_state,
         None,
         initial_state.notification_dnd_settings.as_ref(),
+        &initial_privacy_gate,
     );
 
     let mut notifications = use_signal(move || initial_notifications.clone());

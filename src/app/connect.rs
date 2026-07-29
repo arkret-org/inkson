@@ -1568,6 +1568,11 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         return;
                     }
                     Err(error) => {
+                        tracing::warn!(
+                            target: "session_boot",
+                            ?error,
+                            "connect: account subscribe bootstrap failed"
+                        );
                         // Sync failed — the `realm_tree_nodes` Signal already
                         // reflects what's in the local store via the
                         // derive effect; just refresh status text and

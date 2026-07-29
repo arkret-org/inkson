@@ -441,6 +441,46 @@ pub(crate) fn chat_message_create_operation_with_content(
     )
 }
 
+/// Build the only shared Event shape accepted by explicit Sidecar publish.
+/// The caller must present the final body to the controller and pass
+/// `controller_confirmed=true` only after confirmation. No private Event
+/// envelope or metadata map is accepted by this API, so retries cannot widen
+/// the allowlist beyond a normal shared message body.
+pub(crate) fn confirmed_sidecar_publish_message_operation(
+    privacy_gate: &crate::sidecar::SidecarPrivacyGate,
+    controller_confirmed: bool,
+    realm_id: &str,
+    actor: &str,
+    target_shared_strand_id: &str,
+    message_id: &str,
+    allowlisted_body: &str,
+) -> anyhow::Result<arkret_sdk::Event> {
+    privacy_gate.validate_shared_publish(
+        controller_confirmed,
+        target_shared_strand_id,
+        allowlisted_body,
+    )?;
+    let content = arkret_sdk::ContentBlock::new(
+        arkret_sdk::CONTENT_KIND_LONG_TEXT,
+        allowlisted_body.to_owned(),
+    );
+    let event = chat_message_create_operation_with_content(
+        realm_id,
+        actor,
+        target_shared_strand_id,
+        message_id,
+        allowlisted_body,
+        content,
+        &[],
+        None,
+    )?;
+    // A shared publish is also the only Sidecar-derived value eligible for a
+    // later public export. Validate the complete ordinary Event rather than
+    // assuming the allowlisted body alone makes its envelope safe.
+    privacy_gate.validate_public_export(&event)?;
+    Ok(event)
+}
+
 fn chat_message_create_operation_with_content_and_expiry(
     realm_id: &str,
     actor: &str,

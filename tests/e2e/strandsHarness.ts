@@ -10,6 +10,21 @@ const DEFAULT_DEVICE_ID = "ak:device:01964137-0000-7000-8000-0000000000a1";
 const DEFAULT_SESSION_CREDENTIAL = "sx:e2e-token";
 const TEST_SESSION_INJECTION_KEY = "inkson.test.session_injection.v1";
 const DEFAULT_DPOP_SEED_B64URL = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const apiObservations = new WeakMap<
+  import("@playwright/test").Page,
+  Array<{ method: string; path: string; status: number }>
+>();
+
+async function settleWithin<T>(
+  operation: Promise<T>,
+  fallback: T,
+  timeoutMs = 2_000,
+) {
+  return Promise.race([
+    operation.catch(() => fallback),
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), timeoutMs)),
+  ]);
+}
 
 const defaultLocalConfig = {
   server_url: DEFAULT_SERVER_URL,
@@ -19,11 +34,16 @@ const defaultLocalConfig = {
   session_credential: DEFAULT_SESSION_CREDENTIAL,
 };
 
-export function latestTestId(page: import("@playwright/test").Page, testId: string) {
+export function latestTestId(
+  page: import("@playwright/test").Page,
+  testId: string,
+) {
   return page.getByTestId(testId).last();
 }
 
-export async function dismissBlockingRecoveryModal(page: import("@playwright/test").Page) {
+export async function dismissBlockingRecoveryModal(
+  page: import("@playwright/test").Page,
+) {
   // Dismiss a CHAIN of blocking account-health modals. Dismissing the
   // recovery-missing modal can auto-open the one-time recovery-key setup nudge
   // (account_health::should_auto_prompt_recovery_setup); both expose a
@@ -58,7 +78,9 @@ export async function dismissBlockingRecoveryModal(page: import("@playwright/tes
   }
 }
 
-export async function openServerSwitcher(page: import("@playwright/test").Page) {
+export async function openServerSwitcher(
+  page: import("@playwright/test").Page,
+) {
   await dismissBlockingRecoveryModal(page);
   const menu = latestTestId(page, "server-switch-menu");
   if (await menu.isVisible()) {
@@ -70,10 +92,16 @@ export async function openServerSwitcher(page: import("@playwright/test").Page) 
 
 export async function refreshServer(page: import("@playwright/test").Page) {
   await openServerSwitcher(page);
-  await page.getByTestId("server-option").filter({ hasText: "https://local.host" }).click();
+  await page
+    .getByTestId("server-option")
+    .filter({ hasText: "https://local.host" })
+    .click();
 }
 
-export async function gotoAndDismissRecovery(page: import("@playwright/test").Page, url: string) {
+export async function gotoAndDismissRecovery(
+  page: import("@playwright/test").Page,
+  url: string,
+) {
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await dismissBlockingRecoveryModal(page);
 }
@@ -82,7 +110,9 @@ export async function gotoAndDismissRecovery(page: import("@playwright/test").Pa
 // the highest-priority account-health prompt (RecoverySetupMissing) shows as a
 // blocking modal. Wait for it to settle, then dismiss it so the setup form
 // underneath becomes interactable. No-op when the modal never appears.
-export async function dismissRecoveryMissingModal(page: import("@playwright/test").Page) {
+export async function dismissRecoveryMissingModal(
+  page: import("@playwright/test").Page,
+) {
   const modal = page.getByTestId("mls-recovery-missing-modal").last();
   const appeared = await modal
     .waitFor({ state: "visible", timeout: 8_000 })
@@ -111,8 +141,40 @@ export async function openDiscussion(page: import("@playwright/test").Page) {
 
 export async function openKanban(page: import("@playwright/test").Page) {
   await refreshServer(page);
+  await assertRealmTreeSeeded(page);
   await page.goto(`/kanban/${DEMO_REALM}`, { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
+}
+
+export async function assertRealmTreeSeeded(
+  page: import("@playwright/test").Page,
+) {
+  await dismissBlockingRecoveryModal(page);
+  const seededRealm = page
+    .getByTestId("realm-tree-node-button")
+    .filter({ hasText: "Arkret Demo Realm" })
+    .first();
+  try {
+    await expect(seededRealm).toBeVisible({ timeout: 15_000 });
+  } catch (error) {
+    const diagnostics = {
+      url: page.url(),
+      emptyState: await page
+        .getByTestId("realm-tree-empty-state")
+        .allTextContents()
+        .catch(() => []),
+      selectedRealm: await page
+        .getByTestId("selected-realm-id")
+        .allTextContents()
+        .catch(() => []),
+      accountSubscribe: (apiObservations.get(page) ?? []).filter((entry) =>
+        entry.path.includes("/_arkret/self/account/subscribe"),
+      ),
+    };
+    throw new Error(
+      `Realm tree seed failed before product assertions: ${JSON.stringify(diagnostics)}\n${String(error)}`,
+    );
+  }
 }
 
 export async function createDiscussion(
@@ -206,7 +268,11 @@ export async function writeSessionGrantInjection(
       const parsed = current ? JSON.parse(current) : {};
       localStorage.setItem(
         "inkson.config.v1",
-        JSON.stringify({ ...defaults, ...parsed, account_did: defaults.account_did }),
+        JSON.stringify({
+          ...defaults,
+          ...parsed,
+          account_did: defaults.account_did,
+        }),
       );
       localStorage.setItem(injectionKey, JSON.stringify(record));
     },
@@ -247,10 +313,14 @@ export async function writeLocalConfigAndReload(
 }
 
 export async function readLocalConfig(page: import("@playwright/test").Page) {
-  return page.evaluate(() => JSON.parse(localStorage.getItem("inkson.config.v1") ?? "{}"));
+  return page.evaluate(() =>
+    JSON.parse(localStorage.getItem("inkson.config.v1") ?? "{}"),
+  );
 }
 
-export async function seedLocalRecoveryKeyMetadata(page: import("@playwright/test").Page) {
+export async function seedLocalRecoveryKeyMetadata(
+  page: import("@playwright/test").Page,
+) {
   // Use addInitScript (not a one-shot evaluate) so the seeded private_data is
   // re-injected before EVERY page load — including later page.goto reloads in
   // the same test. A one-shot write is clobbered when the app re-flushes its
@@ -263,7 +333,11 @@ export async function seedLocalRecoveryKeyMetadata(page: import("@playwright/tes
     // XOR with the account-DID key, hex-encoded.
     const xorHex = (plaintext: string) =>
       Array.from(new TextEncoder().encode(plaintext))
-        .map((byte, index) => (byte ^ keyBytes[index % keyBytes.length]).toString(16).padStart(2, "0"))
+        .map((byte, index) =>
+          (byte ^ keyBytes[index % keyBytes.length])
+            .toString(16)
+            .padStart(2, "0"),
+        )
         .join("");
     const recoveryState = JSON.stringify({
       recovery_key_fingerprint: "sha256:e2e-local-recovery-key",
@@ -277,8 +351,12 @@ export async function seedLocalRecoveryKeyMetadata(page: import("@playwright/tes
     // mls.recovery_backup.v1 — presence of a backup_id makes
     // mls_recovery_backup_configured() true, which both bypasses the S6 create
     // gate and drives the backup prompt's "use existing key" branch.
-    const backupState = JSON.stringify({ backup_id: "ak:backup:e2e-existing-0000" });
-    const state = JSON.parse(localStorage.getItem("inkson.local_state.v1") ?? "{}");
+    const backupState = JSON.stringify({
+      backup_id: "ak:backup:e2e-existing-0000",
+    });
+    const state = JSON.parse(
+      localStorage.getItem("inkson.local_state.v1") ?? "{}",
+    );
     state.private_data = {
       ...(state.private_data ?? {}),
       "recovery.state.v1": xorHex(recoveryState),
@@ -287,13 +365,17 @@ export async function seedLocalRecoveryKeyMetadata(page: import("@playwright/tes
     localStorage.setItem("inkson.local_state.v1", JSON.stringify(state));
   });
   await page.reload({ waitUntil: "domcontentloaded" });
-  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+  await expect(latestTestId(page, "client-shell")).toBeVisible({
+    timeout: 120_000,
+  });
 }
 
 // Dismiss the "Protect your encrypted history" backup prompt (needs_mls_backup)
 // when it pops up, so a subsequent interaction underneath becomes clickable.
 // No-op when the modal isn't shown.
-export async function dismissMlsBackupModal(page: import("@playwright/test").Page) {
+export async function dismissMlsBackupModal(
+  page: import("@playwright/test").Page,
+) {
   const modal = page.getByTestId("mls-backup-modal").last();
   const appeared = await modal
     .waitFor({ state: "visible", timeout: 4_000 })
@@ -307,7 +389,25 @@ export async function dismissMlsBackupModal(page: import("@playwright/test").Pag
 
 export function registerStrandsBeforeEach() {
   test.beforeEach(async ({ page }, testInfo) => {
-    const initialDeviceId = testInfo.title.startsWith("fresh browser requires device authorization")
+    const observations: Array<{
+      method: string;
+      path: string;
+      status: number;
+    }> = [];
+    apiObservations.set(page, observations);
+    page.on("response", (response) => {
+      const url = new URL(response.url());
+      if (url.pathname.startsWith("/_arkret/")) {
+        observations.push({
+          method: response.request().method(),
+          path: `${url.pathname}${url.search}`,
+          status: response.status(),
+        });
+      }
+    });
+    const initialDeviceId = testInfo.title.startsWith(
+      "fresh browser requires device authorization",
+    )
       ? "ak:device:01964137-0000-7000-8000-0000000000b2"
       : DEFAULT_DEVICE_ID;
     await mockArkretApi(page, {
@@ -345,8 +445,7 @@ export function registerStrandsBeforeEach() {
             {
               agent_id: "did:web:agents.example:research",
               display_name: "Research Assistant",
-              slug:
-                "research-assistant-with-an-intentionally-long-private-handle",
+              slug: "research-assistant-with-an-intentionally-long-private-handle",
             },
           ]
         : undefined,
@@ -355,21 +454,86 @@ export function registerStrandsBeforeEach() {
       )
         ? "Legal review for a public beta launch with an intentionally long cross-team approval title"
         : undefined,
+      preseedRecoveryMaterial: testInfo.title.startsWith(
+        "owned agent sidecar labels",
+      ),
+      seedSharedHistoryCount: testInfo.title.startsWith(
+        "sidecar preserves long-history",
+      )
+        ? 18
+        : undefined,
     });
     if (testInfo.title.startsWith("login page")) {
       return;
     }
     await addSessionGrantInjection(page);
-    await page.addInitScript((initialConfig) => {
-      if (localStorage.getItem("inkson.config.v1")) {
-        return;
-      }
-      localStorage.setItem("inkson.config.v1", JSON.stringify(initialConfig));
-    }, {
-      ...defaultLocalConfig,
-      device_id: initialDeviceId,
-    });
+    await page.addInitScript(
+      (initialConfig) => {
+        if (localStorage.getItem("inkson.config.v1")) {
+          return;
+        }
+        localStorage.setItem("inkson.config.v1", JSON.stringify(initialConfig));
+      },
+      {
+        ...defaultLocalConfig,
+        device_id: initialDeviceId,
+      },
+    );
     await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120_000 });
-    await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+    await expect(latestTestId(page, "client-shell")).toBeVisible({
+      timeout: 120_000,
+    });
+  });
+
+  test.afterEach(async ({ page }, testInfo) => {
+    const observations = apiObservations.get(page) ?? [];
+    const counts = observations.reduce<Record<string, number>>(
+      (current, entry) => {
+        const key = `${entry.method} ${entry.path} ${entry.status}`;
+        current[key] = (current[key] ?? 0) + 1;
+        return current;
+      },
+      {},
+    );
+    await testInfo.attach("arkret-request-counts.json", {
+      body: Buffer.from(JSON.stringify({ counts, observations }, null, 2)),
+      contentType: "application/json",
+    });
+    await testInfo.attach("inkson-ui-state.json", {
+      body: Buffer.from(
+        JSON.stringify(
+          {
+            url: page.url(),
+            selectedRealm: await settleWithin(
+              page.getByTestId("selected-realm-id").allTextContents(),
+              [],
+            ),
+            sidecarMode: await settleWithin(
+              page
+                .locator("[data-testid^='sidecar-mode-'].active")
+                .allTextContents(),
+              [],
+            ),
+            draft: await settleWithin(
+              page.getByTestId("chat-input").last().inputValue(),
+              null,
+            ),
+          },
+          null,
+          2,
+        ),
+      ),
+      contentType: "application/json",
+    });
+    const screenshot = await settleWithin(
+      page.screenshot({ animations: "disabled", type: "png" }),
+      Buffer.alloc(0),
+    );
+    if (screenshot.length > 0) {
+      await testInfo.attach("inkson-final-state.png", {
+        body: screenshot,
+        contentType: "image/png",
+      });
+    }
   });
 }

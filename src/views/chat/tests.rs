@@ -3135,12 +3135,6 @@ fn owned_agent_mentions_do_not_reopen_sidecar_from_private_composer() {
 }
 
 #[test]
-fn embedded_sidecar_activation_keeps_the_source_strand_shell() {
-    assert!(!composer::sidecar_activation_should_navigate(true));
-    assert!(composer::sidecar_activation_should_navigate(false));
-}
-
-#[test]
 fn direct_chat_disables_mention_ui_triggers_and_send_metadata() {
     let account_did = "did:web:example.com:users:alice";
     let stale_picker = vec![crate::messaging::mentions::MentionCandidate {

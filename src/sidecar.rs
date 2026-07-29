@@ -237,44 +237,184 @@ pub fn cached_sidecar_exchange_projections(
     projections
 }
 
-/// Sidecar private Strands known to this controller device. These identifiers
-/// are used only as a local containment boundary: ordinary search, unread,
-/// watch, and public navigation projections must not treat private Sidecar
-/// history as shared Realm content.
-pub(crate) fn known_sidecar_private_strand_ids(
-    store: &crate::state::LocalStateStore,
-    controller_id: &str,
-) -> std::collections::BTreeSet<String> {
-    let mut strand_ids = std::collections::BTreeSet::new();
-    for key in store.private_data_keys() {
-        let belongs_to_controller = [
-            SIDECAR_EXCHANGE_FOLD_CACHE_PREFIX,
-            SIDECAR_PENDING_SUBMISSION_PREFIX,
-            SIDECAR_EXCHANGE_REQUEST_FACT_PREFIX,
-            SIDECAR_AUTO_CLOSE_INTENT_PREFIX,
-            SIDECAR_CONTEXT_LOCATOR_PREFIX,
-        ]
-        .iter()
-        .any(|prefix| key.starts_with(&format!("{prefix}:{controller_id}:")));
-        if !belongs_to_controller {
-            continue;
+/// Ordinary product surfaces that must never disclose Sidecar-private
+/// identifiers or content. The hosted private overlay is deliberately absent:
+/// callers rendering that controller-only surface do not pass through this
+/// shared-disclosure gate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SidecarDisclosureSurface {
+    Search,
+    Unread,
+    Watch,
+    Notification,
+    PublicExport,
+    SharedPublish,
+}
+
+/// One controller-device-local privacy boundary shared by every ordinary
+/// disclosure surface. It is derived only from accepted/recovered local
+/// Sidecar facts and is never uploaded.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SidecarPrivacyGate {
+    private_identifiers: std::collections::BTreeSet<String>,
+    private_strand_ids: std::collections::BTreeSet<String>,
+}
+
+impl SidecarPrivacyGate {
+    pub(crate) fn from_store(store: &crate::state::LocalStateStore, controller_id: &str) -> Self {
+        let mut private_identifiers = std::collections::BTreeSet::new();
+        let mut private_strand_ids = std::collections::BTreeSet::new();
+        for key in store.private_data_keys() {
+            let belongs_to_controller = [
+                SIDECAR_EXCHANGE_FOLD_CACHE_PREFIX,
+                SIDECAR_PENDING_SUBMISSION_PREFIX,
+                SIDECAR_EXCHANGE_REQUEST_FACT_PREFIX,
+                SIDECAR_AUTO_CLOSE_INTENT_PREFIX,
+                SIDECAR_CONTEXT_LOCATOR_PREFIX,
+            ]
+            .iter()
+            .any(|prefix| key.starts_with(&format!("{prefix}:{controller_id}:")));
+            if !belongs_to_controller {
+                continue;
+            }
+            let Some(raw) = store.load_private_data(controller_id, &key) else {
+                continue;
+            };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+                continue;
+            };
+            collect_sidecar_private_identifiers(
+                &value,
+                &mut private_identifiers,
+                &mut private_strand_ids,
+            );
         }
-        let Some(raw) = store.load_private_data(controller_id, &key) else {
-            continue;
-        };
-        let private_strand_id = serde_json::from_str::<serde_json::Value>(&raw)
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("private_strand_id")
-                    .and_then(serde_json::Value::as_str)
-                    .map(ToOwned::to_owned)
-            });
-        if let Some(private_strand_id) = private_strand_id {
-            strand_ids.insert(private_strand_id);
+        Self {
+            private_identifiers,
+            private_strand_ids,
         }
     }
-    strand_ids
+
+    pub(crate) fn allows_strand(
+        &self,
+        _surface: SidecarDisclosureSurface,
+        strand_id: &str,
+    ) -> bool {
+        !self.private_strand_ids.contains(strand_id)
+    }
+
+    pub(crate) fn allows_serialized<T: serde::Serialize>(
+        &self,
+        _surface: SidecarDisclosureSurface,
+        value: &T,
+    ) -> bool {
+        serde_json::to_value(value)
+            .ok()
+            .is_some_and(|value| !self.value_discloses_private_identifier(&value))
+    }
+
+    pub(crate) fn validate_shared_publish(
+        &self,
+        controller_confirmed: bool,
+        target_strand_id: &str,
+        allowlisted_body: &str,
+    ) -> anyhow::Result<()> {
+        if !controller_confirmed {
+            anyhow::bail!("Sidecar publish requires explicit controller confirmation");
+        }
+        if !self.allows_strand(SidecarDisclosureSurface::SharedPublish, target_strand_id) {
+            anyhow::bail!("Sidecar publish target must be a shared Strand");
+        }
+        if self
+            .private_identifiers
+            .iter()
+            .any(|identifier| allowlisted_body.contains(identifier))
+        {
+            anyhow::bail!("Sidecar publish body contains a private Sidecar identifier");
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_public_export<T: serde::Serialize>(
+        &self,
+        value: &T,
+    ) -> anyhow::Result<()> {
+        if !self.allows_serialized(SidecarDisclosureSurface::PublicExport, value) {
+            anyhow::bail!("public export contains a private Sidecar identifier");
+        }
+        Ok(())
+    }
+
+    fn value_discloses_private_identifier(&self, value: &serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::String(value) => self
+                .private_identifiers
+                .iter()
+                .any(|identifier| value.contains(identifier)),
+            serde_json::Value::Array(values) => values
+                .iter()
+                .any(|value| self.value_discloses_private_identifier(value)),
+            serde_json::Value::Object(object) => object.iter().any(|(key, value)| {
+                is_sidecar_private_identifier_key(key)
+                    || self.value_discloses_private_identifier(value)
+            }),
+            serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {
+                false
+            }
+        }
+    }
+}
+
+fn is_sidecar_private_identifier_key(key: &str) -> bool {
+    matches!(
+        key,
+        "sidecar_id"
+            | "backing_circle_id"
+            | "backing_scope_circle_id"
+            | "private_strand_id"
+            | "private_relation_id"
+            | "exchange_id"
+            | "request_binding"
+            | "control_plaintext"
+            | "private_history"
+            | "private_event_id"
+            | "internal_locator"
+            | "scratchpad"
+            | "tool_state"
+            | "draft"
+    )
+}
+
+fn collect_sidecar_private_identifiers(
+    value: &serde_json::Value,
+    private_identifiers: &mut std::collections::BTreeSet<String>,
+    private_strand_ids: &mut std::collections::BTreeSet<String>,
+) {
+    match value {
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_sidecar_private_identifiers(value, private_identifiers, private_strand_ids);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            for (key, value) in object {
+                if is_sidecar_private_identifier_key(key)
+                    && let Some(identifier) = value.as_str()
+                    && !identifier.trim().is_empty()
+                {
+                    private_identifiers.insert(identifier.to_owned());
+                    if key == "private_strand_id" {
+                        private_strand_ids.insert(identifier.to_owned());
+                    }
+                }
+                collect_sidecar_private_identifiers(value, private_identifiers, private_strand_ids);
+            }
+        }
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => {}
+    }
 }
 
 /// Client-local pre-submission state for one source-routed request intent.
@@ -2433,5 +2573,133 @@ mod tests {
             try_begin_sidecar_submission(EXCHANGE_ACCOUNT, strand, intent).is_some(),
             "dropping the guard releases the slot"
         );
+    }
+
+    #[test]
+    fn one_privacy_gate_blocks_private_sidecar_data_on_every_shared_surface() {
+        let mut store = exchange_test_store("privacy-gate");
+        let session = session(Vec::new());
+        let pending = exchange_pending_submission(&session);
+        save_pending_sidecar_submission(&mut store, "privacy-gate", &pending).unwrap();
+        let gate = SidecarPrivacyGate::from_store(&store, EXCHANGE_ACCOUNT);
+
+        for surface in [
+            SidecarDisclosureSurface::Search,
+            SidecarDisclosureSurface::Unread,
+            SidecarDisclosureSurface::Watch,
+            SidecarDisclosureSurface::Notification,
+            SidecarDisclosureSurface::PublicExport,
+            SidecarDisclosureSurface::SharedPublish,
+        ] {
+            assert!(
+                !gate.allows_strand(surface, &session.private_strand_id),
+                "{surface:?} must reject the private Strand"
+            );
+            assert!(
+                gate.allows_strand(surface, &session.source_strand_id),
+                "{surface:?} must keep an ordinary shared Strand"
+            );
+        }
+
+        assert!(!gate.allows_serialized(
+            SidecarDisclosureSurface::PublicExport,
+            &serde_json::json!({
+                "body": "ordinary looking preview",
+                "private_relation_id": session.private_relation_id,
+            }),
+        ));
+        assert!(!gate.allows_serialized(
+            SidecarDisclosureSurface::Notification,
+            &serde_json::json!({
+                "body": format!("internal locator {}", session.sidecar_id),
+            }),
+        ));
+        assert!(gate.allows_serialized(
+            SidecarDisclosureSurface::PublicExport,
+            &serde_json::json!({
+                "body": "controller-approved shared summary",
+                "strand_id": session.source_strand_id,
+            }),
+        ));
+    }
+
+    #[test]
+    fn explicit_publish_requires_confirmation_and_builds_only_shared_message_payload() {
+        let mut store = exchange_test_store("explicit-publish");
+        let session = session(Vec::new());
+        let pending = exchange_pending_submission(&session);
+        save_pending_sidecar_submission(&mut store, "explicit-publish", &pending).unwrap();
+        let gate = SidecarPrivacyGate::from_store(&store, EXCHANGE_ACCOUNT);
+        let message_id = "ak:message:019f0000-0000-7000-8000-0000000000e7";
+
+        let unconfirmed = crate::views::chat::confirmed_sidecar_publish_message_operation(
+            &gate,
+            false,
+            &session.source_realm_id,
+            EXCHANGE_ACCOUNT,
+            &session.source_strand_id,
+            message_id,
+            "approved summary",
+        );
+        assert!(unconfirmed.is_err());
+
+        let private_target = crate::views::chat::confirmed_sidecar_publish_message_operation(
+            &gate,
+            true,
+            &session.source_realm_id,
+            EXCHANGE_ACCOUNT,
+            &session.private_strand_id,
+            message_id,
+            "approved summary",
+        );
+        assert!(private_target.is_err());
+
+        let leaked_identifier = crate::views::chat::confirmed_sidecar_publish_message_operation(
+            &gate,
+            true,
+            &session.source_realm_id,
+            EXCHANGE_ACCOUNT,
+            &session.source_strand_id,
+            message_id,
+            &format!("internal {}", session.sidecar_id),
+        );
+        assert!(leaked_identifier.is_err());
+
+        let published = crate::views::chat::confirmed_sidecar_publish_message_operation(
+            &gate,
+            true,
+            &session.source_realm_id,
+            EXCHANGE_ACCOUNT,
+            &session.source_strand_id,
+            message_id,
+            "controller-approved shared summary",
+        )
+        .unwrap();
+        assert_eq!(published.kind.as_str(), "ak.message.create");
+        assert!(gate.allows_serialized(SidecarDisclosureSurface::SharedPublish, &published));
+        let serialized = serde_json::to_value(published).unwrap();
+        assert_eq!(serialized["payload"]["strand_id"], session.source_strand_id);
+        assert_eq!(
+            serialized["payload"]["content"]["body"],
+            "controller-approved shared summary"
+        );
+        for forbidden in [
+            "sidecar_id",
+            "backing_circle_id",
+            "private_strand_id",
+            "private_relation_id",
+            "exchange_id",
+            "request_binding",
+            "private_history",
+            "internal_locator",
+            "scratchpad",
+            "tool_state",
+            "draft",
+        ] {
+            assert!(
+                !serialized.to_string().contains(forbidden),
+                "shared publish leaked forbidden field {forbidden}"
+            );
+        }
     }
 }

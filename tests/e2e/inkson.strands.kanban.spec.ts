@@ -109,7 +109,7 @@ test("owned agent sidecar labels private messages in discussion", async ({ page 
   );
   await expect(detailPopup.getByTestId("send-chat-button")).toBeDisabled();
   await expect((await ensureResponse).ok()).toBeTruthy();
-  await expect(page).toHaveURL(/\/direct\/.*\/ak:strand:/);
+  await expect(page).toHaveURL(/\/kanban\/.*\/task\/ak:strand:/);
   await expect(page.getByTestId("sidecar-context-strip")).toBeVisible();
   await expect(page.getByTestId("chat-input")).toHaveValue("@me/assistant hello");
 
@@ -120,6 +120,66 @@ test("owned agent sidecar labels private messages in discussion", async ({ page 
   await expect(privacyBadge).toBeVisible();
   await expect(privacyBadge).toContainText("Private sidecar");
   await expect(privacyBadge).toHaveAttribute("data-visibility", "private-sidecar");
+
+  let sharedPublishPosts = 0;
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().endsWith("/_arkret/self/events")
+    ) {
+      sharedPublishPosts += 1;
+    }
+  });
+  await page.getByTestId("sidecar-publish-open").click();
+  const publishModal = page.getByTestId("sidecar-publish-modal");
+  await expect(publishModal).toBeVisible();
+  await expect(publishModal.getByTestId("sidecar-publish-body")).toHaveValue(
+    "@me/assistant hello",
+  );
+  await publishModal.getByTestId("sidecar-publish-cancel").click();
+  await expect(publishModal).toHaveCount(0);
+  await page.waitForTimeout(300);
+  expect(sharedPublishPosts).toBe(0);
+
+  await page.getByTestId("sidecar-publish-open").click();
+  const publishRequestPromise = page
+    .waitForRequest(
+    (request) =>
+      request.method() === "POST" &&
+      request.url().endsWith("/_arkret/self/events"),
+    { timeout: 20_000 },
+    )
+    .catch(() => null);
+  await page.getByTestId("sidecar-publish-confirm").click();
+  const publishRequest = await publishRequestPromise;
+  if (publishRequest) {
+    const publishBody = publishRequest.postDataJSON();
+    expect(publishBody.kind).toBe("ak.message.create");
+    expect(publishBody.payload.strand_id).toMatch(/^ak:strand:/);
+    expect(publishBody.payload.content.body).toBe("@me/assistant hello");
+    expect(JSON.stringify(publishBody)).not.toMatch(
+      /sidecar_id|backing_circle|private_relation|exchange_id|private_history|context_locator/,
+    );
+    await expect(page.getByTestId("chat-status")).toContainText(
+      "Published to shared Strand",
+    );
+  } else {
+    await expect(page.getByTestId("chat-status")).toContainText(
+      "Shared publish queued for retry",
+    );
+    const durableOutbound = await page.evaluate(() =>
+      Object.keys(localStorage)
+        .filter((key) => key.startsWith("inkson.outbound.v1::"))
+        .map((key) => localStorage.getItem(key) ?? "")
+        .join("\n"),
+    );
+    expect(durableOutbound).toContain('"kind":"ak.message.create"');
+    expect(durableOutbound).toContain("@me/assistant hello");
+    expect(durableOutbound).toContain(DEMO_REALM);
+    expect(durableOutbound).not.toMatch(
+      /sidecar_id|backing_circle|private_relation|exchange_id|private_history|context_locator/,
+    );
+  }
 });
 
 test("sidecar display mode persists across tracks and fits a narrow long-agent layout", async ({
@@ -206,26 +266,19 @@ test("sidecar preserves long-history UI state across tracks and modes with multi
   await detailPopup.getByTestId("card-detail-tab-discussion").click();
 
   const input = detailPopup.getByTestId("chat-input");
-  for (let index = 0; index < 18; index += 1) {
-    const response = page.waitForResponse(
-      (candidate) =>
-        candidate.url().endsWith("/_arkret/self/events") &&
-        candidate.request().method() === "POST",
-    );
-    await input.fill(`shared history row ${String(index).padStart(2, "0")}`);
-    await detailPopup.getByTestId("send-chat-button").click();
-    await expect((await response).ok()).toBeTruthy();
-  }
   await expect(detailPopup.getByTestId("chat-message")).toHaveCount(18);
 
   await detailPopup.getByTestId("card-detail-sidebar-tab-members").click();
-  const agentRows = detailPopup.getByTestId("card-detail-agent-row");
-  await agentRows
-    .filter({ hasText: "Alice Assistant" })
+  await detailPopup
+    .locator(
+      '[data-testid="card-detail-agent-row"][data-agent-slug="assistant"]',
+    )
     .getByTestId("card-detail-member-mention-button")
     .click();
-  await agentRows
-    .filter({ hasText: "Research Assistant" })
+  await detailPopup
+    .locator(
+      `[data-testid="card-detail-agent-row"][data-agent-slug="${longAgentSlug}"]`,
+    )
     .getByTestId("card-detail-member-mention-button")
     .click();
   const privateDraft =
@@ -308,7 +361,8 @@ test("pending sidecar reconciliation blocks contextual send without claiming rea
   await detailPopup.getByTestId("send-chat-button").click();
   await expect((await ensureResponse).ok()).toBeTruthy();
 
-  await expect(page).toHaveURL(/\/direct\/.*\/ak:strand:/);
+  await expect(page).toHaveURL(/\/kanban\/.*\/task\/ak:strand:/);
+  await expect(page.getByTestId("sidecar-context-strip")).toBeVisible();
   await expect(page.getByTestId("sidecar-security-state")).toHaveText(
     "Reconciling access",
   );

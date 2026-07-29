@@ -57,10 +57,6 @@ pub(super) fn chat_composer_should_send_key(
     key == "Enter" && !shift && !alt && !is_composing && !is_auto_repeating
 }
 
-pub(super) fn sidecar_activation_should_navigate(embedded: bool) -> bool {
-    !embedded
-}
-
 fn latest_source_event_anchor(
     messages: &[ChatMessage],
     realm_id: &str,
@@ -80,7 +76,7 @@ fn latest_source_event_anchor(
 #[component]
 pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerContext) -> Element {
     let ChatComposerContext {
-        embedded,
+        embedded: _,
         selected_channel_info,
         account_did,
         account_display_label,
@@ -102,7 +98,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         mut frontier_state,
     } = context;
     let base_url = crate::app::SessionContext::base_url_string();
-    let navigator = use_navigator();
     let mut sidecar_session = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
     let mut state_store = crate::app::SessionContext::get().state_store;
     let messages_snapshot = (controller.messages)();
@@ -1192,12 +1187,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     let inserted_candidates_for_sidecar = inserted_candidates;
                                     let participants_for_sidecar =
                                         participants_for_plaintext_sidecar.clone();
-                                    let source_frontier_anchor = latest_source_event_anchor(
-                                        &messages.read(),
-                                        &realm,
-                                        &strand_id,
-                                    );
-                                    let navigator = navigator;
                                     spawn(async move {
                                         for mention in resolve_agent_selector_mentions(
                                             mentions_enabled,
@@ -1250,57 +1239,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                 );
                                                 let private_strand_id =
                                                     sidecar.private_strand_id.to_string();
-                                                let routed = super::submit_source_routed_sidecar_message(
-                                                    &base,
-                                                    api_token,
-                                                    &actor,
-                                                    &device_id_for_sidecar,
-                                                    &realm,
-                                                    &strand_id,
-                                                    &private_strand_id,
-                                                    source_frontier_anchor.as_deref(),
-                                                    &body_for_resolution,
-                                                    &resolved_mentions,
-                                                    &addressed_agent_ids,
-                                                    state_store,
-                                                    &sidecar_view,
-                                                )
-                                                .await;
-                                                let routed = match routed {
-                                                    Ok(routed) => routed,
-                                                    Err(error) => {
-                                                        status_msg.set(format!(
-                                                            "Private Sidecar message was not sent: {error:#}"
-                                                        ));
-                                                        sidecar_route_pending.set(false);
-                                                        return;
-                                                    }
-                                                };
-                                                messages.write().push(ChatMessage {
-                                                    realm_id: realm.clone(),
-                                                    id: routed.event_id.clone(),
-                                                    protocol_message_id: Some(routed.event_id.clone()),
-                                                    sender: actor.clone(),
-                                                    executed_by: None,
-                                                    body: body_for_resolution.clone(),
-                                                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                                                    created_at: Some(chrono::Utc::now()),
-                                                    strand_id: private_strand_id.clone(),
-                                                    reply_to: None,
-                                                    reactions: Vec::new(),
-                                                    redacted: false,
-                                                    edited: false,
-                                                    revisions: Vec::new(),
-                                                    pending: false,
-                                                    failed: false,
-                                                    error: None,
-                                                    mentions: resolved_mentions.clone(),
-                                                    crypto_state: MessageCryptoState::Plaintext,
-                                                });
-                                                chat_draft.set(String::new());
-                                                mention_picker_state.write().clear();
-                                                reply_to_message.set(None);
-                                                status_msg.set("Private Sidecar message sent".to_owned());
+                                                status_msg
+                                                    .set("Private Sidecar ready".to_owned());
                                                 sidecar_session.set(Some(crate::sidecar::HostedSidecarState {
                                                     trace_id,
                                                     controller_id: actor.clone(),
@@ -1316,15 +1256,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     pending_access_reconciliations: sidecar_view.pending_access_reconciliations.clone(),
                                                     mls_context: sidecar_view.mls_context,
                                                     display_mode: arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
-                                                    migrated_draft: String::new(),
+                                                    migrated_draft: body_for_resolution,
                                                     opened_at: chrono::Utc::now(),
                                                 }));
-                                                if sidecar_activation_should_navigate(embedded) {
-                                                    let _ = navigator.push(Route::DirectConversation {
-                                                        realm_id: realm,
-                                                        strand_id,
-                                                    });
-                                                }
                                             }
                                             Ok(None) => status_msg.set(
                                                 "Could not resolve an owned agent for the private sidecar."
@@ -1667,12 +1601,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     let inserted_candidates_for_sidecar = inserted_candidates;
                                     let participants_for_sidecar =
                                         participants_for_encrypted_sidecar.clone();
-                                    let source_frontier_anchor = latest_source_event_anchor(
-                                        &messages.read(),
-                                        &realm_for_sidecar,
-                                        &strand_for_sidecar,
-                                    );
-                                    let navigator = navigator;
                                     spawn(async move {
                                         for mention in resolve_agent_selector_mentions(
                                             mentions_enabled,
@@ -1725,57 +1653,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                 );
                                                 let private_strand_id =
                                                     sidecar.private_strand_id.to_string();
-                                                let routed = super::submit_source_routed_sidecar_message(
-                                                    &base,
-                                                    api_token,
-                                                    &actor_for_sidecar,
-                                                    &device_id_for_sidecar,
-                                                    &realm_for_sidecar,
-                                                    &strand_for_sidecar,
-                                                    &private_strand_id,
-                                                    source_frontier_anchor.as_deref(),
-                                                    &body_for_resolution,
-                                                    &resolved_mentions,
-                                                    &addressed_agent_ids,
-                                                    state_store,
-                                                    &sidecar_view,
-                                                )
-                                                .await;
-                                                let routed = match routed {
-                                                    Ok(routed) => routed,
-                                                    Err(error) => {
-                                                        status_msg.set(format!(
-                                                            "Private Sidecar message was not sent: {error:#}"
-                                                        ));
-                                                        sidecar_route_pending.set(false);
-                                                        return;
-                                                    }
-                                                };
-                                                messages.write().push(ChatMessage {
-                                                    realm_id: realm_for_sidecar.clone(),
-                                                    id: routed.event_id.clone(),
-                                                    protocol_message_id: Some(routed.event_id.clone()),
-                                                    sender: actor_for_sidecar.clone(),
-                                                    executed_by: None,
-                                                    body: body_for_resolution.clone(),
-                                                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                                                    created_at: Some(chrono::Utc::now()),
-                                                    strand_id: private_strand_id.clone(),
-                                                    reply_to: None,
-                                                    reactions: Vec::new(),
-                                                    redacted: false,
-                                                    edited: false,
-                                                    revisions: Vec::new(),
-                                                    pending: false,
-                                                    failed: false,
-                                                    error: None,
-                                                    mentions: resolved_mentions.clone(),
-                                                    crypto_state: MessageCryptoState::Plaintext,
-                                                });
-                                                chat_draft.set(String::new());
-                                                mention_picker_state.write().clear();
-                                                reply_to_message.set(None);
-                                                status_msg.set("Private Sidecar message sent".to_owned());
+                                                status_msg
+                                                    .set("Private Sidecar ready".to_owned());
                                                 sidecar_session.set(Some(crate::sidecar::HostedSidecarState {
                                                     trace_id,
                                                     controller_id: actor_for_sidecar.clone(),
@@ -1791,15 +1670,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     pending_access_reconciliations: sidecar_view.pending_access_reconciliations.clone(),
                                                     mls_context: sidecar_view.mls_context,
                                                     display_mode: arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
-                                                    migrated_draft: String::new(),
+                                                    migrated_draft: body_for_resolution,
                                                     opened_at: chrono::Utc::now(),
                                                 }));
-                                                if sidecar_activation_should_navigate(embedded) {
-                                                    let _ = navigator.push(Route::DirectConversation {
-                                                        realm_id: realm_for_sidecar,
-                                                        strand_id: strand_for_sidecar,
-                                                    });
-                                                }
                                             }
                                             Ok(None) => status_msg.set(
                                                 "Could not resolve an owned agent for the private sidecar."
@@ -1813,31 +1686,135 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     });
                                     return;
                                 }
-                                let (sidecar_circle_id, sidecar_binding) =
-                                    if let Some(session) = active_sidecar_for_send.as_ref() {
-                                        if !session.membership_ready() {
-                                            status_msg.set(
-                                                "Private Sidecar MLS access is not ready"
-                                                    .to_owned(),
-                                            );
-                                            return;
-                                        }
-                                        let binding = match session.mls_binding() {
-                                            Ok(binding) => binding,
-                                            Err(error) => {
-                                                status_msg.set(format!(
-                                                    "Private Sidecar MLS binding is invalid: {error}"
-                                                ));
-                                                return;
-                                            }
-                                        };
-                                        (
-                                            Some(session.backing_scope_circle_id.to_string()),
-                                            Some(binding),
+                                if let Some(session) = active_sidecar_for_send {
+                                    if !session.membership_ready() {
+                                        status_msg.set(
+                                            "Private Sidecar MLS access is not ready".to_owned(),
+                                        );
+                                        return;
+                                    }
+                                    let local_id = new_chat_message_id();
+                                    let private_strand_id = session.private_strand_id.clone();
+                                    messages.write().push(ChatMessage {
+                                        realm_id: session.source_realm_id.clone(),
+                                        id: local_id.clone(),
+                                        protocol_message_id: Some(local_id.clone()),
+                                        sender: actor.clone(),
+                                        executed_by: None,
+                                        body: body.clone(),
+                                        timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                                        created_at: Some(chrono::Utc::now()),
+                                        strand_id: private_strand_id.clone(),
+                                        reply_to: None,
+                                        reactions: Vec::new(),
+                                        redacted: false,
+                                        edited: false,
+                                        revisions: Vec::new(),
+                                        pending: true,
+                                        failed: false,
+                                        error: None,
+                                        mentions: mentions.clone(),
+                                        crypto_state: MessageCryptoState::Plaintext,
+                                    });
+                                    chat_draft.set(String::new());
+                                    mention_picker_state.write().clear();
+                                    reply_to_message.set(None);
+
+                                    let base = base.clone();
+                                    let api_token = token();
+                                    let wait_for = active_sync_token(sync_cursor());
+                                    let own_controller_handle = own_controller_handle.clone();
+                                    let source_frontier_anchor = latest_source_event_anchor(
+                                        &messages.read(),
+                                        &session.source_realm_id,
+                                        &session.source_strand_id,
+                                    );
+                                    spawn(async move {
+                                        let mut resolved_mentions = mentions;
+                                        for mention in resolve_agent_selector_mentions(
+                                            mentions_enabled,
+                                            &base,
+                                            api_token.clone(),
+                                            wait_for,
+                                            &resolved_mentions,
+                                            &body,
+                                            &session.source_realm_id,
+                                            &actor,
+                                            own_controller_handle.as_deref(),
                                         )
-                                    } else {
-                                        (None, None)
-                                    };
+                                        .await
+                                        {
+                                            push_unique_mention_node(
+                                                &mut resolved_mentions,
+                                                mention,
+                                            );
+                                        }
+                                        let view = match crate::transport::auth::authed_api_with_sync(
+                                            &base,
+                                            api_token.clone(),
+                                            None,
+                                        )
+                                        .and_then(|api| {
+                                            api.sdk_http_client().map_err(anyhow::Error::from)
+                                        }) {
+                                            Ok(http) => http
+                                                .agent_sidecar_get(&session.sidecar_id)
+                                                .await
+                                                .map_err(anyhow::Error::from),
+                                            Err(error) => Err(error),
+                                        };
+                                        let outcome = match view {
+                                            Ok(view) => super::submit_source_routed_sidecar_message(
+                                                &base,
+                                                api_token,
+                                                &actor,
+                                                &device_id_for_sidecar,
+                                                &session.source_realm_id,
+                                                &session.source_strand_id,
+                                                &private_strand_id,
+                                                source_frontier_anchor.as_deref(),
+                                                &body,
+                                                &resolved_mentions,
+                                                &session.addressed_agent_ids,
+                                                state_store,
+                                                &view,
+                                            )
+                                            .await,
+                                            Err(error) => Err(error),
+                                        };
+                                        match outcome {
+                                            Ok(routed) => {
+                                                if let Some(found) = messages
+                                                    .write()
+                                                    .iter_mut()
+                                                    .find(|candidate| {
+                                                        candidate.matches_id_or_protocol(&local_id)
+                                                    })
+                                                {
+                                                    found.id = routed.event_id;
+                                                    found.pending = false;
+                                                    found.failed = false;
+                                                    found.error = None;
+                                                    found.mentions = resolved_mentions;
+                                                }
+                                                status_msg
+                                                    .set("Private Sidecar message sent".to_owned());
+                                            }
+                                            Err(error) => fail_optimistic_chat_send(
+                                                messages,
+                                                chat_draft,
+                                                status_msg,
+                                                &local_id,
+                                                &body,
+                                                format!(
+                                                    "Private Sidecar message was not sent: {error:#}"
+                                                ),
+                                            ),
+                                        }
+                                    });
+                                    return;
+                                }
+                                let (sidecar_circle_id, sidecar_binding) = (None, None);
                                 // P2: preserve the composer's reply target on the
                                 // encrypted path (it was silently dropped before).
                                 let reply_to = reply_to_message()

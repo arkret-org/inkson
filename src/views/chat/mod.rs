@@ -96,6 +96,7 @@ use controller::{
     use_chat_controller,
 };
 use effects::ChatEffects;
+pub(crate) use model::confirmed_sidecar_publish_message_operation;
 #[cfg(test)]
 pub(crate) use model::message_operations_from_events;
 use model::*;
@@ -1554,6 +1555,15 @@ pub fn ChatPanel(
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
     let mut sidecar_session_state = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
+    // Embedded Strand shells do not receive a route-owned Sidecar prop. Read
+    // the same hosted session that renders the context bar so message
+    // projection, privacy gates, and the composer cannot diverge after an
+    // in-place activation.
+    let hosted_sidecar_session = sidecar_session_state();
+    let sidecar_session = sidecar_session.or_else(|| {
+        hosted_sidecar_session
+            .filter(|session| session.matches_route(&selected_realm_id, &initial_strand_id))
+    });
     let navigator = use_navigator();
     let controller = use_chat_controller(&selected_realm_id, &initial_strand_id, &account_did);
     let mut migrated_draft_applied_for = use_signal(String::new);
@@ -1702,6 +1712,9 @@ pub fn ChatPanel(
     let mut eligible_circle_scope_request_key_seen = use_signal(String::new);
     let mut eligible_circle_scope_request_in_flight = use_signal(|| false);
     let mut new_channel_scope = use_signal(CircleScope::default);
+    let mut sidecar_publish_open = use_signal(|| false);
+    let mut sidecar_publish_draft = use_signal(String::new);
+    let mut sidecar_publish_pending = use_signal(|| false);
     {
         let base = base_url.clone();
         let realm = selected_realm_id.clone();
@@ -1802,6 +1815,8 @@ pub fn ChatPanel(
     for projection in &sidecar_exchange_projections {
         private_sidecar_strand_ids.insert(projection.private_strand_id.to_string());
     }
+    let sidecar_privacy_gate =
+        crate::sidecar::SidecarPrivacyGate::from_store(&state_store.read(), &account_did);
     let filter_value = track_filter();
     let visible_channels: Vec<ChannelEntity> = all_channels
         .iter()
@@ -1832,6 +1847,12 @@ pub fn ChatPanel(
         .unwrap_or_else(|| "discussion".to_owned());
     let selected_channel_unread = selected_channel_info
         .as_ref()
+        .filter(|channel| {
+            sidecar_privacy_gate.allows_strand(
+                crate::sidecar::SidecarDisclosureSurface::Unread,
+                &channel.strand_id,
+            )
+        })
         .map(|channel| channel.unread)
         .unwrap_or(0);
     let selected_realm_security_encrypted = {
@@ -2141,6 +2162,17 @@ pub fn ChatPanel(
         })
         .collect();
     let visible_message_count = visible_messages.len();
+    let latest_sidecar_publish_body = sidecar_session.as_ref().and_then(|session| {
+        visible_messages
+            .iter()
+            .rev()
+            .find(|message| {
+                message.strand_id == session.private_strand_id
+                    && !message.redacted
+                    && !message.body.trim().is_empty()
+            })
+            .map(|message| message.body.clone())
+    });
     let messages_for_reply_lookup = &all_messages_snapshot;
     let left_open = !embedded && !direct_mode && left_panel_open();
     let active_right_panel = if embedded { None } else { right_panel() };
@@ -2763,7 +2795,11 @@ pub fn ChatPanel(
                             let strand_id_for_watch = selected_channel_value.clone();
                             let realm_for_watch = selected_realm_id.clone();
                             let actor_for_watch = account_did.clone();
-                            let watch_disabled = strand_id_for_watch.trim().is_empty();
+                            let watch_disabled = strand_id_for_watch.trim().is_empty()
+                                || !sidecar_privacy_gate.allows_strand(
+                                    crate::sidecar::SidecarDisclosureSurface::Watch,
+                                    &strand_id_for_watch,
+                                );
                             rsx! {
                                 div { class: "watch-level-picker", "data-testid": "watch-level-picker",
                                     Button {
@@ -2926,6 +2962,26 @@ pub fn ChatPanel(
                         div { class: "event warning-banner", "data-testid": "sidecar-readiness-gate", role: "alert",
                             strong { {sidecar_security_label.unwrap_or("Not ready")} }
                             span { "{reason}" }
+                        }
+                    }
+                    if let Some(publish_body) = latest_sidecar_publish_body.as_ref() {
+                        div { class: "event info sidecar-publish-action",
+                            strong { "Publish is explicit" }
+                            span { "Copy the latest private result into a normal shared message only after reviewing and confirming its final text." }
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                r#type: "button",
+                                "data-testid": "sidecar-publish-open",
+                                disabled: sidecar_publish_pending(),
+                                onclick: {
+                                    let publish_body = publish_body.clone();
+                                    move |_| {
+                                        sidecar_publish_draft.set(publish_body.clone());
+                                        sidecar_publish_open.set(true);
+                                    }
+                                },
+                                "Review shared publish"
+                            }
                         }
                     }
                 }
@@ -3520,6 +3576,158 @@ pub fn ChatPanel(
                     }
                 }
                 }
+                }
+            }
+
+            if sidecar_publish_open() {
+                if let Some(session) = sidecar_session.as_ref() {
+                    div {
+                        class: "discussion-modal-backdrop",
+                        "data-testid": "sidecar-publish-modal",
+                        div {
+                            class: "discussion-modal",
+                            role: "dialog",
+                            "aria-modal": "true",
+                            "aria-labelledby": "sidecar-publish-title",
+                            div { class: "discussion-modal-head",
+                                h2 { id: "sidecar-publish-title", "Publish to shared Strand" }
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    r#type: "button",
+                                    "data-testid": "sidecar-publish-cancel",
+                                    disabled: sidecar_publish_pending(),
+                                    onclick: move |_| {
+                                        sidecar_publish_open.set(false);
+                                        sidecar_publish_draft.set(String::new());
+                                    },
+                                    "Cancel"
+                                }
+                            }
+                            div { class: "discussion-modal-body workflow-form",
+                                p {
+                                    "This creates a normal shared message in the source Strand. Sidecar identifiers, private history, exchange metadata, and locators are never copied."
+                                }
+                                label { class: "form-row",
+                                    span { "Final shared text" }
+                                    textarea {
+                                        "data-testid": "sidecar-publish-body",
+                                        value: "{sidecar_publish_draft}",
+                                        disabled: sidecar_publish_pending(),
+                                        oninput: move |event| sidecar_publish_draft.set(event.value()),
+                                    }
+                                }
+                            }
+                            div { class: "discussion-modal-actions",
+                                Button {
+                                    variant: ButtonVariant::Primary,
+                                    r#type: "button",
+                                    "data-testid": "sidecar-publish-confirm",
+                                    disabled: sidecar_publish_pending()
+                                        || sidecar_publish_draft().trim().is_empty(),
+                                    onclick: {
+                                        let base = base_url.clone();
+                                        let realm = session.source_realm_id.clone();
+                                        let actor = account_did.clone();
+                                        let target_strand = session.source_strand_id.clone();
+                                        move |_| {
+                                            let body = sidecar_publish_draft().trim().to_owned();
+                                            let gate = crate::sidecar::SidecarPrivacyGate::from_store(
+                                                &state_store.read(),
+                                                &actor,
+                                            );
+                                            let operation =
+                                                match confirmed_sidecar_publish_message_operation(
+                                                    &gate,
+                                                    true,
+                                                    &realm,
+                                                    &actor,
+                                                    &target_strand,
+                                                    &new_chat_message_id(),
+                                                    &body,
+                                                ) {
+                                                    Ok(operation) => operation,
+                                                    Err(error) => {
+                                                        status_msg.set(format!(
+                                                            "Shared publish blocked: {error:#}"
+                                                        ));
+                                                        return;
+                                                    }
+                                                };
+                                            sidecar_publish_pending.set(true);
+                                            let credential = token();
+                                            let base = base.clone();
+                                            spawn(async move {
+                                                let result =
+                                                    crate::transport::auth::with_authed_api(
+                                                        &base,
+                                                        credential,
+                                                        |api| async move {
+                                                            let submitter = api.event_submitter()?;
+                                                            let mut attempt = 0_u8;
+                                                            loop {
+                                                                match submitter
+                                                                    .submit_sdk_event(&operation)
+                                                                    .await
+                                                                {
+                                                                    Ok(result) => {
+                                                                        break Ok(Some(result));
+                                                                    }
+                                                                    Err(error)
+                                                                        if crate::event_submit::is_durably_queued_error(
+                                                                            &error,
+                                                                        ) && attempt < 2 =>
+                                                                    {
+                                                                        attempt += 1;
+                                                                        crate::runtime_helpers::sleep_for(
+                                                                            std::time::Duration::from_millis(
+                                                                                1_100,
+                                                                            ),
+                                                                        )
+                                                                        .await;
+                                                                    }
+                                                                    Err(error)
+                                                                        if crate::event_submit::is_durably_queued_error(
+                                                                            &error,
+                                                                        ) =>
+                                                                    {
+                                                                        break Ok(None);
+                                                                    }
+                                                                    Err(error) => break Err(error),
+                                                                }
+                                                            }
+                                                        },
+                                                    )
+                                                    .await;
+                                                sidecar_publish_pending.set(false);
+                                                match result {
+                                                    Ok(Some(_)) => {
+                                                        sidecar_publish_open.set(false);
+                                                        sidecar_publish_draft.set(String::new());
+                                                        status_msg.set(
+                                                            "Published to shared Strand".to_owned(),
+                                                        );
+                                                    }
+                                                    Ok(None) => {
+                                                        sidecar_publish_open.set(false);
+                                                        sidecar_publish_draft.set(String::new());
+                                                        status_msg.set(
+                                                            "Shared publish queued for retry"
+                                                                .to_owned(),
+                                                        );
+                                                    }
+                                                    Err(error) => status_msg.set(format!(
+                                                        "Shared publish failed: {}",
+                                                        error.display()
+                                                    )),
+                                                }
+                                            });
+                                        }
+                                    },
+                                    "Confirm shared publish"
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

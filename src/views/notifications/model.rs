@@ -141,11 +141,28 @@ pub(crate) fn apply_sync_projection_to_store(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn hydrate_notifications(
     raw_notifications: Vec<StoredNotification>,
     local_state: &ClientLocalState,
     push_rules: Option<&PushRulesConfig>,
     dnd: Option<&DndSettings>,
+) -> Vec<UiNotification> {
+    hydrate_notifications_with_privacy_gate(
+        raw_notifications,
+        local_state,
+        push_rules,
+        dnd,
+        &crate::sidecar::SidecarPrivacyGate::default(),
+    )
+}
+
+pub(crate) fn hydrate_notifications_with_privacy_gate(
+    raw_notifications: Vec<StoredNotification>,
+    local_state: &ClientLocalState,
+    push_rules: Option<&PushRulesConfig>,
+    dnd: Option<&DndSettings>,
+    sidecar_privacy_gate: &crate::sidecar::SidecarPrivacyGate,
 ) -> Vec<UiNotification> {
     let joined_realms = local_state
         .realm_tree_projections
@@ -163,7 +180,14 @@ pub(crate) fn hydrate_notifications(
             !joined_realms.contains(&target) && seen_invite_targets.insert(target)
         })
         .filter_map(|(index, value)| {
-            notification_from_stored(index, value, local_state, push_rules, dnd)
+            notification_from_stored(
+                index,
+                value,
+                local_state,
+                push_rules,
+                dnd,
+                sidecar_privacy_gate,
+            )
         })
         .collect::<Vec<_>>();
     apply_read_cursors_to_notifications(&mut notifications, local_state);
@@ -176,7 +200,19 @@ fn notification_from_stored(
     local_state: &ClientLocalState,
     push_rules: Option<&PushRulesConfig>,
     dnd: Option<&DndSettings>,
+    sidecar_privacy_gate: &crate::sidecar::SidecarPrivacyGate,
 ) -> Option<UiNotification> {
+    if value.strand_id().is_some_and(|strand_id| {
+        !sidecar_privacy_gate.allows_strand(
+            crate::sidecar::SidecarDisclosureSurface::Notification,
+            strand_id,
+        )
+    }) || !sidecar_privacy_gate.allows_serialized(
+        crate::sidecar::SidecarDisclosureSurface::Notification,
+        &value,
+    ) {
+        return None;
+    }
     let mut eval_ctx = notification_eval_context(&value);
     if eval_ctx.sender.as_deref().is_some_and(|sender| {
         crate::account_data::is_blocked(&local_state.client_blocklist, sender)

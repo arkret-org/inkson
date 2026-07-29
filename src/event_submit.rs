@@ -596,6 +596,12 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                     }
                     let reason = format!("{error:#}");
                     if let Some(delay) = outbound_retry_delay(&error) {
+                        tracing::warn!(
+                            event_id = %item.transaction_id,
+                            %reason,
+                            retry_after_ms = delay.as_millis(),
+                            "durable Event submit remains queued after a retryable failure"
+                        );
                         return Ok(OutboundSubmitOutcome::RetryAfter { delay, reason });
                     }
                     self.results
@@ -1667,6 +1673,11 @@ impl EventSubmitter {
             let fence = match self.resolve_queue_generation_fence(&outbound).await {
                 Ok(fence) => fence,
                 Err(error) if outbound_retry_delay(&error).is_some() => {
+                    tracing::warn!(
+                        event_id = %event.event_id,
+                        error = %format!("{error:#}"),
+                        "durable Event generation fence refresh failed; keeping Event queued"
+                    );
                     return Err(DurablyQueuedError {
                         event_id: event.event_id.to_string(),
                     }

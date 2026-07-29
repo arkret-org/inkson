@@ -14,7 +14,8 @@ const GRANDCHILD_REALM = "ak:realm:0196419b-0000-7000-8000-00000000c002";
 const DIRECT_BOB_REALM = "ak:realm:01964137-0000-7000-8000-00000000d0b1";
 const DIRECT_BOB_STRAND = "ak:strand:01964137-0000-7000-8000-00000000d0b2";
 const DIRECT_OWN_AGENT_REALM = "ak:realm:01964137-0000-7000-8000-0000000000a1";
-const DIRECT_OWN_AGENT_STRAND = "ak:strand:01964137-0000-7000-8000-0000000000a2";
+const DIRECT_OWN_AGENT_STRAND =
+  "ak:strand:01964137-0000-7000-8000-0000000000a2";
 const DEMO_CIRCLE = "ak:circle:0196419b-0000-7000-8000-00000000c1c1";
 const DEMO_BOARD_SPACE = "ak:space:0196419b-0000-7000-8000-00000000b0a0";
 const DEMO_SECOND_BOARD_SPACE = "ak:space:0196419b-0000-7000-8000-00000000b0b0";
@@ -80,6 +81,8 @@ type MockArkretApiOptions = {
     slug: string;
   }>;
   demoPrimaryCardTitle?: string;
+  preseedRecoveryMaterial?: boolean;
+  seedSharedHistoryCount?: number;
 };
 
 type MockAccountDevice = {
@@ -112,6 +115,24 @@ function canonicalSha256(value: unknown) {
   assertJsonTransportable(value, "$");
   return inksonWire<InksonWireDigest>("sha256-canonical-json", { value })
     .digest;
+}
+
+function canonicalNdjsonLine(value: unknown): string {
+  assertJsonTransportable(value, "$");
+  const sort = (item: unknown): unknown => {
+    if (Array.isArray(item)) {
+      return item.map(sort);
+    }
+    if (item !== null && typeof item === "object") {
+      return Object.fromEntries(
+        Object.entries(item as Record<string, unknown>)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([key, child]) => [key, sort(child)]),
+      );
+    }
+    return item;
+  };
+  return JSON.stringify(sort(value));
 }
 
 function realmActorFrontier(
@@ -267,7 +288,8 @@ export async function mockArkretApi(
   const includeDemoRealms = options.includeDemoRealms ?? true;
   const sidecarPendingMemberReconciliations =
     options.sidecarPendingMemberReconciliations ?? [];
-  const includeSidecarInCircleList = options.includeSidecarInCircleList ?? false;
+  const includeSidecarInCircleList =
+    options.includeSidecarInCircleList ?? false;
   const includeLowFloorRealm = options.includeLowFloorRealm ?? false;
   const personalAgentPairingExpiresAt =
     options.personalAgentPairingExpiresAt ?? "2099-07-06T00:10:00.000Z";
@@ -294,7 +316,15 @@ export async function mockArkretApi(
   const circleStates = new Map<string, MockCircleState>([
     [DEMO_CIRCLE, "active"],
   ]);
-  const circleMetadata = new Map<string, { title: string; summary?: string; encryption_profile: string; join_rule: string }>([
+  const circleMetadata = new Map<
+    string,
+    {
+      title: string;
+      summary?: string;
+      encryption_profile: string;
+      join_rule: string;
+    }
+  >([
     [
       DEMO_CIRCLE,
       {
@@ -305,7 +335,9 @@ export async function mockArkretApi(
       },
     ],
   ]);
-  const circleMembers = new Map<string, string[]>([[DEMO_CIRCLE, [accountPrincipalId]]]);
+  const circleMembers = new Map<string, string[]>([
+    [DEMO_CIRCLE, [accountPrincipalId]],
+  ]);
   let circleCounter = 2;
   const circleView = (circleId = DEMO_CIRCLE) => ({
     circle_id: circleId,
@@ -347,8 +379,45 @@ export async function mockArkretApi(
       symbol: { glyph: "spark" },
     },
   });
-  let recoveryPolicy: Record<string, unknown> | null = null;
+  const seededRecoveryPolicyId =
+    "ak:policy:019a6aa0-0000-7000-8000-0000000000bb";
+  let recoveryPolicy: Record<string, unknown> | null =
+    options.preseedRecoveryMaterial === true
+      ? {
+          policy_id: seededRecoveryPolicyId,
+          principal_id: accountPrincipalId,
+          version: 1,
+          acceptance_basis: `ak:seal:sha256:${"a".repeat(64)}`,
+          trust_domain: "ak:trust_domain:soland.local",
+          allowed_proof_kinds: ["principal_signing"],
+          issued_at: "2026-07-29T00:00:00.000Z",
+          accepted_at: "2026-07-29T00:00:01.000Z",
+        }
+      : null;
   const keyBackups = new Map<string, Record<string, unknown>>();
+  if (options.preseedRecoveryMaterial === true) {
+    const backupId = "ak:backup:019a6aa0-0000-7000-8000-000000000002";
+    keyBackups.set(backupId, {
+      backup_id: backupId,
+      actor_id: accountPrincipalId,
+      device_id: currentDeviceId,
+      backup_kind: "did_recovery",
+      backup_version: "v1",
+      created_at: "2026-07-29T00:00:02.000Z",
+      ciphertext_digest: `sha256:${"b".repeat(64)}`,
+      encryption: {
+        recipient_method: "recovery_public_key",
+        recipient_key_ref: "recovery-key-e2e",
+      },
+      series_id: "ak:backup_series:019a6aa0-0000-7000-8000-000000000003",
+      series_seq: 0,
+      recovery_policy_ref: {
+        policy_id: seededRecoveryPolicyId,
+        policy_version: 1,
+      },
+      contents: [],
+    });
+  }
   const personalAgents = new Map<string, Record<string, unknown>>();
   const personalAgentKeyStates = new Map<string, Record<string, unknown>>();
   const personalAgentGrants = new Map<string, Array<Record<string, unknown>>>();
@@ -370,11 +439,14 @@ export async function mockArkretApi(
     const ks = personalAgentKeyStates.get(agentId);
     const keyed = Boolean(
       ks &&
-        (ks.authorized_event_ref ||
-          (Array.isArray(ks.active_authorizations) &&
-            ks.active_authorizations.length > 0)),
+      (ks.authorized_event_ref ||
+        (Array.isArray(ks.active_authorizations) &&
+          ks.active_authorizations.length > 0)),
     );
-    return { lifecycle, runtime_state: keyed ? "ready" : "pending_runtime_key" };
+    return {
+      lifecycle,
+      runtime_state: keyed ? "ready" : "pending_runtime_key",
+    };
   };
   personalAgents.set("did:web:agents.example:assistant", {
     agent_id: "did:web:agents.example:assistant",
@@ -442,14 +514,12 @@ export async function mockArkretApi(
       ...personalAgentKeyStates.get(activeAssistantId),
       agent_id: agent.agent_id,
       controller_authorization_ref: `${agent.agent_id}#managed-controller`,
-      authorized_event_ref:
-        "ak:event:01964137-0000-7000-8000-00000000a601",
+      authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000a601",
       active_authorizations: [
         {
           key_id: "runtime-key-2",
           verification_method: `${agent.agent_id}#runtime-key-2`,
-          authorized_event_ref:
-            "ak:event:01964137-0000-7000-8000-00000000a601",
+          authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000a601",
         },
       ],
     });
@@ -464,8 +534,7 @@ export async function mockArkretApi(
   });
   if (personalAgentPairingExpiresAt.startsWith("2000-")) {
     const expiredAgentId = "did:web:agents.example:summary";
-    const expiredRealmId =
-      "ak:realm:01964137-0000-7000-8000-000000000005";
+    const expiredRealmId = "ak:realm:01964137-0000-7000-8000-000000000005";
     const expiredScope = {
       actions: [
         "ak.event.read",
@@ -671,6 +740,108 @@ export async function mockArkretApi(
       fields: { labels: ["planning"], due_at: "May 12" },
     },
   ];
+  const canonicalProjectionEvent = (
+    eventId: string,
+    kind: string,
+    actorSeq: number,
+    payload: Record<string, unknown>,
+  ) => ({
+    event_id: eventId,
+    kind,
+    realm_id: DEMO_REALM,
+    scope_ref: { kind: "realm", realm_id: DEMO_REALM },
+    actor_id: accountPrincipalId,
+    actor_seq: actorSeq,
+    created_at: `2026-04-28T12:${String(actorSeq - 200).padStart(2, "0")}:00.000Z`,
+    hlc: `01964137${String(actorSeq).padStart(4, "0")}-0000-12345678`,
+    prev_refs: [],
+    payload,
+    proofs: [],
+  });
+  projectionEvents.push(
+    ...boardSpaceContainers.map((space, index) =>
+      canonicalProjectionEvent(
+        `ak:event:0196419b-0000-7000-8000-00000000b0${String(index + 1).padStart(2, "0")}`,
+        "ak.space.create",
+        200 + index,
+        {
+          object: {
+            id: space.container_space_id,
+            schema: "ak.schema.space.v1",
+            realm_id: space.realm_id,
+            kind: space.kind,
+            title: space.title,
+            ...(space.rank ? { rank: space.rank } : {}),
+            ...(space.parent_space_id
+              ? { parent_space_id: space.parent_space_id }
+              : {}),
+          },
+        },
+      ),
+    ),
+    ...boardStrandProjections.map((strand, index) =>
+      canonicalProjectionEvent(
+        `ak:event:0196419b-0000-7000-8000-00000000c0${String(index + 1).padStart(2, "0")}`,
+        "ak.strand.create",
+        210 + index,
+        {
+          object: {
+            id: strand.strand_id,
+            schema: "ak.schema.strand.v1",
+            realm_id: strand.realm_id,
+            created_by: accountPrincipalId,
+            created_at: `2026-04-28T12:${10 + index}:00.000Z`,
+            metadata: {
+              title: strand.title,
+              summary: strand.summary,
+              fields: {
+                ...strand.fields,
+                board_space_id: strand.board_space_id,
+                list_space_id: strand.list_space_id,
+                rank: strand.rank,
+                strand_kind: "card",
+              },
+            },
+          },
+        },
+      ),
+    ),
+  );
+  const seedSharedHistoryCount = options.seedSharedHistoryCount ?? 0;
+  for (let index = 0; index < seedSharedHistoryCount; index += 1) {
+    const suffix = (0xd000 + index).toString(16).padStart(12, "0");
+    const historyActor = "did:web:history.example";
+    projectionEvents.push(
+      {
+        ...canonicalProjectionEvent(
+          `ak:event:0196419b-0000-7000-8000-${suffix}`,
+          "ak.message.create",
+          230 + index,
+          {
+            message_id: `ak:message:0196419b-0000-7000-8000-${suffix}`,
+            strand_id: DEMO_STRAND_LEGAL_REVIEW,
+            track_name: "discussion",
+            content: {
+              kind: "ak.content.text",
+              body: `shared history row ${String(index).padStart(2, "0")}`,
+            },
+          },
+        ),
+        actor_id: historyActor,
+        proofs: [
+          {
+            kind: "detached_jws",
+            alg: "EdDSA",
+            verification_method: `${historyActor}#device`,
+            event_digest:
+              "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            created_at: "2026-04-28T12:30:00.000Z",
+            jws: "eyJhbGciOiJFZERTQSJ9..AA",
+          },
+        ],
+      },
+    );
+  }
 
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());
@@ -1003,7 +1174,9 @@ export async function mockArkretApi(
           realmId === DEMO_REALM
             ? [
                 ...[...circleStates.keys()]
-                  .filter((circleId) => circleStates.get(circleId) !== "tombstoned")
+                  .filter(
+                    (circleId) => circleStates.get(circleId) !== "tombstoned",
+                  )
                   .map((circleId) => circleView(circleId)),
                 ...(includeSidecarInCircleList ? [sidecarCircleView()] : []),
               ]
@@ -1139,7 +1312,10 @@ export async function mockArkretApi(
         route,
         {
           ok: false,
-          error: { code: "invalid_param", message: "frontier selector is required" },
+          error: {
+            code: "invalid_param",
+            message: "frontier selector is required",
+          },
         },
         400,
       );
@@ -1646,6 +1822,14 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/account/subscribe" &&
       route.request().method() === "GET"
     ) {
+      if (url.searchParams.has("after")) {
+        await new Promise((resolve) => setTimeout(resolve, 5_000));
+        return route.fulfill({
+          status: 200,
+          contentType: "application/x-ndjson",
+          body: `${canonicalNdjsonLine({ kind: "frontier", cursor: "ak:cursor:e2e-2" })}\n${canonicalNdjsonLine({ kind: "catchup_complete", cursor: "ak:cursor:e2e-2" })}\n`,
+        });
+      }
       const demoProjectionEvents = projectionEvents.filter(
         (event) => eventRealmId(event) === DEMO_REALM,
       );
@@ -1655,6 +1839,7 @@ export async function mockArkretApi(
               event_id: "ak:event:01964137-0000-7000-8000-00000000a101",
               kind: "ak.account_data.set",
               realm_id: DEMO_REALM,
+              scope_ref: { kind: "realm", realm_id: DEMO_REALM },
               actor_id: accountPrincipalId,
               actor_seq: 101,
               created_at: "2026-04-28T12:01:00.000Z",
@@ -1677,6 +1862,7 @@ export async function mockArkretApi(
               event_id: "ak:event:01964137-0000-7000-8000-00000000a102",
               kind: "ak.account_data.set",
               realm_id: DEMO_REALM,
+              scope_ref: { kind: "realm", realm_id: DEMO_REALM },
               actor_id: accountPrincipalId,
               actor_seq: 102,
               created_at: "2026-04-28T12:02:00.000Z",
@@ -1759,6 +1945,7 @@ export async function mockArkretApi(
                           "ak:event:0196419b-0000-7000-8000-00000000e2ee",
                         kind: "ak.realm.create",
                         realm_id: DEMO_REALM,
+                        scope_ref: { kind: "realm", realm_id: DEMO_REALM },
                         actor_id: accountPrincipalId,
                         actor_seq: 1,
                         created_at: "2026-04-28T12:00:00.000Z",
@@ -1847,7 +2034,7 @@ export async function mockArkretApi(
       return route.fulfill({
         status: 200,
         contentType: "application/x-ndjson",
-        body: `${JSON.stringify(frame)}\n${JSON.stringify({ kind: "catchup_complete", cursor: "ak:cursor:e2e-2" })}\n`,
+        body: `${canonicalNdjsonLine(frame)}\n${canonicalNdjsonLine({ kind: "catchup_complete", cursor: "ak:cursor:e2e-2" })}\n`,
       });
     }
 
@@ -2058,6 +2245,43 @@ export async function mockArkretApi(
     }
 
     if (
+      url.pathname === "/_arkret/self/events/subscribe" &&
+      route.request().method() === "GET"
+    ) {
+      const cursor = "ak:cursor:e2e-events-2";
+      if (url.searchParams.has("after")) {
+        await new Promise((resolve) => setTimeout(resolve, 5_000));
+        return route.fulfill({
+          status: 200,
+          contentType: "application/x-ndjson",
+          body: `${canonicalNdjsonLine({ kind: "frontier", cursor })}\n${canonicalNdjsonLine({ kind: "catchup_complete", cursor })}\n`,
+        });
+      }
+      const requestedRealms = (url.searchParams.get("realms") ?? "")
+        .split(",")
+        .map((realm) => realm.trim())
+        .filter(Boolean);
+      const frames: Array<Record<string, unknown>> = projectionEvents
+        .filter(
+          (event) =>
+            requestedRealms.length === 0 ||
+            requestedRealms.includes(eventRealmId(event)),
+        )
+        .map((payload) => ({
+          kind: "event",
+          realm_id: eventRealmId(payload),
+          cursor,
+          payload,
+        }));
+      frames.push({ kind: "catchup_complete", cursor });
+      return route.fulfill({
+        status: 200,
+        contentType: "application/x-ndjson",
+        body: `${frames.map(canonicalNdjsonLine).join("\n")}\n`,
+      });
+    }
+
+    if (
       url.pathname === "/_arkret/self/events" &&
       route.request().method() === "GET"
     ) {
@@ -2205,8 +2429,10 @@ export async function mockArkretApi(
                 avatar_blob_ref: DEMO_BLOB_REF,
                 direct_conversation: {
                   realm_id: "ak:realm:01964137-0000-7000-8000-0000000000b1",
-                  main_strand_id: "ak:strand:01964137-0000-7000-8000-0000000000b2",
-                  binding_event_ref: "ak:event:01964137-0000-7000-8000-0000000000b3",
+                  main_strand_id:
+                    "ak:strand:01964137-0000-7000-8000-0000000000b2",
+                  binding_event_ref:
+                    "ak:event:01964137-0000-7000-8000-0000000000b3",
                   state: "active",
                 },
               },
@@ -2335,7 +2561,9 @@ export async function mockArkretApi(
       return json(route, {
         state: "found",
         realm_id: ownedAgent ? DIRECT_OWN_AGENT_REALM : DIRECT_BOB_REALM,
-        main_strand_id: ownedAgent ? DIRECT_OWN_AGENT_STRAND : DIRECT_BOB_STRAND,
+        main_strand_id: ownedAgent
+          ? DIRECT_OWN_AGENT_STRAND
+          : DIRECT_BOB_STRAND,
         binding_event_ref: ownedAgent
           ? "ak:event:0196419b-0000-7000-8000-0000000000a3"
           : "ak:event:0196419b-0000-7000-8000-000000000103",
@@ -2369,7 +2597,8 @@ export async function mockArkretApi(
         Object.keys(requestedDeviceKeys)[0] ?? accountPrincipalId;
       const requestedDevices = requestedDeviceKeys[requestedPrincipalId];
       const requestedDeviceId =
-        Array.isArray(requestedDevices) && typeof requestedDevices[0] === "string"
+        Array.isArray(requestedDevices) &&
+        typeof requestedDevices[0] === "string"
           ? requestedDevices[0]
           : currentDeviceId;
       const generationRef = "did-version-e2e-1";
@@ -2476,7 +2705,9 @@ export async function mockArkretApi(
       const body = await route.request().postDataJSON();
       if (
         Array.isArray(body?.addressed_agent_ids) &&
-        body.addressed_agent_ids.every((value: unknown) => typeof value === "string")
+        body.addressed_agent_ids.every(
+          (value: unknown) => typeof value === "string",
+        )
       ) {
         sidecarAgentIds = [...body.addressed_agent_ids];
       }
@@ -2510,8 +2741,68 @@ export async function mockArkretApi(
             ? "ready"
             : "access_reconciliation_pending",
         pending_access_reconciliations: sidecarPendingMemberReconciliations.map(
-          (item) => ({ provisioning_phase: "backing_scope_membership", ...item }),
+          (item) => ({
+            provisioning_phase: "backing_scope_membership",
+            ...item,
+          }),
         ),
+      });
+    }
+
+    if (
+      url.pathname === "/_arkret/self/agent-sidecars" &&
+      route.request().method() === "GET"
+    ) {
+      const sidecarId = "ak:sidecar:01964137-0000-7000-8000-0000000000a0";
+      const backingCircleId = "ak:circle:01964137-0000-7000-8000-0000000000a1";
+      const desiredAgentIds = [...sidecarAgentIds].sort();
+      const principalIds = [accountPrincipalId, ...desiredAgentIds].sort();
+      const ready = sidecarPendingMemberReconciliations.length === 0;
+      return json(route, {
+        items: [
+          {
+            sidecar: {
+              id: sidecarId,
+              schema: "ak.schema.agent_sidecar.v1",
+              realm_id: DEMO_REALM,
+              controller_id: accountPrincipalId,
+              backing_circle_id: backingCircleId,
+              encryption_profile: "mls_rfc9420",
+              state: "active",
+              created_at: "2026-07-20T00:00:00.000Z",
+            },
+            desired_agent_ids: desiredAgentIds,
+            effective_agent_ids: ready ? desiredAgentIds : [],
+            mls_context: {
+              desired_access_digest: canonicalSha256({
+                domain: "ak.sidecar.desired_access.v1",
+                sidecar_id: sidecarId,
+                realm_id: DEMO_REALM,
+                controller_id: accountPrincipalId,
+                principal_ids: principalIds,
+              }),
+              control_frontier: [
+                "ak:event:01964137-0000-7000-8000-0000000000af",
+              ],
+              ...(ready
+                ? {
+                    mls_group_id: "e2e-sidecar-group",
+                    epoch: 1,
+                    genesis_event_ref:
+                      "ak:event:01964137-0000-7000-8000-0000000000af",
+                  }
+                : {}),
+              current_controller_device_ready: ready,
+            },
+            access_readiness: ready ? "ready" : "access_reconciliation_pending",
+            pending_access_reconciliations:
+              sidecarPendingMemberReconciliations.map((item) => ({
+                provisioning_phase: "backing_scope_membership",
+                ...item,
+              })),
+          },
+        ],
+        next_cursor: null,
       });
     }
 
@@ -2519,28 +2810,49 @@ export async function mockArkretApi(
       url.pathname.startsWith("/_arkret/self/agent-sidecars/") &&
       route.request().method() === "GET"
     ) {
+      const sidecarId = "ak:sidecar:01964137-0000-7000-8000-0000000000a0";
+      const backingCircleId = "ak:circle:01964137-0000-7000-8000-0000000000a1";
+      const desiredAgentIds = [...sidecarAgentIds].sort();
+      const principalIds = [accountPrincipalId, ...desiredAgentIds].sort();
+      const ready = sidecarPendingMemberReconciliations.length === 0;
       return json(route, {
         sidecar: {
-          id: "ak:sidecar:01964137-0000-7000-8000-0000000000a0",
+          id: sidecarId,
           schema: "ak.schema.agent_sidecar.v1",
           realm_id: DEMO_REALM,
           controller_id: accountPrincipalId,
-          backing_circle_id: "ak:circle:01964137-0000-7000-8000-0000000000a1",
+          backing_circle_id: backingCircleId,
           encryption_profile: "mls_rfc9420",
           state: "active",
           created_at: "2026-07-20T00:00:00.000Z",
         },
-        desired_agent_ids: sidecarAgentIds,
-        effective_agent_ids:
-          sidecarPendingMemberReconciliations.length === 0
-            ? sidecarAgentIds
-            : [],
-        access_readiness:
-          sidecarPendingMemberReconciliations.length === 0
-            ? "ready"
-            : "access_reconciliation_pending",
+        desired_agent_ids: desiredAgentIds,
+        effective_agent_ids: ready ? desiredAgentIds : [],
+        mls_context: {
+          desired_access_digest: canonicalSha256({
+            domain: "ak.sidecar.desired_access.v1",
+            sidecar_id: sidecarId,
+            realm_id: DEMO_REALM,
+            controller_id: accountPrincipalId,
+            principal_ids: principalIds,
+          }),
+          control_frontier: ["ak:event:01964137-0000-7000-8000-0000000000af"],
+          ...(ready
+            ? {
+                mls_group_id: "e2e-sidecar-group",
+                epoch: 1,
+                genesis_event_ref:
+                  "ak:event:01964137-0000-7000-8000-0000000000af",
+              }
+            : {}),
+          current_controller_device_ready: ready,
+        },
+        access_readiness: ready ? "ready" : "access_reconciliation_pending",
         pending_access_reconciliations: sidecarPendingMemberReconciliations.map(
-          (item) => ({ provisioning_phase: "backing_scope_membership", ...item }),
+          (item) => ({
+            provisioning_phase: "backing_scope_membership",
+            ...item,
+          }),
         ),
       });
     }
@@ -2598,7 +2910,10 @@ export async function mockArkretApi(
           route,
           {
             ok: false,
-            error: { code: "invalid_param", message: "phase must be prepare or commit" },
+            error: {
+              code: "invalid_param",
+              message: "phase must be prepare or commit",
+            },
           },
           400,
         );
@@ -2656,7 +2971,10 @@ export async function mockArkretApi(
       if (!agent || !keyState) {
         return json(
           route,
-          { ok: false, error: { code: "not_found", message: "agent not found" } },
+          {
+            ok: false,
+            error: { code: "not_found", message: "agent not found" },
+          },
           404,
         );
       }
@@ -2669,7 +2987,9 @@ export async function mockArkretApi(
       const expectedFrom = action === "pause" ? "active" : "paused";
       const expectedTo = action === "pause" ? "paused" : "active";
       const expectedReason = action === "pause" ? body.reason : undefined;
-      const effect = Array.isArray(event?.effects) ? event.effects[0] : undefined;
+      const effect = Array.isArray(event?.effects)
+        ? event.effects[0]
+        : undefined;
       const payload = event?.payload;
       const valid =
         event?.kind === expectedKind &&
@@ -2698,7 +3018,8 @@ export async function mockArkretApi(
             ok: false,
             error: {
               code: "invalid_param",
-              message: "lifecycle_event does not match the delegated Agent transition",
+              message:
+                "lifecycle_event does not match the delegated Agent transition",
             },
           },
           400,
@@ -2720,7 +3041,10 @@ export async function mockArkretApi(
       if (!agent || !keyState) {
         return json(
           route,
-          { ok: false, error: { code: "not_found", message: "agent not found" } },
+          {
+            ok: false,
+            error: { code: "not_found", message: "agent not found" },
+          },
           404,
         );
       }
@@ -2740,7 +3064,9 @@ export async function mockArkretApi(
         : [];
       const activeGrants = personalAgentGrants.get(agentId) ?? [];
       const previousStatus = String(agent.status ?? "active");
-      const effect = Array.isArray(event?.effects) ? event.effects[0] : undefined;
+      const effect = Array.isArray(event?.effects)
+        ? event.effects[0]
+        : undefined;
       const suppliedKeyIds = new Set(
         keyEvents.map((candidate: Record<string, any>) =>
           String(candidate?.payload?.key_id ?? ""),
@@ -2892,7 +3218,9 @@ export async function mockArkretApi(
       return json(route, { entries: [] });
     }
 
-    const agentGetMatch = url.pathname.match(/^\/_arkret\/self\/agents\/([^/]+)$/);
+    const agentGetMatch = url.pathname.match(
+      /^\/_arkret\/self\/agents\/([^/]+)$/,
+    );
     if (agentGetMatch && route.request().method() === "GET") {
       const agentId = decodeURIComponent(agentGetMatch[1]);
       const agent = personalAgents.get(agentId);
@@ -2960,7 +3288,10 @@ export async function mockArkretApi(
         authorized_event_ref: authorizedEventRef,
         active_authorizations: [
           {
-            key_id: String(body.verification_method ?? "").split("#").pop() ?? "runtime-key-1",
+            key_id:
+              String(body.verification_method ?? "")
+                .split("#")
+                .pop() ?? "runtime-key-1",
             verification_method: body.verification_method,
             authorized_event_ref: authorizedEventRef,
           },
@@ -3079,8 +3410,7 @@ export async function mockArkretApi(
         accepted: true,
         realm_id: body.realm_id,
         envelope_digest:
-          body.proof?.envelope_digest ??
-          `sha256:${"0".repeat(64)}`,
+          body.proof?.envelope_digest ?? `sha256:${"0".repeat(64)}`,
         dispatched_recipient_count: 0,
         server_received_at: new Date().toISOString(),
       });

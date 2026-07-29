@@ -22,9 +22,12 @@
   padding: 0.7rem 1rem;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--accent) 7%, var(--background));
-  position: sticky;
-  top: 0;
-  z-index: 6;
+  position: relative;
+  z-index: 1;
+}
+
+.card-detail-main:has(> .sidecar-context-strip) {
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .sidecar-context-main,
@@ -78,6 +81,13 @@
 .sidecar-draft-notice,
 .sidecar-mode > .discussion-main-panel > .warning-banner {
   margin: 0.6rem 1rem 0;
+}
+
+.sidecar-mode > .discussion-main-panel > .sidecar-publish-action {
+  flex: 0 0 auto;
+  margin: 0.6rem 1rem 0;
+  position: relative;
+  z-index: 2;
 }
 
 .sidecar-mode .discussion-users-panel .discussion-detail-section:not(.sidecar-access-section),
