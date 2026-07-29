@@ -840,6 +840,118 @@ pub struct JointEnrollmentAuthorityRecoveryPreparation {
     pub verified_session: RecoverySessionState,
 }
 
+/// Opaque public-only principal inception checkpoint used by cotest to put a
+/// real B-model principal on the joint stack. The recovery words and derived
+/// private material are not retained.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub struct JointPrincipalBootstrapPreparation {
+    checkpoint: crate::state::PendingPrincipalRegistration,
+}
+
+#[cfg(debug_assertions)]
+impl JointPrincipalBootstrapPreparation {
+    pub fn principal_id(&self) -> &str {
+        &self.checkpoint.did
+    }
+
+    pub fn version_id(&self) -> &str {
+        &self.checkpoint.version_id
+    }
+
+    pub fn enrollment_authority_ref(&self) -> anyhow::Result<String> {
+        let operation: arkret_sdk::DidOperationSubmitRequestBody =
+            serde_json::from_value(self.checkpoint.did_operation.clone())?;
+        operation
+            .operation
+            .get("state")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|state| state.get("service"))
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|service| {
+                service.get("type").and_then(serde_json::Value::as_str)
+                    == Some("ArkretDeviceEnrollmentAuthority")
+            })
+            .and_then(|service| service.get("id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| anyhow::anyhow!("principal inception omitted enrollment delegation"))
+    }
+
+    pub fn did_operation(&self) -> anyhow::Result<arkret_sdk::DidOperationSubmitRequestBody> {
+        serde_json::from_value(self.checkpoint.did_operation.clone()).map_err(anyhow::Error::from)
+    }
+}
+
+/// Prepare the same external-authority DID inception and public checkpoint as
+/// onboarding, without retaining the caller's 24 words.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn prepare_joint_principal_bootstrap(
+    principal_server_url: &str,
+    gate_account_base: &str,
+    account_handle: &str,
+    enrollment_authority_did: &str,
+    trust_domain: &str,
+    device_id: &str,
+    recovery_words: &str,
+) -> anyhow::Result<JointPrincipalBootstrapPreparation> {
+    let request_id = arkret_sdk::identifiers::new_prefixed_uuid7("ak:request:");
+    let handoff = crate::state::PendingAccountHandoff {
+        principal_server_url: principal_server_url.to_owned(),
+        gate_account_base: gate_account_base.to_owned(),
+        request_id,
+        account_handle: account_handle.to_owned(),
+        holder_jkt: String::new(),
+        audience: String::new(),
+        expires_at: crate::clock::now_utc() + chrono::Duration::hours(1),
+        lease_id: Some(arkret_sdk::identifiers::new_prefixed_uuid7(
+            "ak:identity_creation_lease:",
+        )),
+        lease_fence: Some(1),
+        lease_expires_at: Some(crate::clock::now_utc() + chrono::Duration::hours(1)),
+        reserved_identity: None,
+        retry_after_ms: None,
+        device_id: device_id.to_owned(),
+        enrollment_authority_did: enrollment_authority_did.to_owned(),
+        trust_domain: trust_domain.to_owned(),
+    };
+    Ok(JointPrincipalBootstrapPreparation {
+        checkpoint: crate::identity::principal_registration::prepare_registration_checkpoint(
+            &handoff,
+            device_id,
+            recovery_words,
+        )?,
+    })
+}
+
+/// Finish the exact founding PCR bootstrap after cotest has submitted the DID
+/// inception and installed the Account Authority binding.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub async fn execute_joint_principal_bootstrap(
+    prepared: &JointPrincipalBootstrapPreparation,
+    recovery_words: &str,
+    device_public_key: String,
+    hpke_key: String,
+    device_signer: &crate::event_signer::InksonEventSigner,
+    account_client: &arkret_sdk::http_client::Client,
+    principal_client: &arkret_sdk::http_client::Client,
+) -> anyhow::Result<()> {
+    crate::identity::principal_registration::bootstrap_principal(
+        &prepared.checkpoint,
+        recovery_words,
+        device_public_key,
+        hpke_key,
+        device_signer,
+        account_client,
+        principal_client,
+    )
+    .await
+}
+
 /// Prepare the exact enrollment-authority recovery transaction used by the
 /// product client while allowing cotest to drive each durable participant
 /// boundary independently.
