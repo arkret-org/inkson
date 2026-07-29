@@ -690,5 +690,7 @@ test("diagnostic and preview surfaces stay behind clear user-facing states", asy
 
   await page.goto("/call", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("call-panel")).toContainText("Signaling ready");
-  await expect(page.getByTestId("deferred-feature-gate")).toHaveAttribute("data-feature", "experimental-webrtc");
+  await expect(page.getByTestId("deferred-feature-gate")).toHaveCount(0);
+  await expect(page.getByTestId("call-start-voice-button")).toBeAttached();
+  await expect(page.getByTestId("call-start-group-button")).toBeAttached();
 });

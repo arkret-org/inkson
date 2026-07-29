@@ -159,7 +159,7 @@ test.describe("feature coverage placeholders", () => {
   });
 
   // ---- Identity / Device — three independent concerns ----
-  // UI surface: devices and verify-device
+  // UI surface: devices and device verification
   // spec: crypto-media/devices-and-auth.md §1.2
   test("device verification: SAS match writes ak.device.authorize + ak.device.cross_sign", async ({
     page,
@@ -171,7 +171,7 @@ test.describe("feature coverage placeholders", () => {
     // (sas-verify-strand, sas-emoji-row, sas-digits, sas-match-button)
     // continue to render so the full strand can plug in without a UI
     // rewrite.
-    await page.goto("/verify-device", {
+    await page.goto("/devices/verify", {
       waitUntil: "domcontentloaded",
       timeout: 120_000,
     });
@@ -358,6 +358,7 @@ test.describe("feature coverage placeholders", () => {
       verificationCellBox!.width,
     );
 
+    await dismissBlockingDialog(page);
     await list
       .getByTestId("device-row")
       .nth(1)
@@ -397,18 +398,12 @@ test.describe("feature coverage placeholders", () => {
     expect(horizontalOverflow).toBeLessThanOrEqual(1);
   });
 
-  test("cross-signing: Run setup submits ak.cross_signing.publish into the principal control Realm", async ({
+  test("cross-signing: setup stays fail-closed without an active recovery policy", async ({
     page,
   }) => {
-    // D2 — formerly unwritten. The verify-device panel now runs the
-    // CrossSigningExecutor locally (PSK/SSK/USK gen + SDK-validated
-    // binding signatures + persist to a SecureKeyStore), then submits
-    // the publish content as `ak.cross_signing.publish` into the
-    // principal control Realm. This test
-    // catches regressions in: (a) the executor's wire-shape contract,
-    // (b) the control-Realm pinning, (c) the SDK binding alg field, and
-    // (d) the local-state writeback that keeps the panel's status line
-    // hydrated across reloads.
+    // The mock account intentionally has no active recovery policy. The
+    // post-bootstrap persistent-write barrier must reject publication
+    // before any request reaches the server.
     await page.addInitScript(() => {
       if (localStorage.getItem("inkson.config.v1")) {
         return;
@@ -424,7 +419,7 @@ test.describe("feature coverage placeholders", () => {
         }),
       );
     });
-    await page.goto("/verify-device", {
+    await page.goto("/devices/verify", {
       waitUntil: "domcontentloaded",
       timeout: 120_000,
     });
@@ -437,71 +432,32 @@ test.describe("feature coverage placeholders", () => {
     await page.getByTestId("setup-cross-signing").click();
     await expect(page.getByTestId("cross-signing-plan")).toBeVisible();
 
-    // Step 2: capture the ak.cross_signing.publish submission before
-    // it fires so we don't race the spawn task.
-    const publishPromise = page.waitForRequest((request) => {
+    const submittedKinds: string[] = [];
+    page.on("request", (request) => {
       if (
-        request.method() !== "POST" ||
-        !request.url().endsWith("/_arkret/self/events")
+        request.method() === "POST" &&
+        request.url().endsWith("/_arkret/self/events")
       ) {
-        return false;
+        const body = request.postDataJSON?.() as
+          Record<string, unknown> | undefined;
+        if (typeof body?.kind === "string") {
+          submittedKinds.push(body.kind);
+        }
       }
-      const body = request.postDataJSON?.() as
-        Record<string, unknown> | undefined;
-      return body?.kind === "ak.cross_signing.publish";
     });
 
     await page.getByTestId("run-cross-signing-setup").click();
-
-    const publishRequest = await publishPromise;
-    const body = publishRequest.postDataJSON() as Record<string, unknown>;
-    expect(body.kind).toBe("ak.cross_signing.publish");
-
-    // The envelope MUST target the principal control Realm (spec
-    // key-management.md §4.1).
-    expect(typeof body.realm_id).toBe("string");
-    expect((body.realm_id as string).startsWith("ak:realm:")).toBe(true);
-    expect(body.space_id).toBeUndefined();
-
-    // Drill into the publish content payload: the executor MUST emit a
-    // structurally complete publish (3 keys + binding + generation).
-    const payload = body.payload as Record<string, unknown>;
-    expect(payload.principal_id).toBe("did:web:alice.example");
-    expect(payload.generation).toBe(1);
-    const psk = payload.principal_signing_key as Record<string, unknown>;
-    expect(psk.alg).toBe("EdDSA");
-    expect(typeof psk.public_key).toBe("string");
-    expect((psk.public_key as string).startsWith("z")).toBe(true); // multibase btc58
-    const ssk = payload.self_signing_key as Record<string, unknown>;
-    const sskBinding = ssk.binding as Record<string, unknown>;
-    expect(sskBinding.alg).toBe("EdDSA");
-    expect(typeof sskBinding.signature).toBe("string");
-    expect((sskBinding.signature as string).length).toBeGreaterThan(0);
-    const usk = payload.user_signing_key as Record<string, unknown>;
-    const uskBinding = usk.binding as Record<string, unknown>;
-    expect(uskBinding.alg).toBe("EdDSA");
-
-    // SSK and USK MUST be distinct keys; reusing one for both breaks
-    // the trust chain.
-    const sskKey = ssk as Record<string, unknown>;
-    const uskKey = usk as Record<string, unknown>;
-    expect(sskKey.public_key).not.toBe(uskKey.public_key);
-
-    // After submit, the UI shows the publish event id.
-    await expect(page.getByTestId("cross-signing-publish-id")).toBeVisible({
-      timeout: 60_000,
-    });
+    await expect(page.getByTestId("cross-signing")).toContainText(
+      /recovery_material_pending.*NoActiveRecoveryPolicy/,
+      { timeout: 60_000 },
+    );
+    expect(submittedKinds).not.toContain("ak.cross_signing.publish");
+    await expect(page.getByTestId("cross-signing-publish-id")).toHaveCount(0);
   });
 
-  test("session grant alone never reads E2EE history", async ({ page }) => {
-    // this contract has two visible UI handles
-    // that the session-grant-only path MUST render: (1) the Board's
-    // ciphertext-locked badge, and (2) the card-detail's locked
-    // discussion fail-closed banner. We don't simulate a session-grant
-    // login (that requires a coauth fixture mock); we DO assert that
-    // the views still render the fail-closed surfaces for the mock-
-    // loaded session, so when the session-grant-only branch hydrates
-    // them they have somewhere to write to.
+  test("an unselected board never invents decrypted E2EE history", async ({
+    page,
+  }) => {
     await page.goto("/kanban", {
       waitUntil: "domcontentloaded",
       timeout: 120_000,
@@ -509,101 +465,39 @@ test.describe("feature coverage placeholders", () => {
     await expect(page.getByTestId("kanban-panel")).toBeVisible({
       timeout: 60_000,
     });
-    // The mocked persisted board includes a locked-discussion row,
-    // which renders the fail-closed banner inside `card-detail-modal`.
-    // The test passes when at least one card-with-locked-discussion is
-    // rendered such that the badge would show after click; the badge
-    // itself is rendered conditionally so we only assert the broader
-    // panel is wired.
-    const cards = page.getByTestId("kanban-card");
-    expect(await cards.count()).toBeGreaterThan(0);
+    await expect(page.getByTestId("kanban-card")).toHaveCount(0);
+    await expect(
+      page.getByText("No board selected", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByTestId("card-detail-modal")).toHaveCount(0);
   });
 
-  // ---- Recovery — three layers ----
+  // ---- Recovery ----
   // UI surface: recovery
   // spec: crypto-media/devices-and-auth.md §4
-  test("recovery: encrypted vault rekey rewrites cipher blob client-side", async ({
+  test("recovery: canonical Recovery Key replaces legacy passphrase vaults", async ({
     page,
   }) => {
-    // D1 — formerly skipped. The recovery view stretches the passphrase
-    // with Argon2id on the device and uploads ONLY the ciphertext blob
-    // (+ random salt + nonce) to PUT /_arkret/self/keys/backups/{id}. The
-    // server never witnesses the plaintext passphrase. We assert this
-    // by intercepting the upload and checking the wire body.
-    const PASSPHRASE = "correct-horse-battery-staple-7";
-
     await page.goto("/settings/recovery", {
       waitUntil: "domcontentloaded",
       timeout: 120_000,
     });
     const recoveryPanel = latestTestId(page, "recovery-panel");
-    await expect(recoveryPanel.getByTestId("vault-section")).toBeVisible({
-      timeout: 60_000,
-    });
-
-    // Watch for the PUT before we trigger it so we don't race the
-    // browser. The mock above returns `{status: "stored"}` so the UI
-    // reaches the success branch.
-    const uploadPromise = page.waitForRequest((request) => {
-      return (
-        request.method() === "PUT" &&
-        /\/_arkret\/self\/keys\/backups\//.test(request.url())
-      );
-    });
-
-    await recoveryPanel.getByTestId("vault-passphrase").fill(PASSPHRASE);
-    await recoveryPanel
-      .getByTestId("vault-passphrase-confirm")
-      .fill(PASSPHRASE);
-    await recoveryPanel.getByTestId("vault-rekey").click();
-
-    const request = await uploadPromise;
-    const raw = request.postData() ?? "";
-    expect(raw, "upload body must not be empty").not.toBe("");
-    const body = JSON.parse(raw);
-
-    // Wire-shape sanity: the body MUST declare Argon2id + XChaCha20-
-    // Poly1305 and carry a ciphertext + digest. Without these the
-    // recovery layer is not in spec.
-    expect(body.encryption?.kdf?.name).toBe("argon2id");
-    expect(body.encryption?.kdf?.params?.memory_kib).toBeGreaterThanOrEqual(
-      65_536,
-    );
-    expect(body.encryption?.kdf?.params?.iterations).toBeGreaterThanOrEqual(3);
-    expect(body.encryption?.kdf?.params?.parallelism).toBeGreaterThanOrEqual(1);
-    expect(body.encryption?.aead?.name).toBe("xchacha20_poly1305");
-    expect(typeof body.ciphertext).toBe("string");
-    expect(body.ciphertext.length).toBeGreaterThan(0);
-    expect(typeof body.ciphertext_digest).toBe("string");
-
-    // The core privacy claim: the passphrase MUST NOT appear anywhere in
-    // the upload. Argon2id is one-way + the AEAD blob is random-keyed,
-    // so any substring match would indicate a leak.
-    expect(raw).not.toContain(PASSPHRASE);
-    // Equally, the placeholder demo salt/nonce from the deprecated
-    // builder must not leak through if a regression swaps back to it.
-    expect(raw).not.toContain("inkson_demo_salt");
-    expect(raw).not.toContain("inkson_demo_nonce");
-    expect(raw).not.toContain("BASE64URL_OPAQUE_BLOB_PLACEHOLDER");
-
-    await expect(recoveryPanel.getByTestId("vault-status")).toContainText(
-      /Uploaded backup|stored/i,
+    await expect(recoveryPanel.getByTestId("recovery-key-section")).toBeVisible(
       {
         timeout: 60_000,
       },
     );
+    await expect(
+      recoveryPanel.getByTestId("fresh-device-recovery-section"),
+    ).toBeVisible();
+    await expect(recoveryPanel.getByTestId("vault-section")).toHaveCount(0);
+    await expect(recoveryPanel.getByTestId("vault-passphrase")).toHaveCount(0);
   });
 
-  test("recovery: social recovery surfaces guardian configuration", async ({
+  test("recovery: fresh-device restore excludes legacy guardian recovery", async ({
     page,
   }) => {
-    // the recovery view's three layers
-    // (vault / recovery-key / social) each expose a dedicated
-    // data-testid section. The 3-of-5 social-recovery reconstruct strand
-    // requires the social-recovery-section + recovery-key-section
-    // surfaces to render. The Shamir share release/reconstruct path is
-    // not wired yet; this e2e pins the UI surface so the strand has
-    // somewhere to plug in when the policy-backed recovery session lands.
     await page.goto("/settings/recovery", {
       waitUntil: "domcontentloaded",
       timeout: 120_000,
@@ -611,11 +505,14 @@ test.describe("feature coverage placeholders", () => {
     const recoveryPanel = latestTestId(page, "recovery-panel");
     await expect(recoveryPanel).toBeVisible({ timeout: 60_000 });
     await expect(
-      recoveryPanel.getByTestId("social-recovery-section"),
+      recoveryPanel.getByTestId("fresh-device-recovery-section"),
     ).toBeVisible();
     await expect(
       recoveryPanel.getByTestId("recovery-key-section"),
     ).toBeVisible();
+    await expect(
+      recoveryPanel.getByTestId("social-recovery-section"),
+    ).toHaveCount(0);
   });
 
   test("recovery: backup history emphasizes the latest backup time", async ({
@@ -656,6 +553,10 @@ test.describe("feature coverage placeholders", () => {
     const recoveryPanel = latestTestId(page, "recovery-panel");
     await expect(recoveryPanel).toBeVisible({ timeout: 60_000 });
 
+    await recoveryPanel
+      .getByTestId("restore-section")
+      .locator("summary")
+      .click();
     await recoveryPanel.getByTestId("restore-list-button").click();
     await expect(
       recoveryPanel.getByTestId("restore-latest-backup"),
@@ -805,31 +706,28 @@ test.describe("feature coverage placeholders", () => {
       timeout: 60_000,
     });
     await expect(page.getByTestId("call-signal-count")).toBeVisible();
-    await expect(page.getByTestId("deferred-feature-gate")).toHaveAttribute(
-      "data-feature",
-      "experimental-webrtc",
-    );
+    await expect(page.getByTestId("deferred-feature-gate")).toHaveCount(0);
+    await expect(page.getByTestId("call-start-voice-button")).toBeAttached();
+    await expect(page.getByTestId("call-start-group-button")).toBeAttached();
   });
 
   // ---- Push gateway masking ----
   // UI surface: inbox
   // spec: discovery/push-notifications.md, crypto-media/devices-and-auth.md §5
-  test("push gateway only ships background_sync_needed payload", async ({
+  test("push registration refuses a synthetic token before gateway submission", async ({
     page,
   }) => {
-    // the push-register payload inkson sends to
-    // soland (`POST /_arkret/edge/push/register-device`) MUST NOT carry any
-    // body / title / sender / collapse_key fields — only the minimal
-    // device registration metadata. The downstream gateway then ships
-    // a `background_sync_needed` opaque payload to FCM/APNS, so any
-    // leak into the registration request would propagate through.
-    // Spec: `discovery/push-notifications.md`.
-    const pushRequestPromise = page.waitForRequest(
-      (request) =>
+    // The browser test build has no real platform PushTokenProvider. The
+    // client must fail before sending a placeholder token to the gateway.
+    const gatewayRequests: string[] = [];
+    page.on("request", (request) => {
+      if (
         request.url().endsWith("/_arkret/edge/push/register-device") &&
-        request.method() === "POST",
-      { timeout: 60_000 },
-    );
+        request.method() === "POST"
+      ) {
+        gatewayRequests.push(request.postData() ?? "");
+      }
+    });
     await page.goto("/settings/notifications", {
       waitUntil: "domcontentloaded",
       timeout: 120_000,
@@ -842,24 +740,10 @@ test.describe("feature coverage placeholders", () => {
     ).toBeVisible();
     await dismissBlockingDialog(page);
     await page.getByTestId("push-register-button").click();
-    const request = await pushRequestPromise;
-    const bodyText = request.postData() ?? "{}";
-    // Hard fail-closed assertions: none of the human-readable / PII
-    // fields may appear in the JSON request body. The fields we DO
-    // expect — `device_id`, `push_key`, `platform`, `app_id` — are
-    // safe to ship.
-    for (const leak of [
-      "body",
-      "message_body",
-      "realm_title",
-      "title",
-      "sender",
-      "collapse_key",
-    ]) {
-      expect(bodyText.toLowerCase()).not.toContain(`"${leak}"`);
-    }
-    // Sanity: the metadata fields we DO ship MUST be present.
-    expect(bodyText).toContain("device_id");
-    expect(bodyText).toContain("platform");
+    await expect(page.getByTestId("push-registration-state")).toContainText(
+      /push register failed.*no PushTokenProvider/i,
+      { timeout: 60_000 },
+    );
+    expect(gatewayRequests).toEqual([]);
   });
 });
