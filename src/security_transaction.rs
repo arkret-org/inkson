@@ -243,6 +243,7 @@ mod tests {
                 br#"{"binding":{"plaintext_keybag":"synthetic-sensitive-material"}}"#.to_vec(),
             staged_secret_ref: Some("secure-store://recovery/staged-2".to_owned()),
             pending_continue: None,
+            pending_erase_request: None,
             last_observed_resource: None,
         };
 
@@ -271,6 +272,7 @@ mod tests {
             .unwrap(),
             staged_secret_ref: Some("secure-store://recovery/staged-3".to_owned()),
             pending_continue: None,
+            pending_erase_request: None,
             last_observed_resource: None,
         };
 
@@ -300,6 +302,7 @@ mod tests {
             .unwrap(),
             staged_secret_ref: Some("secure-store://recovery/staged-4".to_owned()),
             pending_continue: None,
+            pending_erase_request: None,
             last_observed_resource: None,
         };
 
