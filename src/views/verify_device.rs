@@ -853,10 +853,12 @@ pub fn VerifyDevicePanel(
                             onclick: {
                                 let base = base_url.clone();
                                 let actor = account_did.clone();
+                                let device = device_id.clone();
                                 let plan = plan.clone();
                                 move |_| {
                                     let base = base.clone();
                                     let actor = actor.clone();
+                                    let device = device.clone();
                                     let plan = plan.clone();
                                     let api_token = token();
                                     // Construct the principal DID from the
@@ -972,7 +974,7 @@ pub fn VerifyDevicePanel(
                                         };
                                         match with_authed_api(
                                             &base,
-                                            api_token,
+                                            api_token.clone(),
                                             |api| async move {
                                                 api.event_submitter()?.submit_sdk_event(&envelope).await
                                             },
@@ -982,11 +984,43 @@ pub fn VerifyDevicePanel(
                                             Ok(resp) => {
                                                 cross_signing_publish_id
                                                     .set(resp.event_id.clone());
-                                                cross_signing_state.set(format!(
-                                                    "Cross-signing publish accepted as {} (generation {})",
-                                                    resp.event_id,
-                                                    output.publish_content.generation,
-                                                ));
+                                                let recovery_publish =
+                                                    output.publish_content.clone();
+                                                let recovery_self_signing_key =
+                                                    ed25519_dalek::SigningKey::from_bytes(
+                                                        &output.self_signing_key.to_bytes(),
+                                                    );
+                                                let recovery_actor = actor.clone();
+                                                let recovery_device = device.clone();
+                                                let recovery_backup = with_authed_api(
+                                                    &base,
+                                                    api_token,
+                                                    |api| async move {
+                                                        crate::recovery_strand::ensure_recovery_directed_ssk_backup(
+                                                            &api,
+                                                            &recovery_actor,
+                                                            &recovery_device,
+                                                            &recovery_publish,
+                                                            &recovery_self_signing_key,
+                                                        )
+                                                        .await
+                                                    },
+                                                )
+                                                .await;
+                                                cross_signing_state.set(match recovery_backup {
+                                                    Ok(backup_id) => format!(
+                                                        "Cross-signing publish accepted as {} (generation {}); recovery-directed SSK backup {} is durable",
+                                                        resp.event_id,
+                                                        output.publish_content.generation,
+                                                        backup_id,
+                                                    ),
+                                                    Err(error) => format!(
+                                                        "Cross-signing publish accepted as {} (generation {}), but its recovery-directed SSK backup failed: {}",
+                                                        resp.event_id,
+                                                        output.publish_content.generation,
+                                                        error.display(),
+                                                    ),
+                                                });
                                                 // B2e: persist the publish content into
                                                 // LocalStateStore.private_data (XOR-
                                                 // encrypted with the account DID) so a

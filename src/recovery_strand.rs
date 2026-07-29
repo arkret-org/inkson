@@ -10,10 +10,11 @@
 //! exposed here as a direct HTTP side effect.
 
 use arkret_models_crypto::{
-    RecoveryHpkeSuite, RecoveryKeyAgreementAlgorithm, RecoveryKeyAgreementEntry,
-    RecoveryKeyAgreementUse, RecoveryKeyEntry, RecoveryKeySignatureAlgorithm, RecoveryPolicy,
-    RecoveryPolicyActiveOutcome, RecoveryPolicyAuthData, RecoveryPolicyRef, RecoveryPolicySummary,
-    RecoveryProofKind, RecoveryPublicationAuthorizationRule, RecoverySessionCreateRequestBody,
+    KeyBackupContentItem, RecoveryHpkeSuite, RecoveryKeyAgreementAlgorithm,
+    RecoveryKeyAgreementEntry, RecoveryKeyAgreementUse, RecoveryKeyEntry,
+    RecoveryKeySignatureAlgorithm, RecoveryPolicy, RecoveryPolicyActiveOutcome,
+    RecoveryPolicyAuthData, RecoveryPolicyRef, RecoveryPolicySummary, RecoveryProofKind,
+    RecoveryPublicationAuthorizationRule, RecoverySessionCreateRequestBody,
     RecoverySessionProofSubmitRequestBody,
 };
 use arkret_sdk::{DeviceId, Did, DidUrl, NonEmptyString, PolicyId, TypedTrustDomainId};
@@ -22,6 +23,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::SigningKey;
 use serde_json::{Map, Value, json};
+use zeroize::Zeroizing;
 
 use crate::transport::TransportClient;
 
@@ -750,6 +752,237 @@ pub async fn ensure_recovery_policy_and_did_recovery_backup(
     Ok(backup_id)
 }
 
+pub fn build_recovery_directed_ssk_backup_body(
+    principal_id: &str,
+    device_id: &str,
+    policy: &ActiveRecoveryPolicy,
+    publish: &arkret_sdk::CrossSigningPublish,
+    self_signing_key: &SigningKey,
+) -> anyhow::Result<Value> {
+    if publish.principal_id.as_str() != principal_id || policy.principal_id.as_str() != principal_id
+    {
+        anyhow::bail!("cross-signing recovery backup principal mismatch");
+    }
+    let generation = publish.generation.get();
+    if self_signing_key.verifying_key().to_bytes()
+        != decode_ed25519_public_multikey(publish.self_signing_key.public_key.as_str())?
+    {
+        anyhow::bail!("self-signing private key does not match accepted publish");
+    }
+    let policy_body = policy
+        .policy
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("active recovery policy omits closed policy body"))?;
+    let agreement = policy_body
+        .recovery_key_agreements
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .find(|entry| {
+            entry.usage == RecoveryKeyAgreementUse::BackupHpke
+                && entry.alg == RecoveryKeyAgreementAlgorithm::X25519
+                && entry
+                    .hpke_suites
+                    .contains(&RecoveryHpkeSuite::X25519ChaCha20Poly1305)
+                && entry.revoked_at.is_none()
+        })
+        .ok_or_else(|| anyhow::anyhow!("active recovery policy has no usable backup HPKE key"))?;
+    let recovery_public_key =
+        decode_x25519_public_multikey(agreement.public_key_multibase.as_str())?;
+    let backup_id = format!("ak:backup:{}", crate::operation::uuid_v7());
+    let seed = Zeroizing::new(B64.encode(self_signing_key.to_bytes()));
+    let plaintext = Zeroizing::new(crate::canonical::canonical_json_bytes(&json!({
+        "schema": "ak.local.cross_signing_recovery.v1",
+        "principal_id": principal_id,
+        "ssk_generation": generation,
+        "self_signing_key_kid": publish.self_signing_key.kid.as_str(),
+        "self_signing_key_seed_b64url": seed.as_str(),
+        "recovery_policy_ref": {
+            "policy_id": policy.policy_id.as_str(),
+            "policy_version": policy.version,
+        },
+    }))?);
+    crate::key_backup::build_recovery_public_key_backup_body(
+        &backup_id,
+        principal_id,
+        device_id,
+        &recovery_public_key,
+        agreement.key_agreement_ref.as_str(),
+        crate::key_backup::BackupKind::SecretStorage,
+        "cross_signing_recovery",
+        &KeyBackupContentItem {
+            item_kind: "self_signing_key".to_owned(),
+            secret_id: Some(publish.self_signing_key.kid.as_str().to_owned()),
+            secret_version: Some(u32::try_from(generation).map_err(|_| {
+                anyhow::anyhow!("cross-signing generation exceeds backup secret version range")
+            })?),
+            ..Default::default()
+        },
+        &plaintext,
+        Some((policy.policy_id.as_str(), policy.version)),
+    )
+}
+
+pub async fn ensure_recovery_directed_ssk_backup(
+    api: &TransportClient,
+    principal_id: &str,
+    device_id: &str,
+    publish: &arkret_sdk::CrossSigningPublish,
+    self_signing_key: &SigningKey,
+) -> anyhow::Result<String> {
+    let policy = fetch_active_recovery_policy(api)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("active recovery policy is unavailable"))?;
+    let generation = publish.generation.get();
+    let list = serde_json::to_value(
+        &api.list_key_backups_by_series(None, Some("secret_storage"))
+            .await?,
+    )?;
+    if let Some(existing) = list
+        .get("backups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|backup| {
+            backup.get("backup_kind").and_then(Value::as_str) == Some("secret_storage")
+                && backup
+                    .get("recovery_policy_ref")
+                    .and_then(|value| value.get("policy_id"))
+                    .and_then(Value::as_str)
+                    == Some(policy.policy_id.as_str())
+                && backup
+                    .get("recovery_policy_ref")
+                    .and_then(|value| value.get("policy_version"))
+                    .and_then(Value::as_u64)
+                    == Some(policy.version)
+                && backup
+                    .get("contents")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .any(|item| {
+                        item.get("item_kind").and_then(Value::as_str) == Some("self_signing_key")
+                            && item.get("secret_id").and_then(Value::as_str)
+                                == Some(publish.self_signing_key.kid.as_str())
+                            && item.get("secret_version").and_then(Value::as_u64)
+                                == Some(generation)
+                    })
+        })
+        .and_then(|backup| backup.get("backup_id"))
+        .and_then(Value::as_str)
+    {
+        return Ok(existing.to_owned());
+    }
+    let body = build_recovery_directed_ssk_backup_body(
+        principal_id,
+        device_id,
+        &policy,
+        publish,
+        self_signing_key,
+    )?;
+    let backup_id = body
+        .get("backup_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("recovery-directed SSK backup omits backup_id"))?
+        .to_owned();
+    api.put_key_backup(&backup_id, body).await?;
+    Ok(backup_id)
+}
+
+pub struct RecoveredSelfSigningKey {
+    pub generation: u64,
+    pub kid: String,
+    pub signing_key: SigningKey,
+}
+
+pub fn open_recovery_directed_ssk_backup(
+    body: &Value,
+    recovery_private_key: &[u8],
+    principal_id: &str,
+    snapshot_generation: u64,
+) -> anyhow::Result<RecoveredSelfSigningKey> {
+    if body.get("backup_kind").and_then(Value::as_str) != Some("secret_storage") {
+        anyhow::bail!("recovery-directed SSK envelope is not secret_storage");
+    }
+    let content = body
+        .get("contents")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items.iter().find(|item| {
+                item.get("item_kind").and_then(Value::as_str) == Some("self_signing_key")
+            })
+        })
+        .ok_or_else(|| anyhow::anyhow!("recovery-directed envelope omits self_signing_key"))?;
+    if content.get("secret_version").and_then(Value::as_u64) != Some(snapshot_generation) {
+        anyhow::bail!("recovery-directed SSK envelope generation does not match session snapshot");
+    }
+    let content_kid = content
+        .get("secret_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("recovery-directed SSK envelope omits key id"))?;
+    let opened = Zeroizing::new(crate::key_backup::open_recovery_public_key_backup_body(
+        recovery_private_key,
+        body,
+    )?);
+    let mut plaintext: Value = serde_json::from_slice(&opened)
+        .map_err(|error| anyhow::anyhow!("parse recovery-directed SSK plaintext: {error}"))?;
+    if plaintext.get("schema").and_then(Value::as_str) != Some("ak.local.cross_signing_recovery.v1")
+        || plaintext.get("principal_id").and_then(Value::as_str) != Some(principal_id)
+        || plaintext.get("ssk_generation").and_then(Value::as_u64) != Some(snapshot_generation)
+        || plaintext
+            .get("self_signing_key_kid")
+            .and_then(Value::as_str)
+            != Some(content_kid)
+    {
+        anyhow::bail!("recovery-directed SSK plaintext binding mismatch");
+    }
+    let seed_value = plaintext
+        .get_mut("self_signing_key_seed_b64url")
+        .ok_or_else(|| anyhow::anyhow!("recovery-directed SSK plaintext omits private seed"))?
+        .take();
+    let seed_b64 = match seed_value {
+        Value::String(value) => Zeroizing::new(value),
+        _ => anyhow::bail!("recovery-directed SSK private seed has invalid shape"),
+    };
+    let seed_bytes = Zeroizing::new(
+        B64.decode(seed_b64.as_bytes())
+            .map_err(|error| anyhow::anyhow!("decode recovery-directed SSK seed: {error}"))?,
+    );
+    let seed = Zeroizing::new(
+        <[u8; 32]>::try_from(seed_bytes.as_slice())
+            .map_err(|_| anyhow::anyhow!("recovery-directed SSK seed must be 32 bytes"))?,
+    );
+    Ok(RecoveredSelfSigningKey {
+        generation: snapshot_generation,
+        kid: content_kid.to_owned(),
+        signing_key: SigningKey::from_bytes(&seed),
+    })
+}
+
+fn decode_x25519_public_multikey(value: &str) -> anyhow::Result<Vec<u8>> {
+    let decoded = arkret_sdk::decode_multibase_base58btc(value)
+        .map_err(|error| anyhow::anyhow!("backup HPKE public key is invalid: {error}"))?;
+    let (codec, header_len) = arkret_sdk::decode_multicodec_varint(&decoded)
+        .ok_or_else(|| anyhow::anyhow!("backup HPKE public key has no multicodec"))?;
+    if codec != 0xec || decoded.len().saturating_sub(header_len) != 32 {
+        anyhow::bail!("backup HPKE public key is not a 32-byte X25519 multikey");
+    }
+    Ok(decoded[header_len..].to_vec())
+}
+
+fn decode_ed25519_public_multikey(value: &str) -> anyhow::Result<[u8; 32]> {
+    let decoded = arkret_sdk::decode_multibase_base58btc(value)
+        .map_err(|error| anyhow::anyhow!("self-signing public key is invalid: {error}"))?;
+    let (codec, header_len) = arkret_sdk::decode_multicodec_varint(&decoded)
+        .ok_or_else(|| anyhow::anyhow!("self-signing public key has no multicodec"))?;
+    if codec != 0xed || decoded.len().saturating_sub(header_len) != 32 {
+        anyhow::bail!("self-signing public key is not a 32-byte Ed25519 multikey");
+    }
+    decoded[header_len..]
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("self-signing public key length changed during decode"))
+}
+
 pub fn matching_did_recovery_first_backup_id(
     list_payload: &Value,
     policy: &ActiveRecoveryPolicy,
@@ -964,6 +1197,64 @@ mod tests {
             validate_active_policy_key_material(&policy, "did:web:alice.example", &replacement)
                 .expect_err("unaccepted replacement must fail closed");
         assert!(error.to_string().contains("staged recovery-key handoff"));
+    }
+
+    #[test]
+    fn recovery_directed_ssk_backup_round_trips_only_with_recovery_hpke_key() {
+        let material = identity_recovery_key_material();
+        let policy = active_policy_with_material(&material);
+        let principal = Did::new("did:web:alice.example".to_owned()).unwrap();
+        let output = crate::cross_signing::CrossSigningExecutor::new(
+            crate::cross_signing::CrossSigningSetupPlan::build_initial(
+                principal.as_str(),
+                "ak:device:019a6aa0-0000-7000-8000-000000000099",
+            ),
+            principal,
+            TypedTrustDomainId::new("ak:trust_domain:soland.local".to_owned()).unwrap(),
+        )
+        .run()
+        .unwrap();
+        let body = build_recovery_directed_ssk_backup_body(
+            "did:web:alice.example",
+            "ak:device:019a6aa0-0000-7000-8000-000000000099",
+            &policy,
+            &output.publish_content,
+            &output.self_signing_key,
+        )
+        .unwrap();
+
+        assert_eq!(body["backup_kind"], "secret_storage");
+        assert_eq!(body["contents"][0]["item_kind"], "self_signing_key");
+        assert!(
+            body.to_string()
+                .find(&B64.encode(output.self_signing_key.to_bytes()))
+                .is_none()
+        );
+        let recovered = open_recovery_directed_ssk_backup(
+            &body,
+            &material.backup_hpke_derived_private_key,
+            "did:web:alice.example",
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            recovered.signing_key.to_bytes(),
+            output.self_signing_key.to_bytes()
+        );
+        assert_eq!(recovered.generation, 1);
+        assert_eq!(
+            recovered.kid,
+            output.publish_content.self_signing_key.kid.as_str()
+        );
+        assert!(
+            open_recovery_directed_ssk_backup(
+                &body,
+                &material.backup_hpke_derived_private_key,
+                "did:web:alice.example",
+                2,
+            )
+            .is_err()
+        );
     }
 
     #[test]
