@@ -262,7 +262,7 @@ pub fn SettingsDevicesPanel(
     let mut load_status = use_signal(String::new);
     let revoke_target = use_signal(|| Option::<String>::None);
     let revoke_status = use_signal(String::new);
-    let revoke_passphrase = use_signal(String::new);
+    let revoke_passphrase = use_signal(crate::fresh_device_recovery::RecoveryWordsInput::default);
 
     // Auto-load guard so the device list populates on mount (and once a
     // session credential arrives) without the user clicking Refresh first.
@@ -471,7 +471,7 @@ fn render_device_list(
     device_id: Signal<String>,
     token: Signal<String>,
     state_store: SyncSignal<LocalStateStore>,
-    revoke_passphrase: Signal<String>,
+    revoke_passphrase: Signal<crate::fresh_device_recovery::RecoveryWordsInput>,
 ) -> Element {
     let rows = devices();
     let cur = current_device();
@@ -667,10 +667,10 @@ fn render_revoke_modal(
     mut revoke_status: Signal<String>,
     mut devices: Signal<Vec<DeviceRow>>,
     mut load_status: Signal<String>,
-    mut state_store: SyncSignal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     account_did: Signal<String>,
     device_id: Signal<String>,
-    mut revoke_passphrase: Signal<String>,
+    mut revoke_passphrase: Signal<crate::fresh_device_recovery::RecoveryWordsInput>,
 ) -> Element {
     let confirm_target = target.clone();
     let target_label = short_protocol_id(&target);
@@ -703,10 +703,12 @@ fn render_revoke_modal(
                         id: "device-revoke-passphrase",
                         "data-testid": "device-revoke-passphrase-input",
                         r#type: "password",
-                        value: "{revoke_passphrase}",
+                        value: "{revoke_passphrase().as_str()}",
                         autocomplete: "off",
                         placeholder: "Your 24-word Recovery Key — required to rotate encrypted history backups",
-                        oninput: move |event: FormEvent| revoke_passphrase.set(event.value()),
+                        oninput: move |event: FormEvent| {
+                            revoke_passphrase.write().replace(event.value());
+                        },
                     }
                 }
                 div { class: "modal-foot actions",
@@ -721,7 +723,7 @@ fn render_revoke_modal(
                     Button {
                         variant: ButtonVariant::Primary,
                         "data-testid": "device-revoke-confirm-button",
-                        disabled: revoke_passphrase().trim().is_empty(),
+                        disabled: revoke_passphrase().is_empty(),
                         onclick: move |_| {
                             let base = base_url();
                             let api_token = token();
@@ -730,63 +732,29 @@ fn render_revoke_modal(
                             let target_id = confirm_target.clone();
                             let target_for_status = target_id.clone();
                             let target_label = short_protocol_id(&target_for_status);
-                            // P1: pre-validate the Recovery Key BEFORE the
-                            // irreversible `revoke_device` call. The account-secret
-                            // rotation that follows re-wraps the new secret under
-                            // these bytes, and every restore path only accepts the
-                            // 24-word format — so reject anything else up front to
-                            // avoid the unrecoverable "device revoked, but the new
-                            // backup can never be decrypted" half-state.
-                            let Some(recovery_secret) =
-                                crate::recovery_crypto::normalize_recovery_key_input(
-                                    &revoke_passphrase(),
-                                )
-                            else {
+                            let Some(recovery_words) = revoke_passphrase().normalized() else {
                                 revoke_status.set(
                                     "Enter your 24-word Recovery Key before revoking — it is required to rotate the MLS history secret.".to_owned(),
                                 );
                                 return;
                             };
-                            let passphrase_bytes = recovery_secret.into_bytes();
                             let snapshots = state_store.read().mls_snapshots();
                             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                            let actor_for_rotation = actor.clone();
-                            let device_for_rotation = current_device.clone();
-                            let secure_store_for_rotation = secure_store.clone();
                             revoke_status.set(format!("Revoking {target_label}…"));
                             spawn(async move {
                                 let target_label = short_protocol_id(&target_for_status);
-                                let target_inner = target_id.clone();
-                                let actor_for_revoke = actor.clone();
-                                let device_for_revoke = current_device.clone();
-                                let revoke_result =
-                                    with_authed_api(&base, api_token.clone(), move |api| async move {
-                                        api.revoke_device(
-                                            &actor_for_revoke,
-                                            &device_for_revoke,
-                                            &target_inner,
-                                        )
-                                        .await
-                                    })
-                                    .await;
-                                if let Err(err) = revoke_result {
-                                    revoke_status.set(format!(
-                                        "Revoke failed: {}",
-                                        err.display()
-                                    ));
-                                    return;
-                                }
-
                                 let rotation_result = with_authed_api(
                                     &base,
                                     api_token.clone(),
                                     move |api| async move {
-                                        crate::mls::account_recovery::upload_mls_account_secret_rotation_after_device_revoke(
+                                        crate::mls::account_recovery::execute_device_revoke_security_rotation(
                                             &api,
-                                            secure_store_for_rotation.as_ref(),
-                                            &actor_for_rotation,
-                                            &device_for_rotation,
-                                            &passphrase_bytes,
+                                            secure_store,
+                                            state_store,
+                                            &actor,
+                                            &current_device,
+                                            &target_id,
+                                            recovery_words.as_str(),
                                             &snapshots,
                                         )
                                         .await
@@ -795,26 +763,13 @@ fn render_revoke_modal(
                                 .await;
                                 match rotation_result {
                                     Ok(rotation) => {
-                                        let mut local_state = state_store.write();
-                                        if let Err(err) = crate::mls::runtime::commit_account_mls_secret_rotation(
-                                            &mut local_state,
-                                            secure_store.as_ref(),
-                                            &actor,
-                                            &rotation.rotation,
-                                        ) {
-                                            revoke_status.set(format!(
-                                                "Revoked {target_label}; MLS secret rotation uploaded but local commit failed: {err}"
-                                            ));
-                                            return;
-                                        }
-                                        let history_count = rotation.history_backup_ids.len();
-                                        let version = rotation.rotation.new_version;
-                                        let deleted_count =
-                                            rotation.deleted_superseded_backup_ids.len();
                                         revoke_status.set(format!(
-                                            "Revoked {target_label}. Rotated MLS history secret to v{version}; uploaded {history_count} fresh history backup(s); deleted {deleted_count} superseded old backup(s)."
+                                            "Revoked {target_label} through transaction {}. Rotated MLS history secret to v{} with {} replacement backup object(s); both old series were durably erased.",
+                                            rotation.transaction_id,
+                                            rotation.new_secret_version,
+                                            rotation.replacement_backup_count,
                                         ));
-                                        revoke_passphrase.set(String::new());
+                                        revoke_passphrase.write().clear();
                                         revoke_target.set(None);
                                         // Re-fetch to reflect the new
                                         // active set. Failure here is
@@ -843,7 +798,7 @@ fn render_revoke_modal(
                                     }
                                     Err(err) => {
                                         revoke_status.set(format!(
-                                            "Revoked {target_label}; MLS secret rotation failed: {}",
+                                            "Revoke transaction for {target_label} failed safely and can be resumed: {}",
                                             err.display()
                                         ));
                                     }

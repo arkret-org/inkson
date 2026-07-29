@@ -21,6 +21,7 @@
 
 mod backup_body;
 mod restore;
+mod rotation_transaction;
 mod selection;
 mod series;
 mod upload;
@@ -50,6 +51,7 @@ pub use restore::{
     restore_mls_history_with_passphrase_from_payload,
     restore_mls_history_with_recovery_key_from_payload,
 };
+pub(crate) use rotation_transaction::execute_device_revoke_security_rotation;
 pub use selection::{
     mls_account_secret_backup_version, mls_history_series_tail_ids,
     select_mls_account_secret_backup, select_mls_account_secret_recovery_public_key_backup,
@@ -57,12 +59,10 @@ pub use selection::{
     select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
 };
 pub use upload::{
-    MlsAccountSecretRotationUpload, delete_backups, fetch_mls_history_tail_for_realm,
-    fetch_mls_private_plaintext_backup_body, select_superseded_backup_ids,
+    fetch_mls_history_tail_for_realm, fetch_mls_private_plaintext_backup_body,
     upload_mls_account_secret_backup_with_passphrase,
     upload_mls_account_secret_backup_with_recovery_key,
     upload_mls_account_secret_backup_with_recovery_public_key,
-    upload_mls_account_secret_rotation_after_device_revoke,
     upload_mls_history_backup_with_previous, upload_mls_private_plaintext_backup,
     upload_mls_private_plaintext_backup_with_previous,
 };

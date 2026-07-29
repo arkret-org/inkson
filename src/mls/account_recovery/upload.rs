@@ -6,197 +6,21 @@ use serde_json::Value;
 use super::backup_body::{
     build_mls_account_secret_backup_body_with_kek_and_version,
     build_mls_account_secret_recovery_public_key_backup_in_series,
-    build_mls_private_plaintext_backup_body_with_kek, is_mls_account_secret_backup,
+    build_mls_private_plaintext_backup_body_with_kek,
 };
 use super::restore::fetch_mls_restore_payload;
 use super::selection::{
-    backup_series_id, backup_series_seq, iter_backup_bodies, select_mls_account_secret_backup,
-    select_mls_account_secret_recovery_public_key_backup, select_mls_history_tail_for_realm,
-    select_mls_private_plaintext_backup,
+    select_mls_account_secret_backup, select_mls_account_secret_recovery_public_key_backup,
+    select_mls_history_tail_for_realm, select_mls_private_plaintext_backup,
 };
 use super::series::{apply_next_series, fresh_backup_id};
 use crate::recovery_crypto::derive_vault_kek;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MlsAccountSecretRotationUpload {
-    pub rotation: crate::mls::runtime::AccountMlsSecretRotation,
-    pub account_secret_backup_id: String,
-    pub account_secret_series_seq: u64,
-    pub history_backup_ids: Vec<String>,
-    /// Phase 4: backup_ids of the OLD (pre-rotation) account-secret + rewrapped
-    /// history backups that were deleted from the server after the new series
-    /// was confirmed (so a leaked old secret can no longer pull them).
-    pub deleted_superseded_backup_ids: Vec<String>,
-}
-
-/// Phase 4 (key-management.md §9.1 / §12.2): after a compromise rotation uploads
-/// the NEW account-secret + rewrapped history backups (a fresh series under the
-/// new secret), the OLD superseded backups MUST be deleted so a leaked old
-/// secret can no longer pull old ciphertext off the server.
-///
-/// Given the PRE-rotation server list and the `keep_backup_ids` just uploaded,
-/// return the superseded backup_ids to delete: **every** old `mls_account_secret`
-/// backup AND **every** old `mls_history` backup not in `keep_backup_ids`.
-///
-/// We delete ALL old history, not just the spaces rewrapped locally. Rationale:
-/// the rotation imports a single new account secret and restore decrypts ALL
-/// history with it (`mls_history_backup_needs_restore` /
-/// `restore_mls_history_backup_with_device_snapshot`), so any old history left
-/// behind loses its now-deleted old account secret and becomes permanently
-/// undecryptable on a fresh device — and it stays readable by whoever holds the
-/// rotated-out (compromised) old secret. History for a realm not held locally is
-/// re-recoverable via MLS Welcome / re-sync; leaving compromised,
-/// soon-to-be-orphaned ciphertext on the server is not acceptable. Anything in
-/// `keep_backup_ids` (the freshly uploaded new series) is never selected.
-pub fn select_superseded_backup_ids(
-    list_payload: &Value,
-    keep_backup_ids: &[String],
-) -> Vec<String> {
-    let keep: std::collections::BTreeSet<&str> =
-        keep_backup_ids.iter().map(String::as_str).collect();
-    let mls_history = crate::key_backup::BackupKind::MlsHistory.as_str();
-    let mut selected: Vec<(String, std::cmp::Reverse<u64>, String)> =
-        iter_backup_bodies(list_payload)
-            .filter(|body| {
-                let id = body
-                    .get("backup_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                if keep.contains(id) {
-                    return false;
-                }
-                is_mls_account_secret_backup(body)
-                    || body.get("backup_kind").and_then(Value::as_str) == Some(mls_history)
-            })
-            .filter_map(|body| {
-                let id = body.get("backup_id").and_then(Value::as_str)?;
-                Some((
-                    backup_series_id(body).to_owned(),
-                    std::cmp::Reverse(backup_series_seq(body)),
-                    id.to_owned(),
-                ))
-            })
-            .collect();
-    // Per-series tail-first (descending `series_seq`): soland rejects deleting
-    // a non-tail chain link (`active_series_non_tail_delete_forbidden`), so
-    // a §7.10 continuous-backup chain can only be unwound from the tail down.
-    selected.sort();
-    selected.into_iter().map(|(_, _, id)| id).collect()
-}
-
-/// Delete `backup_ids` from the server (ownership-proof authenticated,
-/// best-effort). Returns `(deleted, failed)`. Called AFTER the new series is
-/// confirmed uploaded so a delete failure never leaves the user unrecoverable.
-pub async fn delete_backups(
-    api: &crate::transport::TransportClient,
-    actor_id: &str,
-    backup_ids: &[String],
-) -> (Vec<String>, Vec<String>) {
-    let mut deleted = Vec::new();
-    let mut failed = Vec::new();
-    for id in backup_ids {
-        match api.delete_key_backup(id, actor_id).await {
-            Ok(_) => deleted.push(id.clone()),
-            Err(_) => failed.push(id.clone()),
-        }
-    }
-    (deleted, failed)
-}
 
 fn passphrase_is_blank(passphrase: &[u8]) -> bool {
     passphrase.is_empty()
         || std::str::from_utf8(passphrase)
             .map(|text| text.trim().is_empty())
             .unwrap_or(false)
-}
-
-/// Device-revoke follow-up: rotate the account MLS snapshot secret, upload the
-/// new account-secret backup, and upload freshly rewrapped MLS-history backups.
-///
-/// This deliberately does not mutate local state. Callers should commit
-/// `upload.rotation` via
-/// [`crate::mls::runtime::commit_account_mls_secret_rotation`] only after this
-/// function returns `Ok`, so local snapshots and the local secret advance
-/// together.
-pub async fn upload_mls_account_secret_rotation_after_device_revoke(
-    api: &crate::transport::TransportClient,
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    actor_id: &str,
-    device_id: &str,
-    passphrase: &[u8],
-    snapshots: &std::collections::BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
-) -> Result<MlsAccountSecretRotationUpload> {
-    if passphrase_is_blank(passphrase) {
-        return Err(anyhow!(
-            "recovery passphrase is required to rotate the account MLS secret"
-        ));
-    }
-
-    let list_payload = fetch_mls_restore_payload(api).await?;
-    // Phase 4 (§9.1): a compromise/revoke rotation opens a NEW series under the
-    // new secret (genesis, fresh series_id, seq=0) rather than appending to the
-    // old series — so the WHOLE old series can be deleted afterwards without
-    // breaking a `supersedes` chain.
-    let account_backup_id = fresh_backup_id();
-
-    let rotation = crate::mls::runtime::prepare_account_mls_secret_rotation(
-        secure_store,
-        actor_id,
-        device_id,
-        snapshots,
-    )
-    .map_err(|err| anyhow!(err.user_message()))?;
-
-    let kek = derive_vault_kek(passphrase).map_err(|err| anyhow!("derive KEK: {err}"))?;
-    let account_body = build_mls_account_secret_backup_body_with_kek_and_version(
-        &account_backup_id,
-        actor_id,
-        device_id,
-        &kek,
-        &rotation.new_secret,
-        rotation.new_version,
-    )?;
-    // Genesis of the new series — no `apply_next_series`. `select_*` picks it as
-    // canonical via the bumped `secret_version`.
-    let account_secret_series_seq = backup_series_seq(&account_body);
-    api.put_key_backup(&account_backup_id, account_body)
-        .await
-        .map_err(|err| anyhow!("upload rotated account MLS secret backup: {err}"))?;
-
-    let mut history_backup_ids = Vec::with_capacity(rotation.rewrapped_snapshots.len());
-    for snapshot in rotation.rewrapped_snapshots.values() {
-        let backup_id =
-            crate::mls::runtime::upload_mls_snapshot_backup(api, snapshot, actor_id, device_id)
-                .await
-                .map_err(|err| {
-                    anyhow!(
-                        "upload rewrapped MLS history backup: {}",
-                        err.user_message()
-                    )
-                })?;
-        history_backup_ids.push(backup_id);
-    }
-
-    // Phase 4 (§9.1 / §12.2): delete ALL superseded OLD account-secret + history
-    // backups now that the new series is confirmed uploaded. Best-effort: a
-    // delete failure leaves stale-but-harmless old ciphertext, never blocks the
-    // rotation. We delete all old history (not just rewrapped Realms) — see
-    // `select_superseded_backup_ids` for why leaving half would orphan history
-    // under the deleted old secret while keeping it readable by the compromised
-    // old secret.
-    let mut keep = Vec::with_capacity(history_backup_ids.len() + 1);
-    keep.push(account_backup_id.clone());
-    keep.extend(history_backup_ids.iter().cloned());
-    let superseded = select_superseded_backup_ids(&list_payload, &keep);
-    let (deleted_superseded_backup_ids, _failed) = delete_backups(api, actor_id, &superseded).await;
-
-    Ok(MlsAccountSecretRotationUpload {
-        rotation,
-        account_secret_backup_id: account_backup_id,
-        account_secret_series_seq,
-        history_backup_ids,
-        deleted_superseded_backup_ids,
-    })
 }
 
 /// Wrap the local account MLS secret behind a freshly-derived recovery KEK and

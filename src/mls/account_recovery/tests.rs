@@ -21,7 +21,6 @@ use super::selection::{
     select_preferred_mls_account_secret_backup,
 };
 use super::series::{apply_next_series, series_supersedes_digest, verify_series_chain};
-use super::upload::select_superseded_backup_ids;
 use crate::key_backup::{BackupKind, validate_key_backup_envelope};
 use crate::recovery_crypto::derive_vault_kek;
 use crate::secure_key_store::MemorySecureKeyStore;
@@ -729,77 +728,6 @@ fn backup_prompt_not_required_when_server_backup_present() {
     crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
     let payload = payload_with_inferred_active_series(vec![recovery_hpke_backup()]);
     assert!(!mls_backup_prompt_required(&payload, &store, ACTOR, DEVICE));
-}
-
-#[test]
-fn select_superseded_picks_all_old_account_and_history() {
-    // Phase 4: after rotation, delete EVERY old account-secret + EVERY old
-    // history backup (not just rewrapped Realms) — leaving any behind would
-    // orphan it under the deleted old secret while keeping it readable by the
-    // compromised old secret. Only the freshly-uploaded `keep` ids survive.
-    let mut old_account = wrap();
-    old_account["backup_id"] = serde_json::json!("ak:backup:old-account");
-    let env_a = history_envelope("ak:realm:a", "g-a", 1, ACCOUNT_SECRET);
-    let mut hist_a = history_body(&env_a);
-    hist_a["backup_id"] = serde_json::json!("ak:backup:old-hist-a");
-    // A server-only realm (not rewrapped locally) — MUST still be deleted.
-    let env_b = history_envelope("ak:realm:b", "g-b", 1, ACCOUNT_SECRET);
-    let mut hist_b = history_body(&env_b);
-    hist_b["backup_id"] = serde_json::json!("ak:backup:old-hist-b");
-    // The just-uploaded new history for realm a (in keep) must NOT be deleted.
-    let mut new_hist_a = history_body(&env_a);
-    new_hist_a["backup_id"] = serde_json::json!("ak:backup:new-hist-a");
-    let payload = serde_json::json!({ "backups": [old_account, hist_a, hist_b, new_hist_a] });
-
-    let keep = vec![
-        "ak:backup:new-account".to_owned(),
-        "ak:backup:new-hist-a".to_owned(),
-    ];
-    let superseded = select_superseded_backup_ids(&payload, &keep);
-    assert!(superseded.contains(&"ak:backup:old-account".to_owned()));
-    assert!(superseded.contains(&"ak:backup:old-hist-a".to_owned()));
-    assert!(
-        superseded.contains(&"ak:backup:old-hist-b".to_owned()),
-        "server-only (non-rewrapped) old history must ALSO be deleted"
-    );
-    assert!(
-        !superseded.contains(&"ak:backup:new-hist-a".to_owned()),
-        "freshly uploaded history must be kept"
-    );
-}
-
-#[test]
-fn select_superseded_orders_chain_links_tail_first() {
-    // soland rejects deleting a non-tail chain link
-    // (`active_series_non_tail_delete_forbidden`), so the rotation cleanup
-    // must unwind each superseded series from the tail down.
-    let series = "ak:backup_series:01964137-0000-7000-8000-0000000000d0";
-    let env = history_envelope("ak:realm:a", "g-a", 1, ACCOUNT_SECRET);
-    let mut link0 = history_body(&env);
-    link0["backup_id"] = serde_json::json!("ak:backup:link0");
-    link0["series_id"] = serde_json::json!(series);
-    link0["series_seq"] = serde_json::json!(0);
-    let mut link1 = history_body(&env);
-    link1["backup_id"] = serde_json::json!("ak:backup:link1");
-    link1["series_id"] = serde_json::json!(series);
-    link1["series_seq"] = serde_json::json!(1);
-    let mut link2 = history_body(&env);
-    link2["backup_id"] = serde_json::json!("ak:backup:link2");
-    link2["series_id"] = serde_json::json!(series);
-    link2["series_seq"] = serde_json::json!(2);
-    // List order is deliberately shuffled.
-    let payload = serde_json::json!({ "backups": [link1, link2, link0] });
-
-    let superseded = select_superseded_backup_ids(&payload, &[]);
-    assert_eq!(
-        superseded,
-        vec![
-            "ak:backup:link2".to_owned(),
-            "ak:backup:link1".to_owned(),
-            "ak:backup:link0".to_owned(),
-        ],
-        "within a series, deletes must run tail-first (descending series_seq)"
-    );
 }
 
 #[test]

@@ -9,8 +9,6 @@ use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
 
-use crate::models::SubmitEventResult;
-
 /// Canonical signing-input prefix for the `keys/upload` `device_signature`
 /// (spec `device-lifecycle.md` §8.1).
 // The keys/upload signing chain below is kept for wire-shape unit tests.
@@ -336,40 +334,5 @@ impl crate::transport::TransportClient {
             .delete_key_backup(&backup_id, &body)
             .await
             .map_err(anyhow::Error::from)
-    }
-
-    // ── Device & Crypto ─────────────────────────────────────────────
-
-    /// User-driven device revoke over the spec-canonical durable Control
-    /// Move `ak.device.revoke`.
-    pub async fn revoke_device(
-        &self,
-        actor_id: &str,
-        revoked_by_device_id: &str,
-        target_device_id: &str,
-    ) -> anyhow::Result<SubmitEventResult> {
-        if target_device_id == revoked_by_device_id {
-            anyhow::bail!(
-                "a device cannot revoke itself; revoke from a peer device (cannot_self_revoke)"
-            );
-        }
-        let principal = arkret_sdk::Did::new(actor_id.to_owned())
-            .map_err(|err| anyhow::anyhow!("invalid principal DID for device revoke: {err}"))?;
-        let control_realm = arkret_sdk::principal_control_realm_id(&principal);
-        let seal_view = self
-            .event_submitter()?
-            .events_frontier_realm_seal_view(&control_realm)
-            .await?;
-        let basis = seal_view.seal_basis();
-        let event = crate::operation::ak_ops::device_revoke(
-            &control_realm,
-            actor_id,
-            target_device_id,
-            revoked_by_device_id,
-            "user_request",
-        )?
-        .seal_basis(basis)
-        .build_sdk_event(revoked_by_device_id)?;
-        self.event_submitter()?.submit_sdk_event(&event).await
     }
 }
