@@ -543,7 +543,12 @@ pub fn RecoveryPanel(
                                                 words.as_str(),
                                             )
                                             .await?;
-                                            anyhow::Ok((session, outcome))
+                                            let authoritative = api
+                                                .get_recovery_session(
+                                                    session.recovery_session_id.as_str(),
+                                                )
+                                                .await?;
+                                            anyhow::Ok((authoritative, outcome))
                                         },
                                     )
                                     .await;
@@ -552,10 +557,30 @@ pub fn RecoveryPanel(
                                             if outcome.state
                                                 == arkret_sdk::SessionState::Verified =>
                                         {
-                                            fresh_recovery_status.set(format!(
-                                                "Recovery proof verified for session {}. Device authorization is still pending; this device is not ready yet.",
-                                                session.recovery_session_id
-                                            ));
+                                            let checkpoint = crate::security_transaction::FreshDeviceRecoveryCheckpoint::from_verified_session(&session);
+                                            match checkpoint {
+                                                Ok(checkpoint) => {
+                                                    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+                                                    match crate::security_transaction::save_fresh_device_recovery_checkpoint(
+                                                        secure_store.as_ref(),
+                                                        &checkpoint,
+                                                    )
+                                                    .await
+                                                    {
+                                                        Ok(()) => fresh_recovery_status.set(format!(
+                                                            "Recovery session {} is verified and durably checkpointed ({:?}). Preparing the bound transaction; this device is not ready yet.",
+                                                            session.recovery_session_id,
+                                                            session.identity_model
+                                                        )),
+                                                        Err(error) => fresh_recovery_status.set(format!(
+                                                            "Recovery proof verified, but the durable public checkpoint failed: {error}. No transaction was started."
+                                                        )),
+                                                    }
+                                                }
+                                                Err(error) => fresh_recovery_status.set(format!(
+                                                    "Recovery proof verified, but the authoritative session could not be checkpointed: {error}. No transaction was started."
+                                                )),
+                                            }
                                         }
                                         Ok((_session, outcome)) => {
                                             fresh_recovery_status.set(format!(

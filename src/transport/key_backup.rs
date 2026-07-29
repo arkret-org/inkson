@@ -254,6 +254,18 @@ impl crate::transport::TransportClient {
             .map_err(anyhow::Error::from)
     }
 
+    pub async fn get_recovery_session(
+        &self,
+        recovery_session_id: &str,
+    ) -> anyhow::Result<arkret_sdk::RecoverySessionState> {
+        self.sdk_http_client()?
+            .get(&format!(
+                "/_arkret/root/identity/recovery-sessions/{recovery_session_id}"
+            ))
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
     /// AKP B-C / spec head 37ce729 — `LIST?series_id=` query path the
     /// recovery strand uses to rebuild a backup series by sequence. When
     /// `series_id` is `None` and `backup_kind` is `None`, this lists all
