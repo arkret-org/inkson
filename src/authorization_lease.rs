@@ -248,6 +248,7 @@ pub(crate) mod test_support {
                 .unwrap(),
             scope_ref,
             action: action.to_owned(),
+            authorization_rule_id: "realm_admission".to_owned(),
             risk_tier: arkret_wire::RiskTier::Low,
             issued_at,
             expires_at,

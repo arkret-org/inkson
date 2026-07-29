@@ -724,6 +724,9 @@ mod tests {
             policy_id: PolicyId::new(policy_id.to_owned()).unwrap(),
             principal_id: Did::new("did:web:alice.example".to_owned()).unwrap(),
             version,
+            acceptance_basis: arkret_wire::LeaseBasisRef::Seal(
+                arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "a".repeat(64))).unwrap(),
+            ),
             recovery_policy_ref: None,
             trust_domain: TypedTrustDomainId::new("ak:trust_domain:soland.local".to_owned())
                 .unwrap(),
@@ -757,6 +760,9 @@ mod tests {
             policy_id: policy.policy_id.clone(),
             principal_id: policy.principal_id.clone(),
             version: policy.version,
+            acceptance_basis: arkret_wire::LeaseBasisRef::Seal(
+                arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "b".repeat(64))).unwrap(),
+            ),
             recovery_policy_ref: None,
             trust_domain: policy.trust_domain.clone(),
             allowed_proof_kinds: policy.allowed_proof_kinds.clone(),
