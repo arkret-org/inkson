@@ -1608,9 +1608,30 @@ pub fn HostedSidecarContextBar(base_url: String, api_token: String, device_id: S
     let sidecar_base = base_url;
     let sidecar_token = api_token;
     let sidecar_device = device_id;
+    #[cfg(feature = "wasm-localstorage-secrets-test")]
+    let cotest_fold_evidence = {
+        let store = state_store.read();
+        let projections = cached_sidecar_exchange_projections(
+            &store,
+            &session.controller_id,
+            &session.source_realm_id,
+        )
+        .into_iter()
+        .filter(|projection| {
+            projection.private_strand_id.as_str() == session.private_strand_id
+                && projection.source_track_ref.strand_id.as_str() == session.source_strand_id
+        })
+        .collect::<Vec<_>>();
+        serde_json::to_string(&projections).ok()
+    };
+    #[cfg(not(feature = "wasm-localstorage-secrets-test"))]
+    let cotest_fold_evidence: Option<String> = None;
 
     rsx! {
-        div { class: "sidecar-context-strip", "data-testid": "sidecar-context-strip",
+        div {
+            class: "sidecar-context-strip",
+            "data-testid": "sidecar-context-strip",
+            "data-cotest-fold-evidence": cotest_fold_evidence,
             div { class: "sidecar-context-main",
                 strong { "Private Sidecar active" }
                 span { class: "muted", "Only you and your eligible AI Agents · E2EE" }

@@ -220,9 +220,7 @@ pub fn build_signed_genesis_recovery_policy_for_session_device(
     }
     if let Some(signer) = crate::event_signer::active_signer() {
         if signer.device_id() != Some(device_id) {
-            anyhow::bail!(
-                "active signer is not bound to current session device `{device_id}`"
-            );
+            anyhow::bail!("active signer is not bound to current session device `{device_id}`");
         }
         let verification_method = format!("{principal_id}#{device_id}");
         return build_signed_genesis_recovery_policy_with_raw_signer(

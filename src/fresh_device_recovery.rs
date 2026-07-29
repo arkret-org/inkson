@@ -22,10 +22,9 @@ use arkret_wire::{
     Audience, AuthorizationLease, AuthorizationLeaseId, BackupObjectRef, BackupRotationBinding,
     BackupRotationKind, BackupRotationPlan, BackupSeriesId, CLIENT_STEP_ATTESTATION_SIGNED_FIELDS,
     CanonicalPublicMaterial, ClientStepAttestationAuthData, ControlProposalDecisionPolicy,
-    ControlProposalReceipt, ControlProposalReceiptKind, DeviceId, Did,
-    EnrollmentAuthorityRecoveryPlan, Event, EventId, EventInitialSubmission,
-    EventsSubmitBatchRequestBody, GrantId, Hash, NonEmptyString, PayloadProof, PayloadSignature,
-    PolicyId, PreparedEventUnit, PromoteRecoverySessionGrantOutcome,
+    ControlProposalReceipt, DeviceId, Did, EnrollmentAuthorityRecoveryPlan, Event, EventId,
+    EventInitialSubmission, EventsSubmitBatchRequestBody, GrantId, Hash, NonEmptyString,
+    PayloadProof, PolicyId, PreparedEventUnit, PromoteRecoverySessionGrantOutcome,
     PromoteRecoverySessionGrantRequest, ProposalMemberReceipt, ReceiptId,
     RecoveryAuthorityHolderProof, RecoveryAuthorityTicket, RecoveryAuthorityTicketId,
     RecoveryBinding, RecoveryPreparedPlan, RecoveryTransactionCreateRequest, RiskTier,
@@ -665,46 +664,20 @@ fn author_recovery_control_proposal_receipt(
     authority_signer: &crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<ControlProposalReceipt> {
     let policy = ControlProposalDecisionPolicy::default();
-    let received_at = crate::clock::now_utc();
     let proposal_digest = Hash::new(event.event_digest()?)?;
     let authority_set_ref = Hash::new(arkret_sdk::canonical::canonical_sha256(
         &arkret_wire::notary::NotaryValue::single_did(session.principal_id.clone()),
     )?)?;
-    let mut member = ProposalMemberReceipt {
-        realm_id: event.realm_id.clone(),
-        proposal_digest: proposal_digest.clone(),
-        received_at,
-        decision_due_at: received_at + policy.decision_window,
-        absolute_due_at: received_at + policy.absolute_horizon,
-        authority_set_ref: authority_set_ref.clone(),
-        signature: PayloadSignature {
-            alg: "EdDSA".to_owned(),
-            verification_method: authority_signer.verification_method().to_owned(),
-            payload_digest: Hash::new(format!("sha256:{}", "0".repeat(64)))?,
-            created_at: received_at,
-            jws: String::new(),
-        },
-    };
-    let signing_bytes = member.canonical_bytes_for_signature()?;
-    member.signature.payload_digest = member.member_receipt_digest()?;
-    member.signature.jws = format!(
-        "{}..{}",
-        arkret_sdk::base64url_encode(br#"{"alg":"EdDSA"}"#),
-        arkret_sdk::base64url_encode(authority_signer.sign_raw(&signing_bytes)?)
-    );
-    let receipt = ControlProposalReceipt {
-        kind: ControlProposalReceiptKind::ProposalReceipt,
-        realm_id: event.realm_id.clone(),
+    let adapter = authority_signer.payload_signer_adapter_for_principal(&session.principal_id)?;
+    let member = ProposalMemberReceipt::issue_with_signer(
+        event.realm_id.clone(),
         proposal_digest,
-        received_at,
-        decision_due_at: received_at + policy.decision_window,
-        absolute_due_at: received_at + policy.absolute_horizon,
-        defer_count: 0,
         authority_set_ref,
-        member_receipts: vec![member],
-    };
-    receipt.validate_structural(policy)?;
-    Ok(receipt)
+        crate::clock::now_utc(),
+        policy,
+        &adapter,
+    );
+    ControlProposalReceipt::from_member_receipts(vec![member?], policy).map_err(Into::into)
 }
 
 #[allow(clippy::too_many_arguments)]

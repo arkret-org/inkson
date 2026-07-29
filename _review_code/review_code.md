@@ -104,3 +104,17 @@
   Envelope digest failure is fail-closed, and legacy stored facts are upgraded on syncback.
 - Prevention dimension: identifiers never substitute for canonical content digests. Any fold field
   derived from an accepted Envelope must remain unavailable until that Envelope is locally verified.
+
+## 2026-07-30 — duplicate proposal receipt authoring bypassed the SDK canonical signer
+
+- Severity: P2 protocol-authoring drift risk.
+- Status: resolved; covered by SDK receipt authoring tests and the live onboarding gate.
+- Evidence: while tracing a separate frontier policy-validation failure, `event_submit` and
+  `fresh_device_recovery` were found to manually rebuild member timestamps, digest and detached JWS
+  even though `authorization_lease` already used the SDK
+  `ProposalMemberReceipt::issue_with_signer` path.
+- Resolution: both duplicate implementations now use the SDK helper with the authenticated
+  principal-bound signer adapter and assemble the aggregate through
+  `ControlProposalReceipt::from_member_receipts`.
+- Prevention dimension: canonical signed protocol artifacts must have one SDK authoring primitive;
+  product clients choose authority context and signer but do not copy transcript construction.
