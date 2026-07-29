@@ -144,6 +144,7 @@ pub async fn acquire_for_events(
     }
     let request = arkret_wire::AuthorizationLeaseIssueRequest {
         events: events.to_vec(),
+        intents: Vec::new(),
     };
     let idempotency_key = crate::operation::uuid_v7();
     let outcome: arkret_wire::AuthorizationLeaseIssueOutcome = http
@@ -176,6 +177,42 @@ pub async fn acquire_for_events(
         install_lease(lease.clone())?;
     }
     Ok(outcome.authorization_leases)
+}
+
+/// Ask the authenticated Principal Server for authorization of one registered
+/// non-Event operation. The server rederives the current basis and authority
+/// policy; the client-provided intent is only the typed target.
+pub async fn acquire_for_intent(
+    http: &arkret_sdk::http_client::Client,
+    intent: arkret_wire::AuthorizationLeaseIssueIntent,
+) -> anyhow::Result<AuthorizationLease> {
+    let request = arkret_wire::AuthorizationLeaseIssueRequest {
+        events: Vec::new(),
+        intents: vec![intent.clone()],
+    };
+    let idempotency_key = crate::operation::uuid_v7();
+    let outcome = http
+        .issue_authorization_leases(
+            &request,
+            &arkret_sdk::http_client::ClientRequestOptions::new()
+                .request_id(idempotency_key.clone())
+                .idempotency_key(idempotency_key),
+        )
+        .await
+        .map_err(anyhow::Error::from)?;
+    let [lease] = outcome.authorization_leases.as_slice() else {
+        anyhow::bail!("authorization lease response must contain exactly one lease");
+    };
+    if lease.scope_ref != intent.scope_ref
+        || lease.action != intent.action
+        || lease.authorization_rule_id != intent.authorization_rule_id
+        || lease.risk_tier != intent.risk_tier
+        || lease.basis_ref != intent.basis_ref
+    {
+        anyhow::bail!("authorization lease does not match the requested operation intent");
+    }
+    install_lease(lease.clone())?;
+    Ok(lease.clone())
 }
 
 /// Keep a still-valid held lease, otherwise acquire a replacement for the

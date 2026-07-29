@@ -113,6 +113,7 @@ mod tests {
             canonical_create_request: br#"{"prepared_plan":"public"}"#.to_vec(),
             staged_secret_ref: Some("secure-store://recovery/staged-1".to_owned()),
             pending_continue: None,
+            pending_erase_request: None,
             last_observed_resource: None,
         };
         store.save(&state).await.unwrap();
