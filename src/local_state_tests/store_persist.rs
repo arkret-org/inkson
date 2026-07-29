@@ -381,6 +381,77 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
 }
 
 #[test]
+fn local_state_store_accepts_server_read_cursor_winner_with_lower_hlc() {
+    let path = temp_state_path("read-cursor-server-winner");
+    let mut store = LocalStateStore::with_path(path.clone());
+    let envelope = |message_suffix: &str, event_suffix: &str, hlc: &str, sent_at: &str| {
+        serde_json::from_value(serde_json::json!({
+            "message_id": format!(
+                "ak:device_message:01904100-0000-7000-8000-{message_suffix}"
+            ),
+            "kind": "ak.read_cursor.update",
+            "sender_principal_id": "did:webvh:z6mkfixture:alice.example",
+            "sender_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
+            "recipient_principal_id": "did:webvh:z6mkfixture:alice.example",
+            "recipient_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
+            "sent_at": sent_at,
+            "expires_at": "2099-06-25T00:00:00.000Z",
+            "content": {
+                "schema": "ak.schema.read_cursor.v1",
+                "actor_id": "did:web:alice.example",
+                "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
+                "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002",
+                "read_scope": {
+                    "kind": "strand",
+                    "container_ref": "ak:strand:01904100-0000-7000-8000-000000000003",
+                    "track_name": "discussion"
+                },
+                "position": {
+                    "event_id": format!("ak:event:01904100-0000-7000-8000-{event_suffix}"),
+                    "hlc": hlc
+                },
+                "updated_at": sent_at
+            }
+        }))
+        .unwrap()
+    };
+    let locally_known = envelope(
+        "000000000006",
+        "000000000004",
+        "019041000000-0002-deadbeef",
+        "2026-06-24T00:00:00.000Z",
+    );
+    let canonical_server_winner = envelope(
+        "000000000007",
+        "000000000005",
+        "019041000000-0001-deadbeef",
+        "2026-06-24T00:00:01.000Z",
+    );
+
+    assert_eq!(store.ingest_to_device_messages(&[locally_known]), 1);
+    assert_eq!(
+        store.ingest_to_device_messages(&[canonical_server_winner]),
+        1
+    );
+
+    let reader = LocalStateStore::with_path(path);
+    let marker = reader
+        .read_cursor_for(
+            "ak:realm:01904100-0000-7000-8000-000000000002",
+            Some("ak:strand:01904100-0000-7000-8000-000000000003"),
+        )
+        .expect("canonical server read cursor persisted");
+    assert_eq!(
+        marker.body.position.event_id.as_str(),
+        "ak:event:01904100-0000-7000-8000-000000000005"
+    );
+    assert_eq!(
+        marker.body.position.hlc.as_str(),
+        "019041000000-0001-deadbeef"
+    );
+}
+
+#[test]
 fn local_state_store_durably_deduplicates_device_message_envelopes() {
     let path = temp_state_path("device-message-dedup");
     let message: arkret_sdk::DeviceMessageEnvelope = serde_json::from_value(serde_json::json!({

@@ -164,14 +164,9 @@ impl LocalStateStore {
             updated_at,
         };
         let key = read_cursor_key(realm_id, &read_scope);
-        if self
-            .cached
-            .read_cursors
-            .get(&key)
-            .is_some_and(|existing| !incoming_read_marker_wins(existing, &marker))
-        {
-            return false;
-        }
+        // This account-stream update is emitted only after Soland has applied
+        // the causal read-cursor reducer. Its payload is the persisted winner,
+        // so the client must not run a second, HLC-only merge.
         self.cached.read_cursors.insert(key, marker);
         true
     }
@@ -548,10 +543,4 @@ impl LocalStateStore {
         self.cached.notification_dnd_settings = settings;
         let _ = self.flush();
     }
-}
-
-fn incoming_read_marker_wins(existing: &ReadMarkerRecord, incoming: &ReadMarkerRecord) -> bool {
-    existing.body.position.hlc < incoming.body.position.hlc
-        || existing.body.position.hlc == incoming.body.position.hlc
-            && existing.device_id <= incoming.device_id
 }
