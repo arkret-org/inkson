@@ -952,6 +952,32 @@ pub async fn execute_joint_principal_bootstrap(
     .await
 }
 
+/// Establish the same signed recovery policy and encrypted DID-recovery
+/// backup as the product setup flow on an already bootstrapped joint fixture.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub async fn establish_joint_recovery_policy_and_backup(
+    principal_http: arkret_sdk::http_client::Client,
+    principal_id: &str,
+    device_id: &str,
+    recovery_words: &str,
+    device_signer: std::sync::Arc<crate::event_signer::InksonEventSigner>,
+) -> anyhow::Result<String> {
+    crate::event_signer::replace_active_signer(Some(device_signer));
+    crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
+    let api = crate::transport::TransportClient::from_http(
+        principal_http,
+        crate::transport::RequestContext::new(""),
+    );
+    crate::recovery_strand::ensure_recovery_policy_and_did_recovery_backup(
+        &api,
+        principal_id,
+        device_id,
+        recovery_words,
+    )
+    .await
+}
+
 /// Prepare the exact enrollment-authority recovery transaction used by the
 /// product client while allowing cotest to drive each durable participant
 /// boundary independently.
