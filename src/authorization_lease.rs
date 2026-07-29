@@ -139,6 +139,12 @@ pub(crate) mod test_support {
         issued_at: DateTime<Utc>,
         expires_at: DateTime<Utc>,
     ) -> arkret_wire::AuthorizationLease {
+        let scope_ref = arkret_sdk::ScopeRef::Realm { realm_id };
+        let authority_set_policy = realm_admission_policy(scope_ref.clone(), action);
+        let authority_set_ref = arkret_wire::AuthoritySetRef {
+            authority_set_id: authority_set_policy.authority_set_id.clone(),
+            authority_set_digest: authority_set_policy.digest().unwrap(),
+        };
         let mut lease = arkret_wire::AuthorizationLease {
             authorization_lease_id: arkret_wire::AuthorizationLeaseId::new(
                 "ak:authorization_lease:01904100-0000-7000-8000-aaaaaaaaaaaa",
@@ -150,12 +156,13 @@ pub(crate) mod test_support {
             actor_id: arkret_sdk::Did::new(actor_id).unwrap(),
             device_id: arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-bbbbbbbbbbbb")
                 .unwrap(),
-            scope_ref: arkret_sdk::ScopeRef::Realm { realm_id },
+            scope_ref,
             action: action.to_owned(),
             risk_tier: arkret_wire::RiskTier::Low,
             issued_at,
             expires_at,
-            authority_set_ref: authority_set("ak.authority_set.realm_admission.v1"),
+            authority_set_ref,
+            authority_set_policy,
             proofs: Vec::new(),
         };
         let digest = lease.lease_digest().unwrap();
@@ -165,6 +172,37 @@ pub(crate) mod test_support {
             issued_at,
         )];
         lease
+    }
+
+    fn realm_admission_policy(
+        scope_ref: arkret_sdk::ScopeRef,
+        action: &str,
+    ) -> arkret_wire::AuthoritySetPolicy {
+        arkret_wire::AuthoritySetPolicy {
+            schema: arkret_wire::AUTHORITY_SET_POLICY_SCHEMA.to_owned(),
+            authority_set_id: "ak.authority_set.realm_admission.v1".to_owned(),
+            policy_kind: arkret_wire::AuthoritySetPolicyKind::RealmAdmission,
+            scope_ref,
+            source: arkret_wire::AuthoritySetPolicySource {
+                source_kind: arkret_wire::AuthoritySetSourceKind::RealmControl,
+                source_ref: format!("ak:seal:sha256:{}", "a".repeat(64)),
+                source_digest: arkret_sdk::Hash::new(format!("sha256:{}", "b".repeat(64)))
+                    .unwrap(),
+                generation_ref: "1".to_owned(),
+            },
+            authorization_rules: vec![arkret_wire::AuthoritySetAuthorizationRule {
+                rule_id: "realm_admission".to_owned(),
+                issuer_role: arkret_wire::AuthoritySetIssuerRole::RealmAdmission,
+                allowed_actions: vec![action.to_owned()],
+                issuers: vec![arkret_wire::AuthoritySetIssuer {
+                    verification_method: arkret_sdk::DidUrl::new(
+                        "did:webvh:z6mkfixture:authority.example#key-1",
+                    )
+                    .unwrap(),
+                }],
+                threshold: 1,
+            }],
+        }
     }
 
     pub(crate) fn receipt(
@@ -204,12 +242,12 @@ pub(crate) mod test_support {
         verification_method: &str,
         payload_digest: arkret_sdk::Hash,
         created_at: DateTime<Utc>,
-    ) -> arkret_sdk::Proof {
-        arkret_sdk::Proof {
+    ) -> arkret_sdk::PayloadProof {
+        arkret_sdk::PayloadProof {
             kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
             alg: "EdDSA".to_owned(),
             verification_method: verification_method.to_owned(),
-            event_digest: payload_digest,
+            payload_digest,
             created_at,
             domain: None,
             audience: None,

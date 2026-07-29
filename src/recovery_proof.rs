@@ -50,6 +50,7 @@ pub fn principal_signing_proof_transcript(session: &Value) -> anyhow::Result<Val
         recovery_session_id: state.recovery_session_id,
         identity_model: state.identity_model,
         model_generation_ref,
+        publication_authority_context_digest: state.publication_authority_context_digest,
         challenge: state.challenge,
         expires_at: state.expires_at,
         // This is the session creation time, never a client-generated timestamp.
@@ -120,6 +121,54 @@ mod tests {
     use super::*;
 
     fn sample_session() -> Value {
+        let authority_set_policy = json!({
+            "schema": "ak.schema.authority_set_policy.v1",
+            "authority_set_id": "ak.authority_set.recovery_cross_signing.v1",
+            "policy_kind": "principal_control",
+            "scope_ref": {
+                "kind": "realm",
+                "realm_id": "ak:realm:01964137-0000-7000-8000-000000000088"
+            },
+            "source": {
+                "source_kind": "cross_signing_publish",
+                "source_ref": "ak:event:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "source_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "generation_ref": "1"
+            },
+            "authorization_rules": [{
+                "rule_id": "self_signing",
+                "issuer_role": "cross_signing_self_signing",
+                "allowed_actions": [
+                    "ak.device.authorize",
+                    "ak.device.list_update"
+                ],
+                "issuers": [{
+                    "verification_method": "did:key:z6MkPrincipalFixture#self-signing-1"
+                }],
+                "threshold": 1
+            }]
+        });
+        let authority_set_digest =
+            crate::canonical::canonical_sha256(&authority_set_policy).unwrap();
+        let publication_authority_context = json!({
+            "identity_model": "cross_signing",
+            "basis_ref": "ak:seal:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "scope_ref": {
+                "kind": "realm",
+                "realm_id": "ak:realm:01964137-0000-7000-8000-000000000088"
+            },
+            "authority_set_ref": {
+                "authority_set_id": "ak.authority_set.recovery_cross_signing.v1",
+                "authority_set_digest": authority_set_digest
+            },
+            "authority_set_policy": authority_set_policy,
+            "allowed_actions": [
+                "ak.device.authorize",
+                "ak.device.list_update"
+            ]
+        });
+        let publication_authority_context_digest =
+            crate::canonical::canonical_sha256(&publication_authority_context).unwrap();
         json!({
             "schema": "ak.schema.recovery_session.v1",
             "recovery_session_id": "ak:recovery_session:01964137-0000-7000-8000-0000000000aa",
@@ -130,6 +179,8 @@ mod tests {
             "policy_version": 1,
             "identity_model": "cross_signing",
             "ssk_generation": 1,
+            "publication_authority_context": publication_authority_context,
+            "publication_authority_context_digest": publication_authority_context_digest,
             "challenge": "Zm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm8",
             "state": "pending",
             "created_at": "2026-05-30T00:00:00.000Z",
@@ -153,6 +204,7 @@ mod tests {
             "recovery_session_id",
             "identity_model",
             "model_generation_ref",
+            "publication_authority_context_digest",
             "challenge",
             "created_at",
             "expires_at",
