@@ -11,8 +11,11 @@ use garth::{
     SecureKeyStoreError, SecurityTransactionStore,
 };
 use serde_json::Value;
+use zeroize::Zeroizing;
 
 const SECURITY_TRANSACTION_STATE_KEY: &str = "security_transaction.state.v1";
+const SECURITY_TRANSACTION_STAGED_SECRET_KEY: &str = "security_transaction.staged_secret.v1";
+const SECURITY_TRANSACTION_STAGED_SECRET_REF_PREFIX: &str = "secure-store://security-transaction/";
 const FORBIDDEN_SECRET_FIELD_NAMES: &[&str] = &[
     "account_mls_secret",
     "device_private_key",
@@ -48,6 +51,61 @@ impl InksonSecurityTransactionStore {
             transaction_id.as_str()
         ))
     }
+
+    fn staged_secret_key(transaction_id: &arkret_sdk::TransactionId) -> String {
+        crate::secure_key_store::account_scoped_device_key(&format!(
+            "{SECURITY_TRANSACTION_STAGED_SECRET_KEY}.{}",
+            transaction_id.as_str()
+        ))
+    }
+
+    fn staged_secret_reference(transaction_id: &arkret_sdk::TransactionId) -> String {
+        format!(
+            "{SECURITY_TRANSACTION_STAGED_SECRET_REF_PREFIX}{}",
+            transaction_id.as_str()
+        )
+    }
+
+    fn transaction_id_from_staged_secret_reference(
+        reference: &str,
+    ) -> garth::Result<arkret_sdk::TransactionId> {
+        let transaction_id = reference
+            .strip_prefix(SECURITY_TRANSACTION_STAGED_SECRET_REF_PREFIX)
+            .ok_or_else(|| {
+                garth::Error::Protocol(
+                    "security transaction staged secret reference is not host-owned".to_owned(),
+                )
+            })?;
+        arkret_sdk::TransactionId::new(transaction_id).map_err(|error| {
+            garth::Error::Protocol(format!(
+                "security transaction staged secret reference is invalid: {error}"
+            ))
+        })
+    }
+
+    pub async fn stage_secret(
+        &self,
+        transaction_id: &arkret_sdk::TransactionId,
+        material: Zeroizing<Vec<u8>>,
+    ) -> garth::Result<String> {
+        if material.is_empty() {
+            return Err(garth::Error::Protocol(
+                "security transaction staged secret material is empty".to_owned(),
+            ));
+        }
+        self.secure_store
+            .put_secret(
+                &Self::staged_secret_key(transaction_id),
+                material.as_slice(),
+                PutSecretOptions {
+                    durability: SecretDurability::DurableBeforeReturn,
+                    class: SecretClass::Seed,
+                },
+            )
+            .await
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        Ok(Self::staged_secret_reference(transaction_id))
+    }
 }
 
 fn audit_public_transaction_state(state: &DurableSecurityTransaction) -> garth::Result<()> {
@@ -57,6 +115,9 @@ fn audit_public_transaction_state(state: &DurableSecurityTransaction) -> garth::
             "pending_continue.canonical_request",
             &pending.canonical_request,
         )?;
+    }
+    if let Some(pending) = &state.pending_erase_request {
+        audit_canonical_public_json("pending_erase_request", pending)?;
     }
     if let Some(resource) = &state.last_observed_resource {
         let value = serde_json::to_value(resource).map_err(|error| {
@@ -175,14 +236,33 @@ impl SecurityTransactionStore for InksonSecurityTransactionStore {
         }
     }
 
-    fn remove(&self, transaction_id: &arkret_sdk::TransactionId) -> garth::Result<()> {
+    fn clear_staged_secret(&self, reference: &str) -> garth::Result<()> {
+        let transaction_id = Self::transaction_id_from_staged_secret_reference(reference)?;
         match self
+            .secure_store
+            .delete_secret(&Self::staged_secret_key(&transaction_id))
+        {
+            Ok(()) | Err(SecureKeyStoreError::NotFound) => Ok(()),
+            Err(error) => Err(garth::Error::Protocol(error.to_string())),
+        }
+    }
+
+    fn remove(&self, transaction_id: &arkret_sdk::TransactionId) -> garth::Result<()> {
+        let state_result = match self
             .secure_store
             .delete_secret(&Self::storage_key(transaction_id))
         {
             Ok(()) | Err(SecureKeyStoreError::NotFound) => Ok(()),
             Err(error) => Err(garth::Error::Protocol(error.to_string())),
-        }
+        };
+        let staged_result = match self
+            .secure_store
+            .delete_secret(&Self::staged_secret_key(transaction_id))
+        {
+            Ok(()) | Err(SecureKeyStoreError::NotFound) => Ok(()),
+            Err(error) => Err(garth::Error::Protocol(error.to_string())),
+        };
+        state_result.and(staged_result)
     }
 }
 
@@ -227,6 +307,46 @@ mod tests {
         assert_eq!(loaded.staged_secret_ref, state.staged_secret_ref);
         store.remove(&transaction_id).unwrap();
         assert!(store.load(&transaction_id).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn adapter_stages_and_idempotently_clears_terminal_secret_material() {
+        let secure_store = Arc::new(garth::MemorySecureKeyStore::new());
+        let store = InksonSecurityTransactionStore::new(secure_store.clone());
+        let transaction_id =
+            arkret_sdk::TransactionId::new("ak:transaction:01904100-0000-7000-8000-abcdefabcded")
+                .unwrap();
+
+        let reference = store
+            .stage_secret(
+                &transaction_id,
+                Zeroizing::new(b"staged key material".to_vec()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            reference,
+            format!("{SECURITY_TRANSACTION_STAGED_SECRET_REF_PREFIX}{transaction_id}")
+        );
+        assert!(
+            secure_store
+                .get_secret_bytes(&InksonSecurityTransactionStore::staged_secret_key(
+                    &transaction_id
+                ))
+                .unwrap()
+                .is_some()
+        );
+
+        store.clear_staged_secret(&reference).unwrap();
+        store.clear_staged_secret(&reference).unwrap();
+        assert!(
+            secure_store
+                .get_secret_bytes(&InksonSecurityTransactionStore::staged_secret_key(
+                    &transaction_id
+                ))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -280,6 +400,39 @@ mod tests {
 
         assert!(error.contains("recovery mnemonic"), "{error}");
         assert!(!error.contains(&mnemonic), "{error}");
+        assert!(store.load(&transaction_id).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn adapter_audits_pending_erase_request_before_persistence() {
+        let secure_store: Arc<dyn SecureKeyStore + Send + Sync> =
+            Arc::new(garth::MemorySecureKeyStore::new());
+        let store = InksonSecurityTransactionStore::new(secure_store);
+        let transaction_id =
+            arkret_sdk::TransactionId::new("ak:transaction:01904100-0000-7000-8000-abcdefabcdee")
+                .unwrap();
+        let state = DurableSecurityTransaction {
+            transaction_id: transaction_id.clone(),
+            canonical_create_request: br#"{"prepared_plan":"public"}"#.to_vec(),
+            staged_secret_ref: None,
+            pending_continue: None,
+            pending_erase_request: Some(
+                arkret_sdk::canonical::canonical_json_bytes(
+                    &serde_json::json!({"mls_secret": "must-not-persist"}),
+                )
+                .unwrap(),
+            ),
+            last_observed_resource: None,
+        };
+
+        let error = store.save(&state).await.unwrap_err().to_string();
+
+        assert!(error.contains("forbidden secret field"), "{error}");
+        assert!(
+            error.contains("pending_erase_request.mls_secret"),
+            "{error}"
+        );
+        assert!(!error.contains("must-not-persist"), "{error}");
         assert!(store.load(&transaction_id).unwrap().is_none());
     }
 
