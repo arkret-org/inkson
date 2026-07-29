@@ -71,6 +71,10 @@ pub fn RecoveryPanel(
     let mut restore_loading = use_signal(|| false);
     let mut restore_loaded_once = use_signal(|| false);
     let mut backup_rows = use_signal(Vec::<BackupSummaryRow>::new);
+    let mut fresh_recovery_words =
+        use_signal(crate::fresh_device_recovery::RecoveryWordsInput::default);
+    let mut fresh_recovery_status = use_signal(String::new);
+    let mut fresh_recovery_running = use_signal(|| false);
 
     // Server-side Recovery-Key backup marker (written by the upload paths via
     // `mark_mls_recovery_backup_configured`). Drives the section sync badge.
@@ -471,6 +475,113 @@ pub fn RecoveryPanel(
                             }
                         },
                         "Confirm custody and publish"
+                    }
+                }
+            }
+
+            div { class: "event", "data-testid": "fresh-device-recovery-section",
+                div { class: "event-head",
+                    span { "Recover this device" }
+                    span { "24-word proof" }
+                    HelpTip { text: "This verifies the Recovery Key against the active policy and opens the durable recovery strand. Proof verification alone never marks the device ready; authorization, terminal receipt, holder-bound grant refresh, and encrypted-history restore must all finish." }
+                }
+                Label { html_for: "fresh-device-recovery-words", "Existing Recovery Key" }
+                Textarea {
+                    id: "fresh-device-recovery-words",
+                    "data-testid": "fresh-device-recovery-words",
+                    rows: "3",
+                    value: "{fresh_recovery_words().as_str()}",
+                    autocomplete: "off",
+                    placeholder: "Enter the 24 words kept offline",
+                    oninput: move |event: FormEvent| {
+                        fresh_recovery_words.write().replace(event.value());
+                    },
+                }
+                div { class: "actions",
+                    Button {
+                        variant: ButtonVariant::Primary,
+                        "data-testid": "fresh-device-recovery-start",
+                        disabled: fresh_recovery_running() || fresh_recovery_words().is_empty(),
+                        onclick: {
+                            let base = base_url.clone();
+                            move |_| {
+                                let Some(words) = fresh_recovery_words().normalized() else {
+                                    fresh_recovery_status.set(
+                                        "Enter exactly 24 valid Recovery Key words.".to_owned(),
+                                    );
+                                    return;
+                                };
+                                fresh_recovery_words.write().clear();
+                                fresh_recovery_running.set(true);
+                                fresh_recovery_status.set(
+                                    "Verifying the recovery proof against the active policy…"
+                                        .to_owned(),
+                                );
+                                let base = base.clone();
+                                let api_token = token();
+                                let principal_id = account_did();
+                                let requesting_device_id = device_id();
+                                spawn(async move {
+                                    let result = with_authed_api(
+                                        &base,
+                                        api_token,
+                                        |api| async move {
+                                            let policy = crate::recovery_strand::fetch_active_recovery_policy(&api)
+                                                .await?
+                                                .ok_or_else(|| anyhow::anyhow!("no active recovery policy"))?;
+                                            let body = crate::recovery_strand::create_session_body(
+                                                &principal_id,
+                                                &requesting_device_id,
+                                                policy.trust_domain.as_str(),
+                                                Some((policy.policy_id.as_str(), policy.version)),
+                                            )?;
+                                            let session = api.create_recovery_session(&body).await?;
+                                            let outcome = crate::recovery_strand::submit_recovery_unlock_proof(
+                                                &api,
+                                                &session,
+                                                &policy,
+                                                words.as_str(),
+                                            )
+                                            .await?;
+                                            anyhow::Ok((session, outcome))
+                                        },
+                                    )
+                                    .await;
+                                    match result {
+                                        Ok((session, outcome))
+                                            if outcome.state
+                                                == arkret_sdk::SessionState::Verified =>
+                                        {
+                                            fresh_recovery_status.set(format!(
+                                                "Recovery proof verified for session {}. Device authorization is still pending; this device is not ready yet.",
+                                                session.recovery_session_id
+                                            ));
+                                        }
+                                        Ok((_session, outcome)) => {
+                                            fresh_recovery_status.set(format!(
+                                                "Recovery proof was not verified (state: {:?}); no device-ready state was granted.",
+                                                outcome.state
+                                            ));
+                                        }
+                                        Err(error) => {
+                                            fresh_recovery_status.set(format!(
+                                                "Recovery proof failed safely: {}",
+                                                error.display()
+                                            ));
+                                        }
+                                    }
+                                    fresh_recovery_running.set(false);
+                                });
+                            }
+                        },
+                        if fresh_recovery_running() { "Verifying…" } else { "Start durable recovery" }
+                    }
+                }
+                if !fresh_recovery_status().is_empty() {
+                    div {
+                        class: "muted",
+                        "data-testid": "fresh-device-recovery-status",
+                        "{fresh_recovery_status}"
                     }
                 }
             }
