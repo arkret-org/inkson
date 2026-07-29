@@ -322,6 +322,27 @@ pub(super) fn inject_test_session_grant(
     // the same account scope. SecureStoreEffects also selects this scope before
     // hydration so the durable snapshot is loaded from the correct namespace.
     state_store.write().switch_active_account(account_did);
+    for (fixture_field, private_data_key) in [
+        ("local_recovery_state", "recovery.state.v1"),
+        ("mls_recovery_backup_state", "mls.recovery_backup.v1"),
+    ] {
+        if let Some(value) = parsed.get(fixture_field) {
+            let payload = match serde_json::to_string(value) {
+                Ok(payload) => payload,
+                Err(error) => {
+                    tracing::warn!(
+                        ?error,
+                        fixture_field,
+                        "test session injection: invalid local metadata fixture"
+                    );
+                    return None;
+                }
+            };
+            state_store
+                .write()
+                .save_private_data(account_did, private_data_key, payload);
+        }
+    }
     if let Some(value) = parsed.get("pending_principal_registration").cloned() {
         match serde_json::from_value::<crate::state::PendingPrincipalRegistration>(value) {
             Ok(registration) if registration.did == account_did => {

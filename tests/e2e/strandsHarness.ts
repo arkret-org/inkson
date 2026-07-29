@@ -10,6 +10,8 @@ const DEFAULT_DEVICE_ID = "ak:device:01964137-0000-7000-8000-0000000000a1";
 const DEFAULT_SESSION_CREDENTIAL = "sx:e2e-token";
 const TEST_SESSION_INJECTION_KEY = "inkson.test.session_injection.v1";
 const DEFAULT_DPOP_SEED_B64URL = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const DEFAULT_EVENT_SIGNING_SEED_B64URL =
+  "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
 const apiObservations = new WeakMap<
   import("@playwright/test").Page,
   Array<{ method: string; path: string; status: number }>
@@ -58,6 +60,39 @@ export async function dismissBlockingRecoveryModal(
       .catch(() => false);
     if (!visible) {
       break;
+    }
+    const recoverySetup = page.getByTestId("recovery-key-setup-modal").last();
+    if (await recoverySetup.isVisible().catch(() => false)) {
+      const generated = recoverySetup.getByTestId(
+        "recovery-key-setup-generated-key",
+      );
+      const generatedReady = await generated
+        .waitFor({ state: "visible", timeout: 15_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (generatedReady) {
+        const recoveryKey = await generated.inputValue();
+        await recoverySetup
+          .getByTestId("recovery-key-setup-confirm-key")
+          .fill(recoveryKey);
+        await recoverySetup.getByTestId("recovery-key-setup-saved").click();
+        try {
+          await expect(recoverySetup).toBeHidden({ timeout: 60_000 });
+        } catch (error) {
+          const diagnostics = {
+            modalText: await recoverySetup.textContent().catch(() => null),
+            recoveryStatus: await recoverySetup
+              .getByTestId("recovery-key-setup-status")
+              .allTextContents()
+              .catch(() => []),
+            recentApi: (apiObservations.get(page) ?? []).slice(-24),
+          };
+          throw new Error(
+            `Recovery setup did not finish: ${JSON.stringify(diagnostics)}\n${String(error)}`,
+          );
+        }
+        continue;
+      }
     }
     const dismiss = modal.getByRole("button", {
       name: /^(Not now|Dismiss|Do this later|Continue with limited access|Continue without history)$/,
@@ -126,6 +161,7 @@ export async function dismissRecoveryMissingModal(
 }
 
 export async function openSettings(page: import("@playwright/test").Page) {
+  await dismissBlockingRecoveryModal(page);
   await latestTestId(page, "account-menu-button").click();
   await latestTestId(page, "account-menu-settings").click();
 }
@@ -225,6 +261,7 @@ function sessionInjectionRecord(
     audience: DEFAULT_SERVER_AUDIENCE,
     principal_id: DEFAULT_ACCOUNT_DID,
     dpop_seed_b64url: DEFAULT_DPOP_SEED_B64URL,
+    event_signing_seed_b64url: DEFAULT_EVENT_SIGNING_SEED_B64URL,
     ...overrides,
   };
 }
@@ -321,48 +358,30 @@ export async function readLocalConfig(page: import("@playwright/test").Page) {
 export async function seedLocalRecoveryKeyMetadata(
   page: import("@playwright/test").Page,
 ) {
-  // Use addInitScript (not a one-shot evaluate) so the seeded private_data is
-  // re-injected before EVERY page load — including later page.goto reloads in
-  // the same test. A one-shot write is clobbered when the app re-flushes its
-  // local state on a subsequent reload, which is why the recovery config has
-  // to be re-applied at boot.
+  // Account main state is IndexedDB-only. Extend the existing test-only
+  // session injection so Rust writes these public recovery metadata records
+  // through the real LocalStateStore after secure-store hydration.
   await page.addInitScript(() => {
-    const account = "did:web:alice.example";
-    const keyBytes = Array.from(new TextEncoder().encode(account));
-    // Mirror of LocalStateStore::xor_encrypt (src/local_state.rs): byte-wise
-    // XOR with the account-DID key, hex-encoded.
-    const xorHex = (plaintext: string) =>
-      Array.from(new TextEncoder().encode(plaintext))
-        .map((byte, index) =>
-          (byte ^ keyBytes[index % keyBytes.length])
-            .toString(16)
-            .padStart(2, "0"),
-        )
-        .join("");
-    const recoveryState = JSON.stringify({
+    const injectionKey = "inkson.test.session_injection.v1";
+    const injection = JSON.parse(localStorage.getItem(injectionKey) ?? "{}");
+    injection.local_recovery_state = {
       recovery_key_fingerprint: "sha256:e2e-local-recovery-key",
+      backup_hpke_public_key_multibase:
+        "z6LSbsw3xDCtsMcRWf8HqYViCDXmadAiioEcZCiefbnKxNjt",
       recovery_key_rotated_at: "2026-06-12T12:00:00.000Z",
       sss_threshold: 3,
       sss_total: 5,
       guardians: [],
       passkey_wraps: [],
       last_rehearsed_at: "",
-    });
+    };
     // mls.recovery_backup.v1 — presence of a backup_id makes
     // mls_recovery_backup_configured() true, which both bypasses the S6 create
     // gate and drives the backup prompt's "use existing key" branch.
-    const backupState = JSON.stringify({
+    injection.mls_recovery_backup_state = {
       backup_id: "ak:backup:e2e-existing-0000",
-    });
-    const state = JSON.parse(
-      localStorage.getItem("inkson.local_state.v1") ?? "{}",
-    );
-    state.private_data = {
-      ...(state.private_data ?? {}),
-      "recovery.state.v1": xorHex(recoveryState),
-      "mls.recovery_backup.v1": xorHex(backupState),
     };
-    localStorage.setItem("inkson.local_state.v1", JSON.stringify(state));
+    localStorage.setItem(injectionKey, JSON.stringify(injection));
   });
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(latestTestId(page, "client-shell")).toBeVisible({
@@ -416,7 +435,7 @@ export function registerStrandsBeforeEach() {
         "account menu falls back to account localpart",
       ),
       directoryPrimaryHandle: testInfo.title.startsWith(
-        "account menu replaces the viewer fallback when the handle directory returns an empty page",
+        "account menu keeps the viewer fallback when the handle directory returns an empty page",
       )
         ? null
         : undefined,
@@ -456,12 +475,19 @@ export function registerStrandsBeforeEach() {
         : undefined,
       preseedRecoveryMaterial: testInfo.title.startsWith(
         "owned agent sidecar labels",
+      ) || testInfo.title.startsWith(
+        "agent deactivation submits controller-signed",
+      ) || testInfo.title.startsWith(
+        "account settings split account/server info",
       ),
       seedSharedHistoryCount: testInfo.title.startsWith(
         "sidecar preserves long-history",
       )
         ? 18
         : undefined,
+      seedDefaultActiveAgent: !testInfo.title.startsWith(
+        "account settings split account/server info",
+      ),
     });
     if (testInfo.title.startsWith("login page")) {
       return;
