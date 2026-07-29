@@ -4,6 +4,7 @@ use chrono::Utc;
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProjectionEvent {
     pub realm_id: Option<String>,
+    pub strand_id: Option<String>,
     pub id: String,
     pub message_id: Option<String>,
     pub sender: String,
@@ -34,6 +35,7 @@ impl Default for ProjectionEvent {
             id: String::new(),
             message_id: None,
             realm_id: None,
+            strand_id: None,
             sender: "inkson".to_owned(),
             sender_display: "local".to_owned(),
             body: String::new(),

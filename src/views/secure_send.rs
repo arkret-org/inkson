@@ -65,10 +65,37 @@ pub(crate) type LocalMlsEncryptResult = (
 /// fail-closed reason instead of a generic "could not produce" message.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_local_mls_encrypt(
+    state_store: SyncSignal<LocalStateStore>,
+    realm_id: &str,
+    principal_id: &str,
+    device_id: &str,
+    plaintext_bytes: &[u8],
+    metadata_plaintext_bytes: Option<&[u8]>,
+    circle_id: Option<&str>,
+    sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
+) -> Result<LocalMlsEncryptResult, crate::mls::runtime::MlsRuntimeError> {
+    run_local_mls_encrypt_for_event(
+        state_store,
+        realm_id,
+        principal_id,
+        device_id,
+        "application/vnd.arkret.message+json",
+        arkret_sdk::events::EventKind::MESSAGE_CREATE,
+        plaintext_bytes,
+        metadata_plaintext_bytes,
+        circle_id,
+        sidecar_binding,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_local_mls_encrypt_for_event(
     mut state_store: SyncSignal<LocalStateStore>,
     realm_id: &str,
     principal_id: &str,
     device_id: &str,
+    content_type: &str,
+    event_kind: &str,
     plaintext_bytes: &[u8],
     metadata_plaintext_bytes: Option<&[u8]>,
     circle_id: Option<&str>,
@@ -80,7 +107,7 @@ pub(crate) fn run_local_mls_encrypt(
             "invalid Realm id for encrypted AAD: {error:?}"
         ))
     })?;
-    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(aad_realm_id, "ak.message.create");
+    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(aad_realm_id, event_kind);
     let (
         schedule_hash,
         member_dids,
@@ -95,7 +122,7 @@ pub(crate) fn run_local_mls_encrypt(
         realm_id,
         principal_id,
         device_id,
-        "application/vnd.arkret.message+json",
+        content_type,
         aad.clone(),
         plaintext_bytes,
         metadata_plaintext_bytes,
@@ -337,6 +364,158 @@ pub(crate) fn build_secure_send(
     Ok(SecureSendBuild {
         commit_event,
         message_event,
+        new_mls_snapshot,
+        member_dids: local_member_dids,
+        seal_ref,
+        pending_history_secrets,
+    })
+}
+
+/// Build the controller-authored durable close Event for a verified Sidecar
+/// completion request. The control plaintext is MLS encrypted under the
+/// Sidecar backing Circle and the outer Event carries `after` refs for every
+/// basis head. A successful submit is still only an accepted control Event;
+/// callers must wait for history refold before presenting the exchange as
+/// closed.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_sidecar_exchange_control_send(
+    state_store: SyncSignal<LocalStateStore>,
+    seal_view: &LocalSealView,
+    realm_id: &str,
+    actor: &str,
+    device_id: &str,
+    private_strand_id: &str,
+    circle_id: &str,
+    sidecar_binding: arkret_sdk::SidecarMlsBinding,
+    control: &arkret_sdk::AgentSidecarExchangeControl,
+) -> Result<SecureSendBuild, String> {
+    control
+        .validate()
+        .map_err(|error| format!("Sidecar exchange control validation failed: {error}"))?;
+    let plaintext = serde_json::to_vec(control)
+        .map_err(|error| format!("Sidecar exchange control encode failed: {error}"))?;
+    let (
+        local_schedule_hash,
+        local_member_dids,
+        encrypted_control,
+        encrypted_metadata,
+        real_commit_envelope,
+        new_mls_snapshot,
+        pending_history_secrets,
+    ) = run_local_mls_encrypt_for_event(
+        state_store,
+        realm_id,
+        actor,
+        device_id,
+        "application/vnd.arkret.agent-sidecar-exchange-control+json",
+        arkret_sdk::events::EventKind::AGENT_SIDECAR_EXCHANGE_CONTROL,
+        &plaintext,
+        None,
+        Some(circle_id),
+        Some(&sidecar_binding),
+    )
+    .map_err(|error| error.user_message())?;
+    let Some((encrypted_payload, envelope_aad)) = encrypted_control else {
+        return Err("Sidecar close could not produce an MLS encrypted payload".to_owned());
+    };
+    if encrypted_metadata.is_some() {
+        return Err("Sidecar close unexpectedly produced encrypted metadata".to_owned());
+    }
+    if local_schedule_hash.is_none() {
+        return Err("Sidecar close could not derive the MLS key schedule hash".to_owned());
+    }
+    if local_member_dids.is_empty() {
+        return Err("Sidecar close could not resolve MLS group members".to_owned());
+    }
+
+    let seal_ref = seal_view.move_seal_ref();
+    let base_group_state_ref = crate::mls::group_events::mls_base_epoch_ref_for_scope(
+        &state_store.read(),
+        realm_id,
+        Some(circle_id),
+        encrypted_payload.group_id.as_str(),
+        encrypted_payload
+            .epoch
+            .saturating_sub(u64::from(real_commit_envelope.is_some())),
+    )?;
+    let (group_state_ref, commit_event) =
+        if let Some(real_commit_envelope) = real_commit_envelope.as_ref() {
+            let mls_commit_epoch = real_commit_envelope.epoch;
+            let prev_epoch = mls_commit_epoch.saturating_sub(1);
+            let commit_event_id = format!("ak:event:{}", uuid_v7());
+            let commit_event_id_typed = arkret_sdk::EventId::new(commit_event_id.clone())
+                .map_err(|error| format!("MLS commit event id invalid: {error:?}"))?;
+            let proof_request = crate::mls::governance_proof::proof_request(
+                &state_store.read(),
+                realm_id,
+                Some(circle_id),
+                real_commit_envelope.group_id.clone(),
+                prev_epoch,
+                mls_commit_epoch,
+            )?;
+            let governance_binding = crate::mls::governance_proof::cached_verified_binding(
+                &state_store.read(),
+                &proof_request,
+            )?
+            .with_sidecar_binding(sidecar_binding)
+            .map_err(|error| error.to_string())?;
+            let payload = arkret_sdk::MlsCommitPayload::new(
+                real_commit_envelope.group_id.clone(),
+                prev_epoch,
+                base_group_state_ref.clone(),
+                Vec::new(),
+                mls_commit_epoch,
+                real_commit_envelope.commit_digest.clone(),
+                governance_binding,
+            )
+            .map_err(|error| format!("MLS commit payload failed: {error}"))?;
+            let mut event =
+                crate::operation::ak_ops::mls_commit_with_governance(realm_id, actor, &payload)
+                    .map_err(|error| format!("MLS commit payload failed: {error}"))?
+                    .build_sdk_event("inkson")
+                    .map_err(|error| format!("MLS commit SDK Event conversion failed: {error}"))?;
+            event.event_id = commit_event_id_typed;
+            event.scope_ref = circle_effective_scope(realm_id, circle_id)?;
+            (commit_event_id, Some(event))
+        } else {
+            (base_group_state_ref, None)
+        };
+
+    let encrypted_envelope = arkret_sdk::mls::encrypted_envelope_from_payload(
+        &encrypted_payload,
+        envelope_aad,
+        arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
+        &group_state_ref,
+    )
+    .map_err(|error| format!("Sidecar close encrypted envelope build failed: {error}"))?;
+    let payload = arkret_sdk::AgentSidecarExchangeControlPayload {
+        strand_id: arkret_sdk::StrandId::new(private_strand_id.to_owned())
+            .map_err(|error| format!("Sidecar close strand id invalid: {error}"))?,
+        encrypted_payload: encrypted_envelope,
+    };
+    let refs = control
+        .basis_event_ids
+        .iter()
+        .map(|event_id| arkret_sdk::EventRef::new(event_id.to_string(), "after"))
+        .collect();
+    let mut control_event = OperationBuilder::new(
+        realm_id,
+        actor,
+        arkret_sdk::events::kinds::EventKind::AgentSidecarExchangeControl,
+    )
+    .circle_id(circle_id)
+    .refs(refs)
+    .body(
+        serde_json::to_value(payload)
+            .map_err(|error| format!("Sidecar close payload encode failed: {error}"))?,
+    )
+    .build_sdk_event("inkson")
+    .map_err(|error| format!("Sidecar close SDK Event conversion failed: {error}"))?;
+    control_event.scope_ref = circle_effective_scope(realm_id, circle_id)?;
+
+    Ok(SecureSendBuild {
+        commit_event,
+        message_event: control_event,
         new_mls_snapshot,
         member_dids: local_member_dids,
         seal_ref,

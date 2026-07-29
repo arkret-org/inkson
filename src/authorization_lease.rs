@@ -245,6 +245,7 @@ pub(crate) mod test_support {
                 .unwrap(),
             scope_ref,
             action: action.to_owned(),
+            authorization_rule_id: "realm_admission".to_owned(),
             risk_tier: arkret_wire::RiskTier::Low,
             issued_at,
             expires_at,
@@ -273,8 +274,7 @@ pub(crate) mod test_support {
             source: arkret_wire::AuthoritySetPolicySource {
                 source_kind: arkret_wire::AuthoritySetSourceKind::RealmControl,
                 source_ref: format!("ak:seal:sha256:{}", "a".repeat(64)),
-                source_digest: arkret_sdk::Hash::new(format!("sha256:{}", "b".repeat(64)))
-                    .unwrap(),
+                source_digest: arkret_sdk::Hash::new(format!("sha256:{}", "b".repeat(64))).unwrap(),
                 generation_ref: "1".to_owned(),
             },
             authorization_rules: vec![arkret_wire::AuthoritySetAuthorizationRule {

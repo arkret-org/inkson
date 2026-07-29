@@ -9,7 +9,7 @@ pub(super) fn ChatEffects(
     initial_strand_id: String,
     plaintext_service_id: String,
     sync_cursor: Signal<String>,
-    realm_live_epoch: Signal<u64>,
+    mut realm_live_epoch: Signal<u64>,
     frontier_state: Signal<String>,
     agent_participation_sync_key: String,
     selected_scope_circle: Option<String>,
@@ -641,6 +641,22 @@ pub(super) fn ChatEffects(
                     && let Ok(backfill) = sub.backfill(&selected_realm_for_load).await
                 {
                     let backfill_events = backfill.event_values();
+                    // Persist the complete encrypted discussion history,
+                    // including Sidecar exchange control Events, before any
+                    // projection work. New controller devices and devices
+                    // with an incomparable local cache frontier refold from
+                    // this accepted union history instead of choosing an
+                    // HLC/LWW winner.
+                    let sidecar_history_changed =
+                        crate::sync_engine::ingest_message_projection_events(
+                            &mut state_store.write(),
+                            &selected_realm_for_load,
+                            &backfill_events,
+                        );
+                    if sidecar_history_changed > 0 {
+                        let next = realm_live_epoch.peek().wrapping_add(1);
+                        realm_live_epoch.set(next);
+                    }
                     // §2.10.3 — a minimal-metadata Realm's backfill never primes
                     // the device directory: authors verify against the MLS leaf.
                     let backfill_realm_is_minimal_metadata = state_store

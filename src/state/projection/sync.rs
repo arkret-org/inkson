@@ -203,6 +203,11 @@ pub fn projection_events_from_sync_realms(
             }
             events.push(ProjectionEvent {
                 realm_id: Some(realm_id.clone()),
+                strand_id: content
+                    .get("strand_id")
+                    .and_then(Value::as_str)
+                    .or_else(|| event.get("thread_id").and_then(Value::as_str))
+                    .map(ToOwned::to_owned),
                 id: event_id.clone(),
                 message_id,
                 // The canonical envelope subject is `actor_id`; sender display

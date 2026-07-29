@@ -338,6 +338,23 @@ export function registerStrandsBeforeEach() {
       includeSidecarInCircleList: testInfo.title.startsWith(
         "ordinary Circle list",
       ),
+      additionalActiveAgents: testInfo.title.startsWith(
+        "sidecar preserves long-history",
+      )
+        ? [
+            {
+              agent_id: "did:web:agents.example:research",
+              display_name: "Research Assistant",
+              slug:
+                "research-assistant-with-an-intentionally-long-private-handle",
+            },
+          ]
+        : undefined,
+      demoPrimaryCardTitle: testInfo.title.startsWith(
+        "sidecar preserves long-history",
+      )
+        ? "Legal review for a public beta launch with an intentionally long cross-team approval title"
+        : undefined,
     });
     if (testInfo.title.startsWith("login page")) {
       return;

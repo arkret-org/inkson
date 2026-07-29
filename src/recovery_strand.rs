@@ -13,7 +13,8 @@ use arkret_models_crypto::{
     RecoveryHpkeSuite, RecoveryKeyAgreementAlgorithm, RecoveryKeyAgreementEntry,
     RecoveryKeyAgreementUse, RecoveryKeyEntry, RecoveryKeySignatureAlgorithm, RecoveryPolicy,
     RecoveryPolicyActiveOutcome, RecoveryPolicyAuthData, RecoveryPolicyRef, RecoveryPolicySummary,
-    RecoveryProofKind, RecoverySessionCreateRequestBody, RecoverySessionProofSubmitRequestBody,
+    RecoveryProofKind, RecoveryPublicationAuthorizationRule, RecoverySessionCreateRequestBody,
+    RecoverySessionProofSubmitRequestBody,
 };
 use arkret_sdk::{DeviceId, Did, DidUrl, NonEmptyString, PolicyId, TypedTrustDomainId};
 use base64::Engine as _;
@@ -30,6 +31,7 @@ pub const RECOVERY_POLICY_SIGNED_FIELDS: &[&str] = &[
     "version",
     "trust_domain",
     "allowed_proof_kinds",
+    "publication_authorization_rules",
     "recovery_keys",
     "recovery_key_agreements",
     "supersedes",
@@ -310,6 +312,29 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         allowed_proof_kinds: vec![
             RecoveryProofKind::PrincipalSigning,
             RecoveryProofKind::RecoveryUnlock,
+        ],
+        publication_authorization_rules: vec![
+            RecoveryPublicationAuthorizationRule {
+                rule_id: "principal_signing".to_owned(),
+                proof_kind: RecoveryProofKind::PrincipalSigning,
+                issuer_role: arkret_wire::AuthoritySetIssuerRole::IdentityRecovery,
+                allowed_actions: vec!["ak.device.reanchor".to_owned()],
+                issuers: vec![arkret_wire::AuthoritySetIssuer {
+                    verification_method: DidUrl::new(verification_method.to_owned())
+                        .map_err(|error| anyhow::anyhow!(error))?,
+                }],
+                threshold: 1,
+            },
+            RecoveryPublicationAuthorizationRule {
+                rule_id: "recovery_unlock".to_owned(),
+                proof_kind: RecoveryProofKind::RecoveryUnlock,
+                issuer_role: arkret_wire::AuthoritySetIssuerRole::IdentityRecovery,
+                allowed_actions: vec!["ak.device.reanchor".to_owned()],
+                issuers: vec![arkret_wire::AuthoritySetIssuer {
+                    verification_method: recovery_proof_ref.clone(),
+                }],
+                threshold: 1,
+            },
         ],
         threshold: None,
         device_quorum: None,
@@ -697,6 +722,9 @@ mod tests {
             policy_id: PolicyId::new(policy_id.to_owned()).unwrap(),
             principal_id: Did::new("did:web:alice.example".to_owned()).unwrap(),
             version,
+            acceptance_basis: arkret_wire::LeaseBasisRef::Seal(
+                arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "a".repeat(64))).unwrap(),
+            ),
             recovery_policy_ref: None,
             trust_domain: TypedTrustDomainId::new("ak:trust_domain:soland.local".to_owned())
                 .unwrap(),
@@ -730,6 +758,9 @@ mod tests {
             policy_id: policy.policy_id.clone(),
             principal_id: policy.principal_id.clone(),
             version: policy.version,
+            acceptance_basis: arkret_wire::LeaseBasisRef::Seal(
+                arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "b".repeat(64))).unwrap(),
+            ),
             recovery_policy_ref: None,
             trust_domain: policy.trust_domain.clone(),
             allowed_proof_kinds: policy.allowed_proof_kinds.clone(),

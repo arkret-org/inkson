@@ -2,6 +2,30 @@ import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = process.env.INKSON_E2E_BASE_URL ?? "http://127.0.0.1:4727";
 const shouldStartServer = !process.env.INKSON_E2E_BASE_URL;
+const browserProjects = (
+  process.env.INKSON_E2E_BROWSERS ?? "chromium"
+)
+  .split(",")
+  .map((name) => name.trim())
+  .filter(Boolean)
+  .map((name) => {
+    if (name === "chrome") {
+      return {
+        name: "chrome",
+        use: { ...devices["Desktop Chrome"], channel: "chrome" as const },
+      };
+    }
+    if (name === "msedge") {
+      return {
+        name: "msedge",
+        use: { ...devices["Desktop Edge"], channel: "msedge" as const },
+      };
+    }
+    return {
+      name: "chromium",
+      use: { ...devices["Desktop Chrome"] },
+    };
+  });
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -16,12 +40,7 @@ export default defineConfig({
     baseURL,
     trace: "on-first-retry",
   },
-  projects: [
-    {
-      name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
-    },
-  ],
+  projects: browserProjects,
   webServer: shouldStartServer
     ? {
         command:

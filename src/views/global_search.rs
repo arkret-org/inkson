@@ -111,6 +111,7 @@ pub fn local_decrypted_index_search(
         .collect::<std::collections::BTreeSet<_>>();
     let events =
         projection_events_from_sync_realms(realms, Some(store), Some((actor_id, device_id)));
+    let sidecar_private_strands = crate::sidecar::known_sidecar_private_strand_ids(store, actor_id);
     let mut results = Vec::new();
     for event in events {
         if results.len() >= limit {
@@ -120,6 +121,13 @@ pub fn local_decrypted_index_search(
             continue;
         };
         if !realm_filter.is_empty() && !realm_filter.contains(realm_id) {
+            continue;
+        }
+        if event
+            .strand_id
+            .as_ref()
+            .is_some_and(|strand_id| sidecar_private_strands.contains(strand_id))
+        {
             continue;
         }
         let Some(body) = searchable_message_body(&event.body, event.redacted) else {
@@ -580,6 +588,76 @@ mod tests {
             "did:web:alice.example",
             "ak:device:01904100-0000-7000-8000-000000000914",
             "message",
+            &[],
+            Some(&["message"]),
+            10,
+        );
+
+        assert!(response.results.is_empty());
+    }
+
+    #[test]
+    fn local_index_search_excludes_known_sidecar_private_strands() {
+        let actor_id = "did:web:alice.example";
+        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000931".to_owned();
+        let source_strand_id = "ak:strand:01904100-0000-7000-8000-000000000932".to_owned();
+        let private_strand_id = "ak:strand:01904100-0000-7000-8000-000000000933".to_owned();
+        let mut store = LocalStateStore::default();
+        let pending = crate::sidecar::PendingSidecarSubmission {
+            controller_id: actor_id.to_owned(),
+            sidecar_id: arkret_sdk::SidecarId::new(
+                "ak:sidecar:01904100-0000-7000-8000-000000000934",
+            )
+            .unwrap(),
+            private_strand_id: private_strand_id.clone(),
+            backing_circle_id: arkret_sdk::CircleId::new(
+                "ak:circle:01904100-0000-7000-8000-000000000935",
+            )
+            .unwrap(),
+            exchange_id: arkret_sdk::AgentSidecarExchangeId::new("SearchPrivateStrand001").unwrap(),
+            request_context: arkret_sdk::AgentSidecarExchangeRequestContext {
+                source_track_ref: arkret_sdk::AgentSidecarSourceTrackRef {
+                    realm_id: arkret_sdk::RealmId::new(realm_id.clone()).unwrap(),
+                    strand_id: arkret_sdk::StrandId::new(source_strand_id).unwrap(),
+                    track_name: "discussion".to_owned(),
+                },
+                source_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
+                client_order_key: arkret_sdk::NonEmptyString::new("device-1-1").unwrap(),
+                addressed_agent_ids: vec![
+                    arkret_sdk::Did::new("did:web:assistant.agents.example").unwrap(),
+                ],
+                completion_policy: arkret_sdk::AgentSidecarExchangeCompletionPolicy::Coordinator,
+                coordinator_agent_id: None,
+                source_frontier_anchor: None,
+            },
+            message_id: "ak:message:01904100-0000-7000-8000-000000000936".to_owned(),
+            local_operation_id: "local-sidecar-search-test".to_owned(),
+        };
+        crate::sidecar::save_pending_sidecar_submission(&mut store, "search-test", &pending)
+            .unwrap();
+        let realms = std::collections::BTreeMap::from([(
+            realm_id,
+            json!({
+                "summary": {"summary": "Search containment Realm"},
+                "timeline": {"events": [{
+                    "kind": "ak.message.create",
+                    "event_id": "ak:event:01904100-0000-7000-8000-000000000937",
+                    "actor_id": actor_id,
+                    "created_at": "2026-07-29T00:00:00.000Z",
+                    "content": {
+                        "strand_id": private_strand_id,
+                        "body": "sidecar-secret-search-needle"
+                    }
+                }]}
+            }),
+        )]);
+
+        let response = local_decrypted_index_search(
+            &realms,
+            &store,
+            actor_id,
+            "ak:device:01904100-0000-7000-8000-000000000938",
+            "sidecar-secret-search-needle",
             &[],
             Some(&["message"]),
             10,
