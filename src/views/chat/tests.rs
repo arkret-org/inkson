@@ -1031,11 +1031,13 @@ fn private_saved_item_uses_saved_account_data_not_pin_event() {
         "did:web:alice.example",
         &item.account_data_key,
         wire,
+        0,
     )
     .unwrap()
     .build("inkson");
     assert_eq!(op.kind, "ak.account_data.set");
     assert_eq!(op.payload["key"], item.account_data_key);
+    assert_eq!(op.payload["expected_revision"], 0);
     assert_eq!(op.payload["encrypted_payload"]["kind"], "saved_item");
     assert!(op.payload.get("body").is_none());
     assert_ne!(op.kind, "ak.pin.add");

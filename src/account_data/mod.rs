@@ -11,8 +11,6 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::canonical::canonical_sha256;
-
 mod blocklist;
 mod client_ui;
 mod crypto;
@@ -86,15 +84,12 @@ impl AccountDataKey {
     }
 }
 
-/// A single account_data record. Tracks the canonical hash so cas-register
-/// merges can be applied client-side without re-serializing.
+/// A single account_data record with the server-authoritative CAS revision.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountDataRecord {
     pub key: String,
     pub value: Value,
-    /// `sha256:<hex>` digest over canonical `value`. Used as the cas-register
-    /// witness when applying remote updates.
-    pub digest: String,
+    pub revision: u64,
     /// Last-touched HLC string. Empty before the first write.
     #[serde(default)]
     pub hlc: String,
@@ -130,24 +125,38 @@ impl AccountDataStore {
         self.entries.get(key.as_wire())
     }
 
-    /// Insert or replace `key` with `value`. Recomputes the canonical digest.
-    /// Returns the new record's digest.
+    /// Insert or replace `key` with a server-observed revision.
     pub fn set(
         &mut self,
         key: AccountDataKey,
         value: Value,
+        revision: u64,
         hlc: String,
-    ) -> anyhow::Result<String> {
-        let digest = canonical_sha256(&value)?;
+    ) -> anyhow::Result<u64> {
+        if revision == 0 {
+            anyhow::bail!("live account_data revision must be greater than zero");
+        }
         let wire = key.as_wire().to_owned();
+        if let Some(current) = self.entries.get(&wire) {
+            if current.revision > revision {
+                anyhow::bail!(
+                    "stale account_data revision {} is older than current revision {}",
+                    revision,
+                    current.revision,
+                );
+            }
+            if current.revision == revision && (current.value != value || current.hlc != hlc) {
+                anyhow::bail!("account_data revision collision carries different content");
+            }
+        }
         let record = AccountDataRecord {
             key: wire.clone(),
             value,
-            digest: digest.clone(),
+            revision,
             hlc,
         };
         self.entries.insert(wire, record);
-        Ok(digest)
+        Ok(revision)
     }
 
     pub fn remove(&mut self, key: &AccountDataKey) -> Option<AccountDataRecord> {

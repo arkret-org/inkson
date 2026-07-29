@@ -35,7 +35,6 @@ pub struct DraftMergeOutcome {
 pub struct SavedAccountDataItem {
     pub account_data_key: String,
     pub value: arkret_sdk::SavedItemValue,
-    pub state_digest: String,
 }
 
 pub fn productivity_account_data_namespace_key(
@@ -160,11 +159,9 @@ pub fn saved_account_data_item(
     validate_saved_item_value(&value)?;
     let account_data_key =
         super::saved_account_data_key(namespace_key, &value.collection_title, &value.target_ref)?;
-    let state_digest = canonical_sha256(&saved_item_account_data_value(&value)?)?;
     Ok(SavedAccountDataItem {
         account_data_key,
         value,
-        state_digest,
     })
 }
 

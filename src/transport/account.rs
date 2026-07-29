@@ -8,9 +8,9 @@
 //! session-refresh + terminal-session classification identical to the old
 //! facade path while dropping the per-domain facade method.
 //!
-//! The durable-event-authoring account writes (`set_account_data`,
-//! `set_private_account_data_with_cas`, `delete_account_data`,
-//! `submit_read_cursor_advance`) are free functions taking an
+//! The account-data resource writes (`set_account_data`,
+//! `set_private_account_data`, `delete_account_data`,
+//! plus the event-authored `submit_read_cursor_advance`) are free functions taking an
 //! [`crate::event_submit::EventSubmitter`], reached through
 //! [`crate::transport::auth::with_event_submitter`]; the account-data actor-scope
 //! lookup they need runs through `submitter.http()`.
@@ -1310,66 +1310,81 @@ pub async fn submit_did_operation(
         .map_err(anyhow::Error::from)
 }
 
-async fn account_data_actor_scope(
+const ACCOUNT_DATA_RESOURCE_PATH: &str = "/_arkret/self/account_data";
+
+async fn account_data_current_revision(
     http: &arkret_sdk::http_client::Client,
-) -> anyhow::Result<(String, String)> {
-    let account = account_me(http).await?;
-    let principal = arkret_sdk::Did::new(account.did.clone())
-        .map_err(|err| anyhow::anyhow!("invalid account DID `{}`: {err}", account.did))?;
-    let realm_id = arkret_sdk::principal_control_realm_id(&principal);
-    Ok((account.did, realm_id.to_string()))
+    type_key: &str,
+) -> anyhow::Result<u64> {
+    let path = format!(
+        "{ACCOUNT_DATA_RESOURCE_PATH}/{}",
+        crate::wire_helpers::path_component(type_key),
+    );
+    match http.get::<arkret_sdk::AccountDataRow>(&path).await {
+        Ok(entry) => Ok(entry.revision),
+        Err(arkret_sdk::http_client::Error::Api { status: 404, error }) => error
+            .error
+            .details
+            .get("current_revision")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                anyhow::anyhow!("account_data not_found omitted required current_revision")
+            }),
+        Err(error) => Err(error.into()),
+    }
 }
 
-/// Submit a per-account `ak.account_data.set` event so settings UIs can
-/// push preferences (for example `ak.read_receipt.preferences`) to soland
-/// for cross-device sync.
+/// Replace a per-account value through the canonical CAS resource binding.
 pub async fn set_account_data(
     submitter: &EventSubmitter,
     type_key: &str,
     content: Value,
 ) -> anyhow::Result<Value> {
-    let (actor, principal_realm_id) = account_data_actor_scope(submitter.http()).await?;
-    let key = crate::account_data::AccountDataKey::from_wire(type_key);
-    let event =
-        crate::account_data::build_account_data_set(&principal_realm_id, &actor, &key, content)
-            .build_sdk_event("inkson-account-data")?;
-    Ok(serde_json::to_value(
-        submitter.submit_sdk_event(&event).await?,
-    )?)
+    let expected_revision = account_data_current_revision(submitter.http(), type_key).await?;
+    let path = format!(
+        "{ACCOUNT_DATA_RESOURCE_PATH}/{}",
+        crate::wire_helpers::path_component(type_key),
+    );
+    let body = arkret_sdk::AccountDataReplaceRequestBody {
+        expected_revision,
+        content,
+    };
+    let entry: arkret_sdk::AccountDataRow = submitter.http().put(&path, &body).await?;
+    serde_json::to_value(entry).map_err(anyhow::Error::from)
 }
 
-/// Submit a private account-data value with an optional CAS guard. Callers
-/// pass already-encrypted account-data material; plaintext draft/saved
-/// content must not cross this API boundary.
-pub async fn set_private_account_data_with_cas(
+/// Replace an encrypted private account-data value. When the caller has not
+/// retained a revision, read the authoritative revision before writing.
+pub async fn set_private_account_data(
     submitter: &EventSubmitter,
     type_key: &str,
     encrypted_payload: Value,
-    expected_state_digest: Option<&str>,
+    expected_revision: Option<u64>,
 ) -> anyhow::Result<Value> {
-    let (actor, principal_realm_id) = account_data_actor_scope(submitter.http()).await?;
-    let event = crate::account_data::build_private_account_data_set_with_cas(
-        &principal_realm_id,
-        &actor,
-        type_key,
-        encrypted_payload,
-        expected_state_digest,
-    )?
-    .build_sdk_event("inkson-private-account-data")?;
-    Ok(serde_json::to_value(
-        submitter.submit_sdk_event(&event).await?,
-    )?)
+    let expected_revision = match expected_revision {
+        Some(revision) => revision,
+        None => account_data_current_revision(submitter.http(), type_key).await?,
+    };
+    let path = format!(
+        "{ACCOUNT_DATA_RESOURCE_PATH}/{}",
+        crate::wire_helpers::path_component(type_key),
+    );
+    let body = arkret_sdk::AccountDataReplaceRequestBody {
+        expected_revision,
+        content: encrypted_payload,
+    };
+    let entry: arkret_sdk::AccountDataRow = submitter.http().put(&path, &body).await?;
+    serde_json::to_value(entry).map_err(anyhow::Error::from)
 }
 
-/// Tombstone an account_data entry by submitting `ak.account_data.set` with
-/// `tombstone: true`.
+/// Delete an account-data entry through the versioned physical-delete binding.
 pub async fn delete_account_data(submitter: &EventSubmitter, type_key: &str) -> anyhow::Result<()> {
-    let (actor, principal_realm_id) = account_data_actor_scope(submitter.http()).await?;
-    let key = crate::account_data::AccountDataKey::from_wire(type_key);
-    let event =
-        crate::account_data::build_account_data_tombstone(&principal_realm_id, &actor, &key)
-            .build_sdk_event("inkson-account-data")?;
-    submitter.submit_sdk_event(&event).await?;
+    let expected_revision = account_data_current_revision(submitter.http(), type_key).await?;
+    let path = format!(
+        "{ACCOUNT_DATA_RESOURCE_PATH}/{}?expected_revision={expected_revision}",
+        crate::wire_helpers::path_component(type_key),
+    );
+    let _: arkret_sdk::AccountDataDeleteOutcome = submitter.http().delete(&path).await?;
     Ok(())
 }
 

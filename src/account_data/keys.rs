@@ -15,6 +15,7 @@ pub fn build_account_data_set(
     actor: &str,
     key: &AccountDataKey,
     value: Value,
+    expected_revision: u64,
 ) -> OperationBuilder {
     let value_field = if private_account_data_key_prefix(key.as_wire()).is_some() {
         "encrypted_payload"
@@ -24,6 +25,7 @@ pub fn build_account_data_set(
     let mut payload = serde_json::json!({
         "key": key.as_wire(),
         "owner": actor,
+        "expected_revision": expected_revision,
         "updated_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
     });
     payload[value_field] = value;
@@ -39,6 +41,7 @@ pub fn build_account_data_tombstone(
     realm_id: &str,
     actor: &str,
     key: &AccountDataKey,
+    expected_revision: u64,
 ) -> OperationBuilder {
     OperationBuilder::new(
         realm_id,
@@ -48,6 +51,7 @@ pub fn build_account_data_tombstone(
     .body(serde_json::json!({
         "key": key.as_wire(),
         "owner": actor,
+        "expected_revision": expected_revision,
         "tombstone": true,
         "updated_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
     }))
@@ -146,28 +150,16 @@ pub fn build_private_account_data_set(
     actor: &str,
     key: &str,
     encrypted_payload: Value,
-) -> anyhow::Result<OperationBuilder> {
-    build_private_account_data_set_with_cas(realm_id, actor, key, encrypted_payload, None)
-}
-
-pub fn build_private_account_data_set_with_cas(
-    realm_id: &str,
-    actor: &str,
-    key: &str,
-    encrypted_payload: Value,
-    expected_state_digest: Option<&str>,
+    expected_revision: u64,
 ) -> anyhow::Result<OperationBuilder> {
     validate_private_account_data_key(key)?;
-    let mut payload = serde_json::json!({
+    let payload = serde_json::json!({
         "key": key,
         "owner": actor,
+        "expected_revision": expected_revision,
         "encrypted_payload": encrypted_payload,
         "updated_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
     });
-    if let Some(expected_state_digest) = expected_state_digest {
-        validate_sha256_digest(expected_state_digest)?;
-        payload["expected_state_digest"] = Value::String(expected_state_digest.to_owned());
-    }
     Ok(OperationBuilder::new(
         realm_id,
         actor,
@@ -180,6 +172,7 @@ pub fn build_private_account_data_tombstone(
     realm_id: &str,
     actor: &str,
     key: &str,
+    expected_revision: u64,
 ) -> anyhow::Result<OperationBuilder> {
     validate_private_account_data_key(key)?;
     Ok(OperationBuilder::new(
@@ -190,20 +183,8 @@ pub fn build_private_account_data_tombstone(
     .body(serde_json::json!({
         "key": key,
         "owner": actor,
+        "expected_revision": expected_revision,
         "tombstone": true,
         "updated_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
     })))
-}
-
-fn validate_sha256_digest(value: &str) -> anyhow::Result<()> {
-    // State digests are pinned to sha256 here, so require that prefix, then
-    // delegate the hex/casing grammar to the single canonical validator
-    // `arkret_sdk::Hash::new` instead of re-deriving the rule locally.
-    if value.strip_prefix("sha256:").is_none() {
-        anyhow::bail!("expected_state_digest must use sha256:<hex>");
-    }
-    if arkret_sdk::Hash::new(value).is_err() {
-        anyhow::bail!("expected_state_digest must be a lowercase sha256 digest");
-    }
-    Ok(())
 }

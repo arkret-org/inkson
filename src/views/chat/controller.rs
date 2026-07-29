@@ -354,7 +354,7 @@ impl ChatController {
                 .and_then(|api| api.event_submitter())
             {
                 Ok(submitter) => {
-                    crate::transport::account::set_private_account_data_with_cas(
+                    crate::transport::account::set_private_account_data(
                         &submitter,
                         &key,
                         account_data_value,

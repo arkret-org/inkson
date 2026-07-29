@@ -32,6 +32,7 @@ fn snapshot_head_default_is_none_and_round_trips() {
         .set(
             AccountDataKey::ClientUi,
             json!({"theme": "night"}),
+            1,
             "01970e589d21-0001-a13f9c2e".to_owned(),
         )
         .unwrap();
@@ -47,6 +48,7 @@ fn snapshot_head_clears_independently_of_entries() {
         .set(
             AccountDataKey::ClientUi,
             json!({"theme": "light"}),
+            1,
             "01970e589d21-0001-a13f9c2e".to_owned(),
         )
         .unwrap();
@@ -65,6 +67,7 @@ fn snapshot_head_persists_through_serde_round_trip() {
         .set(
             AccountDataKey::ClientUi,
             json!({"theme": "night"}),
+            1,
             "01970e589d21-0001-a13f9c2e".to_owned(),
         )
         .unwrap();
@@ -83,7 +86,7 @@ fn snapshot_head_absent_from_state_defaults_to_none() {
             "ak.client.ui_state": {
                 "key": "ak.client.ui_state",
                 "value": {"theme": "light"},
-                "digest": "sha256:00",
+                "revision": 1,
                 "hlc": ""
             }
         }
@@ -111,26 +114,39 @@ fn key_round_trip() {
 }
 
 #[test]
-fn set_recomputes_digest() {
+fn set_tracks_server_revision() {
     let mut store = AccountDataStore::new();
-    let digest_a = store
+    let revision_a = store
         .set(
             AccountDataKey::ClientUi,
             json!({"sidebar_collapsed": true}),
+            1,
             "0-0-0".into(),
         )
         .unwrap();
-    let digest_b = store
+    let revision_b = store
         .set(
             AccountDataKey::ClientUi,
             json!({"sidebar_collapsed": false}),
+            2,
             "0-0-1".into(),
         )
         .unwrap();
-    assert_ne!(digest_a, digest_b);
+    assert_eq!(revision_a, 1);
+    assert_eq!(revision_b, 2);
     assert_eq!(
-        store.get(&AccountDataKey::ClientUi).unwrap().digest,
-        digest_b
+        store.get(&AccountDataKey::ClientUi).unwrap().revision,
+        revision_b
+    );
+    assert!(
+        store
+            .set(
+                AccountDataKey::ClientUi,
+                json!({"sidebar_collapsed": true}),
+                1,
+                "0-0-0".into(),
+            )
+            .is_err()
     );
 }
 
@@ -704,6 +720,7 @@ fn build_account_data_set_emits_canonical_kind() {
         "did:web:alice",
         &AccountDataKey::ClientReadReceipts,
         json!({"send": false}),
+        0,
     )
     .build("node");
     assert_eq!(op.kind, "ak.account_data.set");
@@ -768,6 +785,7 @@ fn contact_and_realm_remarks_are_encrypted_account_data() {
         "did:web:alice.example",
         &AccountDataKey::Custom(realm_key),
         json!({"pinned": true}),
+        0,
     )
     .build("node");
     assert!(op.payload.get("encrypted_payload").is_some());
@@ -782,6 +800,7 @@ fn private_account_data_builders_emit_encrypted_payload() {
         "did:web:alice",
         key,
         json!({"ciphertext": "opaque"}),
+        0,
     )
     .unwrap()
     .build("node");
@@ -794,6 +813,7 @@ fn private_account_data_builders_emit_encrypted_payload() {
         "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice",
         key,
+        1,
     )
     .unwrap()
     .build("node");
@@ -801,7 +821,7 @@ fn private_account_data_builders_emit_encrypted_payload() {
 }
 
 #[test]
-fn private_account_data_builder_can_emit_cas_guard() {
+fn private_account_data_builder_emits_required_revision() {
     let key = draft_account_data_key(
         b"inkson-account-data-test-key",
         arkret_sdk::DraftKind::Message,
@@ -809,31 +829,19 @@ fn private_account_data_builder_can_emit_cas_guard() {
         DRAFT_MESSAGE_SLOT,
     )
     .unwrap();
-    let expected = format!("sha256:{}", "12".repeat(32));
-    let op = build_private_account_data_set_with_cas(
+    let op = build_private_account_data_set(
         "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice",
         &key,
         json!({"ciphertext": "opaque"}),
-        Some(&expected),
+        7,
     )
     .unwrap()
     .build("node");
     assert_eq!(op.kind, "ak.account_data.set");
-    assert_eq!(op.payload["expected_state_digest"], expected);
+    assert_eq!(op.payload["expected_revision"], 7);
     assert!(op.payload.get("body").is_none());
     assert_eq!(op.payload["encrypted_payload"]["ciphertext"], "opaque");
-
-    assert!(
-        build_private_account_data_set_with_cas(
-            "ak:realm:0196419b-0000-7000-8000-000000000001",
-            "did:web:alice",
-            &key,
-            json!({"ciphertext": "opaque"}),
-            Some("sha256:ABC")
-        )
-        .is_err()
-    );
 }
 
 #[test]
@@ -846,6 +854,7 @@ fn generic_builder_does_not_put_private_values_under_body() {
         "did:web:alice",
         &key,
         json!({"ciphertext": "opaque"}),
+        0,
     )
     .build("node");
     assert!(op.payload.get("body").is_none());
@@ -858,11 +867,13 @@ fn build_account_data_tombstone_emits_canonical_payload() {
         "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice",
         &AccountDataKey::ClientReadReceipts,
+        3,
     )
     .build("node");
     assert_eq!(op.kind, "ak.account_data.set");
     assert_eq!(op.payload["key"], "ak.read_receipt.preferences");
     assert_eq!(op.payload["owner"], "did:web:alice");
+    assert_eq!(op.payload["expected_revision"], 3);
     assert_eq!(op.payload["tombstone"], true);
     assert!(op.payload["updated_at"].is_string());
 }
