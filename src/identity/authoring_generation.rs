@@ -68,13 +68,16 @@ fn cache_verified_principal_generation(
     device_id: &str,
     generation: &AuthoringGeneration,
 ) {
-    verified_generation_cache()
+    let previous = verified_generation_cache()
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .insert(
             principal_generation_cache_key(principal_id, device_id),
             generation.clone(),
         );
+    if previous.as_ref().is_some_and(|value| value != generation) {
+        crate::authorization_lease::clear_leases();
+    }
 }
 
 pub(crate) fn reset_verified_authoring_generations() {
