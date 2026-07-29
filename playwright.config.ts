@@ -1,7 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const baseURL = process.env.INKSON_E2E_BASE_URL ?? "http://127.0.0.1:4727";
+const requestedServerPort = process.env.INKSON_E2E_PORT ?? "4727";
+const baseURL =
+  process.env.INKSON_E2E_BASE_URL ?? `http://127.0.0.1:${requestedServerPort}`;
 const shouldStartServer = !process.env.INKSON_E2E_BASE_URL;
+const serverURL = new URL(baseURL);
+const serverPort = serverURL.port || (serverURL.protocol === "https:" ? "443" : "80");
 const browserProjects = (
   process.env.INKSON_E2E_BROWSERS ?? "chromium"
 )
@@ -44,7 +48,7 @@ export default defineConfig({
   webServer: shouldStartServer
     ? {
         command:
-          "dx build --platform web --features wasm-localstorage-secrets-test && dx serve --platform web --features wasm-localstorage-secrets-test --addr 127.0.0.1 --port 4727 --open false --hot-reload false --watch false",
+          `dx build --platform web --features wasm-localstorage-secrets-test && dx serve --platform web --features wasm-localstorage-secrets-test --addr 127.0.0.1 --port ${serverPort} --open false --hot-reload false --watch false`,
         // `dx serve` binds the HTTP socket before the first WASM build is
         // usable. Probe the generated module rather than `/`, otherwise
         // Playwright can start tests against a shell whose `#main` is empty.

@@ -1,5 +1,31 @@
 # Regression Review
 
+## 2026-07-29 — Sidecar Chrome/Edge matrix no longer reaches the seeded Realm
+
+- Surface: `inkson.strands.kanban.spec.ts` Sidecar browser matrix and its Arkret mock harness.
+- Regression: Chrome and Edge both load the client shell, but the mocked account/Realm bootstrap
+  leaves the UI at `No Realm tree loaded`; the executed Sidecar cases then time out waiting for the
+  seeded Kanban card, and the full matrix cannot finish. It supplies no current browser acceptance
+  evidence.
+- Detection: Sidecar completion-gate verification against the real WASM bundle on Chrome and Edge.
+- Required correction: update the mock subscribe/sync fixtures to the current accepted account and
+  Realm frame contract, assert the Realm tree is present before entering Kanban, then rerun all
+  Sidecar display-mode, multi-Agent, narrow-layout, long-history, and state-preservation cases.
+- Prevention dimension: E2E bootstrap helpers must fail early on missing seeded Realm state instead
+  of letting every product assertion consume the full test timeout.
+- Status: open.
+
+## 2026-07-29 — the Playwright dev-server port was not configurable
+
+- Surface: `playwright.config.ts` local web-server startup.
+- Regression: the base URL could be overridden, but `dx serve` always bound port 4727. A system
+  process reserving that port made the browser gate impossible to start.
+- Detection: Sidecar Chrome/Edge completion-gate verification.
+- Resolution: derive the Dioxus server port from the configured E2E URL and add
+  `INKSON_E2E_PORT` for collision-free local startup.
+- Prevention dimension: the readiness probe URL and spawned server must share one source of truth.
+- Status: resolved.
+
 ## 2026-07-29 — browser leader gate did not compile for WASM
 
 - Surface: `app::web_leader` Web Lock acquisition and storage-lease renewal.
