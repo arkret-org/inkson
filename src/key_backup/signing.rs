@@ -262,18 +262,8 @@ pub fn build_key_backup_unlock_proof_active(
         let digest = required_str_anyhow(summary, "proof_digest")?.to_owned();
         (session_id, kind, digest)
     } else {
-        // No policy-layer recovery-session driver is available on this client
-        // yet, so the unlock is backed only by a device signature over a
-        // locally-derived transcript. The server (key-management.md §7.7.1 /
-        // §7.8, `unlock.rs::proof_kind_requires_recovery_session`) fails closed
-        // with `recovery_evidence_unbound` for every recovery-ceremony
-        // proof_kind (`recovery_unlock` / `threshold_recovery` / `device_quorum`
-        // / `trusted_recovery_service`) whose claimed recovery session record is
-        // absent. `principal_signing` is the ONLY documented compatibility kind
-        // permitted to proceed without a durable session record, so a purely
-        // device-signed unlock MUST declare `principal_signing`; declaring
-        // `recovery_unlock` here made the server reject every unlock and left
-        // shared-history cards permanently locked.
+        // Ordinary already-authorized-device restores use the only proof kind
+        // that does not require a durable recovery session.
         let session_id = format!("ak:recovery_session:{}", crate::operation::uuid_v7());
         let local_digest = crate::canonical::canonical_sha256(&json!({
             "type": "ak.key_backup.local_unlock_proof.v1",
@@ -332,12 +322,64 @@ pub async fn fetch_key_backup_with_active_unlock_proof(
     principal_id: &str,
     requesting_device_id: &str,
 ) -> anyhow::Result<Value> {
+    fetch_key_backup_with_unlock_proof(
+        api,
+        backup_metadata,
+        principal_id,
+        requesting_device_id,
+        None,
+    )
+    .await
+}
+
+pub async fn fetch_key_backup_with_recovery_session_unlock_proof(
+    api: &crate::transport::TransportClient,
+    backup_metadata: &Value,
+    principal_id: &str,
+    requesting_device_id: &str,
+    recovery_session: &arkret_sdk::RecoverySessionState,
+) -> anyhow::Result<Value> {
+    recovery_session.validate()?;
+    if recovery_session.principal_id.as_str() != principal_id
+        || recovery_session.requesting_device_id.as_str() != requesting_device_id
+        || !matches!(
+            recovery_session.state,
+            arkret_sdk::SessionState::Verified | arkret_sdk::SessionState::Completed
+        )
+    {
+        anyhow::bail!("key backup unlock recovery session binding mismatch");
+    }
+    let session = serde_json::to_value(recovery_session)?;
+    fetch_key_backup_with_unlock_proof(
+        api,
+        backup_metadata,
+        principal_id,
+        requesting_device_id,
+        Some(&session),
+    )
+    .await
+}
+
+async fn fetch_key_backup_with_unlock_proof(
+    api: &crate::transport::TransportClient,
+    backup_metadata: &Value,
+    principal_id: &str,
+    requesting_device_id: &str,
+    recovery_session: Option<&Value>,
+) -> anyhow::Result<Value> {
     let backoff_scope = key_backup_unlock_backoff_scope(api, principal_id)?;
     if let Some(retry_after_ms) = key_backup_unlock_backoff_remaining_ms(&backoff_scope) {
         return Err(KeyBackupUnlockBackoff { retry_after_ms }.into());
     }
-    let cache_key =
-        unlocked_key_backup_cache_key(api, backup_metadata, principal_id, requesting_device_id)?;
+    let cache_key = unlocked_key_backup_cache_key(
+        api,
+        backup_metadata,
+        principal_id,
+        requesting_device_id,
+        recovery_session
+            .and_then(|session| session.get("recovery_session_id"))
+            .and_then(Value::as_str),
+    )?;
     if let Some(cached) = unlocked_key_backup_cache_get(&cache_key) {
         return Ok(cached);
     }
@@ -346,7 +388,7 @@ pub async fn fetch_key_backup_with_active_unlock_proof(
         backup_metadata,
         principal_id,
         requesting_device_id,
-        None,
+        recovery_session,
     )?;
     let backup = match api
         .get_key_backup_with_unlock_proof(&backup_id, &proof)
@@ -417,6 +459,7 @@ fn unlocked_key_backup_cache_key(
     backup_metadata: &Value,
     principal_id: &str,
     requesting_device_id: &str,
+    recovery_session_id: Option<&str>,
 ) -> anyhow::Result<String> {
     let endpoint = api.endpoint("_arkret/self/keys/backups")?;
     let backup_id = required_str_anyhow(backup_metadata, "backup_id")?;
@@ -424,10 +467,11 @@ fn unlocked_key_backup_cache_key(
     let series_id = required_str_anyhow(backup_metadata, "series_id")?;
     let ciphertext_digest = required_str_anyhow(backup_metadata, "ciphertext_digest")?;
     Ok(format!(
-        "{}|principal={}|device={}|backup={backup_id}|class={backup_kind}|series={series_id}|digest={ciphertext_digest}",
+        "{}|principal={}|device={}|recovery_session={}|backup={backup_id}|class={backup_kind}|series={series_id}|digest={ciphertext_digest}",
         endpoint.as_str(),
         principal_id.trim(),
-        requesting_device_id.trim()
+        requesting_device_id.trim(),
+        recovery_session_id.unwrap_or("none")
     ))
 }
 

@@ -75,7 +75,6 @@ pub fn RecoveryPanel(
         use_signal(crate::fresh_device_recovery::RecoveryWordsInput::default);
     let mut fresh_recovery_status = use_signal(String::new);
     let mut fresh_recovery_running = use_signal(|| false);
-    let mut fresh_recovery_checkpoint = use_signal(|| None);
 
     // Server-side Recovery-Key backup marker (written by the upload paths via
     // `mark_mls_recovery_backup_configured`). Drives the section sync badge.
@@ -95,24 +94,6 @@ pub fn RecoveryPanel(
             }
             if recovery_key_rotated_at() != next.recovery_key_rotated_at {
                 recovery_key_rotated_at.set(next.recovery_key_rotated_at);
-            }
-        });
-    }
-    {
-        let actor_key = actor_key.clone();
-        use_effect(move || {
-            let Ok(principal_id) = arkret_sdk::Did::new(actor_key.clone()) else {
-                return;
-            };
-            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            match crate::security_transaction::load_fresh_device_recovery_checkpoint(
-                secure_store.as_ref(),
-                &principal_id,
-            ) {
-                Ok(checkpoint) => fresh_recovery_checkpoint.set(checkpoint),
-                Err(error) => fresh_recovery_status.set(format!(
-                    "Could not load the durable recovery checkpoint: {error}"
-                )),
             }
         });
     }
@@ -540,11 +521,24 @@ pub fn RecoveryPanel(
                                 let api_token = token();
                                 let principal_id = account_did();
                                 let requesting_device_id = device_id();
+                                let state_store = state_store;
                                 spawn(async move {
+                                    let recovery_base = base.clone();
                                     let result = with_authed_api(
                                         &base,
                                         api_token,
                                         |api| async move {
+                                            if let Some(completed) =
+                                                crate::mls::account_recovery::resume_pending_fresh_device_recovery(
+                                                    &api,
+                                                    &recovery_base,
+                                                    state_store,
+                                                    words.as_str(),
+                                                )
+                                                .await?
+                                            {
+                                                return Ok(completed);
+                                            }
                                             let policy = crate::recovery_strand::fetch_active_recovery_policy(&api)
                                                 .await?
                                                 .ok_or_else(|| anyhow::anyhow!("no active recovery policy"))?;
@@ -567,113 +561,51 @@ pub fn RecoveryPanel(
                                                     session.recovery_session_id.as_str(),
                                                 )
                                                 .await?;
-                                            let transaction = if outcome.state
-                                                == arkret_sdk::SessionState::Verified
-                                                && authoritative.identity_model
-                                                    == arkret_sdk::RecoveryIdentityModel::CrossSigning
-                                            {
-                                                let secure_store =
-                                                    crate::secure_key_store::default_secure_key_store(
-                                                        "inkson",
-                                                    );
-                                                let prepared = crate::fresh_device_recovery::
-                                                    prepare_cross_signing_recovery_from_words(
+                                            if outcome.state != arkret_sdk::SessionState::Verified {
+                                                anyhow::bail!(
+                                                    "recovery proof was not verified (state: {:?})",
+                                                    outcome.state
+                                                );
+                                            }
+                                            match authoritative.identity_model {
+                                                arkret_sdk::RecoveryIdentityModel::CrossSigning => {
+                                                    crate::mls::account_recovery::execute_cross_signing_recovery(
                                                         &api,
-                                                        secure_store.as_ref(),
+                                                        &recovery_base,
+                                                        state_store,
                                                         &authoritative,
+                                                        &outcome,
                                                         words.as_str(),
                                                     )
-                                                    .await?;
-                                                let transaction_id =
-                                                    prepared.request.transaction_id.clone();
-                                                let transaction_store = crate::security_transaction::
-                                                    InksonSecurityTransactionStore::new(
-                                                        secure_store.clone(),
-                                                    );
-                                                let staged_ref = transaction_store
-                                                    .stage_secret(
-                                                        &transaction_id,
-                                                        prepared.staged_secret,
+                                                    .await
+                                                }
+                                                arkret_sdk::RecoveryIdentityModel::EnrollmentAuthority => {
+                                                    crate::mls::account_recovery::execute_enrollment_authority_recovery(
+                                                        &api,
+                                                        &recovery_base,
+                                                        state_store,
+                                                        &authoritative,
+                                                        &outcome,
+                                                        words.as_str(),
                                                     )
-                                                    .await?;
-                                                let engine = crate::security_transaction::
-                                                    security_transaction_engine(
-                                                        api.sdk_http_client()?,
-                                                        secure_store,
-                                                    );
-                                                Some(
-                                                    crate::fresh_device_recovery::
-                                                        FreshDeviceRecovery::new(engine)
-                                                        .create_or_resume(
-                                                            prepared.request,
-                                                            Some(staged_ref),
-                                                        )
-                                                        .await?,
-                                                )
-                                            } else {
-                                                None
-                                            };
-                                            anyhow::Ok((authoritative, outcome, transaction))
+                                                    .await
+                                                }
+                                            }
                                         },
                                     )
                                     .await;
                                     match result {
-                                        Ok((session, outcome, transaction))
-                                            if outcome.state
-                                                == arkret_sdk::SessionState::Verified =>
-                                        {
-                                            let checkpoint = crate::security_transaction::FreshDeviceRecoveryCheckpoint::from_verified_session(&session)
-                                                .and_then(|mut checkpoint| {
-                                                    if let Some(transaction) = &transaction {
-                                                        checkpoint.observe_transaction(transaction)?;
-                                                    }
-                                                    Ok(checkpoint)
-                                                });
-                                            match checkpoint {
-                                                Ok(checkpoint) => {
-                                                    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                                                    match crate::security_transaction::save_fresh_device_recovery_checkpoint(
-                                                        secure_store.as_ref(),
-                                                        &checkpoint,
-                                                    )
-                                                    .await
-                                                    {
-                                                        Ok(()) => {
-                                                            fresh_recovery_checkpoint.set(Some(checkpoint));
-                                                            let progress = transaction
-                                                                .as_ref()
-                                                                .map(|transaction| format!(
-                                                                    " Bound transaction {} is server-authoritative at {:?}.",
-                                                                    transaction.transaction_id,
-                                                                    transaction.state
-                                                                ))
-                                                                .unwrap_or_else(|| {
-                                                                    " Enrollment-authority transaction preparation is still required."
-                                                                        .to_owned()
-                                                                });
-                                                            fresh_recovery_status.set(format!(
-                                                                "Recovery session {} is verified and durably checkpointed ({:?}).{} This device is not ready yet.",
-                                                                session.recovery_session_id,
-                                                                session.identity_model,
-                                                                progress
-                                                            ));
-                                                        }
-                                                        Err(error) => fresh_recovery_status.set(format!(
-                                                            "Recovery proof verified, but the durable public checkpoint failed: {error}. No transaction was started."
-                                                        )),
-                                                    }
-                                                }
-                                                Err(error) => fresh_recovery_status.set(format!(
-                                                    "Recovery proof verified, but the authoritative session could not be checkpointed: {error}. No transaction was started."
-                                                )),
-                                            }
-                                        }
-                                        Ok((_session, outcome, _transaction)) => {
+                                        Ok(completed) if completed.readiness.is_ready() => {
                                             fresh_recovery_status.set(format!(
-                                                "Recovery proof was not verified (state: {:?}); no device-ready state was granted.",
-                                                outcome.state
+                                                "Recovery complete. Transaction {} is durably authorized; {} encrypted history item(s) were restored.",
+                                                completed.transaction_id,
+                                                completed.restore_report.restored
                                             ));
                                         }
+                                        Ok(completed) => fresh_recovery_status.set(format!(
+                                            "Recovery transaction {} is durable but readiness evidence is incomplete; this device remains recovery_pending.",
+                                            completed.transaction_id
+                                        )),
                                         Err(error) => {
                                             fresh_recovery_status.set(format!(
                                                 "Recovery proof failed safely: {}",
@@ -686,76 +618,6 @@ pub fn RecoveryPanel(
                             }
                         },
                         if fresh_recovery_running() { "Verifying…" } else { "Start durable recovery" }
-                    }
-                    if fresh_recovery_checkpoint()
-                        .as_ref()
-                        .and_then(|checkpoint| checkpoint.transaction_id.as_ref())
-                        .is_some()
-                    {
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            "data-testid": "fresh-device-recovery-resume",
-                            disabled: fresh_recovery_running(),
-                            onclick: {
-                                let base = base_url.clone();
-                                move |_| {
-                                    let Some(mut checkpoint) = fresh_recovery_checkpoint() else {
-                                        return;
-                                    };
-                                    let Some(transaction_id) = checkpoint.transaction_id.clone() else {
-                                        return;
-                                    };
-                                    fresh_recovery_running.set(true);
-                                    fresh_recovery_status.set(
-                                        "Reading authoritative transaction progress…".to_owned(),
-                                    );
-                                    let base = base.clone();
-                                    let api_token = token();
-                                    spawn(async move {
-                                        let result = with_authed_api(&base, api_token, |api| async move {
-                                            let secure_store =
-                                                crate::secure_key_store::default_secure_key_store("inkson");
-                                            let engine = crate::security_transaction::security_transaction_engine(
-                                                api.sdk_http_client()?,
-                                                secure_store.clone(),
-                                            );
-                                            let recovery = crate::fresh_device_recovery::FreshDeviceRecovery::new(engine);
-                                            let transaction = match recovery
-                                                .retry_byte_identical_pending(&transaction_id)
-                                                .await?
-                                            {
-                                                Some(transaction) => transaction,
-                                                None => recovery.refresh(&transaction_id).await?,
-                                            };
-                                            checkpoint.observe_transaction(&transaction)?;
-                                            crate::security_transaction::save_fresh_device_recovery_checkpoint(
-                                                secure_store.as_ref(),
-                                                &checkpoint,
-                                            )
-                                            .await?;
-                                            anyhow::Ok((checkpoint, transaction))
-                                        })
-                                        .await;
-                                        match result {
-                                            Ok((checkpoint, transaction)) => {
-                                                fresh_recovery_checkpoint.set(Some(checkpoint));
-                                                fresh_recovery_status.set(format!(
-                                                    "Server state: {:?}; next required step: {:?}. This device is not ready until terminal attestation, grant promotion, durable device/control projection, and restore report all pass.",
-                                                    transaction.state,
-                                                    transaction.next_required_step
-                                                ));
-                                            }
-                                            Err(error) => fresh_recovery_status.set(format!(
-                                                "Recovery resume failed safely: {}",
-                                                error.display()
-                                            )),
-                                        }
-                                        fresh_recovery_running.set(false);
-                                    });
-                                }
-                            },
-                            "Resume durable recovery"
-                        }
                     }
                 }
                 if !fresh_recovery_status().is_empty() {

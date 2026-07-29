@@ -446,8 +446,9 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
     // Server must NOT already hold an `mls_account_secret` backup. (When it
     // does, the restore/unlock path owns the strand — backup and restore are
     // mutually exclusive by this exact check, so we can't double-prompt.)
+    let actor_for_probe = actor_id.clone();
     let payload = match with_authed_api(&base_url, token.clone(), |api| async move {
-        crate::mls::account_recovery::fetch_mls_restore_payload(&api).await
+        crate::mls::account_recovery::fetch_mls_restore_payload(&api, &actor_for_probe).await
     })
     .await
     {

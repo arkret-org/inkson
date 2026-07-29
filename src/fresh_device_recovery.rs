@@ -17,6 +17,7 @@ use arkret_models_crypto::{
     RecoverySessionState, RecoveryWelcomeRealmSummary, TypedClientStepAttestation,
     TypedSecurityTransactionContinueRequest,
 };
+use arkret_wire::security_transaction::PreparedEventSubmissionBatch;
 use arkret_wire::{
     Audience, AuthorizationLease, AuthorizationLeaseId, BackupObjectRef, BackupRotationBinding,
     BackupRotationKind, BackupRotationPlan, BackupSeriesId, CLIENT_STEP_ATTESTATION_SIGNED_FIELDS,
@@ -365,6 +366,138 @@ impl Drop for RecoveryWordsInput {
     fn drop(&mut self) {
         self.words.zeroize();
     }
+}
+
+pub fn sign_recovery_session_lease(
+    session: &arkret_sdk::RecoverySessionState,
+    event: &arkret_sdk::Event,
+    issuer_verification_method: &str,
+    issuer_key: &ed25519_dalek::SigningKey,
+    issued_at: DateTime<Utc>,
+) -> anyhow::Result<AuthorizationLease> {
+    if session.state != arkret_sdk::SessionState::Verified {
+        anyhow::bail!("recovery publication lease requires a verified session");
+    }
+    if issued_at < session.created_at || issued_at >= session.expires_at {
+        anyhow::bail!("recovery publication lease timestamp is outside the verified session");
+    }
+    let context = &session.publication_authority_context;
+    if context.scope_ref != event.scope_ref
+        || !context.allowed_actions.iter().any(|action| {
+            serde_json::to_value(action)
+                .ok()
+                .as_ref()
+                .and_then(serde_json::Value::as_str)
+                == Some(event.kind.as_str())
+        })
+    {
+        anyhow::bail!("recovery publication context does not cover the Event");
+    }
+    let matching_rule = context
+        .authority_set_policy
+        .authorization_rules
+        .iter()
+        .find(|rule| {
+            rule.allowed_actions
+                .iter()
+                .any(|action| action == event.kind.as_str())
+                && rule.threshold == 1
+                && rule
+                    .issuers
+                    .iter()
+                    .any(|issuer| issuer.verification_method.as_str() == issuer_verification_method)
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "recovery publication requires one snapshot rule issued by the recovered authority"
+            )
+        })?;
+    let mut lease = AuthorizationLease {
+        authorization_lease_id: AuthorizationLeaseId::new(format!(
+            "ak:authorization_lease:{}",
+            crate::operation::uuid_v7()
+        ))?,
+        basis_ref: context.basis_ref.clone(),
+        actor_id: event.actor_id.clone(),
+        device_id: session.requesting_device_id.clone(),
+        scope_ref: context.scope_ref.clone(),
+        action: event.kind.as_str().to_owned(),
+        authorization_rule_id: matching_rule.rule_id.clone(),
+        risk_tier: RiskTier::High,
+        issued_at,
+        expires_at: std::cmp::min(
+            session.expires_at,
+            issued_at + RiskTier::High.max_lease_ttl(),
+        ),
+        authority_set_ref: context.authority_set_ref.clone(),
+        authority_set_policy: context.authority_set_policy.clone(),
+        proofs: Vec::new(),
+    };
+    let mut proof = PayloadProof {
+        kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+        alg: "EdDSA".to_owned(),
+        verification_method: issuer_verification_method.to_owned(),
+        payload_digest: lease.lease_digest()?,
+        created_at: issued_at,
+        domain: None,
+        audience: None,
+        proof_purpose: None,
+        jws: String::new(),
+    };
+    proof.jws = arkret_signatures::sign_eddsa_detached_jws(
+        issuer_key,
+        &lease.proof_binding_bytes(&proof)?,
+    )?;
+    lease.proofs.push(proof);
+    lease.validate_structural()?;
+    Ok(lease)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn cross_signing_recovery_create_request(
+    session: &arkret_sdk::RecoverySessionState,
+    proof_digest: Hash,
+    coordinator_service_id: Did,
+    transaction_id: TransactionId,
+    terminal_receipt_id: ReceiptId,
+    expires_at: DateTime<Utc>,
+    authorize_submission: EventInitialSubmission,
+    device_list_update_submission: EventInitialSubmission,
+) -> anyhow::Result<RecoveryTransactionCreateRequest> {
+    session.validate()?;
+    if session.state != arkret_sdk::SessionState::Verified
+        || session.identity_model != arkret_sdk::RecoveryIdentityModel::CrossSigning
+    {
+        anyhow::bail!("cross-signing recovery requires a verified A-model session");
+    }
+    let generation = session
+        .ssk_generation
+        .filter(|value| *value > 0)
+        .ok_or_else(|| anyhow::anyhow!("cross-signing recovery session omits SSK generation"))?;
+    if expires_at > session.expires_at {
+        anyhow::bail!("recovery transaction cannot outlive its verified recovery session");
+    }
+    let snapshot_digest = Hash::new(arkret_sdk::canonical::canonical_sha256(session)?)?;
+    let batch = PreparedEventSubmissionBatch::new(
+        coordinator_service_id,
+        EventsSubmitBatchRequestBody {
+            events: vec![authorize_submission, device_list_update_submission],
+        },
+    )?;
+    RecoveryTransactionCreateRequest::from_cross_signing_prepared(
+        transaction_id,
+        session.principal_id.clone(),
+        expires_at,
+        session.recovery_session_id.clone(),
+        session.requesting_device_id.clone(),
+        terminal_receipt_id,
+        snapshot_digest,
+        proof_digest,
+        generation,
+        generation,
+        batch,
+    )
+    .map_err(anyhow::Error::from)
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -806,6 +939,7 @@ pub struct RecoveryTerminalObservation {
     pub backup_classes_unlocked: Vec<RecoveryBackupClassUnlocked>,
     pub welcome_count: u64,
     pub welcome_realm_summary: Option<Vec<RecoveryWelcomeRealmSummary>>,
+    pub started_at: DateTime<Utc>,
     pub completed_at: DateTime<Utc>,
 }
 
@@ -981,7 +1115,7 @@ pub fn sign_terminal_receipt_continue(
         welcome_realm_summary: observation.welcome_realm_summary,
         outcome: RecoveryReceiptOutcome::Completed,
         outcome_reason_code: None,
-        started_at: resource.created_at,
+        started_at: observation.started_at,
         completed_at: observation.completed_at,
         auth_data: RecoveryReceiptAuthData {
             verification_method: signer.verification_method().to_owned(),

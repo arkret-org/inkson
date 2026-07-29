@@ -1,6 +1,7 @@
 //! Backup / rotation upload flow and superseded-backup cleanup.
 
 use anyhow::{Result, anyhow};
+use arkret_wire::{BackupRotationKind, Did};
 use serde_json::Value;
 
 use super::backup_body::{
@@ -9,10 +10,7 @@ use super::backup_body::{
     build_mls_private_plaintext_backup_body_with_kek,
 };
 use super::restore::fetch_mls_restore_payload;
-use super::selection::{
-    select_mls_account_secret_backup, select_mls_account_secret_recovery_public_key_backup,
-    select_mls_history_tail_for_realm, select_mls_private_plaintext_backup,
-};
+use super::selection::{select_mls_history_tail_for_realm, select_mls_private_plaintext_backup};
 use super::series::{apply_next_series, fresh_backup_id};
 use crate::recovery_crypto::derive_vault_kek;
 
@@ -21,6 +19,105 @@ fn passphrase_is_blank(passphrase: &[u8]) -> bool {
         || std::str::from_utf8(passphrase)
             .map(|text| text.trim().is_empty())
             .unwrap_or(false)
+}
+
+async fn ensure_initial_active_series(
+    api: &crate::transport::TransportClient,
+    actor_id: &str,
+    device_id: &str,
+    backup_kind: BackupRotationKind,
+    series_id: &str,
+) -> Result<()> {
+    let wire_kind = super::rotation_transaction::wire_backup_kind(backup_kind);
+    let payload = fetch_mls_restore_payload(api, actor_id).await?;
+    if let Some(active) = super::selection::active_series_id_for_backup_class(&payload, wire_kind) {
+        if active == series_id {
+            return Ok(());
+        }
+        return Err(anyhow!(
+            "uploaded {wire_kind} envelope does not belong to the authoritative active series"
+        ));
+    }
+
+    let principal = Did::new(actor_id.to_owned())?;
+    let control_realm = arkret_sdk::principal_control_realm_id(&principal);
+    let http = api.sdk_http_client()?;
+    let submitter = api.event_submitter()?;
+    let frontier = submitter
+        .events_frontier_realm_seal_view(&control_realm)
+        .await?;
+    let trust_anchor = super::rotation_transaction::current_controller_backup_trust_anchor(
+        &http, actor_id, device_id,
+    )
+    .await?;
+    let event = super::rotation_transaction::build_active_series_event(
+        actor_id,
+        backup_kind,
+        series_id,
+        1,
+        &[],
+        &frontier,
+        &trust_anchor,
+    )?;
+    submitter
+        .submit_sdk_events_batch(control_realm.as_str(), vec![event], None)
+        .await?;
+
+    let verified = fetch_mls_restore_payload(api, actor_id).await?;
+    if super::selection::active_series_id_for_backup_class(&verified, wire_kind) != Some(series_id)
+    {
+        return Err(anyhow!(
+            "accepted {wire_kind} active-series Event did not become authoritative"
+        ));
+    }
+    Ok(())
+}
+
+async fn fetch_active_series_tail(
+    api: &crate::transport::TransportClient,
+    list_payload: &Value,
+    actor_id: &str,
+    device_id: &str,
+    backup_kind: BackupRotationKind,
+) -> Result<Option<Value>> {
+    let wire_kind = super::rotation_transaction::wire_backup_kind(backup_kind);
+    let series_id = match super::selection::active_series_id_for_backup_class(
+        list_payload,
+        wire_kind,
+    ) {
+        Some(series_id) => series_id.to_owned(),
+        None => {
+            let series_ids = super::selection::iter_backup_bodies(list_payload)
+                .filter(|body| body.get("backup_kind").and_then(Value::as_str) == Some(wire_kind))
+                .filter_map(|body| body.get("series_id").and_then(Value::as_str))
+                .collect::<std::collections::BTreeSet<_>>();
+            if series_ids.is_empty() {
+                return Ok(None);
+            }
+            if series_ids.len() != 1 {
+                return Err(anyhow!(
+                    "{wire_kind} backups have multiple series without an authoritative active-series Event"
+                ));
+            }
+            let series_id = *series_ids
+                .first()
+                .ok_or_else(|| anyhow!("{wire_kind} series inventory changed unexpectedly"))?;
+            ensure_initial_active_series(api, actor_id, device_id, backup_kind, series_id).await?;
+            (*series_id).to_owned()
+        }
+    };
+    let metadata = super::selection::iter_backup_bodies(list_payload)
+        .filter(|body| body.get("backup_kind").and_then(Value::as_str) == Some(wire_kind))
+        .filter(|body| body.get("series_id").and_then(Value::as_str) == Some(series_id.as_str()))
+        .max_by_key(|body| super::selection::backup_series_seq(body))
+        .ok_or_else(|| anyhow!("authoritative {wire_kind} series has no backup envelope"))?;
+    if metadata.get("ciphertext").and_then(Value::as_str).is_some() {
+        return Ok(Some(metadata.clone()));
+    }
+    crate::key_backup::fetch_key_backup_with_active_unlock_proof(api, metadata, actor_id, device_id)
+        .await
+        .map(Some)
+        .map_err(|error| anyhow!("fetch active {wire_kind} series tail: {error}"))
 }
 
 /// Wrap the local account MLS secret behind a freshly-derived recovery KEK and
@@ -47,17 +144,15 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
         .map_err(|err| anyhow!("load account MLS secret: {err}"))?
         .ok_or_else(|| anyhow!("no local account MLS secret to back up"))?;
 
-    let list_payload = fetch_mls_restore_payload(api).await?;
-    let previous_account_backup = match select_mls_account_secret_backup(&list_payload) {
-        Some(metadata) => Some(
-            crate::key_backup::fetch_key_backup_with_active_unlock_proof(
-                api, &metadata, actor_id, device_id,
-            )
-            .await
-            .map_err(|err| anyhow!("fetch previous account MLS secret backup: {err}"))?,
-        ),
-        None => None,
-    };
+    let list_payload = fetch_mls_restore_payload(api, actor_id).await?;
+    let previous_account_backup = fetch_active_series_tail(
+        api,
+        &list_payload,
+        actor_id,
+        device_id,
+        BackupRotationKind::SecretStorage,
+    )
+    .await?;
     // Fresh backup_id per series link (see `apply_next_series`).
     let account_backup_id = fresh_backup_id();
 
@@ -71,9 +166,22 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
         stored.version,
     )?;
     apply_next_series(previous_account_backup.as_ref(), &mut account_body)?;
+    let account_series_id = account_body
+        .get("series_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("account MLS secret backup omitted series_id"))?
+        .to_owned();
     api.put_key_backup(&account_backup_id, account_body)
         .await
         .map_err(|err| anyhow!("upload account MLS secret backup: {err}"))?;
+    ensure_initial_active_series(
+        api,
+        actor_id,
+        device_id,
+        BackupRotationKind::SecretStorage,
+        &account_series_id,
+    )
+    .await?;
     crate::mls::runtime::mark_account_mls_secret_verified(secure_store, actor_id)
         .map_err(|err| anyhow!("mark uploaded account MLS secret verified: {err}"))?;
 
@@ -120,18 +228,15 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
         .map_err(|err| anyhow!("load account MLS secret: {err}"))?
         .ok_or_else(|| anyhow!("no local account MLS secret to back up"))?;
 
-    let list_payload = fetch_mls_restore_payload(api).await?;
-    let previous_account_backup =
-        match select_mls_account_secret_recovery_public_key_backup(&list_payload) {
-            Some(metadata) => Some(
-                crate::key_backup::fetch_key_backup_with_active_unlock_proof(
-                    api, &metadata, actor_id, device_id,
-                )
-                .await
-                .map_err(|err| anyhow!("fetch previous recovery-key account backup: {err}"))?,
-            ),
-            None => None,
-        };
+    let list_payload = fetch_mls_restore_payload(api, actor_id).await?;
+    let previous_account_backup = fetch_active_series_tail(
+        api,
+        &list_payload,
+        actor_id,
+        device_id,
+        BackupRotationKind::SecretStorage,
+    )
+    .await?;
 
     // SEC-05: stamp the actor's currently-accepted recovery policy into the
     // backup's `recovery_policy_ref` so a fresh-device restore can verify it
@@ -157,9 +262,22 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
         recovery_policy_ref,
         previous_account_backup.as_ref(),
     )?;
+    let account_series_id = account_body
+        .get("series_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("recovery-key account backup omitted series_id"))?
+        .to_owned();
     api.put_key_backup(&account_backup_id, account_body)
         .await
         .map_err(|err| anyhow!("upload recovery-key account MLS secret backup: {err}"))?;
+    ensure_initial_active_series(
+        api,
+        actor_id,
+        device_id,
+        BackupRotationKind::SecretStorage,
+        &account_series_id,
+    )
+    .await?;
     crate::mls::runtime::mark_account_mls_secret_verified(secure_store, actor_id)
         .map_err(|err| anyhow!("mark uploaded account MLS secret verified: {err}"))?;
 
@@ -207,7 +325,7 @@ pub async fn fetch_mls_private_plaintext_backup_body(
     actor_id: &str,
     device_id: &str,
 ) -> Result<Option<Value>> {
-    let list_payload = fetch_mls_restore_payload(api).await?;
+    let list_payload = fetch_mls_restore_payload(api, actor_id).await?;
     let Some(metadata) = select_mls_private_plaintext_backup(&list_payload) else {
         return Ok(None);
     };
@@ -231,7 +349,7 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
     actor_id: &str,
     device_id: &str,
     sidecar_json: &[u8],
-    previous_backup: Option<&Value>,
+    _previous_backup: Option<&Value>,
 ) -> Result<(String, Value)> {
     let stored = crate::mls::runtime::load_account_mls_secret(secure_store, actor_id)
         .map_err(|err| anyhow!("load account MLS secret: {err}"))?
@@ -242,6 +360,15 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
     // Fresh backup_id per series link (see `apply_next_series`).
     let backup_id = fresh_backup_id();
 
+    let list_payload = fetch_mls_restore_payload(api, actor_id).await?;
+    let previous_backup = fetch_active_series_tail(
+        api,
+        &list_payload,
+        actor_id,
+        device_id,
+        BackupRotationKind::SecretStorage,
+    )
+    .await?;
     let mut body = build_mls_private_plaintext_backup_body_with_kek(
         &backup_id,
         actor_id,
@@ -249,11 +376,23 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
         &kek,
         sidecar_json,
     )?;
-    apply_next_series(previous_backup, &mut body)?;
+    apply_next_series(previous_backup.as_ref(), &mut body)?;
     let (_, sent_body) = api
         .put_key_backup_returning_sent_body(&backup_id, body)
         .await
         .map_err(|err| anyhow!("upload private plaintext backup: {err}"))?;
+    let series_id = sent_body
+        .get("series_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("private plaintext backup omitted series_id"))?;
+    ensure_initial_active_series(
+        api,
+        actor_id,
+        device_id,
+        BackupRotationKind::SecretStorage,
+        series_id,
+    )
+    .await?;
 
     Ok((backup_id, sent_body))
 }
@@ -272,7 +411,7 @@ pub async fn fetch_mls_history_tail_for_realm(
     device_id: &str,
     realm_id: &str,
 ) -> Result<Option<Value>> {
-    let list_payload = fetch_mls_restore_payload(api).await?;
+    let list_payload = fetch_mls_restore_payload(api, actor_id).await?;
     let Some(tail) = select_mls_history_tail_for_realm(&list_payload, realm_id) else {
         return Ok(None);
     };
@@ -306,13 +445,22 @@ pub async fn upload_mls_history_backup_with_previous(
     snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,
     actor_id: &str,
     device_id: &str,
-    previous: Option<&Value>,
+    _previous: Option<&Value>,
 ) -> Result<(String, Value)> {
+    let list_payload = fetch_mls_restore_payload(api, actor_id).await?;
+    let previous = fetch_active_series_tail(
+        api,
+        &list_payload,
+        actor_id,
+        device_id,
+        BackupRotationKind::MlsHistory,
+    )
+    .await?;
     let (backup_id, mut body) =
         crate::mls::runtime::build_mls_history_backup_body(snapshot, actor_id, device_id)
             .map_err(|error| anyhow!(error.user_message()))?;
     if previous.is_some() {
-        apply_next_series(previous, &mut body)?;
+        apply_next_series(previous.as_ref(), &mut body)?;
         crate::key_backup::sign_key_backup_with_active_device(&mut body, device_id)
             .map_err(|err| anyhow!("re-sign mls_history successor envelope: {err}"))?;
     }
@@ -320,5 +468,17 @@ pub async fn upload_mls_history_backup_with_previous(
         .put_key_backup_returning_sent_body(&backup_id, body)
         .await
         .map_err(|err| anyhow!("upload mls_history backup: {err}"))?;
+    let series_id = sent_body
+        .get("series_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("mls_history backup omitted series_id"))?;
+    ensure_initial_active_series(
+        api,
+        actor_id,
+        device_id,
+        BackupRotationKind::MlsHistory,
+        series_id,
+    )
+    .await?;
     Ok((backup_id, sent_body))
 }

@@ -15,86 +15,8 @@ use zeroize::Zeroizing;
 
 const SECURITY_TRANSACTION_STATE_KEY: &str = "security_transaction.state.v1";
 const SECURITY_TRANSACTION_STAGED_SECRET_KEY: &str = "security_transaction.staged_secret.v1";
+const PENDING_FRESH_DEVICE_RECOVERY_KEY: &str = "fresh_device_recovery.pending.v1";
 const SECURITY_TRANSACTION_STAGED_SECRET_REF_PREFIX: &str = "secure-store://security-transaction/";
-const FRESH_DEVICE_RECOVERY_CHECKPOINT_KEY: &str = "fresh_device_recovery.checkpoint.v1";
-
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FreshDeviceRecoveryCheckpoint {
-    pub principal_id: arkret_sdk::Did,
-    pub replacement_device_id: arkret_sdk::DeviceId,
-    pub recovery_session_id: arkret_sdk::RecoverySessionId,
-    pub identity_model: arkret_models_crypto::RecoveryIdentityModel,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub transaction_id: Option<arkret_sdk::TransactionId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_transaction_state: Option<arkret_wire::SecurityTransactionState>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_required_step: Option<arkret_wire::SecurityTransactionStep>,
-    #[serde(default)]
-    pub holder_bound_grant_refreshed: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub restore_report_digest: Option<arkret_sdk::Hash>,
-    #[serde(with = "arkret_sdk::canonical::serde_helpers::canonical_timestamp")]
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-impl FreshDeviceRecoveryCheckpoint {
-    pub fn from_verified_session(
-        session: &arkret_models_crypto::RecoverySessionState,
-    ) -> anyhow::Result<Self> {
-        session.validate()?;
-        if session.state != arkret_models_crypto::SessionState::Verified {
-            anyhow::bail!("fresh-device checkpoint requires a verified recovery session");
-        }
-        Ok(Self {
-            principal_id: session.principal_id.clone(),
-            replacement_device_id: session.requesting_device_id.clone(),
-            recovery_session_id: session.recovery_session_id.clone(),
-            identity_model: session.identity_model,
-            transaction_id: session.transaction_id.clone(),
-            last_transaction_state: None,
-            next_required_step: None,
-            holder_bound_grant_refreshed: false,
-            restore_report_digest: None,
-            updated_at: arkret_sdk::canonical::normalize_timestamp_canonical(
-                crate::clock::now_utc(),
-            ),
-        })
-    }
-
-    pub fn observe_transaction(
-        &mut self,
-        transaction: &arkret_wire::SecurityTransaction,
-    ) -> anyhow::Result<()> {
-        if transaction.principal_id != self.principal_id {
-            anyhow::bail!("recovery transaction principal differs from checkpoint");
-        }
-        let binding = match &transaction.binding {
-            arkret_wire::SecurityTransactionBinding::Recovery(binding) => binding,
-            arkret_wire::SecurityTransactionBinding::SecurityRotation(_) => {
-                anyhow::bail!("fresh-device checkpoint cannot observe a rotation transaction")
-            }
-        };
-        let replacement_device_id = match binding {
-            arkret_wire::RecoveryBinding::CrossSigning(binding) => &binding.replacement_device_id,
-            arkret_wire::RecoveryBinding::EnrollmentAuthority(binding) => {
-                &binding.replacement_device_id
-            }
-        };
-        if binding.recovery_session_id() != &self.recovery_session_id
-            || replacement_device_id != &self.replacement_device_id
-        {
-            anyhow::bail!("recovery transaction binding differs from checkpoint");
-        }
-        self.transaction_id = Some(transaction.transaction_id.clone());
-        self.last_transaction_state = Some(transaction.state);
-        self.next_required_step = transaction.next_required_step;
-        self.updated_at =
-            arkret_sdk::canonical::normalize_timestamp_canonical(crate::clock::now_utc());
-        Ok(())
-    }
-}
 
 #[derive(Clone)]
 pub struct InksonSecurityTransactionStore {
@@ -175,6 +97,64 @@ impl InksonSecurityTransactionStore {
         self.secure_store
             .get_secret_bytes(&Self::staged_secret_key(transaction_id))
             .map_err(|error| garth::Error::Protocol(error.to_string()))
+    }
+}
+
+fn pending_fresh_device_recovery_storage_key() -> String {
+    crate::secure_key_store::account_scoped_device_key(PENDING_FRESH_DEVICE_RECOVERY_KEY)
+}
+
+pub(crate) async fn store_pending_fresh_device_recovery(
+    secure_store: &(dyn SecureKeyStore + Send + Sync),
+    transaction_id: &arkret_sdk::TransactionId,
+) -> garth::Result<()> {
+    let bytes = arkret_sdk::canonical::canonical_json_bytes(&serde_json::json!({
+        "transaction_id": transaction_id,
+    }))
+    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    secure_store
+        .put_secret(
+            &pending_fresh_device_recovery_storage_key(),
+            &bytes,
+            PutSecretOptions {
+                durability: SecretDurability::DurableBeforeReturn,
+                class: SecretClass::General,
+            },
+        )
+        .await
+        .map_err(|error| garth::Error::Protocol(error.to_string()))
+}
+
+pub(crate) fn pending_fresh_device_recovery(
+    secure_store: &(dyn SecureKeyStore + Send + Sync),
+) -> garth::Result<Option<arkret_sdk::TransactionId>> {
+    let Some(bytes) = secure_store
+        .get_secret_bytes(&pending_fresh_device_recovery_storage_key())
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?
+    else {
+        return Ok(None);
+    };
+    let value: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    let transaction_id = value
+        .get("transaction_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            garth::Error::Protocol(
+                "pending fresh-device recovery omitted transaction_id".to_owned(),
+            )
+        })?;
+    arkret_sdk::TransactionId::new(transaction_id.to_owned())
+        .map(Some)
+        .map_err(|error| garth::Error::Protocol(error.to_string()))
+}
+
+pub(crate) fn clear_pending_fresh_device_recovery(
+    secure_store: &(dyn SecureKeyStore + Send + Sync),
+) -> garth::Result<()> {
+    match secure_store.delete_secret(&pending_fresh_device_recovery_storage_key()) {
+        Ok(()) | Err(SecureKeyStoreError::NotFound) => Ok(()),
+        Err(error) => Err(garth::Error::Protocol(error.to_string())),
     }
 }
 
@@ -325,57 +305,34 @@ pub fn security_transaction_engine(
     garth::SecurityTransactionEngine::new(client, InksonSecurityTransactionStore::new(secure_store))
 }
 
-fn fresh_device_recovery_checkpoint_storage_key(principal_id: &arkret_sdk::Did) -> String {
-    crate::secure_key_store::account_scoped_device_key(&format!(
-        "{FRESH_DEVICE_RECOVERY_CHECKPOINT_KEY}.{}",
-        arkret_sdk::canonical::sha256_digest(principal_id.as_str().as_bytes())
-    ))
-}
-
-pub fn load_fresh_device_recovery_checkpoint(
-    secure_store: &dyn SecureKeyStore,
-    principal_id: &arkret_sdk::Did,
-) -> anyhow::Result<Option<FreshDeviceRecoveryCheckpoint>> {
-    secure_store
-        .get_secret_bytes(&fresh_device_recovery_checkpoint_storage_key(principal_id))
-        .map_err(anyhow::Error::msg)?
-        .map(|bytes| serde_json::from_slice(&bytes).map_err(anyhow::Error::from))
-        .transpose()
-}
-
-pub async fn save_fresh_device_recovery_checkpoint(
-    secure_store: &dyn SecureKeyStore,
-    checkpoint: &FreshDeviceRecoveryCheckpoint,
-) -> anyhow::Result<()> {
-    let value = serde_json::to_value(checkpoint)?;
-    audit_public_json_value("fresh_device_recovery_checkpoint", &value)
-        .map_err(anyhow::Error::msg)?;
-    secure_store
-        .put_secret(
-            &fresh_device_recovery_checkpoint_storage_key(&checkpoint.principal_id),
-            &serde_json::to_vec(checkpoint)?,
-            PutSecretOptions {
-                durability: SecretDurability::DurableBeforeReturn,
-                class: SecretClass::General,
-            },
-        )
-        .await
-        .map_err(anyhow::Error::msg)
-}
-
-pub fn clear_fresh_device_recovery_checkpoint(
-    secure_store: &dyn SecureKeyStore,
-    principal_id: &arkret_sdk::Did,
-) -> anyhow::Result<()> {
-    match secure_store.delete_secret(&fresh_device_recovery_checkpoint_storage_key(principal_id)) {
-        Ok(()) | Err(SecureKeyStoreError::NotFound) => Ok(()),
-        Err(error) => Err(anyhow::Error::msg(error)),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn pending_fresh_device_recovery_pointer_round_trips_and_clears() {
+        let secure_store = garth::MemorySecureKeyStore::new();
+        let transaction_id =
+            arkret_sdk::TransactionId::new("ak:transaction:01904100-0000-7000-8000-abcdefabcda0")
+                .unwrap();
+
+        store_pending_fresh_device_recovery(&secure_store, &transaction_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            pending_fresh_device_recovery(&secure_store)
+                .unwrap()
+                .as_ref(),
+            Some(&transaction_id)
+        );
+        clear_pending_fresh_device_recovery(&secure_store).unwrap();
+        clear_pending_fresh_device_recovery(&secure_store).unwrap();
+        assert!(
+            pending_fresh_device_recovery(&secure_store)
+                .unwrap()
+                .is_none()
+        );
+    }
 
     #[tokio::test]
     async fn adapter_round_trips_public_plan_without_plaintext_secret() {
@@ -449,54 +406,6 @@ mod tests {
                 .get_secret_bytes(&InksonSecurityTransactionStore::staged_secret_key(
                     &transaction_id
                 ))
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[tokio::test]
-    async fn fresh_device_checkpoint_round_trips_without_secret_material() {
-        let secure_store = garth::MemorySecureKeyStore::new();
-        let principal_id = arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap();
-        let checkpoint = FreshDeviceRecoveryCheckpoint {
-            principal_id: principal_id.clone(),
-            replacement_device_id: arkret_sdk::DeviceId::new(
-                "ak:device:01904100-0000-7000-8000-abcdefabcdef".to_owned(),
-            )
-            .unwrap(),
-            recovery_session_id: arkret_sdk::RecoverySessionId::new(
-                "ak:recovery_session:01904100-0000-7000-8000-abcdefabcdef".to_owned(),
-            )
-            .unwrap(),
-            identity_model: arkret_models_crypto::RecoveryIdentityModel::CrossSigning,
-            transaction_id: Some(
-                arkret_sdk::TransactionId::new(
-                    "ak:transaction:01904100-0000-7000-8000-abcdefabcdef".to_owned(),
-                )
-                .unwrap(),
-            ),
-            last_transaction_state: Some(arkret_wire::SecurityTransactionState::Running),
-            next_required_step: Some(arkret_wire::SecurityTransactionStep::SubmitAuthorizeUnit),
-            holder_bound_grant_refreshed: false,
-            restore_report_digest: None,
-            updated_at: arkret_sdk::canonical::normalize_timestamp_canonical(
-                crate::clock::now_utc(),
-            ),
-        };
-        save_fresh_device_recovery_checkpoint(&secure_store, &checkpoint)
-            .await
-            .unwrap();
-        let loaded = load_fresh_device_recovery_checkpoint(&secure_store, &principal_id)
-            .unwrap()
-            .unwrap();
-        assert_eq!(loaded, checkpoint);
-        let persisted = serde_json::to_string(&loaded).unwrap();
-        assert!(!persisted.contains("mnemonic"));
-        assert!(!persisted.contains("seed"));
-        assert!(!persisted.contains("private"));
-        clear_fresh_device_recovery_checkpoint(&secure_store, &principal_id).unwrap();
-        assert!(
-            load_fresh_device_recovery_checkpoint(&secure_store, &principal_id)
                 .unwrap()
                 .is_none()
         );

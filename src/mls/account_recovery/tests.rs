@@ -67,6 +67,7 @@ fn active_series_record(backup_kind: &str, active_series_id: &str) -> Value {
         "actor_id": ACTOR,
         "backup_kind": backup_kind,
         "active_series_id": active_series_id,
+        "series_pointer_version": 1,
         "previous_series_ids": [],
     })
 }
@@ -1100,7 +1101,7 @@ fn restore_brings_back_the_sidecar_into_the_store() {
     // The sidecar is encrypted under the ACCOUNT SECRET (not the passphrase).
     let (_json, mut sidecar_body) = wrap_sidecar();
     let account_secret_body = wrap();
-    sidecar_body["series_id"] = account_secret_body["series_id"].clone();
+    apply_next_series(Some(&account_secret_body), &mut sidecar_body).unwrap();
 
     let payload = payload_with_inferred_active_series(vec![
         account_secret_body,

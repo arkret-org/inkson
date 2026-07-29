@@ -155,13 +155,19 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                     session.clone(),
                     |api| async move {
                         let payload = if should_wait_for_projection {
-                            crate::mls::account_recovery::fetch_mls_restore_payload_after_projection(&api).await?
+                            crate::mls::account_recovery::fetch_mls_restore_payload_after_projection(
+                                &api,
+                                &actor_for_sidecar_restore,
+                            ).await?
                         } else {
                             // A brand-new account has no MLS material whose
                             // projection could be racing. One list is enough;
                             // the encrypted-state inputs in the detection key
                             // will schedule a retry if that changes later.
-                            crate::mls::account_recovery::fetch_mls_restore_payload(&api).await?
+                            crate::mls::account_recovery::fetch_mls_restore_payload(
+                                &api,
+                                &actor_for_sidecar_restore,
+                            ).await?
                         };
                         let history_payload_for_local_restore = if has_local_account_secret {
                             Some(

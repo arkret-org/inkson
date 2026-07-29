@@ -3,8 +3,8 @@
 use serde_json::Value;
 
 use super::backup_body::{
-    is_mls_account_secret_backup, is_mls_private_plaintext_backup,
-    is_passphrase_account_secret_backup, is_recovery_public_key_account_secret_backup,
+    is_mls_private_plaintext_backup, is_passphrase_account_secret_backup,
+    is_recovery_public_key_account_secret_backup,
 };
 
 /// Pure body-selection: pick the latest `mls_private_plaintext` backup from a
@@ -177,15 +177,21 @@ pub fn select_mls_history_backups(list_payload: &Value) -> Vec<Value> {
         .collect()
 }
 
-/// Collect every `mls_account_secret` backup body from a `list_key_backups`
-/// payload (used to verify the series chain before trusting a selected tail).
+/// Collect every envelope in the active `secret_storage` series.
+///
+/// A series may interleave account-secret, private-sidecar, and recovery SSK
+/// items. Chain verification must retain those intermediate links even when
+/// the selected decrypt target is an account-secret envelope.
 pub(super) fn all_mls_account_secret_backups(list_payload: &Value) -> Vec<Value> {
     let active_series = active_series_id_for_backup_class(
         list_payload,
         crate::key_backup::BackupKind::SecretStorage.as_str(),
     );
     iter_backup_bodies(list_payload)
-        .filter(|body| is_mls_account_secret_backup(body))
+        .filter(|body| {
+            body.get("backup_kind").and_then(Value::as_str)
+                == Some(crate::key_backup::BackupKind::SecretStorage.as_str())
+        })
         .filter(|body| matches_active_series(body, active_series))
         .cloned()
         .collect()

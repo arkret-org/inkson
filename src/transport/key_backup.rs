@@ -183,16 +183,36 @@ impl crate::transport::TransportClient {
     }
 
     pub async fn list_key_backups(&self) -> anyhow::Result<arkret_sdk::KeysBackupsList> {
-        let query = arkret_sdk::KeyBackupsListQuery {
-            series_id: None,
-            backup_kind: None,
-            cursor: None,
-            limit: None,
-        };
-        self.sdk_http_client()?
-            .list_key_backups(&query)
-            .await
-            .map_err(anyhow::Error::from)
+        let http = self.sdk_http_client()?;
+        let mut backups = Vec::new();
+        let mut cursor = None;
+        let mut seen_cursors = std::collections::BTreeSet::new();
+        loop {
+            let page = http
+                .list_key_backups(&arkret_sdk::KeyBackupsListQuery {
+                    series_id: None,
+                    backup_kind: None,
+                    cursor: cursor.clone(),
+                    limit: None,
+                })
+                .await
+                .map_err(anyhow::Error::from)?;
+            backups.extend(page.backups);
+            if !page.has_more {
+                return Ok(arkret_sdk::KeysBackupsList {
+                    backups,
+                    next_cursor: None,
+                    has_more: false,
+                });
+            }
+            let next = page
+                .next_cursor
+                .ok_or_else(|| anyhow::anyhow!("key backup page omitted required next_cursor"))?;
+            if !seen_cursors.insert(next.to_string()) {
+                anyhow::bail!("key backup pagination cursor repeated");
+            }
+            cursor = Some(next);
+        }
     }
 
     // ── REC-1 recovery policy + session (6.1 / 6.3) ─────────────────────────
@@ -233,6 +253,19 @@ impl crate::transport::TransportClient {
     ) -> anyhow::Result<arkret_sdk::RecoverySessionState> {
         self.sdk_http_client()?
             .post("/_arkret/root/identity/recovery-sessions", body)
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
+    /// Read the server-authoritative recovery session after proof submission.
+    pub async fn recovery_session(
+        &self,
+        recovery_session_id: &str,
+    ) -> anyhow::Result<arkret_sdk::RecoverySessionState> {
+        self.sdk_http_client()?
+            .get(&format!(
+                "/_arkret/root/identity/recovery-sessions/{recovery_session_id}"
+            ))
             .await
             .map_err(anyhow::Error::from)
     }
