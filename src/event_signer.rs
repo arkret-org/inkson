@@ -298,39 +298,6 @@ impl InksonEventSigner {
         })
     }
 
-    /// Sign a detached JWS transcript as the authenticated principal device.
-    ///
-    /// Proposal member receipts use this when the local device is itself the
-    /// current PCR authority. The caller supplies the complete spec-defined
-    /// transcript bytes; this helper only applies the bound principal
-    /// verification method and device key.
-    pub(crate) fn sign_detached_jws_for_principal(
-        &self,
-        principal_id: &Did,
-        bytes: &[u8],
-    ) -> Result<(String, String), EventSignerError> {
-        let verification_method = self.verification_method_for_principal(principal_id)?;
-        let signature = self
-            .inner
-            .sign(bytes)
-            .map_err(|error| EventSignerError::Backend(error.to_string()))?;
-        let header = serde_json::to_vec(&serde_json::json!({
-            "alg": self.algorithm(),
-        }))
-        .map_err(|error| EventSignerError::Encoding(error.to_string()))?;
-        if let Ok(mut guard) = self.last_signed_at.lock() {
-            *guard = Some(crate::clock::now_utc());
-        }
-        Ok((
-            verification_method,
-            format!(
-                "{}..{}",
-                URL_SAFE_NO_PAD.encode(header),
-                URL_SAFE_NO_PAD.encode(signature)
-            ),
-        ))
-    }
-
     pub(crate) fn verification_method_for_principal(
         &self,
         principal_id: &Did,
