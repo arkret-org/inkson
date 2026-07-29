@@ -138,6 +138,20 @@ impl DpopHandle {
             .map_err(|error| AuthDpopError::Mint(error.to_string()))
     }
 
+    pub fn mint_recovery_authority_proof(
+        &self,
+        htu: &str,
+        canonical_request_digest: &str,
+        jti: &str,
+    ) -> Result<String, AuthDpopError> {
+        let request = arkret_sdk::dpop::DpopProofRequest::new("POST", htu)
+            .nonce(canonical_request_digest)
+            .jti(jti);
+        arkret_sdk::dpop::build_dpop_proof(&request, &self.signing_key)
+            .map(|proof| proof.header_value)
+            .map_err(|error| AuthDpopError::Mint(error.to_string()))
+    }
+
     /// Build SDK http-client DPoP auth for requests protected by the
     /// current session grant.
     pub fn sdk_dpop_auth_for_access_token(
@@ -535,6 +549,30 @@ mod tests {
         for p in &parts {
             assert!(!p.is_empty());
         }
+    }
+
+    #[test]
+    fn recovery_authority_proof_binds_request_digest_and_single_use_jti() {
+        let mut store = isolated_store("recovery-authority-proof");
+        let handle = ensure_device_key(&mut store).unwrap();
+        let nonce = format!("sha256:{}", "a".repeat(64));
+        let jti = "urn:uuid:01970000-0000-7000-8000-000000000001";
+        let proof = handle
+            .mint_recovery_authority_proof(
+                "https://account.example/_arkret/gate/account/recovery-session-grants/promote",
+                &nonce,
+                jti,
+            )
+            .unwrap();
+        let payload = proof_payload(&proof);
+        assert_eq!(payload["htm"], "POST");
+        assert_eq!(
+            payload["htu"],
+            "https://account.example/_arkret/gate/account/recovery-session-grants/promote"
+        );
+        assert_eq!(payload["nonce"], nonce);
+        assert_eq!(payload["jti"], jti);
+        assert!(payload.get("ath").is_none());
     }
 
     #[test]

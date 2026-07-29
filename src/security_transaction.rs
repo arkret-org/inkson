@@ -116,8 +116,14 @@ fn audit_public_transaction_state(state: &DurableSecurityTransaction) -> garth::
             &pending.canonical_request,
         )?;
     }
+    if let Some(accepted) = &state.accepted_terminal_continue {
+        audit_canonical_public_json("accepted_terminal_continue", accepted)?;
+    }
     if let Some(pending) = &state.pending_erase_request {
         audit_canonical_public_json("pending_erase_request", pending)?;
+    }
+    if let Some(pending) = &state.pending_promotion_request {
+        audit_canonical_public_json("pending_promotion_request", pending)?;
     }
     if let Some(resource) = &state.last_observed_resource {
         let value = serde_json::to_value(resource).map_err(|error| {
@@ -295,7 +301,9 @@ mod tests {
             canonical_create_request: br#"{"prepared_plan":"public"}"#.to_vec(),
             staged_secret_ref: Some("secure-store://recovery/staged-1".to_owned()),
             pending_continue: None,
+            accepted_terminal_continue: None,
             pending_erase_request: None,
+            pending_promotion_request: None,
             last_observed_resource: None,
         };
         store.save(&state).await.unwrap();
@@ -363,7 +371,9 @@ mod tests {
                 br#"{"binding":{"plaintext_keybag":"synthetic-sensitive-material"}}"#.to_vec(),
             staged_secret_ref: Some("secure-store://recovery/staged-2".to_owned()),
             pending_continue: None,
+            accepted_terminal_continue: None,
             pending_erase_request: None,
+            pending_promotion_request: None,
             last_observed_resource: None,
         };
 
@@ -392,7 +402,9 @@ mod tests {
             .unwrap(),
             staged_secret_ref: Some("secure-store://recovery/staged-3".to_owned()),
             pending_continue: None,
+            accepted_terminal_continue: None,
             pending_erase_request: None,
+            pending_promotion_request: None,
             last_observed_resource: None,
         };
 
@@ -416,12 +428,14 @@ mod tests {
             canonical_create_request: br#"{"prepared_plan":"public"}"#.to_vec(),
             staged_secret_ref: None,
             pending_continue: None,
+            accepted_terminal_continue: None,
             pending_erase_request: Some(
                 arkret_sdk::canonical::canonical_json_bytes(
                     &serde_json::json!({"mls_secret": "must-not-persist"}),
                 )
                 .unwrap(),
             ),
+            pending_promotion_request: None,
             last_observed_resource: None,
         };
 
@@ -455,7 +469,9 @@ mod tests {
             .unwrap(),
             staged_secret_ref: Some("secure-store://recovery/staged-4".to_owned()),
             pending_continue: None,
+            accepted_terminal_continue: None,
             pending_erase_request: None,
+            pending_promotion_request: None,
             last_observed_resource: None,
         };
 

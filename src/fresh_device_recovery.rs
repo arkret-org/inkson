@@ -4,13 +4,25 @@
 //! module owns only secret lifetime and the evidence required before the UI may
 //! call a recovered device ready.
 
-use arkret_models_crypto::TypedSecurityTransactionContinueRequest;
+use arkret_models_crypto::{
+    ClientStepAttestationArtifact, RecoveryBackupClassUnlocked,
+    RecoveryIdentityModel as ReceiptIdentityModel,
+    RecoveryModelGenerationRef as ReceiptModelGenerationRef, RecoveryProofSummary, RecoveryReceipt,
+    RecoveryReceiptAuthData, RecoveryReceiptOutcome, RecoveryWelcomeRealmSummary,
+    TypedClientStepAttestation, TypedSecurityTransactionContinueRequest,
+};
 use arkret_wire::{
     BackupObjectRef, BackupRotationBinding, BackupRotationKind, BackupRotationPlan, BackupSeriesId,
-    CanonicalPublicMaterial, Did, EventId, EventsSubmitBatchRequestBody, Hash, PreparedEventUnit,
+    CLIENT_STEP_ATTESTATION_SIGNED_FIELDS, CanonicalPublicMaterial, ClientStepAttestationAuthData,
+    Did, EventId, EventsSubmitBatchRequestBody, GrantId, Hash, NonEmptyString, PolicyId,
+    PreparedEventUnit, PromoteRecoverySessionGrantOutcome, PromoteRecoverySessionGrantRequest,
+    ReceiptId, RecoveryAuthorityHolderProof, RecoveryBinding, RecoveryPreparedPlan,
     RecoveryTransactionCreateRequest, SecurityRotationTransactionCreateRequest,
-    SecurityTransaction, SecurityTransactionCreateRequest, TransactionId,
+    SecurityTransaction, SecurityTransactionBinding, SecurityTransactionCreateRequest,
+    SecurityTransactionPreparedPlan, SecurityTransactionState, SecurityTransactionStep,
+    TransactionId, TypedTrustDomainId,
 };
+use chrono::{DateTime, Utc};
 use garth::{SecurityTransactionEngine, SecurityTransactionStore, SecurityTransactionTransport};
 use zeroize::{Zeroize, Zeroizing};
 
@@ -173,6 +185,243 @@ fn backup_object_ref(value: &serde_json::Value) -> anyhow::Result<BackupObjectRe
     })
 }
 
+pub struct RecoveryTerminalObservation {
+    pub policy_id: PolicyId,
+    pub policy_version: u64,
+    pub trust_domain: TypedTrustDomainId,
+    pub proof_summary: RecoveryProofSummary,
+    pub backup_classes_unlocked: Vec<RecoveryBackupClassUnlocked>,
+    pub welcome_count: u64,
+    pub welcome_realm_summary: Option<Vec<RecoveryWelcomeRealmSummary>>,
+    pub completed_at: DateTime<Utc>,
+}
+
+pub fn sign_terminal_receipt_continue(
+    resource: &SecurityTransaction,
+    observation: RecoveryTerminalObservation,
+    signer: &crate::event_signer::InksonEventSigner,
+) -> anyhow::Result<TypedSecurityTransactionContinueRequest> {
+    resource.validate_structural()?;
+    if resource.state != SecurityTransactionState::AwaitingDeviceAttestation
+        || resource.next_required_step != Some(SecurityTransactionStep::IssueTerminalReceipt)
+    {
+        anyhow::bail!(
+            "terminal receipt may only be signed from authoritative awaiting_device_attestation state"
+        );
+    }
+    let (binding, plan) = match (&resource.binding, &resource.prepared_plan) {
+        (
+            SecurityTransactionBinding::Recovery(binding),
+            SecurityTransactionPreparedPlan::Recovery(plan),
+        ) => (binding, plan),
+        _ => anyhow::bail!("terminal receipt requires a recovery transaction"),
+    };
+    if observation.policy_version == 0
+        || observation.proof_summary.proof_digest != *plan_proof_digest(plan)
+    {
+        anyhow::bail!("terminal observation does not match the accepted recovery proof");
+    }
+
+    let (
+        new_device_id,
+        authorization_event_id,
+        device_list_update_event_id,
+        reanchor_event_id,
+        reanchor_batch_receipt_id,
+        authority_ticket_id,
+        did_entry_ref,
+        previous_model_generation_ref,
+        result_model_generation_ref,
+    ) = match (binding, plan) {
+        (RecoveryBinding::CrossSigning(binding), RecoveryPreparedPlan::CrossSigning(plan)) => (
+            binding.replacement_device_id.clone(),
+            binding.authorize_event_id.clone(),
+            Some(binding.device_list_update_event_id.clone()),
+            None,
+            None,
+            None,
+            None,
+            ReceiptModelGenerationRef::CrossSigning(
+                std::num::NonZeroU64::new(plan.previous_model_generation_ref)
+                    .ok_or_else(|| anyhow::anyhow!("previous SSK generation must be positive"))?,
+            ),
+            ReceiptModelGenerationRef::CrossSigning(
+                std::num::NonZeroU64::new(plan.result_model_generation_ref)
+                    .ok_or_else(|| anyhow::anyhow!("result SSK generation must be positive"))?,
+            ),
+        ),
+        (
+            RecoveryBinding::EnrollmentAuthority(binding),
+            RecoveryPreparedPlan::EnrollmentAuthority(plan),
+        ) => {
+            let preimage = &plan.authorization_preimage;
+            if observation.policy_id != preimage.policy_id
+                || observation.policy_version != preimage.policy_version
+                || observation.trust_domain != preimage.trust_domain
+            {
+                anyhow::bail!(
+                    "terminal observation changed the enrollment-authority policy binding"
+                );
+            }
+            let batch_receipt = resource
+                .accepted_steps
+                .iter()
+                .find(|step| step.step == SecurityTransactionStep::SubmitReanchorUnit)
+                .ok_or_else(|| anyhow::anyhow!("accepted re-anchor unit is missing"))?;
+            (
+                binding.replacement_device_id.clone(),
+                binding.authorize_event_id.clone(),
+                None,
+                Some(binding.reanchor_event_id.clone()),
+                Some(ReceiptId::new(batch_receipt.output_ref.clone())?),
+                Some(binding.authority_ticket_id.clone()),
+                Some(binding.did_entry_ref.clone()),
+                ReceiptModelGenerationRef::EnrollmentAuthority(
+                    NonEmptyString::new(plan.previous_model_generation_ref.clone())
+                        .map_err(anyhow::Error::msg)?,
+                ),
+                ReceiptModelGenerationRef::EnrollmentAuthority(
+                    NonEmptyString::new(plan.result_model_generation_ref.clone())
+                        .map_err(anyhow::Error::msg)?,
+                ),
+            )
+        }
+        _ => anyhow::bail!("recovery binding and prepared plan models disagree"),
+    };
+
+    let mut signed_fields = vec![
+        "schema",
+        "receipt_id",
+        "transaction_id",
+        "transaction_request_digest",
+        "prepared_plan_digest",
+        "principal_id",
+        "recovery_session_id",
+        "policy_id",
+        "policy_version",
+        "trust_domain",
+        "new_device_id",
+        "identity_model",
+        "previous_model_generation_ref",
+        "result_model_generation_ref",
+        "authorization_event_id",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<Vec<_>>();
+    match binding {
+        RecoveryBinding::CrossSigning(_) => {
+            signed_fields.push("device_list_update_event_id".into())
+        }
+        RecoveryBinding::EnrollmentAuthority(_) => signed_fields.extend(
+            [
+                "reanchor_event_id",
+                "reanchor_batch_receipt_id",
+                "authority_ticket_id",
+                "did_entry_ref",
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        ),
+    }
+    signed_fields.extend(
+        ["proof_summary", "backup_classes_unlocked", "welcome_count"]
+            .into_iter()
+            .map(str::to_owned),
+    );
+    if observation.welcome_realm_summary.is_some() {
+        signed_fields.push("welcome_realm_summary".into());
+    }
+    signed_fields.extend(
+        ["outcome", "started_at", "completed_at"]
+            .into_iter()
+            .map(str::to_owned),
+    );
+
+    let mut receipt = RecoveryReceipt {
+        schema: "ak.schema.recovery_receipt.v1".to_owned(),
+        receipt_id: binding.terminal_receipt_id().clone(),
+        transaction_id: resource.transaction_id.clone(),
+        transaction_request_digest: resource.request_digest.clone(),
+        prepared_plan_digest: resource.prepared_plan_digest.clone(),
+        principal_id: resource.principal_id.clone(),
+        recovery_session_id: binding.recovery_session_id().clone(),
+        policy_id: observation.policy_id,
+        policy_version: observation.policy_version,
+        trust_domain: observation.trust_domain,
+        new_device_id,
+        identity_model: match binding {
+            RecoveryBinding::CrossSigning(_) => ReceiptIdentityModel::CrossSigning,
+            RecoveryBinding::EnrollmentAuthority(_) => ReceiptIdentityModel::EnrollmentAuthority,
+        },
+        previous_model_generation_ref,
+        result_model_generation_ref,
+        authorization_event_id,
+        device_list_update_event_id,
+        reanchor_event_id,
+        reanchor_batch_receipt_id,
+        authority_ticket_id,
+        did_entry_ref,
+        proof_summary: observation.proof_summary,
+        backup_classes_unlocked: observation.backup_classes_unlocked,
+        welcome_count: observation.welcome_count,
+        welcome_realm_summary: observation.welcome_realm_summary,
+        outcome: RecoveryReceiptOutcome::Completed,
+        outcome_reason_code: None,
+        started_at: resource.created_at,
+        completed_at: observation.completed_at,
+        auth_data: RecoveryReceiptAuthData {
+            verification_method: signer.verification_method().to_owned(),
+            signature_algorithm: "Ed25519".to_owned(),
+            signature: String::new(),
+            signed_fields,
+        },
+        extra: Default::default(),
+    };
+    let receipt_signature = signer.sign_raw(&receipt.signature_transcript_bytes()?)?;
+    receipt.auth_data.signature = arkret_sdk::base64url_encode(receipt_signature);
+    receipt.validate()?;
+
+    let artifact = ClientStepAttestationArtifact::RecoveryReceipt(receipt);
+    let artifact_bytes = arkret_sdk::canonical::canonical_json_bytes(&artifact)?;
+    let mut attestation = TypedClientStepAttestation {
+        step: SecurityTransactionStep::IssueTerminalReceipt,
+        output_ref: binding.terminal_receipt_id().as_str().to_owned(),
+        transaction_id: resource.transaction_id.clone(),
+        transaction_request_digest: resource.request_digest.clone(),
+        prepared_plan_digest: resource.prepared_plan_digest.clone(),
+        attestation_digest: Hash::new(arkret_sdk::canonical::sha256_digest(&artifact_bytes))?,
+        artifact,
+        auth_data: ClientStepAttestationAuthData {
+            verification_method: signer.verification_method().to_owned(),
+            alg: "EdDSA".to_owned(),
+            signature: String::new(),
+            signed_fields: CLIENT_STEP_ATTESTATION_SIGNED_FIELDS
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+        },
+    };
+    let outer_signature = signer.sign_raw(&attestation.signing_bytes()?)?;
+    attestation.auth_data.signature = arkret_sdk::base64url_encode(outer_signature);
+    attestation.validate_structural()?;
+
+    Ok(TypedSecurityTransactionContinueRequest {
+        request_digest: resource.request_digest.clone(),
+        prepared_plan_digest: resource.prepared_plan_digest.clone(),
+        expected_next_step: SecurityTransactionStep::IssueTerminalReceipt,
+        client_attestation: Some(attestation),
+        participant_request: None,
+    })
+}
+
+fn plan_proof_digest(plan: &RecoveryPreparedPlan) -> &Hash {
+    match plan {
+        RecoveryPreparedPlan::CrossSigning(plan) => &plan.proof_digest,
+        RecoveryPreparedPlan::EnrollmentAuthority(plan) => &plan.proof_digest,
+    }
+}
+
 /// Thin UI-facing facade over Garth's durable coordinator.
 ///
 /// Callers author and sign protocol artifacts outside this type. Every
@@ -228,6 +477,118 @@ where
         transaction_id: &TransactionId,
     ) -> garth::Result<Option<SecurityTransaction>> {
         self.engine.retry_pending(transaction_id).await
+    }
+
+    pub async fn promote_holder_bound_grant(
+        &self,
+        transaction_id: &TransactionId,
+        request: &PromoteRecoverySessionGrantRequest,
+    ) -> garth::Result<PromoteRecoverySessionGrantOutcome> {
+        self.engine
+            .promote_recovery_session_grant(transaction_id, request)
+            .await
+    }
+
+    pub fn build_holder_bound_promotion(
+        &self,
+        transaction_id: &TransactionId,
+        old_grant_id: GrantId,
+        account_authority_endpoint: &str,
+        holder: &crate::identity::account_auth::grant_dpop::DpopHandle,
+    ) -> anyhow::Result<PromoteRecoverySessionGrantRequest> {
+        let endpoint = url::Url::parse(account_authority_endpoint)?;
+        if endpoint.scheme() != "https"
+            || !endpoint.username().is_empty()
+            || endpoint.password().is_some()
+            || endpoint.query().is_some()
+            || endpoint.fragment().is_some()
+            || endpoint.path() != "/_arkret/gate/account/recovery-session-grants/promote"
+        {
+            anyhow::bail!("recovery grant promotion requires the exact standard HTTPS endpoint");
+        }
+        let local = self
+            .engine
+            .local_state(transaction_id)?
+            .ok_or_else(|| anyhow::anyhow!("recovery transaction has no durable local state"))?;
+        let resource = local
+            .last_observed_resource
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("recovery transaction has no authoritative resource"))?;
+        if resource.state != SecurityTransactionState::Completed {
+            anyhow::bail!("recovery grant promotion requires a completed transaction");
+        }
+        let terminal_result = resource
+            .terminal_result
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("completed recovery transaction omitted result"))?;
+        let completion_attestation = terminal_result
+            .completion_attestation
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("completed recovery transaction omitted attestation"))?;
+        let terminal_continue = local.accepted_terminal_continue.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("completed recovery transaction omitted its durable terminal receipt")
+        })?;
+        let terminal_request: TypedSecurityTransactionContinueRequest = serde_json::from_value(
+            arkret_sdk::canonical::parse_canonical_json(terminal_continue)?,
+        )?;
+        let receipt = match terminal_request
+            .client_attestation
+            .ok_or_else(|| anyhow::anyhow!("terminal continuation omitted client attestation"))?
+            .artifact
+        {
+            ClientStepAttestationArtifact::RecoveryReceipt(receipt) => receipt,
+            ClientStepAttestationArtifact::SecurityRotationLocalCommit(_) => {
+                anyhow::bail!("recovery promotion cannot use a rotation local commit")
+            }
+        };
+        let terminal_receipt = serde_json::to_value(receipt)?;
+        let mut request = PromoteRecoverySessionGrantRequest {
+            old_grant_id,
+            transaction_id: transaction_id.clone(),
+            transaction_request_digest: resource.request_digest.clone(),
+            terminal_receipt,
+            completion_attestation: completion_attestation.clone(),
+            device_authorization_event_id: completion_attestation
+                .device_authorization_event_id
+                .clone(),
+            result_model_generation_ref: completion_attestation.result_model_generation_ref.clone(),
+            canonical_request_digest: Hash::new(format!("sha256:{}", "0".repeat(64)))?,
+            holder_proof: RecoveryAuthorityHolderProof {
+                dpop_jkt: holder.jkt().to_owned(),
+                proof_jwt: String::new(),
+            },
+        };
+        request.canonical_request_digest = request.expected_canonical_request_digest()?;
+        let jti = format!("urn:uuid:{}", crate::operation::uuid_v7());
+        request.holder_proof.proof_jwt = holder.mint_recovery_authority_proof(
+            endpoint.as_str(),
+            request.canonical_request_digest.as_str(),
+            &jti,
+        )?;
+        request.validate_structural()?;
+        Ok(request)
+    }
+
+    pub async fn retry_byte_identical_promotion(
+        &self,
+        transaction_id: &TransactionId,
+    ) -> garth::Result<Option<PromoteRecoverySessionGrantOutcome>> {
+        self.engine.retry_pending_promotion(transaction_id).await
+    }
+
+    pub fn install_promoted_holder_bound_grant(
+        &self,
+        store: &mut crate::state::LocalStateStore,
+        outcome: &PromoteRecoverySessionGrantOutcome,
+        principal_server_url: &str,
+        holder: &crate::identity::account_auth::grant_dpop::DpopHandle,
+    ) -> anyhow::Result<crate::state::PersistedSessionGrant> {
+        crate::identity::session_refresh::persist_promoted_recovery_grant(
+            store,
+            outcome,
+            principal_server_url,
+            holder,
+        )
     }
 }
 

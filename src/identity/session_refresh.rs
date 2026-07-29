@@ -543,6 +543,46 @@ fn persisted_session_grant_from_state(
     })
 }
 
+pub(crate) fn persist_promoted_recovery_grant(
+    store: &mut LocalStateStore,
+    outcome: &arkret_wire::PromoteRecoverySessionGrantOutcome,
+    principal_server_url: &str,
+    device_handle: &DpopHandle,
+) -> anyhow::Result<PersistedSessionGrant> {
+    let promoted: arkret_sdk::SessionGrantOutcome =
+        serde_json::from_value(outcome.new_grant.clone())
+            .context("recovery promotion returned an invalid session grant")?;
+    let device_id = promoted
+        .device_id
+        .as_ref()
+        .context("promoted recovery grant omitted device_id")?;
+    let grant_id = promoted
+        .grant_id
+        .as_ref()
+        .context("promoted recovery grant omitted grant_id")?;
+    let audience = promoted
+        .audience
+        .as_ref()
+        .context("promoted recovery grant omitted audience")?;
+    let session_private_key_pem = device_handle
+        .session_signing_key_pkcs8_pem()
+        .map_err(|error| anyhow::anyhow!("export promoted grant holder key: {error}"))?;
+    let grant = PersistedSessionGrant {
+        grant_jwt: promoted.session_grant,
+        session_private_key_pem: session_private_key_pem.to_string(),
+        grant_id: grant_id.as_str().to_owned(),
+        audience: audience.to_string(),
+        principal_id: promoted.principal_id.to_string(),
+        device_id: device_id.to_string(),
+        principal_server_url: principal_server_url.to_owned(),
+        grant_expires_at: Some(promoted.expires_at),
+        stored_at: Utc::now(),
+    };
+    store.set_session_grant(Some(grant.clone()));
+    reset_session_grant_runtime();
+    Ok(grant)
+}
+
 fn session_grant_state_from_persisted(
     grant: &PersistedSessionGrant,
     device_handle: &DpopHandle,
@@ -761,5 +801,62 @@ mod tests {
 
         assert_eq!(authenticated.base_url().as_str(), "https://soland.example/");
         assert_eq!(refresh.base_url().as_str(), "https://coauth.example/");
+    }
+
+    #[test]
+    fn promoted_recovery_grant_replaces_restricted_session_material() {
+        let mut store = crate::state::isolated_store_for_tests("promoted-recovery-grant");
+        let handle = test_device_handle();
+        let promoted = arkret_sdk::SessionGrantOutcome {
+            principal_id: arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example".to_owned())
+                .unwrap(),
+            device_id: Some(
+                arkret_sdk::DeviceId::new(
+                    "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
+                )
+                .unwrap(),
+            ),
+            session_grant: "standard.grant.jwt".to_owned(),
+            expires_at: Utc::now() + chrono::Duration::hours(1),
+            grant_id: Some(
+                arkret_sdk::GrantId::new(
+                    "ak:grant:01964137-0000-7000-8000-000000000002".to_owned(),
+                )
+                .unwrap(),
+            ),
+            session_public_key: Some("holder-public-key".to_owned()),
+            audience: Some(
+                arkret_sdk::Did::new("did:webvh:z6mkfixture:soland.example".to_owned()).unwrap(),
+            ),
+            granted_scope: vec!["ak.self.sync".to_owned()],
+            scope_details: None,
+        };
+        let outcome = arkret_wire::PromoteRecoverySessionGrantOutcome {
+            transaction_id: arkret_sdk::TransactionId::new(
+                "ak:transaction:01964137-0000-7000-8000-000000000001",
+            )
+            .unwrap(),
+            consumed_grant_id: arkret_sdk::GrantId::new(
+                "ak:grant:01964137-0000-7000-8000-000000000001",
+            )
+            .unwrap(),
+            new_grant: serde_json::to_value(promoted).unwrap(),
+            consumed_at: Utc::now(),
+        };
+
+        let installed = persist_promoted_recovery_grant(
+            &mut store,
+            &outcome,
+            "https://soland.example/",
+            &handle,
+        )
+        .unwrap();
+
+        assert_eq!(installed.grant_jwt, "standard.grant.jwt");
+        assert_eq!(
+            installed.grant_id,
+            "ak:grant:01964137-0000-7000-8000-000000000002"
+        );
+        assert_eq!(store.session_grant(), Some(installed));
     }
 }
