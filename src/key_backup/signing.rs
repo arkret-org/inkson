@@ -367,6 +367,29 @@ pub async fn fetch_key_backup_with_active_unlock_proof(
     Ok(backup)
 }
 
+pub async fn fetch_key_backup_for_verified_recovery_session(
+    api: &crate::transport::TransportClient,
+    backup_metadata: &Value,
+    session: &arkret_models_crypto::RecoverySessionState,
+) -> anyhow::Result<Value> {
+    session.validate()?;
+    if session.state != arkret_models_crypto::SessionState::Verified {
+        anyhow::bail!("key backup recovery requires a verified recovery session");
+    }
+    let session_value = serde_json::to_value(session)?;
+    let backup_id = required_str_anyhow(backup_metadata, "backup_id")?.to_owned();
+    let proof = build_key_backup_unlock_proof_active(
+        backup_metadata,
+        session.principal_id.as_str(),
+        session.requesting_device_id.as_str(),
+        Some(&session_value),
+    )?;
+    let backup = api
+        .get_key_backup_with_unlock_proof(&backup_id, &proof)
+        .await?;
+    serde_json::to_value(backup).map_err(anyhow::Error::from)
+}
+
 fn key_backup_unlock_backoff_scope(
     api: &crate::transport::TransportClient,
     principal_id: &str,
