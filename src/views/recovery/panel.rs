@@ -75,6 +75,7 @@ pub fn RecoveryPanel(
         use_signal(crate::fresh_device_recovery::RecoveryWordsInput::default);
     let mut fresh_recovery_status = use_signal(String::new);
     let mut fresh_recovery_running = use_signal(|| false);
+    let mut fresh_recovery_checkpoint = use_signal(|| None);
 
     // Server-side Recovery-Key backup marker (written by the upload paths via
     // `mark_mls_recovery_backup_configured`). Drives the section sync badge.
@@ -94,6 +95,24 @@ pub fn RecoveryPanel(
             }
             if recovery_key_rotated_at() != next.recovery_key_rotated_at {
                 recovery_key_rotated_at.set(next.recovery_key_rotated_at);
+            }
+        });
+    }
+    {
+        let actor_key = actor_key.clone();
+        use_effect(move || {
+            let Ok(principal_id) = arkret_sdk::Did::new(actor_key.clone()) else {
+                return;
+            };
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+            match crate::security_transaction::load_fresh_device_recovery_checkpoint(
+                secure_store.as_ref(),
+                &principal_id,
+            ) {
+                Ok(checkpoint) => fresh_recovery_checkpoint.set(checkpoint),
+                Err(error) => fresh_recovery_status.set(format!(
+                    "Could not load the durable recovery checkpoint: {error}"
+                )),
             }
         });
     }
@@ -567,11 +586,14 @@ pub fn RecoveryPanel(
                                                     )
                                                     .await
                                                     {
-                                                        Ok(()) => fresh_recovery_status.set(format!(
-                                                            "Recovery session {} is verified and durably checkpointed ({:?}). Preparing the bound transaction; this device is not ready yet.",
-                                                            session.recovery_session_id,
-                                                            session.identity_model
-                                                        )),
+                                                        Ok(()) => {
+                                                            fresh_recovery_checkpoint.set(Some(checkpoint));
+                                                            fresh_recovery_status.set(format!(
+                                                                "Recovery session {} is verified and durably checkpointed ({:?}). Preparing the bound transaction; this device is not ready yet.",
+                                                                session.recovery_session_id,
+                                                                session.identity_model
+                                                            ));
+                                                        }
                                                         Err(error) => fresh_recovery_status.set(format!(
                                                             "Recovery proof verified, but the durable public checkpoint failed: {error}. No transaction was started."
                                                         )),
@@ -600,6 +622,76 @@ pub fn RecoveryPanel(
                             }
                         },
                         if fresh_recovery_running() { "Verifying…" } else { "Start durable recovery" }
+                    }
+                    if fresh_recovery_checkpoint()
+                        .as_ref()
+                        .and_then(|checkpoint| checkpoint.transaction_id.as_ref())
+                        .is_some()
+                    {
+                        Button {
+                            variant: ButtonVariant::Secondary,
+                            "data-testid": "fresh-device-recovery-resume",
+                            disabled: fresh_recovery_running(),
+                            onclick: {
+                                let base = base_url.clone();
+                                move |_| {
+                                    let Some(mut checkpoint) = fresh_recovery_checkpoint() else {
+                                        return;
+                                    };
+                                    let Some(transaction_id) = checkpoint.transaction_id.clone() else {
+                                        return;
+                                    };
+                                    fresh_recovery_running.set(true);
+                                    fresh_recovery_status.set(
+                                        "Reading authoritative transaction progress…".to_owned(),
+                                    );
+                                    let base = base.clone();
+                                    let api_token = token();
+                                    spawn(async move {
+                                        let result = with_authed_api(&base, api_token, |api| async move {
+                                            let secure_store =
+                                                crate::secure_key_store::default_secure_key_store("inkson");
+                                            let engine = crate::security_transaction::security_transaction_engine(
+                                                api.sdk_http_client()?,
+                                                secure_store.clone(),
+                                            );
+                                            let recovery = crate::fresh_device_recovery::FreshDeviceRecovery::new(engine);
+                                            let transaction = match recovery
+                                                .retry_byte_identical_pending(&transaction_id)
+                                                .await?
+                                            {
+                                                Some(transaction) => transaction,
+                                                None => recovery.refresh(&transaction_id).await?,
+                                            };
+                                            checkpoint.observe_transaction(&transaction)?;
+                                            crate::security_transaction::save_fresh_device_recovery_checkpoint(
+                                                secure_store.as_ref(),
+                                                &checkpoint,
+                                            )
+                                            .await?;
+                                            anyhow::Ok((checkpoint, transaction))
+                                        })
+                                        .await;
+                                        match result {
+                                            Ok((checkpoint, transaction)) => {
+                                                fresh_recovery_checkpoint.set(Some(checkpoint));
+                                                fresh_recovery_status.set(format!(
+                                                    "Server state: {:?}; next required step: {:?}. This device is not ready until terminal attestation, grant promotion, durable device/control projection, and restore report all pass.",
+                                                    transaction.state,
+                                                    transaction.next_required_step
+                                                ));
+                                            }
+                                            Err(error) => fresh_recovery_status.set(format!(
+                                                "Recovery resume failed safely: {}",
+                                                error.display()
+                                            )),
+                                        }
+                                        fresh_recovery_running.set(false);
+                                    });
+                                }
+                            },
+                            "Resume durable recovery"
+                        }
                     }
                 }
                 if !fresh_recovery_status().is_empty() {
