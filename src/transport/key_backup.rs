@@ -212,18 +212,14 @@ impl crate::transport::TransportClient {
 
     /// Publish or rotate the principal's signed recovery policy.
     ///
-    /// `body` stays a raw `Value`: it is a fully-signed recovery policy
-    /// envelope built by `recovery_strand::build_signed_genesis_recovery_policy_*`,
-    /// and round-tripping it through `arkret_sdk::RecoveryPolicy` (which carries
-    /// a flattened `extra` map and an `auth_data` detached-JWS) risks
-    /// re-canonicalizing the signed bytes. The response is the typed
-    /// publish outcome.
+    /// The request is the canonical `ak.policy.set` EventInitialSubmission
+    /// required by `ak.root.identity.recovery_policy.command.publish`.
     pub async fn put_recovery_policy(
         &self,
-        body: serde_json::Value,
+        body: &arkret_sdk::RecoveryPolicyPublishRequest,
     ) -> anyhow::Result<arkret_sdk::RecoveryPolicyPublishOutcome> {
         self.sdk_http_client()?
-            .post("/_arkret/root/identity/recovery-policy", &body)
+            .post("/_arkret/root/identity/recovery-policy", body)
             .await
             .map_err(anyhow::Error::from)
     }

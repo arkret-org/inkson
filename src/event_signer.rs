@@ -298,6 +298,54 @@ impl InksonEventSigner {
         })
     }
 
+    /// Sign a detached JWS transcript as the authenticated principal device.
+    ///
+    /// Proposal member receipts use this when the local device is itself the
+    /// current PCR authority. The caller supplies the complete spec-defined
+    /// transcript bytes; this helper only applies the bound principal
+    /// verification method and device key.
+    pub(crate) fn sign_detached_jws_for_principal(
+        &self,
+        principal_id: &Did,
+        bytes: &[u8],
+    ) -> Result<(String, String), EventSignerError> {
+        let verification_method = self.verification_method_for_principal(principal_id)?;
+        let signature = self
+            .inner
+            .sign(bytes)
+            .map_err(|error| EventSignerError::Backend(error.to_string()))?;
+        let header = serde_json::to_vec(&serde_json::json!({
+            "alg": self.algorithm(),
+        }))
+        .map_err(|error| EventSignerError::Encoding(error.to_string()))?;
+        if let Ok(mut guard) = self.last_signed_at.lock() {
+            *guard = Some(crate::clock::now_utc());
+        }
+        Ok((
+            verification_method,
+            format!(
+                "{}..{}",
+                URL_SAFE_NO_PAD.encode(header),
+                URL_SAFE_NO_PAD.encode(signature)
+            ),
+        ))
+    }
+
+    pub(crate) fn verification_method_for_principal(
+        &self,
+        principal_id: &Did,
+    ) -> Result<String, EventSignerError> {
+        Ok(match self.device_id.as_deref() {
+            Some(device_id) => format!("{principal_id}#{device_id}"),
+            None if self.signer_did == principal_id.as_str() => self.verification_method.clone(),
+            None => {
+                return Err(EventSignerError::Encoding(format!(
+                    "principal-bound signing for {principal_id} requires a bound device_id"
+                )));
+            }
+        })
+    }
+
     /// `"ed25519"` for the in-process seed signer, `"external"` for
     /// SDK-trait delegated backends. Surfaced by the settings UI badge.
     pub fn mode_tag(&self) -> &'static str {
@@ -397,6 +445,39 @@ impl InksonEventSigner {
         arkret_bootstrap::build_self_principal_bootstrap_seal(
             create,
             authorize,
+            hlc,
+            &signer,
+            &crate::operation::cell_write_projector,
+        )
+        .map_err(|error| EventSignerError::Backend(error.to_string()))
+    }
+
+    /// Sign the first post-bootstrap self-PCR Seal. The predecessor view is
+    /// the accepted two-Event bootstrap Seal; the first successor is the
+    /// recovery-policy Event required before the first encrypted backup.
+    pub fn sign_self_principal_first_successor_seal(
+        &self,
+        create: &arkret_sdk::Event,
+        authorize: &arkret_sdk::Event,
+        successor: &arkret_sdk::Event,
+        predecessor: &arkret_sdk::RealmSealFrontierView,
+        hlc: arkret_sdk::Hlc,
+    ) -> Result<arkret_sdk::Seal, EventSignerError> {
+        let device_id = self.device_id.as_deref().ok_or_else(|| {
+            EventSignerError::Encoding(
+                "principal successor Seal requires a bound device_id".to_owned(),
+            )
+        })?;
+        let signer = InksonPayloadSignerAdapter {
+            owner: self,
+            did: create.actor_id.clone(),
+            verification_method: format!("{}#{device_id}", create.actor_id),
+        };
+        arkret_bootstrap::build_self_principal_first_successor_seal(
+            create,
+            authorize,
+            successor,
+            predecessor,
             hlc,
             &signer,
             &crate::operation::cell_write_projector,

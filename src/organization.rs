@@ -146,9 +146,7 @@ pub enum OrganizationError {
 /// organization's stable handle / slug. `also_known_as` carries optional
 /// reverse-link handles. Organizations use the service-identity WebVH profile:
 /// they are not human principals and therefore must not publish a principal
-/// device-enrollment-authority service slot. The legacy
-/// `enrollment_authority_did` argument is retained for call-site compatibility
-/// and deliberately ignored.
+/// device-enrollment-authority service slot.
 ///
 /// On success returns the prepared inception (which carries `submit_body` to
 /// POST to soland) plus a [`PreparedOrganization`] with the secrets + ids the
@@ -158,7 +156,6 @@ pub fn prepare_organization_inception(
     local_id: &str,
     display_name: Option<&str>,
     also_known_as: &[String],
-    _enrollment_authority_did: &str,
 ) -> Result<(PreparedInception, PreparedOrganization), OrganizationError> {
     let local_id = local_id.trim();
     if local_id.is_empty() {

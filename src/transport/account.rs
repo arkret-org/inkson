@@ -508,31 +508,19 @@ fn direct_conversation_pending_secure_key(actor_id: &str, pending_key: &str) -> 
     format!("direct_conversation.pending_mls.{actor_id}.{pending_key}")
 }
 
-/// Load the resumable signed MLS transaction, preferring the durable secure
-/// store and falling back to the legacy plaintext-state entry (migrating it
-/// forward on read) so a transaction persisted by an older build still resumes.
+/// Load the resumable signed MLS transaction from the durable secure store.
 fn load_pending_direct_conversation_mls(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    state_store: &SyncSignal<crate::state::LocalStateStore>,
-    actor_id: &str,
-    pending_key: &str,
     pending_secure_key: &str,
 ) -> anyhow::Result<Option<PendingDirectConversationMls>> {
-    if let Some(raw) = secure_store
+    let Some(raw) = secure_store
         .get_secret(pending_secure_key)
         .map_err(|error| anyhow::anyhow!("read pending direct conversation MLS secret: {error}"))?
-    {
-        return serde_json::from_str::<PendingDirectConversationMls>(&raw)
-            .map(Some)
-            .map_err(|error| {
-                anyhow::anyhow!("decode pending direct conversation MLS transaction: {error}")
-            });
-    }
-    state_store
-        .read()
-        .load_private_data(actor_id, pending_key)
-        .map(|raw| serde_json::from_str::<PendingDirectConversationMls>(&raw))
-        .transpose()
+    else {
+        return Ok(None);
+    };
+    serde_json::from_str::<PendingDirectConversationMls>(&raw)
+        .map(Some)
         .map_err(|error| {
             anyhow::anyhow!("decode pending direct conversation MLS transaction: {error}")
         })
@@ -540,13 +528,9 @@ fn load_pending_direct_conversation_mls(
 
 /// Durably persist the resumable signed MLS transaction to the hardened secure
 /// store (awaited) so a mid-flow reload can replay the exact same Commit /
-/// Welcome / snapshot. The prior plaintext-state copy is cleared to avoid a
-/// stale divergent resume.
+/// Welcome / snapshot.
 async fn persist_pending_direct_conversation_mls(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    state_store: &mut SyncSignal<crate::state::LocalStateStore>,
-    actor_id: &str,
-    pending_key: &str,
     pending_secure_key: &str,
     pending: &PendingDirectConversationMls,
 ) -> anyhow::Result<()> {
@@ -556,10 +540,7 @@ async fn persist_pending_direct_conversation_mls(
         .await
         .map_err(|error| {
             anyhow::anyhow!("durably persist pending direct conversation MLS transaction: {error}")
-        })?;
-    let _ = actor_id;
-    state_store.write().remove_private_data(pending_key);
-    Ok(())
+        })
 }
 
 async fn materialize_direct_conversation(
@@ -736,13 +717,8 @@ async fn materialize_direct_conversation(
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let pending_key = pending_direct_conversation_key(draft.materialization_id.as_str());
     let pending_secure_key = direct_conversation_pending_secure_key(&actor_id, &pending_key);
-    let mut pending = load_pending_direct_conversation_mls(
-        secure_store.as_ref(),
-        &state_store,
-        &actor_id,
-        &pending_key,
-        &pending_secure_key,
-    )?;
+    let mut pending =
+        load_pending_direct_conversation_mls(secure_store.as_ref(), &pending_secure_key)?;
     tracing::info!(
         realm_id,
         resumed = pending.is_some(),
@@ -881,9 +857,6 @@ async fn materialize_direct_conversation(
         };
         persist_pending_direct_conversation_mls(
             secure_store.as_ref(),
-            &mut state_store,
-            &actor_id,
-            &pending_key,
             &pending_secure_key,
             &prepared,
         )
@@ -917,9 +890,6 @@ async fn materialize_direct_conversation(
             .expect("single Event preparation preserves cardinality");
         persist_pending_direct_conversation_mls(
             secure_store.as_ref(),
-            &mut state_store,
-            &actor_id,
-            &pending_key,
             &pending_secure_key,
             &pending,
         )
@@ -939,9 +909,6 @@ async fn materialize_direct_conversation(
         );
         persist_pending_direct_conversation_mls(
             secure_store.as_ref(),
-            &mut state_store,
-            &actor_id,
-            &pending_key,
             &pending_secure_key,
             &pending,
         )
@@ -955,7 +922,6 @@ async fn materialize_direct_conversation(
                 .expect("pending direct binding is initialized"),
         )
         .await?;
-    state_store.write().remove_private_data(&pending_key);
     let _ = secure_store.delete_secret(&pending_secure_key);
     Ok(())
 }

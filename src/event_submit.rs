@@ -1312,7 +1312,8 @@ impl EventSubmitter {
         validate_signed_sdk_event_for_submit(signed)?;
         crate::authorization_lease::ensure_for_events(&self.http, std::slice::from_ref(signed))
             .await?;
-        let submission = crate::authorization_lease::initial_submission(signed)?;
+        let submission =
+            crate::authorization_lease::standard_initial_submission(&self.http, signed).await?;
         let response: arkret_sdk::EventsSubmitOutcome = self
             .http
             .events_submit_with_options(
@@ -1346,7 +1347,8 @@ impl EventSubmitter {
         // re-authorization.
         crate::authorization_lease::ensure_for_events(&self.http, std::slice::from_ref(signed))
             .await?;
-        let submission = crate::authorization_lease::initial_submission(signed)?;
+        let submission =
+            crate::authorization_lease::standard_initial_submission(&self.http, signed).await?;
         let response: arkret_sdk::EventsSubmitOutcome = self
             .http
             .post_with_options(
@@ -1912,11 +1914,22 @@ impl EventSubmitter {
         crate::authorization_lease::ensure_for_events(&self.http, sdk_events).await?;
         // `idempotency_key` is not a body field in v1: it travels only in the
         // `Idempotency-Key` header.
+        let anchor_unit = first_event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE;
+        let mut submissions = Vec::with_capacity(sdk_events.len());
+        for event in sdk_events {
+            let submission = if anchor_unit {
+                let submission = crate::authorization_lease::initial_submission(event)?;
+                submission
+                    .validate_structural_in_context(arkret_wire::EventSubmitContext::AnchorUnit)
+                    .map_err(anyhow::Error::from)?;
+                submission
+            } else {
+                crate::authorization_lease::standard_initial_submission(&self.http, event).await?
+            };
+            submissions.push(submission);
+        }
         let body = arkret_sdk::EventsSubmitBatchRequestBody {
-            events: sdk_events
-                .iter()
-                .map(crate::authorization_lease::initial_submission)
-                .collect::<anyhow::Result<Vec<_>>>()?,
+            events: submissions,
         };
         let idem = idempotency_key
             .map(ToOwned::to_owned)

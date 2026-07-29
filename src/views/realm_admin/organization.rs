@@ -479,36 +479,11 @@ fn OrganizationCreatePanel(token: Signal<String>, account_did: String) -> Elemen
                             status_msg.set("minting organization DID…".to_owned());
                             created_did.set(String::new());
                             spawn(async move {
-                                // The organization document records the deployment's
-                                // service DID as its device-enrollment-authority
-                                // service entry (uniform embedded-webvh profile);
-                                // the organization itself authorizes no end-user
-                                // devices, and the relationship-binding verifier
-                                // does not depend on this field.
-                                let enrollment_authority = match crate::transport::auth::with_authed_sdk_client(
-                                    &base,
-                                    api_token.clone(),
-                                    |http| async move { crate::transport::account::identity_describe(&http).await },
-                                )
-                                .await
-                                {
-                                    Ok(describe) => describe.service_id.as_str().to_owned(),
-                                    Err(err) => {
-                                        busy.set(false);
-                                        status_msg.set(format!(
-                                            "could not resolve identity authority: {}",
-                                            err.display()
-                                        ));
-                                        return;
-                                    }
-                                };
-
                                 let (prepared, organization) = match prepare_organization_inception(
                                     &base,
                                     &local_id,
                                     Some(&name),
                                     &[],
-                                    &enrollment_authority,
                                 ) {
                                     Ok(pair) => pair,
                                     Err(err) => {

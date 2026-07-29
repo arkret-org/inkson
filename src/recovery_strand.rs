@@ -460,13 +460,149 @@ pub async fn ensure_active_recovery_policy(
         device_id,
         key_material,
     )?;
-    api.put_recovery_policy(body).await?;
+    publish_recovery_policy(api, principal_id, device_id, body).await?;
 
     let policy = fetch_active_recovery_policy(api)
         .await?
         .ok_or_else(|| anyhow::anyhow!("server accepted recovery policy but did not expose it"))?;
     validate_active_policy_key_material(&policy, principal_id, key_material)?;
     Ok(policy)
+}
+
+async fn publish_recovery_policy(
+    api: &TransportClient,
+    principal_id: &str,
+    device_id: &str,
+    policy_value: Value,
+) -> anyhow::Result<arkret_sdk::RecoveryPolicyPublishOutcome> {
+    let policy: RecoveryPolicy = serde_json::from_value(policy_value)?;
+    policy.validate()?;
+    let principal = arkret_sdk::Did::new(principal_id.to_owned())?;
+    let realm_id = arkret_sdk::principal_control_realm_id(&principal);
+    let payload = arkret_sdk::RecoveryPolicySetPayload {
+        policy_id: policy.policy_id.clone(),
+        value: policy,
+    };
+    payload.validate()?;
+    let event = crate::operation::OperationBuilder::new(
+        realm_id,
+        principal_id,
+        arkret_sdk::events::kinds::EventKind::PolicySet,
+    )
+    .body(serde_json::to_value(payload)?)
+    .build_sdk_event("inkson-recovery-policy")?;
+    let submitter = api.event_submitter()?;
+    let (event, _) = submitter.prepare_sdk_event_for_submit(&event).await?;
+    let http = api.sdk_http_client()?;
+    crate::authorization_lease::ensure_for_events(&http, std::slice::from_ref(&event)).await?;
+    let submission = crate::authorization_lease::standard_initial_submission(&http, &event).await?;
+    let request = arkret_sdk::RecoveryPolicyPublishRequest {
+        event: submission.event,
+        authorization_lease: submission.authorization_lease,
+        cba_proof_bundles: submission.cba_proof_bundles,
+        control_proposal_receipt: submission.control_proposal_receipt,
+    };
+
+    // A self-PCR notary is the principal's current device, never the hosting
+    // service. The first typed publication accepts the Event and returns
+    // frontier_unavailable; the client must then publish the device-signed
+    // successor Seal before retrying the identical request.
+    const FRONTIER_RETRY_ATTEMPTS: usize = 120;
+    let mut successor_seal_submitted = false;
+    for attempt in 0..FRONTIER_RETRY_ATTEMPTS {
+        match api.put_recovery_policy(&request).await {
+            Ok(outcome) => return Ok(outcome),
+            Err(error)
+                if recovery_policy_frontier_pending(&error)
+                    && attempt + 1 < FRONTIER_RETRY_ATTEMPTS =>
+            {
+                if !successor_seal_submitted {
+                    submit_first_recovery_policy_seal(api, principal_id, device_id, &event).await?;
+                    successor_seal_submitted = true;
+                }
+                crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(250)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("bounded recovery policy retry loop always returns")
+}
+
+async fn submit_first_recovery_policy_seal(
+    api: &TransportClient,
+    principal_id: &str,
+    device_id: &str,
+    policy_event: &arkret_sdk::Event,
+) -> anyhow::Result<()> {
+    let http = api.sdk_http_client()?;
+    let events = http
+        .events_query_all_pages(policy_event.realm_id.as_str())
+        .await?;
+    let create = events
+        .events
+        .iter()
+        .find(|event| {
+            event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE
+                && event.actor_id.as_str() == principal_id
+        })
+        .ok_or_else(|| anyhow::anyhow!("self-PCR history omitted its bootstrap create Event"))?;
+    let authorize = events
+        .events
+        .iter()
+        .find(|event| {
+            event.kind.as_str() == arkret_sdk::events::EventKind::DEVICE_AUTHORIZE
+                && event.actor_id.as_str() == principal_id
+                && event.actor_seq == 1
+        })
+        .ok_or_else(|| anyhow::anyhow!("self-PCR history omitted its bootstrap authorize Event"))?;
+    let predecessor = api
+        .event_submitter()?
+        .events_frontier_realm_seal_view(policy_event.realm_id.as_str())
+        .await?;
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
+    if signer.device_id() != Some(device_id) {
+        anyhow::bail!("active device signer does not match the recovery-policy device");
+    }
+    let hlc = crate::signing_stamp::issue_protocol_hlc(
+        principal_id,
+        device_id,
+        policy_event.realm_id.as_str(),
+    )?;
+    let seal = signer
+        .sign_self_principal_first_successor_seal(
+            create,
+            authorize,
+            policy_event,
+            &predecessor,
+            hlc,
+        )
+        .map_err(|error| anyhow::anyhow!("sign recovery-policy successor Seal: {error}"))?;
+    let expected_id = seal.id.clone();
+    let expected_digest = arkret_sdk::Hash::new(policy_event.event_digest()?)?;
+    let expected_state_root = seal.state_root.clone();
+    let outcome = http.events_submit_seal(&seal).await?;
+    if outcome.seal_id != expected_id
+        || outcome.accepted_event_digests != vec![expected_digest]
+        || outcome.post_state_root != expected_state_root
+    {
+        anyhow::bail!("Principal Server returned a mismatched recovery-policy Seal outcome");
+    }
+    Ok(())
+}
+
+fn recovery_policy_frontier_pending(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<arkret_sdk::http_client::Error>(),
+            Some(arkret_sdk::http_client::Error::Api { error, .. })
+                if error.code() == "frontier_unavailable"
+        ) || matches!(
+            cause.downcast_ref::<arkret_sdk::Error>(),
+            Some(arkret_sdk::Error::Api { error, .. })
+                if error.code() == "frontier_unavailable"
+        )
+    })
 }
 
 fn validate_active_policy_key_material(
@@ -848,6 +984,7 @@ mod tests {
                 "policy_id": "ak:policy:019a6aa0-0000-7000-8000-0000000000bb",
                 "principal_id": "did:web:alice.example",
                 "version": 3,
+                "acceptance_basis": format!("ak:seal:sha256:{}", "a".repeat(64)),
                 "trust_domain": "ak:trust_domain:soland.local",
                 "allowed_proof_kinds": ["principal_signing", "recovery_unlock"],
                 "issued_at": "2026-01-01T00:00:00.000Z",
@@ -993,6 +1130,7 @@ mod tests {
                 "policy_id": "ak:policy:019a6aa0-0000-7000-8000-0000000000bb",
                 "principal_id": "did:web:alice.example",
                 "version": 1,
+                "acceptance_basis": format!("ak:seal:sha256:{}", "a".repeat(64)),
                 "trust_domain": "ak:trust_domain:soland.local",
                 "allowed_proof_kinds": ["principal_signing"],
                 "issued_at": "2026-01-01T00:00:00.000Z",
@@ -1110,6 +1248,7 @@ mod tests {
                 "policy_id": "ak:policy:019a6aa0-0000-7000-8000-0000000000bb",
                 "principal_id": "did:web:alice.example",
                 "version": 1,
+                "acceptance_basis": format!("ak:seal:sha256:{}", "a".repeat(64)),
                 "trust_domain": "ak:trust_domain:soland.local",
                 "allowed_proof_kinds": ["principal_signing"],
                 "issued_at": "2026-01-01T00:00:00.000Z",

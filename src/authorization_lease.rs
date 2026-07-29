@@ -24,7 +24,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock, PoisonError};
 
-use arkret_wire::AuthorizationLease;
+use arkret_wire::{AuthorizationLease, ProposalMemberReceipt};
 
 /// No usable lease covers this Event's actor and signed scope.
 #[derive(Clone, Debug, thiserror::Error)]
@@ -49,6 +49,15 @@ type LeaseKey = (String, String, String);
 fn leases() -> &'static Mutex<BTreeMap<LeaseKey, AuthorizationLease>> {
     static LEASES: OnceLock<Mutex<BTreeMap<LeaseKey, AuthorizationLease>>> = OnceLock::new();
     LEASES.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+type ProposalReceiptKey = (String, String, String);
+
+fn local_proposal_receipts() -> &'static Mutex<BTreeMap<ProposalReceiptKey, ProposalMemberReceipt>>
+{
+    static RECEIPTS: OnceLock<Mutex<BTreeMap<ProposalReceiptKey, ProposalMemberReceipt>>> =
+        OnceLock::new();
+    RECEIPTS.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
 fn key(actor_id: &str, scope_ref: &arkret_sdk::ScopeRef, action: &str) -> anyhow::Result<LeaseKey> {
@@ -79,6 +88,10 @@ pub fn install_lease(lease: AuthorizationLease) -> anyhow::Result<()> {
 /// Drop every held lease (sign-out, account switch, revocation notice).
 pub fn clear_leases() {
     leases()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clear();
+    local_proposal_receipts()
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .clear();
@@ -248,6 +261,108 @@ pub fn initial_submission(
         // DataEvents and caller-proven anchor units must omit it.
         control_proposal_receipt: None,
     })
+}
+
+/// Build the publication wrapper required by a normal events.submit call.
+///
+/// A non-genesis Control Move first asks the authenticated Principal Server
+/// for its independently signed member receipt, then assembles the canonical
+/// receipt set. DataEvents do not enter the proposal protocol and therefore
+/// keep the receipt field absent.
+pub async fn standard_initial_submission(
+    http: &arkret_sdk::http_client::Client,
+    event: &arkret_sdk::Event,
+) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
+    let mut submission = initial_submission(event)?;
+    if event.seal_basis.is_some() {
+        let member_receipt = if event.realm_id
+            == arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&event.actor_id))?
+        {
+            local_principal_control_member_receipt(event)?
+        } else {
+            http.issue_control_proposal_receipt(
+                &arkret_wire::ControlProposalReceiptIssueRequestBody {
+                    event: event.clone(),
+                    authorization_lease: submission.authorization_lease.clone(),
+                    cba_proof_bundles: submission.cba_proof_bundles.clone(),
+                },
+            )
+            .await
+            .map_err(anyhow::Error::from)?
+            .member_receipt
+        };
+        submission.control_proposal_receipt =
+            Some(arkret_wire::ControlProposalReceipt::from_member_receipts(
+                vec![member_receipt],
+                arkret_wire::ControlProposalDecisionPolicy::protocol_maximum(),
+            )?);
+    }
+    submission
+        .validate_structural_in_context(arkret_wire::EventSubmitContext::Standard)
+        .map_err(anyhow::Error::from)?;
+    Ok(submission)
+}
+
+fn local_principal_control_member_receipt(
+    event: &arkret_sdk::Event,
+) -> anyhow::Result<ProposalMemberReceipt> {
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("PCR proposal receipt requires an active device signer"))?;
+    let verification_method = signer.verification_method_for_principal(&event.actor_id)?;
+    let proposal_digest = arkret_sdk::Hash::new(event.event_digest()?)?;
+    let notary = arkret_wire::notary::NotaryValue::single_did(event.actor_id.clone());
+    let authority_set_ref = arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
+        arkret_sdk::canonical::canonical_json_bytes(&notary)?,
+    ))?;
+    let cache_key = (
+        proposal_digest.to_string(),
+        authority_set_ref.to_string(),
+        verification_method.clone(),
+    );
+    if let Some(receipt) = local_proposal_receipts()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&cache_key)
+        .cloned()
+    {
+        return Ok(receipt);
+    }
+
+    let received_at = crate::clock::now_utc();
+    let mut member = ProposalMemberReceipt {
+        realm_id: event.realm_id.clone(),
+        proposal_digest,
+        received_at,
+        decision_due_at: received_at + chrono::Duration::seconds(30),
+        absolute_due_at: received_at + chrono::Duration::seconds(90),
+        authority_set_ref,
+        signature: arkret_wire::PayloadSignature {
+            alg: "EdDSA".to_owned(),
+            verification_method,
+            payload_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))?,
+            created_at: received_at,
+            jws: String::new(),
+        },
+    };
+    member.signature.payload_digest = member.member_digest()?;
+    let transcript = member.canonical_bytes_for_signature()?;
+    let (signed_method, jws) =
+        signer.sign_detached_jws_for_principal(&event.actor_id, &transcript)?;
+    if signed_method != member.signature.verification_method {
+        anyhow::bail!("PCR proposal receipt signer binding changed during signing");
+    }
+    member.signature.jws = jws;
+    member.validate_structural(arkret_wire::ControlProposalDecisionPolicy {
+        receipt_sla: Some(chrono::Duration::hours(24)),
+        decision_window: chrono::Duration::seconds(30),
+        absolute_horizon: chrono::Duration::seconds(90),
+        max_defers: 2,
+    })?;
+    local_proposal_receipts()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(cache_key, member.clone());
+    Ok(member)
 }
 
 /// Lease / receipt fixtures for tests in other modules.
