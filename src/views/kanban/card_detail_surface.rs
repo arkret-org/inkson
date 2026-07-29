@@ -2209,6 +2209,11 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                             let recurrence_label = schedule.recurrence_label();
                                                                             let occurrence_hint = calendar_occurrence_hint(&schedule);
                                                                             let rsvp_display = card.calendar_rsvp.clone();
+                                                                            let agenda = calendar_agenda(
+                                                                                &schedule,
+                                                                                &card.calendar_schedule_basis_refs,
+                                                                                chrono::Utc::now(),
+                                                                            );
                                                                             let location_label = if schedule.location_locked {
                                                                                 MLS_LOCKED_FIELD_PLACEHOLDER.to_owned()
                                                                             } else {
@@ -2285,6 +2290,10 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                         strong { "All day" }
                                                                                                     }
                                                                                                 }
+                                                                                                div {
+                                                                                                    span { "Status" }
+                                                                                                    strong { "{schedule.status}" }
+                                                                                                }
                                                                                                 if !recurrence_label.trim().is_empty() {
                                                                                                     div {
                                                                                                         span { "Recurrence" }
@@ -2297,6 +2306,50 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                         strong { "{location_label}" }
                                                                                                     }
                                                                                                 }
+                                                                                                if !schedule.call_id.trim().is_empty() {
+                                                                                                    div {
+                                                                                                        span { "Call" }
+                                                                                                        strong { "{schedule.call_id}" }
+                                                                                                    }
+                                                                                                }
+                                                                                                if !schedule.attendees_json.trim().is_empty() {
+                                                                                                    div {
+                                                                                                        span { "Attendees" }
+                                                                                                        strong { "{schedule.attendees_json}" }
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                            match agenda {
+                                                                                                Ok(items) if !items.is_empty() => rsx! {
+                                                                                                    div {
+                                                                                                        class: "calendar-agenda",
+                                                                                                        "data-testid": "card-detail-calendar-agenda",
+                                                                                                        span { "Upcoming" }
+                                                                                                        ul {
+                                                                                                            for item in items {
+                                                                                                                li {
+                                                                                                                    key: "{item.occurrence}",
+                                                                                                                    strong { "{item.local_start}" }
+                                                                                                                    span { " – {item.local_end}" }
+                                                                                                                }
+                                                                                                            }
+                                                                                                        }
+                                                                                                    }
+                                                                                                },
+                                                                                                Ok(_) => rsx! {
+                                                                                                    div {
+                                                                                                        class: "card-detail-empty",
+                                                                                                        "data-testid": "card-detail-calendar-agenda-empty",
+                                                                                                        "No occurrences in the next 90 days"
+                                                                                                    }
+                                                                                                },
+                                                                                                Err(error) => rsx! {
+                                                                                                    div {
+                                                                                                        class: "card-detail-empty",
+                                                                                                        "data-testid": "card-detail-calendar-agenda-unresolved",
+                                                                                                        "Agenda unavailable: {error}"
+                                                                                                    }
+                                                                                                },
                                                                                             }
                                                                                         } else {
                                                                                             div { class: "card-detail-empty", "No schedule" }

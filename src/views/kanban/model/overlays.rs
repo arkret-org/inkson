@@ -624,19 +624,36 @@ fn apply_calendar_field_overlay(
     if touched_fields.contains_key("timezone") {
         current.timezone = next.timezone.clone();
     }
+    if touched_fields.contains_key("tzdb_version") {
+        current.tzdb_version = next.tzdb_version.clone();
+    }
     if touched_fields.contains_key("all_day") {
         current.all_day = next.all_day;
+    }
+    if touched_fields.contains_key("status") {
+        current.status = next.status.clone();
     }
     if touched_fields.contains_key("recurrence") {
         current.recurrence_frequency = next.recurrence_frequency.clone();
         current.recurrence_interval = next.recurrence_interval.clone();
         current.recurrence_by_day = next.recurrence_by_day.clone();
+        current.recurrence_by_month = next.recurrence_by_month.clone();
+        current.recurrence_by_month_day = next.recurrence_by_month_day.clone();
+        current.recurrence_by_set_position = next.recurrence_by_set_position.clone();
+        current.recurrence_first_day_of_week = next.recurrence_first_day_of_week.clone();
         current.recurrence_count = next.recurrence_count.clone();
         current.recurrence_until = next.recurrence_until.clone();
     }
     if touched_fields.contains_key("location") {
         current.location = next.location.clone();
         current.location_locked = next.location_locked;
+        current.location_source = next.location_source.clone();
+    }
+    if touched_fields.contains_key("call_id") {
+        current.call_id = next.call_id.clone();
+    }
+    if touched_fields.contains_key("attendees") {
+        current.attendees_json = next.attendees_json.clone();
     }
 }
 

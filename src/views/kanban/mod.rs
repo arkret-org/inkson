@@ -41,7 +41,9 @@ use drag_drop_controller::*;
 use due_calendar::*;
 use effects::KanbanEffects;
 use model::*;
-pub(crate) use model::{strand_update_operations_from_events, strand_views_from_ops};
+pub(crate) use model::{
+    calendar_schedule_revision_heads, strand_update_operations_from_events, strand_views_from_ops,
+};
 
 #[cfg(test)]
 pub(crate) use crate::state::projection::kanban_ops::kanban_operations_from_events;
@@ -214,11 +216,17 @@ fn CalendarScheduleEditForm(
     on_cancel: EventHandler<()>,
 ) -> Element {
     let selected_frequency = use_memo(move || {
-        let frequency = calendar().recurrence_frequency.trim().to_owned();
+        let frequency = calendar().recurrence_frequency.trim().to_ascii_lowercase();
         Some(if frequency.is_empty() {
             "none".to_owned()
         } else {
             frequency
+        })
+    });
+    let selected_status = use_memo(move || {
+        Some(match calendar().status.trim() {
+            "" => "confirmed".to_owned(),
+            value => value.to_owned(),
         })
     });
     rsx! {
@@ -256,6 +264,32 @@ fn CalendarScheduleEditForm(
                     oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.timezone = event.value()),
                 }
             }
+            div { class: "field",
+                Label { html_for: "card-detail-calendar-tzdb-input", "TZDB version" }
+                Input {
+                    id: "card-detail-calendar-tzdb-input",
+                    class: "input",
+                    "data-testid": "card-detail-calendar-tzdb-input",
+                    value: "{calendar().tzdb_version}",
+                    placeholder: "{DEFAULT_CALENDAR_TZDB_VERSION}",
+                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.tzdb_version = event.value()),
+                }
+            }
+            div { class: "field",
+                Label { html_for: "card-detail-calendar-status-select", "Calendar status" }
+                Select::<String> {
+                    "data-testid": "card-detail-calendar-status-select",
+                    value: Some(selected_status.into()),
+                    on_value_change: move |value: Option<String>| {
+                        if let Some(value) = value {
+                            update_calendar_draft(calendar, |draft| draft.status = value);
+                        }
+                    },
+                    SelectOption::<String> { index: 0usize, value: "confirmed".to_owned(), text_value: "Confirmed", "Confirmed" }
+                    SelectOption::<String> { index: 1usize, value: "tentative".to_owned(), text_value: "Tentative", "Tentative" }
+                    SelectOption::<String> { index: 2usize, value: "cancelled".to_owned(), text_value: "Cancelled", "Cancelled" }
+                }
+            }
             label { class: "discussion-checkbox-row",
                 Checkbox {
                     "data-testid": "card-detail-calendar-all-day",
@@ -283,10 +317,10 @@ fn CalendarScheduleEditForm(
                         }
                     },
                     SelectOption::<String> { index: 0usize, value: "none".to_owned(), text_value: "None", "None" }
-                    SelectOption::<String> { index: 1usize, value: "DAILY".to_owned(), text_value: "Daily", "Daily" }
-                    SelectOption::<String> { index: 2usize, value: "WEEKLY".to_owned(), text_value: "Weekly", "Weekly" }
-                    SelectOption::<String> { index: 3usize, value: "MONTHLY".to_owned(), text_value: "Monthly", "Monthly" }
-                    SelectOption::<String> { index: 4usize, value: "YEARLY".to_owned(), text_value: "Yearly", "Yearly" }
+                    SelectOption::<String> { index: 1usize, value: "daily".to_owned(), text_value: "Daily", "Daily" }
+                    SelectOption::<String> { index: 2usize, value: "weekly".to_owned(), text_value: "Weekly", "Weekly" }
+                    SelectOption::<String> { index: 3usize, value: "monthly".to_owned(), text_value: "Monthly", "Monthly" }
+                    SelectOption::<String> { index: 4usize, value: "yearly".to_owned(), text_value: "Yearly", "Yearly" }
                 }
             }
             div { class: "field",
@@ -309,6 +343,50 @@ fn CalendarScheduleEditForm(
                     value: "{calendar().recurrence_by_day}",
                     placeholder: "MO, WE, FR",
                     oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_by_day = event.value()),
+                }
+            }
+            div { class: "field",
+                Label { html_for: "card-detail-calendar-by-month-input", "By month" }
+                Input {
+                    id: "card-detail-calendar-by-month-input",
+                    class: "input",
+                    "data-testid": "card-detail-calendar-by-month-input",
+                    value: "{calendar().recurrence_by_month}",
+                    placeholder: "1, 6, 12",
+                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_by_month = event.value()),
+                }
+            }
+            div { class: "field",
+                Label { html_for: "card-detail-calendar-by-month-day-input", "By month day" }
+                Input {
+                    id: "card-detail-calendar-by-month-day-input",
+                    class: "input",
+                    "data-testid": "card-detail-calendar-by-month-day-input",
+                    value: "{calendar().recurrence_by_month_day}",
+                    placeholder: "1, 15, -1",
+                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_by_month_day = event.value()),
+                }
+            }
+            div { class: "field",
+                Label { html_for: "card-detail-calendar-by-set-position-input", "By set position" }
+                Input {
+                    id: "card-detail-calendar-by-set-position-input",
+                    class: "input",
+                    "data-testid": "card-detail-calendar-by-set-position-input",
+                    value: "{calendar().recurrence_by_set_position}",
+                    placeholder: "1, -1",
+                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_by_set_position = event.value()),
+                }
+            }
+            div { class: "field",
+                Label { html_for: "card-detail-calendar-first-weekday-input", "First day of week" }
+                Input {
+                    id: "card-detail-calendar-first-weekday-input",
+                    class: "input",
+                    "data-testid": "card-detail-calendar-first-weekday-input",
+                    value: "{calendar().recurrence_first_day_of_week}",
+                    placeholder: "MO",
+                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_first_day_of_week = event.value()),
                 }
             }
             div { class: "field",
@@ -345,6 +423,28 @@ fn CalendarScheduleEditForm(
                         draft.location = event.value();
                         draft.location_locked = false;
                     }),
+                }
+            }
+            div { class: "field",
+                Label { html_for: "card-detail-calendar-call-id-input", "Call ID" }
+                Input {
+                    id: "card-detail-calendar-call-id-input",
+                    class: "input",
+                    "data-testid": "card-detail-calendar-call-id-input",
+                    value: "{calendar().call_id}",
+                    placeholder: "ak:call:…",
+                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.call_id = event.value()),
+                }
+            }
+            div { class: "field",
+                Label { html_for: "card-detail-calendar-attendees-input", "Attendees (JSON)" }
+                Input {
+                    id: "card-detail-calendar-attendees-input",
+                    class: "input",
+                    "data-testid": "card-detail-calendar-attendees-input",
+                    value: "{calendar().attendees_json}",
+                    placeholder: r#"[{{"actor_id":"did:web:alice.example","role":"required"}}]"#,
+                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.attendees_json = event.value()),
                 }
             }
             CardDetailEditActions {
