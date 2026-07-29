@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { chromium, expect, test } from "@playwright/test";
 import {
   registerStrandsBeforeEach,
   latestTestId,
@@ -65,6 +65,119 @@ test("a second browser tab is blocked until the active Inkson tab closes", async
 
   await expect(latestTestId(follower, "client-shell")).toBeVisible({ timeout: 120_000 });
   await expect(follower.getByTestId("web-leader-follower")).toHaveCount(0);
+});
+
+test("exactly one follower takes over after the leader closes", async ({ page }) => {
+  const followers = await Promise.all([
+    page.context().newPage(),
+    page.context().newPage(),
+  ]);
+  for (const follower of followers) {
+    await mockArkretApi(follower);
+    await addSessionGrantInjection(follower);
+    await follower.goto("/", { waitUntil: "domcontentloaded" });
+    await expect(follower.getByTestId("web-leader-follower")).toBeVisible();
+    await expect(follower.getByTestId("client-shell")).toHaveCount(0);
+  }
+
+  await page.close();
+  await Promise.all(
+    followers.map((follower) =>
+      follower.reload({ waitUntil: "domcontentloaded" }),
+    ),
+  );
+
+  await expect
+    .poll(async () => {
+      const states = await Promise.all(
+        followers.map(async (follower) => ({
+          leader: await follower.getByTestId("client-shell").count(),
+          follower: await follower.getByTestId("web-leader-follower").count(),
+        })),
+      );
+      return states;
+    }, { timeout: 120_000 })
+    .toEqual(
+      expect.arrayContaining([
+        { leader: 1, follower: 0 },
+        { leader: 0, follower: 1 },
+      ]),
+    );
+});
+
+test("a follower takes over after the leader renderer crashes", async ({
+  baseURL,
+  page,
+}) => {
+  await page.close();
+  const isolatedBrowser = await chromium.launch({
+    args: ["--process-per-tab"],
+  });
+  const context = await isolatedBrowser.newContext();
+  const [leader, follower] = await Promise.all([
+    context.newPage(),
+    context.newPage(),
+  ]);
+  const initialConfig = {
+    server_url: "https://local.host",
+    principal_servers: ["https://local.host"],
+    account_did: "did:web:alice.example",
+    device_id: "ak:device:01964137-0000-7000-8000-0000000000a1",
+    session_credential: "sx:e2e-token",
+  };
+  for (const tab of [leader, follower]) {
+    await mockArkretApi(tab);
+    await addSessionGrantInjection(tab);
+    await tab.addInitScript((config) => {
+      localStorage.setItem("inkson.config.v1", JSON.stringify(config));
+    }, initialConfig);
+  }
+
+  await leader.goto(baseURL ?? "/", { waitUntil: "domcontentloaded" });
+  await expect(latestTestId(leader, "client-shell")).toBeVisible({
+    timeout: 120_000,
+  });
+  await follower.goto(baseURL ?? "/", { waitUntil: "domcontentloaded" });
+  await expect(follower.getByTestId("web-leader-follower")).toBeVisible();
+
+  const cdp = await context.newCDPSession(leader);
+  const crashed = leader.waitForEvent("crash", { timeout: 10_000 });
+  void cdp.send("Page.crash").catch(() => undefined);
+  await crashed;
+  await follower.getByTestId("web-leader-retry").click();
+
+  await expect(latestTestId(follower, "client-shell")).toBeVisible({
+    timeout: 120_000,
+  });
+  await expect(follower.getByTestId("web-leader-follower")).toHaveCount(0);
+  await isolatedBrowser.close();
+});
+
+test("a browser without Web Locks fails closed before mounting writers", async ({
+  browser,
+}) => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, "locks", {
+      configurable: true,
+      get: () => undefined,
+    });
+  });
+  const page = await context.newPage();
+  await mockArkretApi(page);
+  await addSessionGrantInjection(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  await expect(page.getByTestId("web-leader-unavailable")).toBeVisible();
+  await expect(page.getByTestId("client-shell")).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        localStorage.getItem("inkson.web_writer_lease.v1"),
+      ),
+    )
+    .toBeNull();
+  await context.close();
 });
 
 test("selected Realm security badge matches its encrypted sidebar marker", async ({ page }) => {

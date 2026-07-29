@@ -34,10 +34,6 @@ pub(super) fn WebLeaderGate() -> Element {
             spawn(async move {
                 match browser::acquire_leadership().await {
                     Ok(browser::Leadership::WebLock) => state.set(LeaderState::Leader),
-                    Ok(browser::Leadership::Lease(lease)) => {
-                        state.set(LeaderState::Leader);
-                        browser::maintain_lease(lease, state);
-                    }
                     Ok(browser::Leadership::Follower) => state.set(LeaderState::Follower),
                     Err(error) => {
                         tracing::error!(%error, "browser single-leader gate unavailable");
@@ -121,52 +117,31 @@ mod browser {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use dioxus::prelude::{Signal, WritableExt, spawn};
     use js_sys::{Function, Object, Promise, Reflect};
-    use serde::{Deserialize, Serialize};
     use wasm_bindgen::JsCast;
     use wasm_bindgen::closure::Closure;
     use wasm_bindgen::prelude::JsValue;
 
-    use super::LeaderState;
-
     const LOCK_NAME: &str = "inkson:web-writer:v1";
-    const LEASE_KEY: &str = "inkson.web_writer_lease.v1";
-    const LEASE_TTL_MS: f64 = 8_000.0;
-    const LEASE_RENEW_MS: u32 = 2_000;
-    const LEASE_SETTLE_MS: u32 = 200;
 
     #[derive(Debug)]
     pub(super) enum Leadership {
         WebLock,
-        Lease(Lease),
         Follower,
     }
 
-    #[derive(Clone, Debug)]
-    pub(super) struct Lease {
-        owner: String,
-    }
-
-    #[derive(Clone, Debug, Deserialize, Serialize)]
-    struct LeaseRecord {
-        owner: String,
-        expires_at_ms: f64,
-    }
-
     pub(super) async fn acquire_leadership() -> Result<Leadership, String> {
-        match acquire_web_lock().await? {
-            Some(acquired) => {
-                return Ok(if acquired {
-                    Leadership::WebLock
-                } else {
-                    Leadership::Follower
-                });
-            }
-            None => {}
-        }
-
-        acquire_storage_lease().await
+        let Some(acquired) = acquire_web_lock().await? else {
+            return Err(
+                "navigator.locks is required to guarantee a single encrypted-state writer"
+                    .to_owned(),
+            );
+        };
+        Ok(if acquired {
+            Leadership::WebLock
+        } else {
+            Leadership::Follower
+        })
     }
 
     /// Returns `Ok(None)` when Web Locks is not exposed by the browser.
@@ -223,89 +198,6 @@ mod browser {
             gloo_timers::future::TimeoutFuture::new(10).await;
         }
         Err("navigator.locks did not resolve within one second".to_owned())
-    }
-
-    async fn acquire_storage_lease() -> Result<Leadership, String> {
-        let storage = storage()?;
-        let now = js_sys::Date::now();
-        if let Some(record) = read_lease(&storage)?
-            && record.expires_at_ms > now
-        {
-            return Ok(Leadership::Follower);
-        }
-
-        let owner = new_owner_id();
-        write_lease(&storage, &owner, now + LEASE_TTL_MS)?;
-        gloo_timers::future::TimeoutFuture::new(LEASE_SETTLE_MS).await;
-
-        let confirmed = read_lease(&storage)?.is_some_and(|record| {
-            record.owner == owner && record.expires_at_ms > js_sys::Date::now()
-        });
-        Ok(if confirmed {
-            Leadership::Lease(Lease { owner })
-        } else {
-            Leadership::Follower
-        })
-    }
-
-    pub(super) fn maintain_lease(lease: Lease, mut state: Signal<LeaderState>) {
-        spawn(async move {
-            loop {
-                gloo_timers::future::TimeoutFuture::new(LEASE_RENEW_MS).await;
-                let Ok(storage) = storage() else {
-                    state.set(LeaderState::Unavailable);
-                    return;
-                };
-                let owns_lease = read_lease(&storage)
-                    .ok()
-                    .flatten()
-                    .is_some_and(|record| record.owner == lease.owner);
-                if !owns_lease {
-                    tracing::warn!("browser writer lease lost; unmounting authenticated app");
-                    state.set(LeaderState::Follower);
-                    return;
-                }
-                if write_lease(&storage, &lease.owner, js_sys::Date::now() + LEASE_TTL_MS).is_err()
-                {
-                    state.set(LeaderState::Unavailable);
-                    return;
-                }
-            }
-        });
-    }
-
-    fn storage() -> Result<web_sys::Storage, String> {
-        web_sys::window()
-            .ok_or("window unavailable")?
-            .local_storage()
-            .map_err(js_error)?
-            .ok_or_else(|| "localStorage unavailable".to_owned())
-    }
-
-    fn read_lease(storage: &web_sys::Storage) -> Result<Option<LeaseRecord>, String> {
-        storage
-            .get_item(LEASE_KEY)
-            .map_err(js_error)?
-            .map(|raw| serde_json::from_str(&raw).map_err(|error| error.to_string()))
-            .transpose()
-    }
-
-    fn write_lease(
-        storage: &web_sys::Storage,
-        owner: &str,
-        expires_at_ms: f64,
-    ) -> Result<(), String> {
-        let value = serde_json::to_string(&LeaseRecord {
-            owner: owner.to_owned(),
-            expires_at_ms,
-        })
-        .map_err(|error| error.to_string())?;
-        storage.set_item(LEASE_KEY, &value).map_err(js_error)
-    }
-
-    fn new_owner_id() -> String {
-        let random = js_sys::Math::random().to_bits();
-        format!("{:x}-{:x}", js_sys::Date::now().to_bits(), random)
     }
 
     fn js_error(value: JsValue) -> String {
