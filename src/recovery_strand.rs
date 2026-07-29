@@ -13,9 +13,11 @@ use arkret_models_crypto::{
     RecoveryHpkeSuite, RecoveryKeyAgreementAlgorithm, RecoveryKeyAgreementEntry,
     RecoveryKeyAgreementUse, RecoveryKeyEntry, RecoveryKeySignatureAlgorithm, RecoveryPolicy,
     RecoveryPolicyActiveOutcome, RecoveryPolicyAuthData, RecoveryPolicyRef, RecoveryPolicySummary,
-    RecoveryProofKind, RecoverySessionCreateRequestBody, RecoverySessionProofSubmitRequestBody,
+    RecoveryProofKind, RecoveryPublicationAuthorizationRule, RecoverySessionCreateRequestBody,
+    RecoverySessionProofSubmitRequestBody,
 };
 use arkret_sdk::{DeviceId, Did, DidUrl, NonEmptyString, PolicyId, TypedTrustDomainId};
+use arkret_wire::{AuthoritySetIssuer, AuthoritySetIssuerRole};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::SigningKey;
@@ -30,6 +32,7 @@ pub const RECOVERY_POLICY_SIGNED_FIELDS: &[&str] = &[
     "version",
     "trust_domain",
     "allowed_proof_kinds",
+    "publication_authorization_rules",
     "recovery_keys",
     "recovery_key_agreements",
     "supersedes",
@@ -300,6 +303,8 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         .map_err(|error| anyhow::anyhow!(error))?;
     let backup_hpke_ref = DidUrl::new(format!("{principal_id}#backup-hpke-0"))
         .map_err(|error| anyhow::anyhow!(error))?;
+    let principal_signing_ref =
+        DidUrl::new(verification_method.to_owned()).map_err(|error| anyhow::anyhow!(error))?;
     let mut typed_policy = RecoveryPolicy {
         schema: "ak.schema.recovery_policy.v1".to_owned(),
         policy_id: PolicyId::new(format!("ak:policy:{}", crate::operation::uuid_v7()))?,
@@ -310,6 +315,28 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         allowed_proof_kinds: vec![
             RecoveryProofKind::PrincipalSigning,
             RecoveryProofKind::RecoveryUnlock,
+        ],
+        publication_authorization_rules: vec![
+            RecoveryPublicationAuthorizationRule {
+                rule_id: "principal_signing".to_owned(),
+                proof_kind: RecoveryProofKind::PrincipalSigning,
+                issuer_role: AuthoritySetIssuerRole::IdentityRecovery,
+                allowed_actions: vec!["ak.device.reanchor".to_owned()],
+                issuers: vec![AuthoritySetIssuer {
+                    verification_method: principal_signing_ref,
+                }],
+                threshold: 1,
+            },
+            RecoveryPublicationAuthorizationRule {
+                rule_id: "recovery_unlock".to_owned(),
+                proof_kind: RecoveryProofKind::RecoveryUnlock,
+                issuer_role: AuthoritySetIssuerRole::IdentityRecovery,
+                allowed_actions: vec!["ak.device.reanchor".to_owned()],
+                issuers: vec![AuthoritySetIssuer {
+                    verification_method: recovery_proof_ref.clone(),
+                }],
+                threshold: 1,
+            },
         ],
         threshold: None,
         device_quorum: None,
