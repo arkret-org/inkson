@@ -280,13 +280,11 @@ pub async fn standard_initial_submission(
         {
             local_principal_control_member_receipt(event)?
         } else {
-            http.issue_control_proposal_receipt(
-                &arkret_wire::ProposalReceiptIssueRequest {
-                    event: event.clone(),
-                    authorization_lease: submission.authorization_lease.clone(),
-                    cba_proof_bundles: submission.cba_proof_bundles.clone(),
-                },
-            )
+            http.issue_control_proposal_receipt(&arkret_wire::ProposalReceiptIssueRequest {
+                event: event.clone(),
+                authorization_lease: submission.authorization_lease.clone(),
+                cba_proof_bundles: submission.cba_proof_bundles.clone(),
+            })
             .await
             .map_err(anyhow::Error::from)?
             .member_receipt
