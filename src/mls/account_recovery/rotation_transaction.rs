@@ -10,7 +10,7 @@ use arkret_wire::{
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use dioxus::prelude::{SyncSignal, WritableExt};
-use garth::SecureKeyStore;
+use garth::{PutSecretOptions, SecretClass, SecretDurability, SecureKeyStore};
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
 
@@ -29,6 +29,7 @@ const ACTIVE_SERIES_SIGNED_FIELDS: &[&str] = &[
     "frontier_ref",
     "issued_at",
 ];
+const PENDING_ROTATION_INDEX_KEY: &str = "security_rotation.pending.v1";
 
 pub(crate) struct CompletedSecurityRotation {
     pub(crate) transaction_id: TransactionId,
@@ -142,7 +143,7 @@ pub(crate) fn prepare_rotation_backup_material(
 pub(crate) async fn execute_device_revoke_security_rotation(
     api: &crate::transport::TransportClient,
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: SyncSignal<crate::state::LocalStateStore>,
     actor_id: &str,
     current_device_id: &str,
     target_device_id: &str,
@@ -151,6 +152,23 @@ pub(crate) async fn execute_device_revoke_security_rotation(
 ) -> Result<CompletedSecurityRotation> {
     if current_device_id == target_device_id {
         return Err(anyhow!("a device cannot revoke itself"));
+    }
+    if let Some(pending) = load_pending_rotation(secure_store.as_ref(), target_device_id)? {
+        if pending.actor_id != actor_id || pending.current_device_id != current_device_id {
+            return Err(anyhow!(
+                "pending security rotation belongs to a different actor or controller device"
+            ));
+        }
+        return resume_device_revoke_security_rotation(
+            api,
+            secure_store,
+            state_store,
+            actor_id,
+            current_device_id,
+            target_device_id,
+            pending.transaction_id,
+        )
+        .await;
     }
     let http = api.sdk_http_client()?;
     let submitter = api.event_submitter()?;
@@ -268,6 +286,21 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         .stage_secret(&transaction_id, staged)
         .await
         .map_err(anyhow::Error::from)?;
+    if let Err(error) = save_pending_rotation(
+        secure_store.as_ref(),
+        target_device_id,
+        &PendingRotation {
+            transaction_id: transaction_id.clone(),
+            actor_id: actor_id.to_owned(),
+            current_device_id: current_device_id.to_owned(),
+        },
+    )
+    .await
+    {
+        let _ =
+            garth::SecurityTransactionStore::clear_staged_secret(&transaction_store, &staged_ref);
+        return Err(error);
+    }
 
     let engine = crate::security_transaction::security_transaction_engine(
         http.clone(),
@@ -278,6 +311,87 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         .create_or_resume(create, staged_ref)
         .await
         .map_err(anyhow::Error::from)?;
+    drive_security_rotation(
+        api,
+        secure_store,
+        state_store,
+        actor_id,
+        current_device_id,
+        target_device_id,
+        &mut transaction,
+    )
+    .await
+}
+
+async fn resume_device_revoke_security_rotation(
+    api: &crate::transport::TransportClient,
+    secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
+    state_store: SyncSignal<crate::state::LocalStateStore>,
+    actor_id: &str,
+    current_device_id: &str,
+    target_device_id: &str,
+    transaction_id: TransactionId,
+) -> Result<CompletedSecurityRotation> {
+    let http = api.sdk_http_client()?;
+    let engine =
+        crate::security_transaction::security_transaction_engine(http, secure_store.clone());
+    let workflow = crate::fresh_device_recovery::DeviceRevokeSecurityRotation::new(engine);
+    let mut transaction = match workflow
+        .retry_byte_identical_pending(&transaction_id)
+        .await
+        .map_err(anyhow::Error::from)?
+    {
+        Some(transaction) => transaction,
+        None => workflow
+            .refresh(&transaction_id)
+            .await
+            .map_err(anyhow::Error::from)?,
+    };
+    drive_security_rotation(
+        api,
+        secure_store,
+        state_store,
+        actor_id,
+        current_device_id,
+        target_device_id,
+        &mut transaction,
+    )
+    .await
+}
+
+async fn drive_security_rotation(
+    api: &crate::transport::TransportClient,
+    secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
+    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    actor_id: &str,
+    current_device_id: &str,
+    target_device_id: &str,
+    transaction: &mut arkret_wire::SecurityTransaction,
+) -> Result<CompletedSecurityRotation> {
+    let http = api.sdk_http_client()?;
+    let submitter = api.event_submitter()?;
+    let principal = Did::new(actor_id.to_owned())?;
+    let control_realm = arkret_sdk::principal_control_realm_id(&principal);
+    let transaction_id = transaction.transaction_id.clone();
+    let engine = crate::security_transaction::security_transaction_engine(
+        http.clone(),
+        secure_store.clone(),
+    );
+    let workflow = crate::fresh_device_recovery::DeviceRevokeSecurityRotation::new(engine);
+    if transaction.state == SecurityTransactionState::Completed {
+        clear_pending_rotation(secure_store.as_ref(), target_device_id)?;
+        let version =
+            crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), actor_id)?
+                .map(|secret| secret.version)
+                .ok_or_else(|| {
+                    anyhow!("completed security rotation has no committed local MLS secret")
+                })?;
+        return Ok(CompletedSecurityRotation {
+            transaction_id,
+            new_secret_version: version,
+            replacement_backup_count: rotation_backup_count(transaction)?,
+        });
+    }
     while matches!(
         transaction.next_required_step,
         Some(
@@ -286,68 +400,81 @@ pub(crate) async fn execute_device_revoke_security_rotation(
                 | SecurityTransactionStep::SwitchAuthoritativePointer
         )
     ) {
-        transaction = workflow
-            .continue_server_step(&transaction)
+        *transaction = workflow
+            .continue_server_step(transaction)
             .await
             .map_err(anyhow::Error::from)?;
-    }
-    if transaction.next_required_step != Some(SecurityTransactionStep::EraseOldMaterial) {
-        return Err(anyhow!(
-            "security rotation did not reach the durable erase operation"
-        ));
     }
     let SecurityTransactionBinding::SecurityRotation(binding) = transaction.binding.clone() else {
         return Err(anyhow!(
             "server returned a non-rotation transaction binding"
         ));
     };
-    let erase_frontier = submitter
-        .events_frontier_realm_seal_view(&control_realm)
-        .await?;
-    let erase_lease = crate::authorization_lease::acquire_for_intent(
-        &http,
-        arkret_wire::AuthorizationLeaseIssueIntent {
-            scope_ref: arkret_sdk::ScopeRef::Realm {
-                realm_id: arkret_sdk::RealmId::new(control_realm.clone())?,
+    if transaction.next_required_step == Some(SecurityTransactionStep::EraseOldMaterial) {
+        let erase_frontier = submitter
+            .events_frontier_realm_seal_view(&control_realm)
+            .await?;
+        let erase_lease = crate::authorization_lease::acquire_for_intent(
+            &http,
+            arkret_wire::AuthorizationLeaseIssueIntent {
+                scope_ref: arkret_sdk::ScopeRef::Realm {
+                    realm_id: arkret_sdk::RealmId::new(control_realm.clone())?,
+                },
+                action: "ak.keys.backup_series.erase".to_owned(),
+                authorization_rule_id: "realm_admission".to_owned(),
+                risk_tier: RiskTier::High,
+                basis_ref: LeaseBasisRef::Seal(erase_frontier.seal_id),
             },
-            action: "ak.keys.backup_series.erase".to_owned(),
-            authorization_rule_id: "realm_admission".to_owned(),
-            risk_tier: RiskTier::High,
-            basis_ref: LeaseBasisRef::Seal(erase_frontier.seal_id),
-        },
-    )
-    .await?;
-    let erase_request = BackupSeriesEraseRequestBody {
-        transaction_id: transaction.transaction_id.clone(),
-        transaction_request_digest: transaction.request_digest.clone(),
-        prepared_plan_digest: transaction.prepared_plan_digest.clone(),
-        erase_confirmation_digest: binding.erase_confirmation_digest.clone(),
-        series: binding.backup_rotations.clone(),
-        authorization_lease: erase_lease,
-        cba_proof_bundles: Vec::new(),
-    };
-    let erase = workflow
-        .erase_old_series(&transaction.transaction_id, &erase_request)
-        .await
-        .map_err(anyhow::Error::from)?;
-    if erase.status != BackupSeriesEraseStatus::Complete {
-        return Err(anyhow!(
-            "old backup series erasure is incomplete and remains retryable"
-        ));
+        )
+        .await?;
+        let erase_request = BackupSeriesEraseRequestBody {
+            transaction_id: transaction.transaction_id.clone(),
+            transaction_request_digest: transaction.request_digest.clone(),
+            prepared_plan_digest: transaction.prepared_plan_digest.clone(),
+            erase_confirmation_digest: binding.erase_confirmation_digest.clone(),
+            series: binding.backup_rotations.clone(),
+            authorization_lease: erase_lease,
+            cba_proof_bundles: Vec::new(),
+        };
+        let erase = match workflow
+            .retry_pending_erase(&transaction.transaction_id)
+            .await
+            .map_err(anyhow::Error::from)?
+        {
+            Some(outcome) => outcome,
+            None => workflow
+                .erase_old_series(&transaction.transaction_id, &erase_request)
+                .await
+                .map_err(anyhow::Error::from)?,
+        };
+        if erase.status != BackupSeriesEraseStatus::Complete {
+            return Err(anyhow!(
+                "old backup series erasure is incomplete and remains retryable"
+            ));
+        }
+        *transaction = workflow
+            .refresh(&transaction.transaction_id)
+            .await
+            .map_err(anyhow::Error::from)?;
     }
-    transaction = workflow
-        .refresh(&transaction.transaction_id)
-        .await
-        .map_err(anyhow::Error::from)?;
     if transaction.next_required_step != Some(SecurityTransactionStep::LocalCommit) {
         return Err(anyhow!("security rotation did not reach local commit"));
     }
 
+    let transaction_store =
+        crate::security_transaction::InksonSecurityTransactionStore::new(secure_store.clone());
+    let staged = transaction_store
+        .load_staged_secret(&transaction.transaction_id)
+        .map_err(anyhow::Error::from)?
+        .ok_or_else(|| anyhow!("staged MLS rotation material is unavailable; refusing commit"))?;
+    let staged: StagedRotationSecret =
+        serde_json::from_slice(staged.as_slice()).context("decode staged MLS rotation material")?;
+    let rotation = staged.into_rotation();
     crate::mls::runtime::commit_account_mls_secret_rotation(
         &mut state_store.write(),
         secure_store.as_ref(),
         actor_id,
-        &prepared.rotation,
+        &rotation,
     )
     .map_err(|error| anyhow!(error.to_string()))?;
     let local_commit = arkret_models_crypto::SecurityRotationLocalCommit {
@@ -389,8 +516,8 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         .continue_with_signed_local_commit(
             &transaction.transaction_id,
             &arkret_models_crypto::TypedSecurityTransactionContinueRequest {
-                request_digest: transaction.request_digest,
-                prepared_plan_digest: transaction.prepared_plan_digest,
+                request_digest: transaction.request_digest.clone(),
+                prepared_plan_digest: transaction.prepared_plan_digest.clone(),
                 expected_next_step: SecurityTransactionStep::LocalCommit,
                 client_attestation: Some(attestation),
                 participant_request: None,
@@ -401,13 +528,14 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     if completed.state != SecurityTransactionState::Completed {
         return Err(anyhow!("security rotation local commit was not accepted"));
     }
+    clear_pending_rotation(secure_store.as_ref(), target_device_id)?;
     Ok(CompletedSecurityRotation {
         transaction_id,
-        new_secret_version: prepared.rotation.new_version,
-        replacement_backup_count: prepared
-            .classes
+        new_secret_version: rotation.new_version,
+        replacement_backup_count: binding
+            .backup_rotations
             .iter()
-            .map(|class| class.new_backup_bodies.len())
+            .map(|rotation| rotation.new_backups.len())
             .sum(),
     })
 }
@@ -433,6 +561,78 @@ impl StagedRotationSecret {
             rewrapped_snapshots: rotation.rewrapped_snapshots.clone(),
         })
     }
+
+    fn into_rotation(self) -> crate::mls::runtime::AccountMlsSecretRotation {
+        crate::mls::runtime::AccountMlsSecretRotation {
+            previous_version: self.previous_version,
+            new_version: self.new_version,
+            new_secret: self.new_secret,
+            rewrapped_snapshots: self.rewrapped_snapshots,
+            failed_realms: Vec::new(),
+        }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PendingRotation {
+    transaction_id: TransactionId,
+    actor_id: String,
+    current_device_id: String,
+}
+
+fn pending_rotation_key(target_device_id: &str) -> String {
+    crate::secure_key_store::account_scoped_device_key(&format!(
+        "{PENDING_ROTATION_INDEX_KEY}.{target_device_id}"
+    ))
+}
+
+fn load_pending_rotation(
+    secure_store: &dyn SecureKeyStore,
+    target_device_id: &str,
+) -> Result<Option<PendingRotation>> {
+    secure_store
+        .get_secret_bytes(&pending_rotation_key(target_device_id))?
+        .map(|bytes| serde_json::from_slice(&bytes).context("decode pending security rotation"))
+        .transpose()
+}
+
+async fn save_pending_rotation(
+    secure_store: &dyn SecureKeyStore,
+    target_device_id: &str,
+    pending: &PendingRotation,
+) -> Result<()> {
+    let bytes = serde_json::to_vec(pending)?;
+    secure_store
+        .put_secret(
+            &pending_rotation_key(target_device_id),
+            &bytes,
+            PutSecretOptions {
+                durability: SecretDurability::DurableBeforeReturn,
+                class: SecretClass::General,
+            },
+        )
+        .await?;
+    Ok(())
+}
+
+fn clear_pending_rotation(secure_store: &dyn SecureKeyStore, target_device_id: &str) -> Result<()> {
+    match secure_store.delete_secret(&pending_rotation_key(target_device_id)) {
+        Ok(()) | Err(garth::SecureKeyStoreError::NotFound) => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn rotation_backup_count(transaction: &arkret_wire::SecurityTransaction) -> Result<usize> {
+    let SecurityTransactionBinding::SecurityRotation(binding) = &transaction.binding else {
+        return Err(anyhow!(
+            "server returned a non-rotation transaction binding"
+        ));
+    };
+    Ok(binding
+        .backup_rotations
+        .iter()
+        .map(|rotation| rotation.new_backups.len())
+        .sum())
 }
 
 #[derive(Clone, Debug)]
@@ -577,6 +777,37 @@ fn build_active_series_event(
     )
     .body(payload)
     .build_sdk_event("inkson")
+}
+
+#[cfg(test)]
+mod rotation_resume_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn pending_rotation_index_round_trips_and_clears() {
+        let store = garth::MemorySecureKeyStore::new();
+        let target = "ak:device:01964137-0000-7000-8000-000000000022";
+        let pending = PendingRotation {
+            transaction_id: TransactionId::new(
+                "ak:transaction:01964137-0000-7000-8000-000000000033",
+            )
+            .unwrap(),
+            actor_id: "did:webvh:z6mkfixture:alice.example".to_owned(),
+            current_device_id: "ak:device:01964137-0000-7000-8000-000000000011".to_owned(),
+        };
+
+        save_pending_rotation(&store, target, &pending)
+            .await
+            .unwrap();
+        let restored = load_pending_rotation(&store, target).unwrap().unwrap();
+        assert_eq!(restored.transaction_id, pending.transaction_id);
+        assert_eq!(restored.actor_id, pending.actor_id);
+        assert_eq!(restored.current_device_id, pending.current_device_id);
+
+        clear_pending_rotation(&store, target).unwrap();
+        clear_pending_rotation(&store, target).unwrap();
+        assert!(load_pending_rotation(&store, target).unwrap().is_none());
+    }
 }
 
 fn prepare_class(

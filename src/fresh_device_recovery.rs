@@ -684,6 +684,13 @@ where
     ) -> garth::Result<Option<arkret_models_crypto::BackupSeriesEraseOutcome>> {
         self.engine.retry_pending_erase(transaction_id).await
     }
+
+    pub async fn retry_byte_identical_pending(
+        &self,
+        transaction_id: &TransactionId,
+    ) -> garth::Result<Option<SecurityTransaction>> {
+        self.engine.retry_pending(transaction_id).await
+    }
 }
 
 #[cfg(test)]

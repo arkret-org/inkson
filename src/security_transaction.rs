@@ -88,6 +88,15 @@ impl InksonSecurityTransactionStore {
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         Ok(Self::staged_secret_reference(transaction_id))
     }
+
+    pub fn load_staged_secret(
+        &self,
+        transaction_id: &arkret_sdk::TransactionId,
+    ) -> garth::Result<Option<Zeroizing<Vec<u8>>>> {
+        self.secure_store
+            .get_secret_bytes(&Self::staged_secret_key(transaction_id))
+            .map_err(|error| garth::Error::Protocol(error.to_string()))
+    }
 }
 
 fn audit_public_transaction_state(state: &DurableSecurityTransaction) -> garth::Result<()> {
@@ -296,6 +305,14 @@ mod tests {
                 ))
                 .unwrap()
                 .is_some()
+        );
+        assert_eq!(
+            store
+                .load_staged_secret(&transaction_id)
+                .unwrap()
+                .unwrap()
+                .as_slice(),
+            b"staged key material"
         );
 
         store.clear_staged_secret(&reference).unwrap();
