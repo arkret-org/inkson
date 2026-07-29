@@ -16,11 +16,12 @@ use arkret_wire::{
     Audience, AuthorizationLease, AuthorizationLeaseId, BackupObjectRef, BackupRotationBinding,
     BackupRotationKind, BackupRotationPlan, BackupSeriesId, CLIENT_STEP_ATTESTATION_SIGNED_FIELDS,
     CanonicalPublicMaterial, ClientStepAttestationAuthData, ControlProposalDecisionPolicy,
-    ControlProposalReceipt, ControlProposalReceiptKind, DeviceId, Did, Event, EventId,
-    EventInitialSubmission, EventsSubmitBatchRequestBody, GrantId, Hash, NonEmptyString,
-    PayloadProof, PayloadSignature, PolicyId, PreparedEventUnit,
-    PromoteRecoverySessionGrantOutcome, PromoteRecoverySessionGrantRequest, ProposalMemberReceipt,
-    ReceiptId, RecoveryAuthorityHolderProof, RecoveryBinding, RecoveryPreparedPlan,
+    ControlProposalReceipt, ControlProposalReceiptKind, DeviceId, Did,
+    EnrollmentAuthorityRecoveryPlan, Event, EventId, EventInitialSubmission,
+    EventsSubmitBatchRequestBody, GrantId, Hash, NonEmptyString, PayloadProof, PayloadSignature,
+    PolicyId, PreparedEventUnit, PromoteRecoverySessionGrantOutcome,
+    PromoteRecoverySessionGrantRequest, ProposalMemberReceipt, ReceiptId,
+    RecoveryAuthorityHolderProof, RecoveryAuthorityTicketId, RecoveryBinding, RecoveryPreparedPlan,
     RecoveryTransactionCreateRequest, RiskTier, SecurityRotationTransactionCreateRequest,
     SecurityTransaction, SecurityTransactionBinding, SecurityTransactionCreateRequest,
     SecurityTransactionPreparedPlan, SecurityTransactionState, SecurityTransactionStep,
@@ -330,6 +331,65 @@ pub fn prepare_cross_signing_recovery_transaction(
             coordinator_service_id,
             request,
         )?,
+    )
+    .map_err(anyhow::Error::from)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_enrollment_authority_recovery_transaction(
+    session: &RecoverySessionState,
+    transaction_id: TransactionId,
+    authority_ticket_id: RecoveryAuthorityTicketId,
+    terminal_receipt_id: ReceiptId,
+    expires_at: DateTime<Utc>,
+    mut plan: EnrollmentAuthorityRecoveryPlan,
+    recovery_authority_signer: &crate::event_signer::InksonEventSigner,
+) -> anyhow::Result<RecoveryTransactionCreateRequest> {
+    if session.identity_model != RecoveryIdentityModel::EnrollmentAuthority {
+        anyhow::bail!("enrollment-authority recovery cannot use a cross-signing session");
+    }
+    let previous_generation = session
+        .current_device_generation_ref
+        .as_ref()
+        .ok_or_else(|| {
+            anyhow::anyhow!("enrollment-authority session omitted current generation ref")
+        })?
+        .as_str();
+    if plan.previous_model_generation_ref != previous_generation {
+        anyhow::bail!("enrollment-authority plan changed the session generation fence");
+    }
+    let proof_digest = session
+        .proof_summary
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("verified recovery session omitted proof summary"))?
+        .proof_digest
+        .clone();
+    if plan.proof_digest != proof_digest
+        || plan.authorization_preimage.recovery_session_id != session.recovery_session_id
+        || plan.authorization_preimage.principal_id != session.principal_id
+        || plan.authorization_preimage.replacement_device_id != session.requesting_device_id
+    {
+        anyhow::bail!("enrollment-authority plan differs from the verified session binding");
+    }
+    plan.recovery_session_snapshot_digest =
+        Hash::new(arkret_sdk::canonical::canonical_sha256(session)?)?;
+    plan.reanchor_event_submission = author_recovery_publication_submission(
+        session,
+        plan.reanchor_event_submission.event,
+        RecoveryPublicationAction::DeviceReanchor,
+        recovery_authority_signer,
+        session.requesting_device_id.clone(),
+    )?;
+    plan.reanchor_event_submission_digest = Hash::new(arkret_sdk::canonical::canonical_sha256(
+        &plan.reanchor_event_submission,
+    )?)?;
+    RecoveryTransactionCreateRequest::from_enrollment_authority_prepared(
+        transaction_id,
+        session.principal_id.clone(),
+        expires_at,
+        authority_ticket_id,
+        terminal_receipt_id,
+        plan,
     )
     .map_err(anyhow::Error::from)
 }
