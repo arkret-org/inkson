@@ -17,6 +17,7 @@ use arkret_models_crypto::{
     RecoverySessionProofSubmitRequestBody,
 };
 use arkret_sdk::{DeviceId, Did, DidUrl, NonEmptyString, PolicyId, TypedTrustDomainId};
+use arkret_wire::{AuthoritySetIssuer, AuthoritySetIssuerRole};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::SigningKey;
@@ -302,6 +303,8 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         .map_err(|error| anyhow::anyhow!(error))?;
     let backup_hpke_ref = DidUrl::new(format!("{principal_id}#backup-hpke-0"))
         .map_err(|error| anyhow::anyhow!(error))?;
+    let principal_signing_ref =
+        DidUrl::new(verification_method.to_owned()).map_err(|error| anyhow::anyhow!(error))?;
     let mut typed_policy = RecoveryPolicy {
         schema: "ak.schema.recovery_policy.v1".to_owned(),
         policy_id: PolicyId::new(format!("ak:policy:{}", crate::operation::uuid_v7()))?,
@@ -317,20 +320,19 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
             RecoveryPublicationAuthorizationRule {
                 rule_id: "principal_signing".to_owned(),
                 proof_kind: RecoveryProofKind::PrincipalSigning,
-                issuer_role: arkret_wire::AuthoritySetIssuerRole::IdentityRecovery,
+                issuer_role: AuthoritySetIssuerRole::IdentityRecovery,
                 allowed_actions: vec!["ak.device.reanchor".to_owned()],
-                issuers: vec![arkret_wire::AuthoritySetIssuer {
-                    verification_method: DidUrl::new(verification_method.to_owned())
-                        .map_err(|error| anyhow::anyhow!(error))?,
+                issuers: vec![AuthoritySetIssuer {
+                    verification_method: principal_signing_ref,
                 }],
                 threshold: 1,
             },
             RecoveryPublicationAuthorizationRule {
                 rule_id: "recovery_unlock".to_owned(),
                 proof_kind: RecoveryProofKind::RecoveryUnlock,
-                issuer_role: arkret_wire::AuthoritySetIssuerRole::IdentityRecovery,
+                issuer_role: AuthoritySetIssuerRole::IdentityRecovery,
                 allowed_actions: vec!["ak.device.reanchor".to_owned()],
-                issuers: vec![arkret_wire::AuthoritySetIssuer {
+                issuers: vec![AuthoritySetIssuer {
                     verification_method: recovery_proof_ref.clone(),
                 }],
                 threshold: 1,

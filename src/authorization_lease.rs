@@ -207,6 +207,9 @@ pub fn initial_submission(
         // a shortfall; a bounded superset is always acceptable, so nothing is
         // guessed here.
         cba_proof_bundles: Vec::new(),
+        // Standard Control Moves acquire their authority receipt separately;
+        // DataEvents and caller-proven anchor units must omit it.
+        control_proposal_receipt: None,
     })
 }
 
