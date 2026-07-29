@@ -51,12 +51,12 @@ impl InksonSecurityTransactionStore {
 }
 
 fn audit_public_transaction_state(state: &DurableSecurityTransaction) -> garth::Result<()> {
-    audit_canonical_public_json(
-        "canonical_create_request",
-        &state.canonical_create_request,
-    )?;
+    audit_canonical_public_json("canonical_create_request", &state.canonical_create_request)?;
     if let Some(pending) = &state.pending_continue {
-        audit_canonical_public_json("pending_continue.canonical_request", &pending.canonical_request)?;
+        audit_canonical_public_json(
+            "pending_continue.canonical_request",
+            &pending.canonical_request,
+        )?;
     }
     if let Some(resource) = &state.last_observed_resource {
         let value = serde_json::to_value(resource).map_err(|error| {
