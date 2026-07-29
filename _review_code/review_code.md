@@ -149,12 +149,16 @@
   and withholding the pairing card. A first local-routing correction then exposed a second defect:
   hashing an orgless `NotaryValue::single_did(Agent)` omitted the accepted managed-PCR recovery
   members and controller-organization fields, so the receiver rejected the wrong authority digest.
+  The next live run exposed a third defect: the receipt used an Agent-owned verification-method
+  label even though the active device belongs to the delegated controller, so the receiver correctly
+  found no active authorized Agent device key.
 - Resolution: the standard publication wrapper recognizes both self-PCR authority and the
   protocol's exact managed Agent delegation shape (`actor_id=Agent`, distinct `executed_by`,
   `authorization_ref=<Agent DID>#managed-controller`). Managed PCR writes re-read the complete
   accepted Event history, validate it through the SDK managed-PCR materializer, and hash the exact
-  typed founding `NotaryValue` before using the delegated controller signer and shared SDK receipt
-  authoring primitive. Unrelated Realm control moves still collect receipts from the remote current
-  authority.
+  typed founding `NotaryValue`; their receipt is signed under the `executed_by` controller DID and
+  its active device verification method through the shared SDK authoring primitive. Self-PCR
+  receipts remain actor-signed, while unrelated Realm control moves still collect receipts from the
+  remote current authority.
 - Prevention dimension: receipt routing must derive from the governed Realm's authority model,
   not from whether the PCR id happens to equal the self-principal deterministic id.

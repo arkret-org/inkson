@@ -403,7 +403,8 @@ fn local_pcr_member_receipt(
 ) -> anyhow::Result<ProposalMemberReceipt> {
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("PCR proposal receipt requires an active device signer"))?;
-    let verification_method = signer.verification_method_for_principal(&event.actor_id)?;
+    let signer_principal = local_pcr_receipt_signer_principal(event);
+    let verification_method = signer.verification_method_for_principal(signer_principal)?;
     let proposal_digest = arkret_sdk::Hash::new(event.event_digest()?)?;
     let cache_key = (
         proposal_digest.to_string(),
@@ -419,7 +420,7 @@ fn local_pcr_member_receipt(
         return Ok(receipt);
     }
 
-    let adapter = signer.payload_signer_adapter_for_principal(&event.actor_id)?;
+    let adapter = signer.payload_signer_adapter_for_principal(signer_principal)?;
     let member = ProposalMemberReceipt::issue_with_signer(
         event.realm_id.clone(),
         proposal_digest,
@@ -433,6 +434,17 @@ fn local_pcr_member_receipt(
         .unwrap_or_else(PoisonError::into_inner)
         .insert(cache_key, member.clone());
     Ok(member)
+}
+
+fn local_pcr_receipt_signer_principal(event: &arkret_sdk::Event) -> &arkret_sdk::Did {
+    if is_managed_agent_pcr_control(event) {
+        event
+            .executed_by
+            .as_ref()
+            .expect("managed Agent PCR controls always carry executed_by")
+    } else {
+        &event.actor_id
+    }
 }
 
 /// Lease / receipt fixtures for tests in other modules.
@@ -618,12 +630,18 @@ mod tests {
     fn managed_agent_pcr_control_uses_the_delegated_local_authority() {
         let mut managed = event();
         managed.actor_id = arkret_sdk::Did::new("did:web:agent.example").unwrap();
-        managed.executed_by = Some(arkret_sdk::Did::new("did:web:alice.example").unwrap());
+        let controller = arkret_sdk::Did::new("did:web:alice.example").unwrap();
+        managed.executed_by = Some(controller.clone());
         managed.authorization_ref = Some("did:web:agent.example#managed-controller".to_owned());
         assert!(is_managed_agent_pcr_control(&managed));
+        assert_eq!(local_pcr_receipt_signer_principal(&managed), &controller);
 
         managed.authorization_ref = Some("did:web:agent.example#other-delegation".to_owned());
         assert!(!is_managed_agent_pcr_control(&managed));
+        assert_eq!(
+            local_pcr_receipt_signer_principal(&managed),
+            &managed.actor_id
+        );
 
         managed.authorization_ref = Some("did:web:agent.example#managed-controller".to_owned());
         managed.executed_by = Some(managed.actor_id.clone());
