@@ -298,8 +298,10 @@ pub async fn standard_initial_submission(
 ) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
     let mut submission = initial_submission(event)?;
     if event.seal_basis.is_some() {
-        let member_receipt = if uses_local_pcr_proposal_authority(event)? {
-            local_pcr_member_receipt(event)?
+        let member_receipt = if let Some(authority_set_ref) =
+            local_pcr_proposal_authority_set_ref(http, event).await?
+        {
+            local_pcr_member_receipt(event, authority_set_ref)?
         } else {
             http.issue_control_proposal_receipt(&arkret_wire::ProposalReceiptIssueRequest {
                 event: event.clone(),
@@ -322,27 +324,87 @@ pub async fn standard_initial_submission(
     Ok(submission)
 }
 
-fn uses_local_pcr_proposal_authority(event: &arkret_sdk::Event) -> anyhow::Result<bool> {
-    let self_pcr = event.realm_id
-        == arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&event.actor_id))?;
+fn is_managed_agent_pcr_control(event: &arkret_sdk::Event) -> bool {
     let managed_authorization_ref = format!("{}#managed-controller", event.actor_id);
-    let managed_pcr = event
+    event
         .executed_by
         .as_ref()
         .is_some_and(|executor| executor != &event.actor_id)
-        && event.authorization_ref.as_deref() == Some(managed_authorization_ref.as_str());
-    Ok(self_pcr || managed_pcr)
+        && event.authorization_ref.as_deref() == Some(managed_authorization_ref.as_str())
 }
 
-fn local_pcr_member_receipt(event: &arkret_sdk::Event) -> anyhow::Result<ProposalMemberReceipt> {
+async fn local_pcr_proposal_authority_set_ref(
+    http: &arkret_sdk::http_client::Client,
+    event: &arkret_sdk::Event,
+) -> anyhow::Result<Option<arkret_sdk::Hash>> {
+    let self_pcr = event.realm_id
+        == arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&event.actor_id))?;
+    if self_pcr {
+        return Ok(Some(arkret_sdk::Hash::new(
+            arkret_sdk::canonical::canonical_sha256(
+                &arkret_wire::notary::NotaryValue::single_did(event.actor_id.clone()),
+            )?,
+        )?));
+    }
+    if !is_managed_agent_pcr_control(event) {
+        return Ok(None);
+    }
+
+    let accepted = http
+        .events_query_all_pages(event.realm_id.as_str())
+        .await
+        .map_err(anyhow::Error::from)?;
+    managed_agent_pcr_authority_set_ref_from_events(event, &accepted.events).map(Some)
+}
+
+fn managed_agent_pcr_authority_set_ref_from_events(
+    event: &arkret_sdk::Event,
+    accepted_events: &[arkret_sdk::Event],
+) -> anyhow::Result<arkret_sdk::Hash> {
+    arkret_bootstrap::materialize_managed_agent_pcr_control(
+        accepted_events,
+        &crate::operation::cell_write_projector,
+    )
+    .map_err(|error| {
+        anyhow::anyhow!("managed Agent PCR authority materialization failed: {error}")
+    })?;
+    let mut creates = accepted_events.iter().filter(|candidate| {
+        candidate.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE
+            && candidate.realm_id == event.realm_id
+            && candidate.actor_id == event.actor_id
+            && candidate.executed_by == event.executed_by
+            && candidate.authorization_ref == event.authorization_ref
+    });
+    let create = creates
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("managed Agent PCR create Event is unavailable"))?;
+    if creates.next().is_some() {
+        anyhow::bail!("managed Agent PCR has multiple matching create Events");
+    }
+    let notary = create
+        .payload
+        .get("object")
+        .and_then(|object| object.get("notary"))
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("managed Agent PCR create Event omits notary"))?;
+    let notary = serde_json::from_value::<arkret_wire::notary::NotaryValue>(notary)?;
+    notary.validate()?;
+    if !notary.includes_signer_as_primary(&event.actor_id) {
+        anyhow::bail!("managed Agent PCR notary does not name the Agent as primary");
+    }
+    Ok(arkret_sdk::Hash::new(
+        arkret_sdk::canonical::canonical_sha256(&notary)?,
+    )?)
+}
+
+fn local_pcr_member_receipt(
+    event: &arkret_sdk::Event,
+    authority_set_ref: arkret_sdk::Hash,
+) -> anyhow::Result<ProposalMemberReceipt> {
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("PCR proposal receipt requires an active device signer"))?;
     let verification_method = signer.verification_method_for_principal(&event.actor_id)?;
     let proposal_digest = arkret_sdk::Hash::new(event.event_digest()?)?;
-    let notary = arkret_wire::notary::NotaryValue::single_did(event.actor_id.clone());
-    let authority_set_ref = arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
-        arkret_sdk::canonical::canonical_json_bytes(&notary)?,
-    ))?;
     let cache_key = (
         proposal_digest.to_string(),
         authority_set_ref.to_string(),
@@ -558,14 +620,46 @@ mod tests {
         managed.actor_id = arkret_sdk::Did::new("did:web:agent.example").unwrap();
         managed.executed_by = Some(arkret_sdk::Did::new("did:web:alice.example").unwrap());
         managed.authorization_ref = Some("did:web:agent.example#managed-controller".to_owned());
-        assert!(uses_local_pcr_proposal_authority(&managed).unwrap());
+        assert!(is_managed_agent_pcr_control(&managed));
 
         managed.authorization_ref = Some("did:web:agent.example#other-delegation".to_owned());
-        assert!(!uses_local_pcr_proposal_authority(&managed).unwrap());
+        assert!(!is_managed_agent_pcr_control(&managed));
 
         managed.authorization_ref = Some("did:web:agent.example#managed-controller".to_owned());
         managed.executed_by = Some(managed.actor_id.clone());
-        assert!(!uses_local_pcr_proposal_authority(&managed).unwrap());
+        assert!(!is_managed_agent_pcr_control(&managed));
+    }
+
+    #[test]
+    fn managed_agent_pcr_authority_preserves_the_complete_notary_profile() {
+        let agent_id = "did:web:agent.example";
+        let controller_id = "did:web:alice.example";
+        let realm_id = "ak:realm:01964137-0000-7000-8000-000000000099";
+        let accepted = crate::event_builders::build_managed_agent_pcr_bootstrap_events(
+            realm_id,
+            agent_id,
+            controller_id,
+            "did:web:agent.example#managed-controller",
+            "ak:trust_domain:did.web.example",
+        )
+        .unwrap();
+        let mut target = event();
+        target.realm_id = arkret_sdk::RealmId::new(realm_id).unwrap();
+        target.scope_ref = arkret_sdk::ScopeRef::Realm {
+            realm_id: target.realm_id.clone(),
+        };
+        target.actor_id = arkret_sdk::Did::new(agent_id).unwrap();
+        target.executed_by = Some(arkret_sdk::Did::new(controller_id).unwrap());
+        target.authorization_ref = Some("did:web:agent.example#managed-controller".to_owned());
+
+        let authority =
+            managed_agent_pcr_authority_set_ref_from_events(&target, &accepted).unwrap();
+        let expected = arkret_sdk::Hash::new(
+            arkret_sdk::canonical::canonical_sha256(&accepted[0].payload["object"]["notary"])
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(authority, expected);
     }
 
     fn rebind_and_resign(lease: &mut AuthorizationLease, basis_ref: arkret_wire::LeaseBasisRef) {

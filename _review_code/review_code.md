@@ -146,11 +146,15 @@
 - Evidence: Agent allocation and managed-PCR genesis succeeded, but the first `ak.mls.genesis`
   durable attempt called `/_arkret/self/control-proposal-receipts`; Soland correctly returned
   `policy_violation: this service is not a current proposal authority`, leaving the Event queued
-  and withholding the pairing card.
-- Resolution: the standard publication wrapper now recognizes both self-PCR authority and the
+  and withholding the pairing card. A first local-routing correction then exposed a second defect:
+  hashing an orgless `NotaryValue::single_did(Agent)` omitted the accepted managed-PCR recovery
+  members and controller-organization fields, so the receiver rejected the wrong authority digest.
+- Resolution: the standard publication wrapper recognizes both self-PCR authority and the
   protocol's exact managed Agent delegation shape (`actor_id=Agent`, distinct `executed_by`,
-  `authorization_ref=<Agent DID>#managed-controller`). Those PCR control writes use the active
-  delegated controller signer and the shared SDK receipt authoring primitive; unrelated Realm
-  control moves still collect receipts from the remote current authority.
+  `authorization_ref=<Agent DID>#managed-controller`). Managed PCR writes re-read the complete
+  accepted Event history, validate it through the SDK managed-PCR materializer, and hash the exact
+  typed founding `NotaryValue` before using the delegated controller signer and shared SDK receipt
+  authoring primitive. Unrelated Realm control moves still collect receipts from the remote current
+  authority.
 - Prevention dimension: receipt routing must derive from the governed Realm's authority model,
   not from whether the PCR id happens to equal the self-principal deterministic id.
