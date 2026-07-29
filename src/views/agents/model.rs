@@ -12,11 +12,12 @@ use arkret_models_collaboration::events_payloads::agent::{
 use arkret_models_collaboration::governance::agent_participation::AgentParticipation;
 use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
-    AgentKeyPairRequestBody, AgentKeySupersession, AgentPairingBootstrap, AgentProvisionEvents,
-    AgentRequestedScopeDisclosure, AgentRuntimeApprovalControllerProjection,
-    AgentSigningKeyBinding, AgentSigningPublicKey, Did, DidUrl, Event, EventId, GrantConstraint,
-    GrantConstraintEffect, GrantConstraintKind, GrantConstraintSubkind, Hash, KeyState,
-    NonEmptyString, OpaqueLocalId, Proof, RealmId, RequestId,
+    AgentKeyPairRequestBody, AgentKeySupersession, AgentPairingBootstrap,
+    AgentProvisionEventDrafts, AgentRequestedScopeDisclosure,
+    AgentRuntimeApprovalControllerProjection, AgentSigningKeyBinding, AgentSigningPublicKey, Did,
+    DidUrl, Event, EventId, GrantConstraint, GrantConstraintEffect, GrantConstraintKind,
+    GrantConstraintSubkind, Hash, KeyState, NonEmptyString, OpaqueLocalId, Proof, RealmId,
+    RequestId,
 };
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -26,7 +27,7 @@ pub fn build_agent_provision_event_drafts(
     controller_realm_id: &RealmId,
     agent_id: &Did,
     agent_slug: &str,
-) -> anyhow::Result<AgentProvisionEvents> {
+) -> anyhow::Result<AgentProvisionEventDrafts> {
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("no active controller signer"))?;
     let created_at = crate::clock::now_utc();

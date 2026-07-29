@@ -29,6 +29,58 @@ use crate::ephemeral::{ensure_events_submit_accepted, validate_outgoing_register
 use crate::models::{BackfillView, ServiceDescribe, SubmitEventResult};
 use crate::operation::uuid_v7;
 
+fn author_local_proposal_receipt(
+    event: &arkret_sdk::Event,
+    signer: &crate::event_signer::InksonEventSigner,
+) -> anyhow::Result<arkret_wire::ControlProposalReceipt> {
+    use arkret_wire::{
+        ControlProposalDecisionPolicy, ControlProposalReceipt, ControlProposalReceiptKind, Hash,
+        PayloadSignature, ProposalMemberReceipt,
+    };
+
+    let policy = ControlProposalDecisionPolicy::default();
+    let received_at = crate::clock::now_utc();
+    let proposal_digest = Hash::new(event.event_digest()?)?;
+    let authority_set_ref = Hash::new(arkret_sdk::canonical::canonical_sha256(
+        &arkret_wire::notary::NotaryValue::single_did(event.actor_id.clone()),
+    )?)?;
+    let mut member = ProposalMemberReceipt {
+        realm_id: event.realm_id.clone(),
+        proposal_digest: proposal_digest.clone(),
+        received_at,
+        decision_due_at: received_at + policy.decision_window,
+        absolute_due_at: received_at + policy.absolute_horizon,
+        authority_set_ref: authority_set_ref.clone(),
+        signature: PayloadSignature {
+            alg: "EdDSA".to_owned(),
+            verification_method: signer.verification_method().to_owned(),
+            payload_digest: Hash::new(format!("sha256:{}", "0".repeat(64)))?,
+            created_at: received_at,
+            jws: String::new(),
+        },
+    };
+    let signing_bytes = member.canonical_bytes_for_signature()?;
+    member.signature.payload_digest = member.member_receipt_digest()?;
+    member.signature.jws = format!(
+        "{}..{}",
+        arkret_sdk::base64url_encode(br#"{"alg":"EdDSA"}"#),
+        arkret_sdk::base64url_encode(signer.sign_raw(&signing_bytes)?)
+    );
+    let receipt = ControlProposalReceipt {
+        kind: ControlProposalReceiptKind::ProposalReceipt,
+        realm_id: event.realm_id.clone(),
+        proposal_digest,
+        received_at,
+        decision_due_at: received_at + policy.decision_window,
+        absolute_due_at: received_at + policy.absolute_horizon,
+        defer_count: 0,
+        authority_set_ref,
+        member_receipts: vec![member],
+    };
+    receipt.validate_structural(policy)?;
+    Ok(receipt)
+}
+
 /// Authenticated durable/ephemeral event submission engine extracted from the
 /// former `TransportClient` events surface. Constructed per authenticated call from
 /// the shared SDK http-client (see `crate::transport::auth::with_event_submitter`).
@@ -2064,6 +2116,22 @@ impl EventSubmitter {
             }
         }
         Ok(events)
+    }
+
+    pub(crate) async fn prepare_initial_submissions(
+        &self,
+        events: Vec<arkret_sdk::Event>,
+    ) -> anyhow::Result<Vec<arkret_wire::EventInitialSubmission>> {
+        let events = self.prepare_sdk_events_batch(events).await?;
+        let signer = crate::event_signer::active_signer()
+            .ok_or_else(|| anyhow::anyhow!("no active proposal-authority signer"))?;
+        self.http
+            .prepare_initial_submissions_with_local_proposal_authority(&events, |event, _lease| {
+                author_local_proposal_receipt(event, signer.as_ref())
+                    .map_err(|error| arkret_sdk::http_client::Error::Protocol(error.to_string()))
+            })
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// `POST /_arkret/self/signal` — `ak.self.signal.command.send`.
