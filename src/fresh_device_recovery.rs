@@ -961,8 +961,15 @@ pub async fn establish_joint_recovery_policy_and_backup(
     principal_id: &str,
     device_id: &str,
     recovery_words: &str,
+    device_signing_seed: [u8; 32],
     device_signer: std::sync::Arc<crate::event_signer::InksonEventSigner>,
 ) -> anyhow::Result<String> {
+    crate::secure_key_store::set_active_device_seed_scope(Some(principal_id));
+    crate::secure_key_store::store_signing_seed_scoped(
+        crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
+        Some(principal_id),
+        &device_signing_seed,
+    )?;
     crate::event_signer::replace_active_signer(Some(device_signer));
     crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
     let api = crate::transport::TransportClient::from_http(
