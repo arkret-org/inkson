@@ -329,6 +329,7 @@ pub(crate) fn schema_message_id_or_new(value: &str) -> String {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn chat_message_create_operation(
     realm_id: &str,
     actor: &str,
@@ -407,6 +408,7 @@ pub(crate) async fn chat_content_block_for_body_with_upload(
         .await
 }
 
+#[cfg(test)]
 pub(crate) fn chat_message_create_operation_with_expiry(
     realm_id: &str,
     actor: &str,

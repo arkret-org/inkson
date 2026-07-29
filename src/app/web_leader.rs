@@ -11,6 +11,7 @@ use dioxus_router::Router;
 
 use crate::routes::Route;
 
+#[cfg(target_arch = "wasm32")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum LeaderState {
     Pending,
@@ -76,6 +77,7 @@ pub(super) fn WebLeaderGate() -> Element {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 #[component]
 fn LeaderGatePage(
     test_id: &'static str,
@@ -106,9 +108,6 @@ fn LeaderGatePage(
         }
     }
 }
-
-#[cfg(not(target_arch = "wasm32"))]
-fn reload_page() {}
 
 #[cfg(target_arch = "wasm32")]
 fn reload_page() {
@@ -314,7 +313,7 @@ mod browser {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "wasm32"))]
 mod tests {
     use super::*;
 

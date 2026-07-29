@@ -473,7 +473,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
         network_state.set("reconnecting".to_owned());
         last_error.set(None);
         match current_base_api(&base, state_store) {
-            Ok(mut api) => {
+            Ok(api) => {
                 // Probe `/server/describe` for status text, but treat failure
                 // as non-fatal: a transient describe error (CORS preflight,
                 // server warming up, brief 5xx) must not block the sync below
@@ -569,9 +569,6 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 match bootstrap_session_refresh(&session).await {
                     crate::runtime::session::CurrentSessionRefresh::Credential(refreshed) => {
                         session_credential = refreshed;
-                        if let Ok(rebound) = current_base_api(&base, state_store) {
-                            api = rebound;
-                        }
                         session_boot_state.set(SessionBootState::Checking);
                     }
                     crate::runtime::session::CurrentSessionRefresh::SignInRequired { reason }
@@ -1107,11 +1104,6 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                             refreshed,
                                         ) => {
                                             session_credential = refreshed;
-                                            if let Ok(rebound) =
-                                                current_base_api(&base, state_store)
-                                            {
-                                                api = rebound;
-                                            }
                                             let Ok(rebound) = current_authed_api(
                                                 &base,
                                                 &session_credential,

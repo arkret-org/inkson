@@ -16,7 +16,9 @@
 //! content-type reducer state.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 
 use crate::operation::{OperationBuilder, uuid_v7};
 use crate::payload::{sdk_payload_value, strand_id_value};

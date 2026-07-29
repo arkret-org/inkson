@@ -295,9 +295,8 @@ fn assert_envelope_matches_schema(label: &str, envelope: &Event) {
             .is_some_and(|hlc| !hlc.as_str().is_empty()),
         "{label}: builder produced empty hlc — should be `<12>-<4>-<8>` hex"
     );
-    let mut value = serde_json::to_value(envelope)
+    let value = serde_json::to_value(envelope)
         .unwrap_or_else(|err| panic!("{label}: serialize envelope: {err}"));
-    let value = value;
     let validator = event_schema_validator();
     if !validator.is_valid(&value) {
         let errors: Vec<String> = validator
