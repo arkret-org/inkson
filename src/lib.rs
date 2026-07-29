@@ -53,6 +53,7 @@ pub mod event_signer;
 pub mod event_submit;
 pub mod federation;
 pub mod file_transfer;
+pub mod fresh_device_recovery;
 pub mod hpke_backup;
 pub mod i18n;
 pub(crate) mod identity;
