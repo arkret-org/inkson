@@ -10,7 +10,7 @@ pub(crate) const CALENDAR_SCHEMA_REFS_PATH: &str = "schema_refs";
 
 /// TZDB release new schedules pin when the editor has no explicit choice.
 /// Must be one of `calendar-timezone-registry.json` release rows.
-pub(crate) const DEFAULT_CALENDAR_TZDB_VERSION: &str = "2025a";
+pub(crate) const DEFAULT_CALENDAR_TZDB_VERSION: &str = arkret_sdk::EXECUTABLE_CALENDAR_TZDB_VERSION;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CalendarCardFields {
@@ -27,10 +27,20 @@ pub(crate) struct CalendarCardFields {
     pub(crate) recurrence_frequency: String,
     pub(crate) recurrence_interval: String,
     pub(crate) recurrence_by_day: String,
+    pub(crate) recurrence_by_month: String,
+    pub(crate) recurrence_by_month_day: String,
+    pub(crate) recurrence_by_set_position: String,
+    pub(crate) recurrence_first_day_of_week: String,
     pub(crate) recurrence_count: String,
     pub(crate) recurrence_until: String,
     pub(crate) location: String,
     pub(crate) location_locked: bool,
+    /// Exact projected value retained when the user does not edit the location,
+    /// including encrypted envelopes and multi-field plaintext locations.
+    pub(crate) location_source: Option<Value>,
+    pub(crate) call_id: String,
+    /// JSON array editor preserves attendee roles and display-name snapshots.
+    pub(crate) attendees_json: String,
 }
 
 impl CalendarCardFields {
@@ -42,10 +52,16 @@ impl CalendarCardFields {
             || !self.recurrence_frequency.trim().is_empty()
             || !self.recurrence_interval.trim().is_empty()
             || !self.recurrence_by_day.trim().is_empty()
+            || !self.recurrence_by_month.trim().is_empty()
+            || !self.recurrence_by_month_day.trim().is_empty()
+            || !self.recurrence_by_set_position.trim().is_empty()
+            || !self.recurrence_first_day_of_week.trim().is_empty()
             || !self.recurrence_count.trim().is_empty()
             || !self.recurrence_until.trim().is_empty()
             || !self.location.trim().is_empty()
             || self.location_locked
+            || !self.call_id.trim().is_empty()
+            || !self.attendees_json.trim().is_empty()
     }
 
     pub(crate) fn has_editable_schedule(&self) -> bool {
@@ -56,9 +72,15 @@ impl CalendarCardFields {
             || !self.recurrence_frequency.trim().is_empty()
             || !self.recurrence_interval.trim().is_empty()
             || !self.recurrence_by_day.trim().is_empty()
+            || !self.recurrence_by_month.trim().is_empty()
+            || !self.recurrence_by_month_day.trim().is_empty()
+            || !self.recurrence_by_set_position.trim().is_empty()
+            || !self.recurrence_first_day_of_week.trim().is_empty()
             || !self.recurrence_count.trim().is_empty()
             || !self.recurrence_until.trim().is_empty()
             || !self.location.trim().is_empty()
+            || !self.call_id.trim().is_empty()
+            || !self.attendees_json.trim().is_empty()
     }
 
     pub(crate) fn recurrence_label(&self) -> String {
@@ -72,6 +94,21 @@ impl CalendarCardFields {
         }
         if !self.recurrence_by_day.trim().is_empty() {
             parts.push(self.recurrence_by_day.trim().to_owned());
+        }
+        if !self.recurrence_by_month.trim().is_empty() {
+            parts.push(format!("months {}", self.recurrence_by_month.trim()));
+        }
+        if !self.recurrence_by_month_day.trim().is_empty() {
+            parts.push(format!(
+                "month days {}",
+                self.recurrence_by_month_day.trim()
+            ));
+        }
+        if !self.recurrence_by_set_position.trim().is_empty() {
+            parts.push(format!(
+                "positions {}",
+                self.recurrence_by_set_position.trim()
+            ));
         }
         if !self.recurrence_count.trim().is_empty() {
             parts.push(format!("{} times", self.recurrence_count.trim()));
@@ -149,11 +186,43 @@ pub(crate) fn calendar_fields_from_metadata(
             .and_then(Value::as_array)
             .map(|days| {
                 days.iter()
-                    .filter_map(|day| day.get("day").and_then(Value::as_str))
-                    .map(str::to_ascii_uppercase)
+                    .filter_map(|day| {
+                        let weekday = day.get("day").and_then(Value::as_str)?;
+                        let nth = day.get("nth_of_period").and_then(Value::as_i64);
+                        Some(match nth {
+                            Some(nth) => format!("{nth}{}", weekday.to_ascii_uppercase()),
+                            None => weekday.to_ascii_uppercase(),
+                        })
+                    })
                     .collect::<Vec<_>>()
                     .join(", ")
             })
+            .unwrap_or_default(),
+        recurrence_by_month: recurrence
+            .and_then(|value| value.get("by_month"))
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default(),
+        recurrence_by_month_day: recurrence
+            .and_then(|value| value.get("by_month_day"))
+            .and_then(Value::as_array)
+            .map(|values| format_integer_array(values))
+            .unwrap_or_default(),
+        recurrence_by_set_position: recurrence
+            .and_then(|value| value.get("by_set_position"))
+            .and_then(Value::as_array)
+            .map(|values| format_integer_array(values))
+            .unwrap_or_default(),
+        recurrence_first_day_of_week: recurrence
+            .and_then(|value| value.get("first_day_of_week"))
+            .and_then(Value::as_str)
+            .map(str::to_ascii_uppercase)
             .unwrap_or_default(),
         recurrence_count: recurrence
             .and_then(|value| value.get("count"))
@@ -167,7 +236,28 @@ pub(crate) fn calendar_fields_from_metadata(
             .to_owned(),
         location,
         location_locked,
+        location_source: location_value.cloned(),
+        call_id: fields
+            .get("call_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        attendees_json: fields
+            .get("attendees")
+            .and_then(Value::as_array)
+            .filter(|attendees| !attendees.is_empty())
+            .and_then(|attendees| serde_json::to_string(attendees).ok())
+            .unwrap_or_default(),
     }
+}
+
+fn format_integer_array(values: &[Value]) -> String {
+    values
+        .iter()
+        .filter_map(Value::as_i64)
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// True when the touched `metadata.fields` carry the schedule.
@@ -245,14 +335,23 @@ pub(crate) fn calendar_patch_entries(
     // after its parent, so the parent object lands first and the encrypted
     // envelope is written on top of it.
     let mut subtree = event_value;
-    let location = subtree
-        .as_object_mut()
-        .and_then(|object| object.remove("location"));
+    let location_changed = current.location != draft.location
+        || current.location_locked != draft.location_locked
+        || current.location_source.is_none() && draft.location_source.is_some();
+    let location = location_changed
+        .then(|| {
+            subtree
+                .as_object_mut()
+                .and_then(|object| object.remove("location"))
+        })
+        .flatten();
     patch.insert(
         CALENDAR_SUBTREE_PATH.to_owned(),
         json!({ "$op": "set", "value": subtree }),
     );
-    set_location_if_changed(patch, current, location, draft.location.trim());
+    if location_changed {
+        set_location_if_changed(patch, current, location, draft.location.trim());
+    }
     Ok(())
 }
 
@@ -277,7 +376,7 @@ pub(crate) fn calendar_event_fields_from_draft(
         draft.tzdb_version.trim().to_owned()
     };
     let status = calendar_status_from_text(&draft.status)?;
-    Ok(arkret_sdk::CalendarEventFields {
+    let fields = arkret_sdk::CalendarEventFields {
         start,
         end,
         timezone,
@@ -285,10 +384,14 @@ pub(crate) fn calendar_event_fields_from_draft(
         all_day: draft.all_day,
         status,
         recurrence: recurrence_from_card(draft)?,
-        location: location_value_from_text(&draft.location),
-        call_id: None,
-        attendees: Vec::new(),
-    })
+        location: location_value_from_card(draft)?,
+        call_id: parse_calendar_call_id(&draft.call_id)?,
+        attendees: parse_calendar_attendees(&draft.attendees_json)?,
+    };
+    fields
+        .validate()
+        .map_err(|err| format!("calendar schedule is invalid: {err}"))?;
+    Ok(fields)
 }
 
 fn canonical_calendar_date_time(field: &str, value: &str, all_day: bool) -> Result<String, String> {
@@ -339,41 +442,18 @@ pub(crate) fn calendar_rsvp_operation(
     hlc: arkret_sdk::Hlc,
 ) -> anyhow::Result<arkret_sdk::Event> {
     let calendar_fields = calendar_event_fields_from_draft(calendar).map_err(anyhow::Error::msg)?;
-    let schedule_bytes = arkret_sdk::canonical::canonical_json_bytes(&calendar_fields)?;
-    let schedule = if schedule_basis_refs.len() == 1 {
-        arkret_sdk::CalendarScheduleProjection::from_heads(&[(
-            schedule_basis_refs[0].clone(),
-            Some(schedule_bytes),
-        )])
-    } else {
-        arkret_sdk::CalendarScheduleProjection::from_heads(
-            &schedule_basis_refs
-                .iter()
-                .cloned()
-                .map(|head| (head, None))
-                .collect::<Vec<_>>(),
-        )
-    };
-    let mut authoring = crate::operation::ak_ops::rsvp_authoring(
+    crate::calendar::build_calendar_rsvp_event(
+        realm_id,
+        actor_id,
         strand_id,
         status,
         (!occurrence.trim().is_empty() && !calendar.recurrence_frequency.trim().is_empty())
             .then_some(occurrence.trim()),
-    )?;
-    authoring.schedule_basis_refs = schedule_basis_refs.clone();
-    Ok(arkret_sdk::calendar::build_rsvp_set_event(
-        authoring,
         &calendar_fields,
-        &schedule,
-        arkret_sdk::EventId::new(format!("ak:event:{}", crate::operation::uuid_v7()))?,
-        arkret_sdk::ScopeRef::Realm {
-            realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
-        },
-        arkret_sdk::Did::new(actor_id.to_owned())?,
+        schedule_basis_refs,
         actor_seq,
         hlc,
-        schedule_basis_refs,
-    )?)
+    )
 }
 
 pub(crate) fn calendar_schedule_revision_heads(
@@ -447,15 +527,36 @@ fn calendar_event_revises_schedule(event: &arkret_sdk::Event, strand_id: &str) -
                     .payload
                     .get("patch")
                     .and_then(Value::as_object)
-                    .is_some_and(|patch| {
-                        patch.keys().any(|path| {
-                            path == CALENDAR_SUBTREE_PATH
-                                || path.starts_with(&format!("{CALENDAR_SUBTREE_PATH}."))
-                        })
-                    })
+                    .is_some_and(calendar_patch_revises_schedule)
         }
         _ => false,
     }
+}
+
+fn calendar_patch_revises_schedule(patch: &Map<String, Value>) -> bool {
+    patch.iter().any(|(path, value)| {
+        if path == CALENDAR_SUBTREE_PATH || path.starts_with(&format!("{CALENDAR_SUBTREE_PATH}.")) {
+            return true;
+        }
+        if path == "metadata.fields" {
+            return value
+                .get("value")
+                .or_else(|| value.get("$value"))
+                .or_else(|| value.get("fields"))
+                .or(Some(value))
+                .and_then(Value::as_object)
+                .is_some_and(fields_have_calendar_keys);
+        }
+        if path == "metadata" {
+            return value
+                .get("value")
+                .or_else(|| value.get("$value"))
+                .and_then(|metadata| metadata.get("fields"))
+                .and_then(Value::as_object)
+                .is_some_and(fields_have_calendar_keys);
+        }
+        false
+    })
 }
 
 /// Canonical instance key for the card's base occurrence.
@@ -478,6 +579,44 @@ pub(crate) fn calendar_occurrence_hint(calendar: &CalendarCardFields) -> String 
         return start.to_owned();
     }
     format!("{start}[{timezone}]")
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CalendarAgendaItem {
+    pub(crate) occurrence: String,
+    pub(crate) local_start: String,
+    pub(crate) local_end: String,
+}
+
+/// Expands the next 90 days through the shared Calendar time API. The UI never
+/// slices schedule strings or reimplements recurrence/TZDB/DST behavior.
+pub(crate) fn calendar_agenda(
+    calendar: &CalendarCardFields,
+    schedule_revision_heads: &[String],
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<CalendarAgendaItem>, String> {
+    let fields = calendar_event_fields_from_draft(calendar)?;
+    let mut heads = schedule_revision_heads
+        .iter()
+        .map(|head| arkret_sdk::Hash::new(head.clone()).map_err(|err| err.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    heads.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    heads.dedup_by(|left, right| left.as_str() == right.as_str());
+    if heads.is_empty() {
+        return Err("calendar agenda requires an observed schedule frontier".to_owned());
+    }
+    let page = fields
+        .expand_occurrences_between_instants(now, now + chrono::Duration::days(90), 20, heads)
+        .map_err(|err| err.to_string())?;
+    Ok(page
+        .occurrences
+        .into_iter()
+        .map(|occurrence| CalendarAgendaItem {
+            occurrence: occurrence.occurrence,
+            local_start: occurrence.local_start,
+            local_end: occurrence.local_end,
+        })
+        .collect())
 }
 
 fn calendar_status_from_text(value: &str) -> Result<arkret_sdk::CalendarStatus, String> {
@@ -533,6 +672,10 @@ fn recurrence_from_card(
     let has_recurrence = !frequency.is_empty()
         || !calendar.recurrence_interval.trim().is_empty()
         || !calendar.recurrence_by_day.trim().is_empty()
+        || !calendar.recurrence_by_month.trim().is_empty()
+        || !calendar.recurrence_by_month_day.trim().is_empty()
+        || !calendar.recurrence_by_set_position.trim().is_empty()
+        || !calendar.recurrence_first_day_of_week.trim().is_empty()
         || !calendar.recurrence_count.trim().is_empty()
         || !calendar.recurrence_until.trim().is_empty();
     if !has_recurrence {
@@ -541,6 +684,18 @@ fn recurrence_from_card(
     let frequency = parse_recurrence_frequency(frequency)?;
     let interval = parse_optional_u64("recurrence interval", &calendar.recurrence_interval)?;
     let by_day = parse_recurrence_weekdays(&calendar.recurrence_by_day)?;
+    let by_month =
+        parse_optional_string_list("recurrence by_month", &calendar.recurrence_by_month)?;
+    let by_month_day = parse_optional_integer_list::<i8>(
+        "recurrence by_month_day",
+        &calendar.recurrence_by_month_day,
+    )?;
+    let by_set_position = parse_optional_integer_list::<i16>(
+        "recurrence by_set_position",
+        &calendar.recurrence_by_set_position,
+    )?;
+    let first_day_of_week =
+        parse_optional_recurrence_weekday(&calendar.recurrence_first_day_of_week)?;
     let count = parse_optional_u64("recurrence count", &calendar.recurrence_count)?;
     if let Some(count) = count
         && !(1..=10_000).contains(&count)
@@ -554,8 +709,14 @@ fn recurrence_from_card(
         if until.ends_with('Z') || until.contains('+') {
             return Err("recurrence until must not contain a UTC offset or Z suffix".to_owned());
         }
-        chrono::NaiveDateTime::parse_from_str(until, "%Y-%m-%dT%H:%M:%S%.f")
-            .map_err(|err| format!("recurrence until must be a local date-time: {err}"))?;
+        if calendar.all_day {
+            chrono::NaiveDate::parse_from_str(until, "%Y-%m-%d")
+                .map_err(|err| format!("all-day recurrence until must be a date: {err}"))?;
+        } else {
+            chrono::NaiveDateTime::parse_from_str(until, "%Y-%m-%dT%H:%M:%S").map_err(|err| {
+                format!("recurrence until must be a whole-second local date-time: {err}")
+            })?;
+        }
         Some(until.to_owned())
     };
     if count.is_some() && until.is_some() {
@@ -565,10 +726,10 @@ fn recurrence_from_card(
         frequency,
         interval,
         by_day,
-        by_month: None,
-        by_month_day: None,
-        by_set_position: None,
-        first_day_of_week: None,
+        by_month,
+        by_month_day,
+        by_set_position,
+        first_day_of_week,
         count,
         until,
     }))
@@ -593,7 +754,11 @@ fn parse_recurrence_weekdays(
         .map(|day| day.trim().to_ascii_uppercase())
         .filter(|day| !day.is_empty())
     {
-        let parsed = match day.as_str() {
+        if day.len() < 2 {
+            return Err(format!("unsupported recurrence weekday {day}"));
+        }
+        let (nth, weekday) = day.split_at(day.len() - 2);
+        let parsed = match weekday {
             "MO" => arkret_sdk::RecurrenceWeekday::Mo,
             "TU" => arkret_sdk::RecurrenceWeekday::Tu,
             "WE" => arkret_sdk::RecurrenceWeekday::We,
@@ -603,15 +768,86 @@ fn parse_recurrence_weekdays(
             "SU" => arkret_sdk::RecurrenceWeekday::Su,
             _ => return Err(format!("unsupported recurrence weekday {day}")),
         };
+        let nth_of_period = if nth.is_empty() {
+            None
+        } else {
+            let value = nth
+                .parse::<i16>()
+                .map_err(|err| format!("invalid recurrence ordinal {nth}: {err}"))?;
+            if value == 0 || !(-366..=366).contains(&value) {
+                return Err("recurrence ordinal must be in -366..=-1 or 1..=366".to_owned());
+            }
+            Some(value)
+        };
         let parsed = arkret_sdk::CalendarRecurrenceDay {
             day: parsed,
-            nth_of_period: None,
+            nth_of_period,
         };
-        if !days.contains(&parsed) {
-            days.push(parsed);
+        if days.contains(&parsed) {
+            return Err(format!("duplicate recurrence by_day value {day}"));
         }
+        days.push(parsed);
     }
     Ok(days)
+}
+
+fn parse_optional_recurrence_weekday(
+    value: &str,
+) -> Result<Option<arkret_sdk::RecurrenceWeekday>, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let parsed = parse_recurrence_weekdays(value)?;
+    if parsed.len() != 1 || parsed[0].nth_of_period.is_some() {
+        return Err("first_day_of_week must be one of MO, TU, WE, TH, FR, SA, SU".to_owned());
+    }
+    Ok(Some(parsed[0].day))
+}
+
+fn parse_optional_string_list(field: &str, value: &str) -> Result<Option<Vec<String>>, String> {
+    let values = value
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        return Ok(None);
+    }
+    let unique = values.iter().collect::<std::collections::BTreeSet<_>>();
+    if unique.len() != values.len() {
+        return Err(format!("{field} must not contain duplicates"));
+    }
+    Ok(Some(values))
+}
+
+fn parse_optional_integer_list<T>(field: &str, value: &str) -> Result<Option<Vec<T>>, String>
+where
+    T: std::str::FromStr + Ord + Copy,
+    T::Err: std::fmt::Display,
+{
+    let values = value
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            value
+                .parse::<T>()
+                .map_err(|err| format!("{field} contains an invalid integer {value}: {err}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if values.is_empty() {
+        return Ok(None);
+    }
+    let unique = values
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    if unique.len() != values.len() {
+        return Err(format!("{field} must not contain duplicates"));
+    }
+    Ok(Some(values))
 }
 
 fn parse_optional_u64(field: &str, value: &str) -> Result<Option<u64>, String> {
@@ -628,6 +864,20 @@ fn parse_optional_u64(field: &str, value: &str) -> Result<Option<u64>, String> {
     Ok(Some(parsed))
 }
 
+fn location_value_from_card(
+    calendar: &CalendarCardFields,
+) -> Result<Option<arkret_sdk::CalendarEventLocation>, String> {
+    if let Some(source) = &calendar.location_source {
+        let source_label = calendar_location_plaintext_label(source);
+        if calendar.location_locked || source_label == calendar.location.trim() {
+            return serde_json::from_value(source.clone())
+                .map(Some)
+                .map_err(|err| format!("projected calendar location is invalid: {err}"));
+        }
+    }
+    Ok(location_value_from_text(&calendar.location))
+}
+
 fn location_value_from_text(value: &str) -> Option<arkret_sdk::CalendarEventLocation> {
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| {
@@ -638,6 +888,25 @@ fn location_value_from_text(value: &str) -> Option<arkret_sdk::CalendarEventLoca
             url: None,
         })
     })
+}
+
+fn parse_calendar_call_id(value: &str) -> Result<Option<arkret_sdk::CallId>, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    arkret_sdk::CallId::new(value.to_owned())
+        .map(Some)
+        .map_err(|err| format!("calendar call_id is invalid: {err}"))
+}
+
+fn parse_calendar_attendees(value: &str) -> Result<Vec<arkret_sdk::CalendarAttendee>, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(Vec::new());
+    }
+    serde_json::from_str(value)
+        .map_err(|err| format!("calendar attendees must be a JSON array: {err}"))
 }
 
 fn location_json_from_text(value: &str) -> Option<Value> {

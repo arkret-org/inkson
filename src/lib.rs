@@ -26,6 +26,7 @@ pub mod authorization_lease;
 pub mod avatar_crop;
 pub mod blob;
 pub mod build_info;
+pub mod calendar;
 pub mod canonical;
 pub mod card_comments;
 /// AKP-0007 P3B.2 — Circle UX types, scope picker, error-code mapping.

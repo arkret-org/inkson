@@ -820,6 +820,7 @@ type SidecarEnvelopeDecrypt<'a> =
 
 /// Decrypt-injectable core of [`refold_sidecar_exchanges_from_history`]
 /// (tests substitute the MLS decrypt with a passthrough).
+#[cfg(test)]
 fn refold_sidecar_exchanges_with_decrypt(
     store: &mut crate::state::LocalStateStore,
     controller_id: &str,

@@ -250,6 +250,112 @@ fn calendar_projection_reads_schedule_and_plain_location() {
 }
 
 #[test]
+fn calendar_editor_round_trips_the_complete_v1_schedule() {
+    let source = json!({
+        "start": "2026-06-22T09:00:00",
+        "end": "2026-06-22T10:00:00",
+        "timezone": "America/Los_Angeles",
+        "tzdb_version": DEFAULT_CALENDAR_TZDB_VERSION,
+        "all_day": false,
+        "status": "tentative",
+        "recurrence": {
+            "frequency": "monthly",
+            "interval": 2,
+            "by_day": [{"day": "fr", "nth_of_period": -1}],
+            "by_month": ["1", "3", "5"],
+            "by_month_day": [-1],
+            "by_set_position": [-1],
+            "first_day_of_week": "su",
+            "until": "2027-12-31T09:00:00"
+        },
+        "location": {
+            "title": "Planning room",
+            "address": "1 Example Street",
+            "geo_uri": "geo:31.2304,121.4737",
+            "url": "https://meet.example/room"
+        },
+        "call_id": "ak:call:0196419b-0000-7000-8000-000000000902",
+        "attendees": [
+            {
+                "actor_id": "did:web:alice.example",
+                "role": "organizer",
+                "display_name_snapshot": "Alice"
+            },
+            {
+                "actor_id": "did:web:bob.example",
+                "role": "required",
+                "display_name_snapshot": "Bob"
+            }
+        ]
+    });
+    let fields = Map::from_iter([("calendar".to_owned(), source.clone())]);
+    let editor = calendar_fields_from_metadata(&fields, None, TEST_CALENDAR_STRAND_ID);
+
+    assert_eq!(editor.recurrence_by_day, "-1FR");
+    assert_eq!(editor.recurrence_by_month, "1, 3, 5");
+    assert_eq!(editor.recurrence_by_month_day, "-1");
+    assert_eq!(editor.recurrence_by_set_position, "-1");
+    assert_eq!(editor.recurrence_first_day_of_week, "SU");
+    assert_eq!(
+        editor.call_id,
+        "ak:call:0196419b-0000-7000-8000-000000000902"
+    );
+    assert!(editor.attendees_json.contains("display_name_snapshot"));
+
+    let rebuilt = calendar_event_fields_from_draft(&editor).unwrap();
+    assert_eq!(serde_json::to_value(rebuilt).unwrap(), source);
+}
+
+#[test]
+fn calendar_editor_rejects_duplicate_attendee_actor_ids() {
+    let calendar = CalendarCardFields {
+        start: "2026-06-22T09:00:00".to_owned(),
+        end: "2026-06-22T10:00:00".to_owned(),
+        timezone: "Etc/UTC".to_owned(),
+        tzdb_version: DEFAULT_CALENDAR_TZDB_VERSION.to_owned(),
+        status: "confirmed".to_owned(),
+        attendees_json: json!([
+            {"actor_id": "did:web:alice.example", "role": "organizer"},
+            {"actor_id": "did:web:alice.example", "role": "required"}
+        ])
+        .to_string(),
+        ..CalendarCardFields::default()
+    };
+
+    assert!(calendar_event_fields_from_draft(&calendar).is_err());
+}
+
+#[test]
+fn calendar_agenda_uses_shared_recurrence_expansion() {
+    let calendar = CalendarCardFields {
+        start: "2026-06-22T09:00:00".to_owned(),
+        end: "2026-06-22T10:00:00".to_owned(),
+        timezone: "Etc/UTC".to_owned(),
+        tzdb_version: DEFAULT_CALENDAR_TZDB_VERSION.to_owned(),
+        status: "confirmed".to_owned(),
+        recurrence_frequency: "weekly".to_owned(),
+        recurrence_count: "4".to_owned(),
+        ..CalendarCardFields::default()
+    };
+    let now = chrono::DateTime::parse_from_rfc3339("2026-06-21T00:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let items = calendar_agenda(&calendar, &[FRONTIER.to_owned()], now).unwrap();
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item.local_start.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "2026-06-22T09:00:00",
+            "2026-06-29T09:00:00",
+            "2026-07-06T09:00:00",
+            "2026-07-13T09:00:00"
+        ]
+    );
+}
+
+#[test]
 fn card_without_a_projected_frontier_cannot_author_an_rsvp() {
     let card = test_card(TEST_CALENDAR_STRAND_ID, "U");
     assert!(card.calendar_schedule_basis_refs().is_empty());
