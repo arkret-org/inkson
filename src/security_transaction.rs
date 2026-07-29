@@ -16,24 +16,6 @@ use zeroize::Zeroizing;
 const SECURITY_TRANSACTION_STATE_KEY: &str = "security_transaction.state.v1";
 const SECURITY_TRANSACTION_STAGED_SECRET_KEY: &str = "security_transaction.staged_secret.v1";
 const SECURITY_TRANSACTION_STAGED_SECRET_REF_PREFIX: &str = "secure-store://security-transaction/";
-const FORBIDDEN_SECRET_FIELD_NAMES: &[&str] = &[
-    "account_mls_secret",
-    "device_private_key",
-    "device_seed",
-    "hkdf_prk",
-    "mls_secret",
-    "mnemonic",
-    "plaintext_keybag",
-    "prk",
-    "private_key",
-    "recovery_key",
-    "recovery_phrase",
-    "recovery_secret",
-    "root_private_key",
-    "root_seed",
-    "secret_b64u",
-    "seed",
-];
 
 #[derive(Clone)]
 pub struct InksonSecurityTransactionStore {
@@ -146,56 +128,27 @@ fn audit_canonical_public_json(label: &str, bytes: &[u8]) -> garth::Result<()> {
 }
 
 fn audit_public_json_value(path: &str, value: &Value) -> garth::Result<()> {
-    match value {
-        Value::Object(object) => {
-            for (key, value) in object {
-                let next_path = format!("{path}.{key}");
-                if FORBIDDEN_SECRET_FIELD_NAMES
-                    .iter()
-                    .any(|forbidden| key.eq_ignore_ascii_case(forbidden))
-                {
-                    return Err(garth::Error::Protocol(format!(
-                        "security transaction public state contains forbidden secret field at {next_path}"
-                    )));
-                }
-                audit_public_json_value(&next_path, value)?;
-            }
+    let Some(violation) = crate::secret_surface::find_json_violation(path, value) else {
+        return Ok(());
+    };
+    let message = match &violation {
+        crate::secret_surface::SecretSurfaceViolation::ForbiddenField(_) => {
+            "contains forbidden secret field"
         }
-        Value::Array(items) => {
-            for (index, item) in items.iter().enumerate() {
-                audit_public_json_value(&format!("{path}[{index}]"), item)?;
-            }
+        crate::secret_surface::SecretSurfaceViolation::PrivateKeyBlock(_) => {
+            "contains a private-key block"
         }
-        Value::String(text) => {
-            if text.contains("-----BEGIN PRIVATE KEY-----")
-                || text.contains("-----BEGIN RSA PRIVATE KEY-----")
-                || text.contains("-----BEGIN EC PRIVATE KEY-----")
-                || text.contains("-----BEGIN OPENSSH PRIVATE KEY-----")
-                || text.contains("-----BEGIN ENCRYPTED PRIVATE KEY-----")
-            {
-                return Err(garth::Error::Protocol(format!(
-                    "security transaction public state contains a private-key block at {path}"
-                )));
-            }
-            if contains_recovery_mnemonic(text) {
-                return Err(garth::Error::Protocol(format!(
-                    "security transaction public state contains a recovery mnemonic at {path}"
-                )));
-            }
+        crate::secret_surface::SecretSurfaceViolation::RecoveryMnemonic(_) => {
+            "contains a recovery mnemonic"
         }
-        Value::Null | Value::Bool(_) | Value::Number(_) => {}
-    }
-    Ok(())
-}
-
-fn contains_recovery_mnemonic(text: &str) -> bool {
-    let words = text
-        .split(|character: char| !character.is_ascii_alphabetic())
-        .filter(|word| !word.is_empty())
-        .collect::<Vec<_>>();
-    words.windows(24).any(|window| {
-        crate::recovery_crypto::normalize_recovery_key_input(&window.join(" ")).is_some()
-    })
+        crate::secret_surface::SecretSurfaceViolation::TextAssignment(_) => {
+            "contains a secret-bearing text assignment"
+        }
+    };
+    Err(garth::Error::Protocol(format!(
+        "security transaction public state {message} at {}",
+        violation.path()
+    )))
 }
 
 impl SecurityTransactionStore for InksonSecurityTransactionStore {

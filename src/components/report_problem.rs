@@ -75,7 +75,8 @@ pub fn build_report_body(recent_tracing: &[String], app_version: &str, os: &str)
 }
 
 fn sanitize_report_trace_line(line: &str) -> String {
-    let prefix_redacted = redact_prefixed_identifiers(line);
+    let prefix_redacted =
+        redact_prefixed_identifiers(crate::secret_surface::sanitize_log_line(line));
     prefix_redacted
         .split_inclusive(char::is_whitespace)
         .map(redact_handle_like_segment)
@@ -252,6 +253,23 @@ mod tests {
         assert!(!body.contains("did:web:alice.example"));
         assert!(!body.contains("alice@example.com"));
         assert!(!body.contains("ak:realm:01964137"));
+    }
+
+    #[test]
+    fn report_body_drops_secret_bearing_tracing_lines() {
+        let mnemonic = crate::recovery_crypto::format_recovery_key(&[0_u8; 32]);
+        let body = build_report_body(
+            &[
+                "private_key=sentinel-private".to_owned(),
+                format!("unexpected recovery words: {mnemonic}"),
+            ],
+            "0.1.0",
+            "web",
+        );
+
+        assert_eq!(body.matches("[redacted:secret-bearing-line]").count(), 2);
+        assert!(!body.contains("sentinel-private"));
+        assert!(!body.contains(&mnemonic));
     }
 
     #[cfg(not(target_arch = "wasm32"))]

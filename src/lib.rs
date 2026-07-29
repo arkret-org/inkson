@@ -126,6 +126,7 @@ pub mod routes;
 pub mod rtc_transport;
 pub(crate) mod runtime;
 pub(crate) mod runtime_helpers;
+pub(crate) mod secret_surface;
 pub mod secure_key_store;
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]

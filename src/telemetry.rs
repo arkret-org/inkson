@@ -43,6 +43,14 @@ pub fn sentry_init(
         dsn: Some(dsn),
         attach_stacktrace: true,
         release: sentry::release_name!(),
+        before_send: Some(std::sync::Arc::new(|event| {
+            let Ok(value) = serde_json::to_value(&event) else {
+                return None;
+            };
+            crate::secret_surface::find_json_violation("crash_event", &value)
+                .is_none()
+                .then_some(event)
+        })),
         // R18: never let the SDK attach default PII (IP address, request
         // headers, usernames). Crash telemetry is opt-in but MUST stay
         // privacy-preserving by default.
