@@ -567,16 +567,68 @@ pub fn RecoveryPanel(
                                                     session.recovery_session_id.as_str(),
                                                 )
                                                 .await?;
-                                            anyhow::Ok((authoritative, outcome))
+                                            let transaction = if outcome.state
+                                                == arkret_sdk::SessionState::Verified
+                                                && authoritative.identity_model
+                                                    == arkret_sdk::RecoveryIdentityModel::CrossSigning
+                                            {
+                                                let secure_store =
+                                                    crate::secure_key_store::default_secure_key_store(
+                                                        "inkson",
+                                                    );
+                                                let prepared = crate::fresh_device_recovery::
+                                                    prepare_cross_signing_recovery_from_words(
+                                                        &api,
+                                                        secure_store.as_ref(),
+                                                        &authoritative,
+                                                        words.as_str(),
+                                                    )
+                                                    .await?;
+                                                let transaction_id =
+                                                    prepared.request.transaction_id.clone();
+                                                let transaction_store = crate::security_transaction::
+                                                    InksonSecurityTransactionStore::new(
+                                                        secure_store.clone(),
+                                                    );
+                                                let staged_ref = transaction_store
+                                                    .stage_secret(
+                                                        &transaction_id,
+                                                        prepared.staged_secret,
+                                                    )
+                                                    .await?;
+                                                let engine = crate::security_transaction::
+                                                    security_transaction_engine(
+                                                        api.sdk_http_client()?,
+                                                        secure_store,
+                                                    );
+                                                Some(
+                                                    crate::fresh_device_recovery::
+                                                        FreshDeviceRecovery::new(engine)
+                                                        .create_or_resume(
+                                                            prepared.request,
+                                                            Some(staged_ref),
+                                                        )
+                                                        .await?,
+                                                )
+                                            } else {
+                                                None
+                                            };
+                                            anyhow::Ok((authoritative, outcome, transaction))
                                         },
                                     )
                                     .await;
                                     match result {
-                                        Ok((session, outcome))
+                                        Ok((session, outcome, transaction))
                                             if outcome.state
                                                 == arkret_sdk::SessionState::Verified =>
                                         {
-                                            let checkpoint = crate::security_transaction::FreshDeviceRecoveryCheckpoint::from_verified_session(&session);
+                                            let checkpoint = crate::security_transaction::FreshDeviceRecoveryCheckpoint::from_verified_session(&session)
+                                                .and_then(|mut checkpoint| {
+                                                    if let Some(transaction) = &transaction {
+                                                        checkpoint.observe_transaction(transaction)?;
+                                                    }
+                                                    Ok(checkpoint)
+                                                });
                                             match checkpoint {
                                                 Ok(checkpoint) => {
                                                     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -588,10 +640,22 @@ pub fn RecoveryPanel(
                                                     {
                                                         Ok(()) => {
                                                             fresh_recovery_checkpoint.set(Some(checkpoint));
+                                                            let progress = transaction
+                                                                .as_ref()
+                                                                .map(|transaction| format!(
+                                                                    " Bound transaction {} is server-authoritative at {:?}.",
+                                                                    transaction.transaction_id,
+                                                                    transaction.state
+                                                                ))
+                                                                .unwrap_or_else(|| {
+                                                                    " Enrollment-authority transaction preparation is still required."
+                                                                        .to_owned()
+                                                                });
                                                             fresh_recovery_status.set(format!(
-                                                                "Recovery session {} is verified and durably checkpointed ({:?}). Preparing the bound transaction; this device is not ready yet.",
+                                                                "Recovery session {} is verified and durably checkpointed ({:?}).{} This device is not ready yet.",
                                                                 session.recovery_session_id,
-                                                                session.identity_model
+                                                                session.identity_model,
+                                                                progress
                                                             ));
                                                         }
                                                         Err(error) => fresh_recovery_status.set(format!(
@@ -604,7 +668,7 @@ pub fn RecoveryPanel(
                                                 )),
                                             }
                                         }
-                                        Ok((_session, outcome)) => {
+                                        Ok((_session, outcome, _transaction)) => {
                                             fresh_recovery_status.set(format!(
                                                 "Recovery proof was not verified (state: {:?}); no device-ready state was granted.",
                                                 outcome.state
