@@ -992,6 +992,59 @@ pub async fn prepare_joint_enrollment_authority_recovery(
     })
 }
 
+/// Open and verify a real recovery session from the 24 words, then prepare the
+/// enrollment-authority transaction through the product orchestration path.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub async fn prepare_joint_enrollment_authority_recovery_from_words(
+    principal_http: arkret_sdk::http_client::Client,
+    principal_server_url: &str,
+    principal_id: &str,
+    replacement_device_id: &str,
+    trust_domain: arkret_sdk::TypedTrustDomainId,
+    recovery_words: &str,
+    recovery_holder_jkt: &str,
+) -> anyhow::Result<JointEnrollmentAuthorityRecoveryPreparation> {
+    let api = crate::transport::TransportClient::from_http(
+        principal_http.clone(),
+        crate::transport::RequestContext::new(""),
+    );
+    let policy = crate::recovery_strand::fetch_active_recovery_policy(&api)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("joint recovery policy is absent"))?;
+    let session = api
+        .create_recovery_session(&arkret_models_crypto::RecoverySessionCreateRequestBody {
+            principal_id: arkret_sdk::Did::new(principal_id.to_owned())?,
+            requesting_device_id: arkret_sdk::DeviceId::new(replacement_device_id.to_owned())?,
+            trust_domain,
+            expected_recovery_policy_ref: Some(arkret_models_crypto::RecoveryPolicyRef {
+                policy_id: policy.policy_id.clone(),
+                policy_version: policy.version,
+            }),
+        })
+        .await?;
+    let proof = crate::recovery_strand::build_recovery_unlock_proof_from_words(
+        &session,
+        &policy,
+        recovery_words,
+    )?;
+    let proof_outcome = api
+        .submit_recovery_proof(
+            session.recovery_session_id.as_str(),
+            &arkret_models_crypto::RecoverySessionProofSubmitRequestBody { proof },
+        )
+        .await?;
+    prepare_joint_enrollment_authority_recovery(
+        principal_http,
+        principal_server_url,
+        &session,
+        &proof_outcome,
+        recovery_words,
+        recovery_holder_jkt,
+    )
+    .await
+}
+
 /// Build the holder-bound Account Authority participant request through the
 /// same Inkson implementation used by the product recovery workflow.
 #[cfg(debug_assertions)]

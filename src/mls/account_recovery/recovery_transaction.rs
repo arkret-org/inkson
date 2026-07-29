@@ -628,8 +628,8 @@ pub(crate) async fn prepare_enrollment_authority_recovery(
     let reanchor_lease = crate::fresh_device_recovery::sign_recovery_session_lease(
         &verified_session,
         &reanchor_event,
-        &rotation.current_root_verification_method,
-        &ed25519_dalek::SigningKey::from_bytes(&root_material.root_seed),
+        &format!("{}#recovery-proof-0", verified_session.principal_id),
+        &ed25519_dalek::SigningKey::from_bytes(&root_material.recovery_proof_seed),
         crate::clock::now_utc(),
     )?;
     crate::authorization_lease::install_lease(reanchor_lease)?;
