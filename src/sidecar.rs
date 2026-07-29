@@ -162,6 +162,9 @@ const SIDECAR_EXCHANGE_REQUEST_FACT_PREFIX: &str = "sidecar_exchange_request_fac
 /// accepted, the projection remains `responding` until that control Event is
 /// observed in accepted private-Strand history.
 const SIDECAR_AUTO_CLOSE_INTENT_PREFIX: &str = "sidecar_exchange_auto_close_intent";
+/// Controller-device-local recovery cache. These locators are derived from
+/// accepted structural Event history and are never uploaded.
+const SIDECAR_CONTEXT_LOCATOR_PREFIX: &str = "sidecar_context_locator";
 
 fn sidecar_exchange_fold_cache_key(
     controller_id: &str,
@@ -249,6 +252,7 @@ pub(crate) fn known_sidecar_private_strand_ids(
             SIDECAR_PENDING_SUBMISSION_PREFIX,
             SIDECAR_EXCHANGE_REQUEST_FACT_PREFIX,
             SIDECAR_AUTO_CLOSE_INTENT_PREFIX,
+            SIDECAR_CONTEXT_LOCATOR_PREFIX,
         ]
         .iter()
         .any(|prefix| key.starts_with(&format!("{prefix}:{controller_id}:")));
@@ -426,6 +430,11 @@ pub(crate) struct StoredSidecarExchangeRequestFact {
     pub private_strand_id: String,
     pub exchange_id: arkret_sdk::AgentSidecarExchangeId,
     pub request_event_id: String,
+    /// Canonical digest of the complete accepted Event Envelope. Submission
+    /// responses expose only the Event id, so this remains `None` until the
+    /// accepted Envelope syncs back. A fact without this digest is non-fold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_event_digest: Option<String>,
     /// Fold-fact HLC. The authoring device cannot read the accepted Event's
     /// server-stamped top-level HLC synchronously, so the request context's
     /// `source_hlc` stands in; it only feeds `max_hlc` display metadata.
@@ -653,10 +662,7 @@ fn request_fact_from_stored(
         hlc: stored.request_event_hlc.clone(),
         actor_id: arkret_sdk::Did::new(stored.controller_id.clone()).ok()?,
         actor_seq: stored.request_event_actor_seq,
-        // The canonical Event digest is not tracked client-side; the accepted
-        // Event id is a deterministic stand-in used ONLY for same-sequence
-        // sibling tie-breaking under controller equivocation.
-        event_digest: stored.request_event_id.clone(),
+        event_digest: stored.request_event_digest.clone()?,
         exchange_id: stored.exchange_id.clone(),
         context: stored.request_context.clone(),
     })
@@ -675,23 +681,13 @@ pub(crate) fn record_accepted_sidecar_exchange_request(
         private_strand_id: pending.private_strand_id.clone(),
         exchange_id: pending.exchange_id.clone(),
         request_event_id: accepted_event_id.to_owned(),
+        request_event_digest: None,
         request_event_hlc: pending.request_context.source_hlc.clone(),
         request_event_actor_seq: 0,
         backing_circle_id: pending.backing_circle_id.clone(),
         request_context: pending.request_context.clone(),
     };
     save_stored_sidecar_exchange_request_fact(store, &stored)?;
-    let scope = garth::projection::SidecarExchangeFoldScope {
-        controller_id: arkret_sdk::Did::new(stored.controller_id.clone())?,
-        sidecar_id: stored.sidecar_id.clone(),
-        private_strand_id: arkret_sdk::StrandId::new(stored.private_strand_id.clone())?,
-    };
-    let fact = request_fact_from_stored(&stored)
-        .ok_or_else(|| anyhow::anyhow!("accepted Sidecar request fact has invalid identifiers"))?;
-    let projection =
-        garth::projection::fold_sidecar_exchange(&scope, &stored.exchange_id, &[fact], &[], &[])?
-            .ok_or_else(|| anyhow::anyhow!("accepted Sidecar request did not fold"))?;
-    cache_sidecar_exchange_projection(store, &stored.controller_id, &projection)?;
     Ok(())
 }
 
@@ -811,6 +807,152 @@ pub(crate) fn refold_sidecar_exchanges_from_history(
             )
         },
     )
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SidecarBackgroundSyncOutcome {
+    pub sidecar_views: usize,
+    pub recovered_locators: usize,
+    pub ingested_events: usize,
+    pub cache_entries_changed: usize,
+    pub backfill_required: bool,
+}
+
+/// Account-scoped Sidecar recovery and Event-truth maintenance.
+///
+/// This pass intentionally has no route or hosted-session input. It fully
+/// paginates the controller's Sidecar list, fully scans every referenced
+/// Realm, recovers private locators from accepted structural Events, ingests
+/// the union history, refolds exchanges, and retries durable coordinator-close
+/// intents from the recovered Sidecar view plus the local MLS snapshot.
+pub(crate) async fn sync_sidecar_exchange_background(
+    base_url: &str,
+    api_token: String,
+    controller_id: &str,
+    device_id: &str,
+    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+) -> anyhow::Result<SidecarBackgroundSyncOutcome> {
+    let api = crate::transport::auth::authed_api_with_sync(base_url, api_token.clone(), None)?;
+    let http = api.sdk_http_client()?;
+    let mut sidecar_views = Vec::<arkret_sdk::AgentSidecarView>::new();
+    let mut cursor = None::<String>;
+    let mut seen_cursors = std::collections::BTreeSet::new();
+    loop {
+        let page = http
+            .agent_sidecar_list(None, cursor.as_deref())
+            .await
+            .map_err(anyhow::Error::from)?;
+        sidecar_views.extend(page.items);
+        let Some(next_cursor) = page.next_cursor.map(|value| value.to_string()) else {
+            break;
+        };
+        if !seen_cursors.insert(next_cursor.clone()) {
+            anyhow::bail!("Sidecar list pagination repeated a cursor");
+        }
+        cursor = Some(next_cursor);
+    }
+
+    let mut views_by_realm =
+        std::collections::BTreeMap::<String, Vec<arkret_sdk::AgentSidecarView>>::new();
+    for view in sidecar_views {
+        view.validate()?;
+        if view.sidecar.controller_id.as_str() != controller_id {
+            anyhow::bail!("Sidecar list returned a view for another controller");
+        }
+        views_by_realm
+            .entry(view.sidecar.realm_id.to_string())
+            .or_default()
+            .push(view);
+    }
+
+    let mut outcome = SidecarBackgroundSyncOutcome::default();
+    for (realm_id, realm_views) in views_by_realm {
+        outcome.sidecar_views += realm_views.len();
+        let backfill = api.event_submitter()?.backfill(&realm_id).await?;
+        let locators =
+            arkret_sdk::recover_agent_sidecar_context_locators(&realm_views, &backfill.events)?;
+        outcome.recovered_locators += locators.len();
+        {
+            let mut store = state_store.write();
+            for view in &realm_views {
+                let key = format!(
+                    "{SIDECAR_CONTEXT_LOCATOR_PREFIX}:{controller_id}:{}",
+                    view.sidecar.id
+                );
+                store.remove_private_data(&key);
+            }
+            for locator in &locators {
+                let key = format!(
+                    "{SIDECAR_CONTEXT_LOCATOR_PREFIX}:{controller_id}:{}",
+                    locator.sidecar_id
+                );
+                store.save_private_data(
+                    controller_id,
+                    key,
+                    serde_json::json!({
+                        "sidecar_id": locator.sidecar_id,
+                        "backing_circle_id": locator.backing_circle_id,
+                        "private_strand_id": locator.private_strand_id,
+                        "source_context_ref": locator.source_context_ref,
+                    })
+                    .to_string(),
+                );
+            }
+        }
+        let event_values = backfill.event_values();
+        outcome.ingested_events += crate::sync_engine::ingest_message_projection_events(
+            &mut state_store.write(),
+            &realm_id,
+            &event_values,
+        );
+        let hints = locators
+            .iter()
+            .map(|locator| SidecarExchangeScopeHint {
+                private_strand_id: locator.private_strand_id.to_string(),
+                sidecar_id: locator.sidecar_id.clone(),
+                backing_circle_id: locator.backing_circle_id.clone(),
+            })
+            .collect::<Vec<_>>();
+        let refold = refold_sidecar_exchanges_from_history(
+            &mut state_store.write(),
+            controller_id,
+            device_id,
+            &realm_id,
+            &hints,
+        );
+        outcome.cache_entries_changed += refold.cache_entries_changed;
+        outcome.backfill_required |= refold.backfill_required;
+
+        let views_by_sidecar = realm_views
+            .iter()
+            .map(|view| (view.sidecar.id.to_string(), view))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let retryable_closes =
+            pending_sidecar_auto_close_intents(&state_store.read(), controller_id, &realm_id)
+                .into_iter()
+                .filter(|intent| intent.accepted_control_event_id.is_none())
+                .collect::<Vec<_>>();
+        for intent in retryable_closes {
+            let Some(view) = views_by_sidecar.get(intent.sidecar_id.as_str()) else {
+                continue;
+            };
+            let binding = arkret_sdk::SidecarMlsBinding {
+                sidecar_id: view.sidecar.id.clone(),
+                desired_access_digest: view.mls_context.desired_access_digest.clone(),
+                control_frontier: view.mls_context.control_frontier.clone(),
+            };
+            submit_pending_sidecar_auto_close(
+                base_url,
+                api_token.clone(),
+                device_id,
+                state_store,
+                intent,
+                binding,
+            )
+            .await?;
+        }
+    }
+    Ok(outcome)
 }
 
 /// Circle-scoped envelope decrypt hook: `(store, circle_id, envelope_value)`
@@ -937,13 +1079,14 @@ fn refold_sidecar_exchanges_with_decrypt_report(
             if circle_id.as_str() != backing_circle_id.as_str() {
                 continue;
             }
+            let Ok(event_digest) = event.event_digest() else {
+                continue;
+            };
             if kind == arkret_sdk::events::EventKind::MESSAGE_CREATE {
-                // F-3: the accepted request Event's envelope carries the real
-                // `actor_seq` / top-level `hlc` in the clear. The authoring
-                // device cannot decrypt its own metadata, so when the
-                // envelope syncs back, upgrade the placeholder values in the
-                // durable local request fact (the Event-id `event_digest`
-                // stand-in stays — the canonical digest is still untracked).
+                // The accepted request Event's complete envelope carries the
+                // canonical digest, actor_seq, and top-level HLC. The authoring
+                // device may be unable to decrypt its own metadata, so upgrade
+                // its durable request fact before the decrypt path.
                 if event.actor_id.as_str() == controller_id
                     && let Some(index) = stored_index_by_request_event_id
                         .get(event.event_id.as_str())
@@ -953,9 +1096,11 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                     let stored = &mut stored_facts[index];
                     if stored.request_event_actor_seq != event.actor_seq
                         || stored.request_event_hlc != envelope_hlc
+                        || stored.request_event_digest.as_deref() != Some(event_digest.as_str())
                     {
                         stored.request_event_actor_seq = event.actor_seq;
                         stored.request_event_hlc = envelope_hlc;
+                        stored.request_event_digest = Some(event_digest.clone());
                         fact_upgrades.push(stored.clone());
                         upgraded_exchange_keys.insert((
                             stored.private_strand_id.clone(),
@@ -1001,10 +1146,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                                 hlc,
                                 actor_id: event.actor_id.clone(),
                                 actor_seq: event.actor_seq,
-                                // Deterministic stand-in for the canonical
-                                // Event digest; used only for same-sequence
-                                // sibling tie-breaking.
-                                event_digest: event.event_id.to_string(),
+                                event_digest: event_digest.clone(),
                                 exchange_id: binding.exchange_id.clone(),
                                 context,
                             },
@@ -1048,7 +1190,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                         hlc,
                         actor_id: event.actor_id.clone(),
                         actor_seq: event.actor_seq,
-                        event_digest: event.event_id.to_string(),
+                        event_digest,
                         // §7.2.3: the outer refs MUST cover the plaintext
                         // basis; the fold validates this coverage.
                         refs_after: event_refs_after(&event),
@@ -1675,6 +1817,53 @@ mod tests {
         }
     }
 
+    fn append_accepted_request_envelope(
+        store: &mut crate::state::LocalStateStore,
+        session: &HostedSidecarState,
+        pending: &PendingSidecarSubmission,
+    ) {
+        let binding = arkret_sdk::AgentSidecarEventExchangeBinding::request(
+            pending.exchange_id.clone(),
+            pending.request_context.clone(),
+        )
+        .unwrap();
+        let mut metadata = arkret_sdk::MessageMetadata::default();
+        metadata.set_sidecar_exchange_binding(&binding).unwrap();
+        let mut event = arkret_sdk::Event::new(
+            arkret_sdk::events::EventKind::MESSAGE_CREATE,
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+            },
+            arkret_sdk::Did::new(EXCHANGE_ACCOUNT).unwrap(),
+            7,
+            arkret_sdk::Hlc::new("01970e589d21-0005-a13f9c2e").unwrap(),
+            serde_json::json!({
+                "strand_id": session.private_strand_id.clone(),
+                "track_name": "discussion",
+                "encrypted_metadata": serde_json::to_value(&metadata).unwrap(),
+            }),
+        )
+        .unwrap();
+        event.event_id = arkret_sdk::EventId::new(EXCHANGE_REQUEST_EVENT).unwrap();
+        event.scope_ref = arkret_wire::ScopeRef::Circle {
+            realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+            circle_id: session.backing_scope_circle_id.clone(),
+        };
+        store.append_raw_operation(
+            EXCHANGE_REQUEST_EVENT.to_owned(),
+            Some(session.source_realm_id.clone()),
+            serde_json::to_value(&event).unwrap(),
+        );
+    }
+
+    fn passthrough_sidecar_envelope(
+        _: &crate::state::LocalStateStore,
+        _: &str,
+        value: &serde_json::Value,
+    ) -> Option<Vec<u8>> {
+        serde_json::to_vec(value).ok()
+    }
+
     #[test]
     fn pending_sidecar_submission_is_client_local_and_reused_for_retry() {
         let mut store = exchange_test_store("pending");
@@ -1741,13 +1930,33 @@ mod tests {
     }
 
     #[test]
-    fn accepted_request_folds_to_delivered_in_the_local_cache_only() {
+    fn accepted_request_waits_for_canonical_envelope_then_folds_to_delivered() {
         let mut store = exchange_test_store("accepted");
         let session = session(Vec::new());
         let pending = exchange_pending_submission(&session);
 
         record_accepted_sidecar_exchange_request(&mut store, &pending, EXCHANGE_REQUEST_EVENT)
             .unwrap();
+        assert!(
+            cached_sidecar_exchange_projections(
+                &store,
+                EXCHANGE_ACCOUNT,
+                session.source_realm_id.as_str(),
+            )
+            .is_empty(),
+            "an Event id alone is never used as a digest stand-in"
+        );
+        append_accepted_request_envelope(&mut store, &session, &pending);
+        assert_eq!(
+            refold_sidecar_exchanges_with_decrypt(
+                &mut store,
+                EXCHANGE_ACCOUNT,
+                &session.source_realm_id,
+                &[],
+                &passthrough_sidecar_envelope,
+            ),
+            1
+        );
 
         let cached = cached_sidecar_exchange_projections(
             &store,
@@ -1796,6 +2005,7 @@ mod tests {
         let pending = exchange_pending_submission(&session);
         record_accepted_sidecar_exchange_request(&mut store, &pending, EXCHANGE_REQUEST_EVENT)
             .unwrap();
+        append_accepted_request_envelope(&mut store, &session, &pending);
 
         // Craft the Agent-authored user_facing_response Event; the fake
         // decrypt below returns the mounted metadata value as plaintext.
@@ -1835,16 +2045,12 @@ mod tests {
             serde_json::to_value(&event).unwrap(),
         );
 
-        let passthrough = |_: &crate::state::LocalStateStore,
-                           _: &str,
-                           value: &serde_json::Value|
-         -> Option<Vec<u8>> { serde_json::to_vec(value).ok() };
         let changed = refold_sidecar_exchanges_with_decrypt(
             &mut store,
             EXCHANGE_ACCOUNT,
             &session.source_realm_id,
             &[],
-            &passthrough,
+            &passthrough_sidecar_envelope,
         );
         assert_eq!(changed, 1);
 
@@ -1901,7 +2107,7 @@ mod tests {
             EXCHANGE_ACCOUNT,
             &session.source_realm_id,
             &[],
-            &passthrough,
+            &passthrough_sidecar_envelope,
         );
         assert_eq!(unchanged, 0);
 
@@ -1961,7 +2167,7 @@ mod tests {
                 EXCHANGE_ACCOUNT,
                 &session.source_realm_id,
                 &[],
-                &passthrough,
+                &passthrough_sidecar_envelope,
             ),
             1
         );
@@ -1997,6 +2203,17 @@ mod tests {
         let pending = exchange_pending_submission(&session);
         record_accepted_sidecar_exchange_request(&mut store, &pending, EXCHANGE_REQUEST_EVENT)
             .unwrap();
+        append_accepted_request_envelope(&mut store, &session, &pending);
+        assert_eq!(
+            refold_sidecar_exchanges_with_decrypt(
+                &mut store,
+                EXCHANGE_ACCOUNT,
+                &session.source_realm_id,
+                &[],
+                &passthrough_sidecar_envelope,
+            ),
+            1
+        );
 
         let binding = arkret_sdk::AgentSidecarEventExchangeBinding::user_facing_response(
             pending.exchange_id.clone(),
@@ -2035,16 +2252,12 @@ mod tests {
             serde_json::to_value(&event).unwrap(),
         );
 
-        let passthrough = |_: &crate::state::LocalStateStore,
-                           _: &str,
-                           value: &serde_json::Value|
-         -> Option<Vec<u8>> { serde_json::to_vec(value).ok() };
         let changed = refold_sidecar_exchanges_with_decrypt(
             &mut store,
             EXCHANGE_ACCOUNT,
             &session.source_realm_id,
             &[],
-            &passthrough,
+            &passthrough_sidecar_envelope,
         );
         assert_eq!(changed, 0, "foreign-Circle events never enter the fold");
         let cached = cached_sidecar_exchange_projections(
@@ -2141,6 +2354,17 @@ mod tests {
         let pending = exchange_pending_submission(&session);
         record_accepted_sidecar_exchange_request(&mut store, &pending, EXCHANGE_REQUEST_EVENT)
             .unwrap();
+        append_accepted_request_envelope(&mut store, &session, &pending);
+        assert_eq!(
+            refold_sidecar_exchanges_with_decrypt(
+                &mut store,
+                EXCHANGE_ACCOUNT,
+                &session.source_realm_id,
+                &[],
+                &passthrough_sidecar_envelope,
+            ),
+            1
+        );
         let mut cached = cached_sidecar_exchange_projections(
             &store,
             EXCHANGE_ACCOUNT,

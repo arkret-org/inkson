@@ -87,3 +87,16 @@
 - Prevention dimension: authenticated immutable-header members are protocol
   claims, not hints. A receiver must never search alternate keys to compensate
   for a signed epoch or key-reference mismatch.
+
+## 2026-07-29 — Sidecar fold used Event ids as canonical digest stand-ins
+
+- Severity: P0 durable-truth determinism boundary.
+- Status: resolved and covered by focused Sidecar refold tests.
+- Evidence: accepted request and control facts copied `event_id` into `event_digest`; a successful
+  submit also seeded a delivered cache before the complete accepted Event Envelope had synced back.
+  Same-sequence siblings could therefore select a different winner than the canonical digest rule.
+- Resolution: submission now persists only the accepted Event identity. The fact remains non-fold
+  until the complete accepted Envelope can recompute `Event::event_digest()`; request/control
+  Envelope digest failure is fail-closed, and legacy stored facts are upgraded on syncback.
+- Prevention dimension: identifiers never substitute for canonical content digests. Any fold field
+  derived from an accepted Envelope must remain unavailable until that Envelope is locally verified.

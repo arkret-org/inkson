@@ -78,6 +78,9 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
     let mls_key_package_publish_retry_attempt = use_signal(|| 0_u32);
     let realm_key_pull_retry_key = use_signal(|| Option::<String>::None);
     let realm_key_pull_retry_attempt = use_signal(|| 0_u32);
+    let sidecar_background_basis_seen = use_signal(|| Option::<String>::None);
+    let sidecar_background_in_flight = use_signal(|| false);
+    let sidecar_background_retry_attempt = use_signal(|| 0_u32);
 
     {
         let mut seen_publish_key = mls_key_package_publish_key_seen;
@@ -159,6 +162,81 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         }
                     }
                 }
+            });
+        });
+    }
+    {
+        let mut basis_seen = sidecar_background_basis_seen;
+        let mut in_flight = sidecar_background_in_flight;
+        let mut retry_attempt = sidecar_background_retry_attempt;
+        let ready = secure_store_bootstrap_ready;
+        let sync_ready = sync_bootstrap_complete;
+        let sync_freshness = sync_cursor;
+        let mut live_epoch = realm_live_epoch;
+        let background_store = state_store;
+        use_effect(move || {
+            let cursor = sync_freshness();
+            if !ready() || !sync_ready() || *in_flight.peek() {
+                return;
+            }
+            let base = base_url();
+            let credential = token();
+            let actor = account_did();
+            let device = device_id();
+            if base.trim().is_empty()
+                || credential.trim().is_empty()
+                || actor.trim().is_empty()
+                || device.trim().is_empty()
+            {
+                return;
+            }
+            let basis = format!("{base}\u{1f}{actor}\u{1f}{device}\u{1f}{cursor}");
+            if basis_seen().as_deref() == Some(basis.as_str()) {
+                return;
+            }
+            basis_seen.set(Some(basis.clone()));
+            in_flight.set(true);
+            spawn(async move {
+                match crate::sidecar::sync_sidecar_exchange_background(
+                    &base,
+                    credential,
+                    &actor,
+                    &device,
+                    background_store,
+                )
+                .await
+                {
+                    Ok(outcome) => {
+                        if *retry_attempt.peek() != 0 {
+                            retry_attempt.set(0);
+                        }
+                        if outcome.ingested_events > 0 || outcome.cache_entries_changed > 0 {
+                            live_epoch.set(live_epoch().wrapping_add(1));
+                        }
+                        tracing::debug!(
+                            sidecars = outcome.sidecar_views,
+                            locators = outcome.recovered_locators,
+                            ingested = outcome.ingested_events,
+                            refolded = outcome.cache_entries_changed,
+                            backfill_pending = outcome.backfill_required,
+                            "account-scoped Sidecar background pass completed"
+                        );
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "account-scoped Sidecar background pass failed");
+                        let attempt = *retry_attempt.peek();
+                        let retry_after_secs = (2_u64 << attempt.min(5)).min(60);
+                        retry_attempt.set(attempt.saturating_add(1).min(5));
+                        crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(
+                            retry_after_secs,
+                        ))
+                        .await;
+                        if basis_seen.peek().as_deref() == Some(basis.as_str()) {
+                            basis_seen.set(None);
+                        }
+                    }
+                }
+                in_flight.set(false);
             });
         });
     }
