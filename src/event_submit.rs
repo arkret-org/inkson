@@ -1310,6 +1310,8 @@ impl EventSubmitter {
         idempotency_key: String,
     ) -> anyhow::Result<SubmitEventResult> {
         validate_signed_sdk_event_for_submit(signed)?;
+        crate::authorization_lease::ensure_for_events(&self.http, std::slice::from_ref(signed))
+            .await?;
         let submission = crate::authorization_lease::initial_submission(signed)?;
         let response: arkret_sdk::EventsSubmitOutcome = self
             .http
@@ -1342,6 +1344,8 @@ impl EventSubmitter {
         // permanently rejected (`offline-publication.md` §2). Replaying a
         // stale wrapper would hide that from the user instead of prompting a
         // re-authorization.
+        crate::authorization_lease::ensure_for_events(&self.http, std::slice::from_ref(signed))
+            .await?;
         let submission = crate::authorization_lease::initial_submission(signed)?;
         let response: arkret_sdk::EventsSubmitOutcome = self
             .http
@@ -1905,6 +1909,7 @@ impl EventSubmitter {
         for sdk_event in sdk_events {
             validate_signed_sdk_event_for_submit(sdk_event)?;
         }
+        crate::authorization_lease::ensure_for_events(&self.http, sdk_events).await?;
         // `idempotency_key` is not a body field in v1: it travels only in the
         // `Idempotency-Key` header.
         let body = arkret_sdk::EventsSubmitBatchRequestBody {

@@ -44,15 +44,19 @@ pub enum AuthorizationLeaseUnavailable {
     },
 }
 
-type LeaseKey = (String, String);
+type LeaseKey = (String, String, String);
 
 fn leases() -> &'static Mutex<BTreeMap<LeaseKey, AuthorizationLease>> {
     static LEASES: OnceLock<Mutex<BTreeMap<LeaseKey, AuthorizationLease>>> = OnceLock::new();
     LEASES.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
-fn key(actor_id: &str, scope_ref: &arkret_sdk::ScopeRef) -> anyhow::Result<LeaseKey> {
-    Ok((actor_id.to_owned(), serde_json::to_string(scope_ref)?))
+fn key(actor_id: &str, scope_ref: &arkret_sdk::ScopeRef, action: &str) -> anyhow::Result<LeaseKey> {
+    Ok((
+        actor_id.to_owned(),
+        serde_json::to_string(scope_ref)?,
+        action.to_owned(),
+    ))
 }
 
 /// Install an authority-issued lease for its own actor and scope.
@@ -64,7 +68,7 @@ pub fn install_lease(lease: AuthorizationLease) -> anyhow::Result<()> {
     lease
         .validate_structural()
         .map_err(|error| anyhow::anyhow!("authorization lease is invalid: {error}"))?;
-    let key = key(lease.actor_id.as_str(), &lease.scope_ref)?;
+    let key = key(lease.actor_id.as_str(), &lease.scope_ref, &lease.action)?;
     leases()
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
@@ -92,11 +96,26 @@ pub fn lease_for_event(
     let missing = || AuthorizationLeaseUnavailable::Missing {
         actor_id: event.actor_id.as_str().to_owned(),
     };
-    let key = key(event.actor_id.as_str(), &event.scope_ref).map_err(|_| missing())?;
-    let lease = leases()
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(&key)
+    let scope = serde_json::to_string(&event.scope_ref).map_err(|_| missing())?;
+    let held = leases().lock().unwrap_or_else(PoisonError::into_inner);
+    let mut matching = held
+        .iter()
+        .filter(|((actor_id, lease_scope, action), lease)| {
+            actor_id == event.actor_id.as_str()
+                && lease_scope == &scope
+                && lease_covers_event_kind(action, event.kind.as_str())
+                && lease.actor_id == event.actor_id
+                && lease.scope_ref == event.scope_ref
+        })
+        .map(|(_, lease)| lease)
+        .collect::<Vec<_>>();
+    matching.sort_by_key(|lease| lease.expires_at);
+    let lease = matching
+        .iter()
+        .rev()
+        .find(|lease| lease.expires_at > now)
+        .copied()
+        .or_else(|| matching.last().copied())
         .cloned()
         .ok_or_else(missing)?;
     if lease.expires_at <= now {
@@ -106,6 +125,74 @@ pub fn lease_for_event(
         });
     }
     Ok(lease)
+}
+
+fn lease_covers_event_kind(action: &str, event_kind: &str) -> bool {
+    arkret_schema::capability_action(action)
+        .is_some_and(|descriptor| descriptor.target_event_kinds.contains(&event_kind))
+        || action == event_kind
+}
+
+/// Ask the authenticated Principal Server to validate final signed Events and
+/// issue one publication lease per Event, then install the returned leases.
+pub async fn acquire_for_events(
+    http: &arkret_sdk::http_client::Client,
+    events: &[arkret_sdk::Event],
+) -> anyhow::Result<Vec<AuthorizationLease>> {
+    if events.is_empty() {
+        anyhow::bail!("authorization lease issuance requires at least one Event");
+    }
+    let request = arkret_wire::AuthorizationLeaseIssueRequest {
+        events: events.to_vec(),
+    };
+    let idempotency_key = crate::operation::uuid_v7();
+    let outcome: arkret_wire::AuthorizationLeaseIssueOutcome = http
+        .post_with_options(
+            "/_arkret/self/authorization-leases",
+            &request,
+            &arkret_sdk::http_client::ClientRequestOptions::new()
+                .request_id(idempotency_key.clone())
+                .idempotency_key(idempotency_key),
+        )
+        .await
+        .map_err(anyhow::Error::from)?;
+    if outcome.authorization_leases.len() != events.len() {
+        anyhow::bail!(
+            "authorization lease response cardinality mismatch: expected {}, received {}",
+            events.len(),
+            outcome.authorization_leases.len()
+        );
+    }
+    for (event, lease) in events.iter().zip(&outcome.authorization_leases) {
+        if lease.actor_id != event.actor_id
+            || lease.scope_ref != event.scope_ref
+            || !lease_covers_event_kind(&lease.action, event.kind.as_str())
+        {
+            anyhow::bail!(
+                "authorization lease does not cover requested Event {}",
+                event.event_id
+            );
+        }
+        install_lease(lease.clone())?;
+    }
+    Ok(outcome.authorization_leases)
+}
+
+/// Keep a still-valid held lease, otherwise acquire a replacement for the
+/// complete atomic request so anchor-unit cardinality and order stay bound.
+pub async fn ensure_for_events(
+    http: &arkret_sdk::http_client::Client,
+    events: &[arkret_sdk::Event],
+) -> anyhow::Result<()> {
+    let now = crate::clock::now_utc();
+    if events
+        .iter()
+        .all(|event| lease_for_event(event, now).is_ok())
+    {
+        return Ok(());
+    }
+    acquire_for_events(http, events).await?;
+    Ok(())
 }
 
 /// Wrap a signed Event into its initial publication.
