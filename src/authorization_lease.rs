@@ -355,12 +355,7 @@ fn local_principal_control_member_receipt(
         proposal_digest,
         authority_set_ref,
         crate::clock::now_utc(),
-        arkret_wire::ControlProposalDecisionPolicy {
-            receipt_sla: chrono::Duration::hours(24),
-            decision_window: chrono::Duration::seconds(30),
-            absolute_horizon: chrono::Duration::seconds(90),
-            max_defers: 2,
-        },
+        arkret_wire::ControlProposalDecisionPolicy::default(),
         &adapter,
     )?;
     local_proposal_receipts()
