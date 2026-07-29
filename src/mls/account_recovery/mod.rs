@@ -20,6 +20,7 @@
 //! - [`upload`] — backup / rotation upload flow and superseded cleanup.
 
 mod backup_body;
+mod recovery_transaction;
 mod restore;
 mod rotation_transaction;
 mod selection;
@@ -42,12 +43,17 @@ pub use backup_body::{
     is_recovery_public_key_account_secret_backup,
     open_mls_account_secret_recovery_public_key_backup,
 };
+pub(crate) use recovery_transaction::{
+    execute_cross_signing_recovery, execute_enrollment_authority_recovery,
+    resume_pending_fresh_device_recovery,
+};
 pub use restore::{
     RestoreReport, auto_restore_mls_history_with_passphrase, fetch_mls_account_secret_backup,
     fetch_mls_history_restore_payload_with_unlock_proof, fetch_mls_restore_payload,
-    fetch_mls_restore_payload_after_projection, fetch_mls_restore_payload_with_unlock_proof,
-    mls_backup_prompt_required, mls_restore_prompt_required,
-    restore_mls_history_with_local_secret_from_payload,
+    fetch_mls_restore_payload_after_projection,
+    fetch_mls_restore_payload_with_recovery_session_unlock_proof,
+    fetch_mls_restore_payload_with_unlock_proof, mls_backup_prompt_required,
+    mls_restore_prompt_required, restore_mls_history_with_local_secret_from_payload,
     restore_mls_history_with_passphrase_from_payload,
     restore_mls_history_with_recovery_key_from_payload,
 };

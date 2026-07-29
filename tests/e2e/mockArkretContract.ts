@@ -50,6 +50,8 @@ export function mockArkretContract(req) {
     return json({
       status: "accepted",
       accepted: [acceptedId],
+      ingress_receipts: [],
+      control_proposal_receipts: [],
       cursor: "sx:e2e:event",
     });
   }
@@ -224,7 +226,11 @@ export function canonicalPath(path) {
 }
 
 function firstEventId(events) {
-  return Array.isArray(events) ? events.find((event) => event?.event_id)?.event_id : undefined;
+  return Array.isArray(events)
+    ? events
+        .map((entry) => entry?.event ?? entry)
+        .find((event) => event?.event_id)?.event_id
+    : undefined;
 }
 
 function json(body, status = 200) {

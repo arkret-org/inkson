@@ -1009,8 +1009,11 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     &detect_base,
                     detect_session.clone(),
                     |api| async move {
-                        let payload =
-                            crate::mls::account_recovery::fetch_mls_restore_payload(&api).await?;
+                        let payload = crate::mls::account_recovery::fetch_mls_restore_payload(
+                            &api,
+                            &actor_for_sidecar_restore,
+                        )
+                        .await?;
                         let history_payload_for_local_restore = if has_local_account_secret {
                             Some(
                                 crate::mls::account_recovery::fetch_mls_history_restore_payload_with_unlock_proof(

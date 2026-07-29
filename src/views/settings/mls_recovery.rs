@@ -212,8 +212,10 @@ pub fn SettingsMlsRecoveryPanel(
                     .flatten()
                     .is_some()
             };
+            let actor_for_fetch = actor.clone();
             match with_authed_api(&base, session, |api| async move {
-                crate::mls::account_recovery::fetch_mls_restore_payload(&api).await
+                crate::mls::account_recovery::fetch_mls_restore_payload(&api, &actor_for_fetch)
+                    .await
             })
             .await
             {

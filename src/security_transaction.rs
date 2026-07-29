@@ -15,6 +15,7 @@ use zeroize::Zeroizing;
 
 const SECURITY_TRANSACTION_STATE_KEY: &str = "security_transaction.state.v1";
 const SECURITY_TRANSACTION_STAGED_SECRET_KEY: &str = "security_transaction.staged_secret.v1";
+const PENDING_FRESH_DEVICE_RECOVERY_KEY: &str = "fresh_device_recovery.pending.v1";
 const SECURITY_TRANSACTION_STAGED_SECRET_REF_PREFIX: &str = "secure-store://security-transaction/";
 
 #[derive(Clone)]
@@ -96,6 +97,64 @@ impl InksonSecurityTransactionStore {
         self.secure_store
             .get_secret_bytes(&Self::staged_secret_key(transaction_id))
             .map_err(|error| garth::Error::Protocol(error.to_string()))
+    }
+}
+
+fn pending_fresh_device_recovery_storage_key() -> String {
+    crate::secure_key_store::account_scoped_device_key(PENDING_FRESH_DEVICE_RECOVERY_KEY)
+}
+
+pub(crate) async fn store_pending_fresh_device_recovery(
+    secure_store: &(dyn SecureKeyStore + Send + Sync),
+    transaction_id: &arkret_sdk::TransactionId,
+) -> garth::Result<()> {
+    let bytes = arkret_sdk::canonical::canonical_json_bytes(&serde_json::json!({
+        "transaction_id": transaction_id,
+    }))
+    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    secure_store
+        .put_secret(
+            &pending_fresh_device_recovery_storage_key(),
+            &bytes,
+            PutSecretOptions {
+                durability: SecretDurability::DurableBeforeReturn,
+                class: SecretClass::General,
+            },
+        )
+        .await
+        .map_err(|error| garth::Error::Protocol(error.to_string()))
+}
+
+pub(crate) fn pending_fresh_device_recovery(
+    secure_store: &(dyn SecureKeyStore + Send + Sync),
+) -> garth::Result<Option<arkret_sdk::TransactionId>> {
+    let Some(bytes) = secure_store
+        .get_secret_bytes(&pending_fresh_device_recovery_storage_key())
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?
+    else {
+        return Ok(None);
+    };
+    let value: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    let transaction_id = value
+        .get("transaction_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            garth::Error::Protocol(
+                "pending fresh-device recovery omitted transaction_id".to_owned(),
+            )
+        })?;
+    arkret_sdk::TransactionId::new(transaction_id.to_owned())
+        .map(Some)
+        .map_err(|error| garth::Error::Protocol(error.to_string()))
+}
+
+pub(crate) fn clear_pending_fresh_device_recovery(
+    secure_store: &(dyn SecureKeyStore + Send + Sync),
+) -> garth::Result<()> {
+    match secure_store.delete_secret(&pending_fresh_device_recovery_storage_key()) {
+        Ok(()) | Err(SecureKeyStoreError::NotFound) => Ok(()),
+        Err(error) => Err(garth::Error::Protocol(error.to_string())),
     }
 }
 
@@ -249,6 +308,31 @@ pub fn security_transaction_engine(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn pending_fresh_device_recovery_pointer_round_trips_and_clears() {
+        let secure_store = garth::MemorySecureKeyStore::new();
+        let transaction_id =
+            arkret_sdk::TransactionId::new("ak:transaction:01904100-0000-7000-8000-abcdefabcda0")
+                .unwrap();
+
+        store_pending_fresh_device_recovery(&secure_store, &transaction_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            pending_fresh_device_recovery(&secure_store)
+                .unwrap()
+                .as_ref(),
+            Some(&transaction_id)
+        );
+        clear_pending_fresh_device_recovery(&secure_store).unwrap();
+        clear_pending_fresh_device_recovery(&secure_store).unwrap();
+        assert!(
+            pending_fresh_device_recovery(&secure_store)
+                .unwrap()
+                .is_none()
+        );
+    }
 
     #[tokio::test]
     async fn adapter_round_trips_public_plan_without_plaintext_secret() {

@@ -1,21 +1,23 @@
 //! Fetch + restore flow: account secret, MLS history, and the private-plaintext
 //! sidecar.
 
+use std::collections::BTreeMap;
+
 use anyhow::{Result, anyhow};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
+use ed25519_dalek::Verifier as _;
 use serde_json::{Value, json};
 
 use super::backup_body::{
     decrypt_mls_account_secret_backup, decrypt_mls_private_plaintext_backup,
-    is_mls_account_secret_backup, is_mls_private_plaintext_backup,
     open_mls_account_secret_recovery_public_key_backup,
 };
 use super::selection::{
     all_mls_account_secret_backups, is_mls_history_backup, mls_account_secret_backup_version,
-    mls_history_series_tail_ids, select_mls_account_secret_backup,
-    select_mls_account_secret_recovery_public_key_backup, select_mls_history_backups,
-    select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
+    select_mls_account_secret_backup, select_mls_account_secret_recovery_public_key_backup,
+    select_mls_history_backups, select_mls_private_plaintext_backup,
+    select_preferred_mls_account_secret_backup,
 };
 use super::series::verify_series_chain;
 
@@ -266,18 +268,66 @@ pub struct RestoreReport {
     pub first_error: Option<String>,
 }
 
+fn verify_active_backup_series(list_payload: &Value, backup_kind: &str) -> Result<()> {
+    let Some(active_series) =
+        super::selection::active_series_id_for_backup_class(list_payload, backup_kind)
+    else {
+        return Err(anyhow!(
+            "{backup_kind} active-series pointer is unavailable"
+        ));
+    };
+    let bodies = super::selection::iter_backup_bodies(list_payload)
+        .filter(|body| body.get("backup_kind").and_then(Value::as_str) == Some(backup_kind))
+        .filter(|body| body.get("series_id").and_then(Value::as_str) == Some(active_series))
+        .cloned()
+        .collect::<Vec<_>>();
+    let Some(tail) = bodies
+        .iter()
+        .max_by_key(|body| super::selection::backup_series_seq(body))
+    else {
+        return Err(anyhow!(
+            "authoritative {backup_kind} series has no envelopes"
+        ));
+    };
+    verify_series_chain(tail, &bodies)
+}
+
+fn observe_active_series_versions(
+    list_payload: &Value,
+    state_store: &mut crate::state::LocalStateStore,
+    actor_id: &str,
+) -> Result<()> {
+    for record in list_payload
+        .get("active_series")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if record.get("actor_id").and_then(Value::as_str) != Some(actor_id) {
+            return Err(anyhow!("active-series actor binding mismatch"));
+        }
+        let backup_kind = record
+            .get("backup_kind")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("active-series record omitted backup_kind"))?;
+        let version = record
+            .get("series_pointer_version")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| anyhow!("active-series record omitted series_pointer_version"))?;
+        state_store.observe_key_backup_active_series_version(actor_id, backup_kind, version)?;
+    }
+    Ok(())
+}
+
 /// Pure-fetch helper: list the server's key backups and return the
 /// preferred `mls_account_secret` body if one is present (None if absent). No
 /// Recovery Key is required — this is the SAFE half that can run at silent boot
 /// to *detect* whether account-secret recovery is available.
 pub async fn fetch_mls_account_secret_backup(
     api: &crate::transport::TransportClient,
+    actor_id: &str,
 ) -> Result<Option<Value>> {
-    let payload = serde_json::to_value(
-        &api.list_key_backups()
-            .await
-            .map_err(|err| anyhow!("list key backups: {err}"))?,
-    )?;
+    let payload = fetch_mls_restore_payload(api, actor_id).await?;
     Ok(select_preferred_mls_account_secret_backup(&payload))
 }
 
@@ -288,13 +338,17 @@ pub async fn fetch_mls_account_secret_backup(
 /// before acquiring `state_store.write()`, then pass the returned payload into
 /// [`restore_mls_history_with_passphrase_from_payload`]. That keeps the local
 /// state write guard out of the network await.
-pub async fn fetch_mls_restore_payload(api: &crate::transport::TransportClient) -> Result<Value> {
+pub async fn fetch_mls_restore_payload(
+    api: &crate::transport::TransportClient,
+    actor_id: &str,
+) -> Result<Value> {
     let backups = api
         .list_key_backups()
         .await
         .map_err(|err| anyhow!("list key backups: {err}"))?;
     let mut payload = serde_json::to_value(&backups)?;
-    attach_bootstrap_active_series(&mut payload);
+    payload["active_series"] =
+        Value::Array(fetch_authoritative_active_series(api, actor_id).await?);
     Ok(payload)
 }
 
@@ -303,67 +357,206 @@ pub async fn fetch_mls_restore_payload(api: &crate::transport::TransportClient) 
 /// caching the first empty projection for the lifetime of the app session.
 pub async fn fetch_mls_restore_payload_after_projection(
     api: &crate::transport::TransportClient,
+    actor_id: &str,
 ) -> Result<Value> {
-    let mut payload = fetch_mls_restore_payload(api).await?;
+    let mut payload = fetch_mls_restore_payload(api, actor_id).await?;
     for _ in 0..5 {
         if select_preferred_mls_account_secret_backup(&payload).is_some() {
             break;
         }
         crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(1)).await;
-        payload = fetch_mls_restore_payload(api).await?;
+        payload = fetch_mls_restore_payload(api, actor_id).await?;
     }
     Ok(payload)
 }
 
-/// The public LIST carrier intentionally contains metadata only and currently
-/// has no field for the verified control-stream active-series records.  Keep
-/// the strict selectors fail-closed for arbitrary callers, but bridge the live
-/// bootstrap response by selecting the newest actor-authenticated series per
-/// class until the transport exposes those records directly.  Rotation safety
-/// still comes from `secret_version` first; `series_seq`/`created_at` only
-/// order backups with the same secret generation.
-fn attach_bootstrap_active_series(payload: &mut Value) {
-    if payload
-        .get("active_series")
-        .and_then(Value::as_array)
-        .is_some()
-    {
-        return;
+async fn fetch_authoritative_active_series(
+    api: &crate::transport::TransportClient,
+    actor_id: &str,
+) -> Result<Vec<Value>> {
+    let actor = arkret_sdk::Did::new(actor_id.to_owned())
+        .map_err(|error| anyhow!("invalid backup actor_id: {error}"))?;
+    let realm_id = arkret_sdk::principal_control_realm_id(&actor);
+    let events = api
+        .http()
+        .events_query_all_pages(realm_id.as_str())
+        .await
+        .map_err(|error| anyhow!("read key backup active-series control stream: {error}"))?;
+    let viewer = api
+        .http()
+        .account_viewer()
+        .await
+        .map_err(|error| anyhow!("read active-series device authority: {error}"))?;
+    if viewer.principal_id != actor {
+        return Err(anyhow!(
+            "active-series device authority belongs to another principal"
+        ));
     }
-    let Some(backups) = payload.get("backups").and_then(Value::as_array) else {
-        return;
-    };
-    let mut records = Vec::new();
-    for class in ["secret_storage", "mls_history", "did_recovery"] {
-        let selected = backups
-            .iter()
-            .filter(|body| body.get("backup_kind").and_then(Value::as_str) == Some(class))
-            .filter(|body| class != "secret_storage" || is_mls_account_secret_backup(body))
-            .max_by(|a, b| {
-                (
-                    mls_account_secret_backup_version(a),
-                    super::selection::backup_series_seq(a),
-                    super::selection::backup_created_at(a),
-                )
-                    .cmp(&(
-                        mls_account_secret_backup_version(b),
-                        super::selection::backup_series_seq(b),
-                        super::selection::backup_created_at(b),
-                    ))
-            });
-        if let Some(series_id) = selected
-            .and_then(|body| body.get("series_id"))
-            .and_then(Value::as_str)
-            .filter(|series_id| !series_id.is_empty())
+    let device_ids = viewer
+        .devices
+        .into_iter()
+        .map(|device| device.device_id)
+        .collect::<Vec<_>>();
+    if device_ids.is_empty() {
+        return Err(anyhow!(
+            "active-series verification has no principal device inventory"
+        ));
+    }
+    let keys = api
+        .http()
+        .keys_query(&arkret_models_crypto::KeysQueryRequestBody {
+            device_keys: BTreeMap::from([(actor.clone(), device_ids)]),
+            timeout_ms: None,
+        })
+        .await
+        .map_err(|error| anyhow!("read active-series verification keys: {error}"))?;
+    if !keys.failures.is_empty() {
+        return Err(anyhow!(
+            "active-series verification key query was incomplete"
+        ));
+    }
+    let mut current = BTreeMap::<
+        String,
+        (
+            arkret_sdk::KeyBackupActiveSeriesHead,
+            arkret_sdk::KeyBackupActiveSeries,
+        ),
+    >::new();
+    let mut active_events = events
+        .events
+        .iter()
+        .filter(|event| event.kind.as_str() == "ak.key_backup.active_series")
+        .collect::<Vec<_>>();
+    active_events.sort_by_key(|event| event.actor_seq);
+    for event in active_events {
+        let record = serde_json::from_value::<arkret_sdk::KeyBackupActiveSeries>(
+            serde_json::to_value(&event.payload)?,
+        )
+        .map_err(|error| anyhow!("accepted active-series Event is invalid: {error}"))?;
+        if record.actor_id != actor || event.actor_id != actor {
+            return Err(anyhow!(
+                "accepted active-series Event actor does not match its principal control realm"
+            ));
+        }
+        verify_active_series_record_signature(&record, &keys)?;
+        let class = record.backup_kind.as_str().to_owned();
+        let head = arkret_sdk::validate_key_backup_active_series_transition(
+            current.get(&class).map(|(head, _)| head),
+            &record,
+        )
+        .map_err(|error| anyhow!("accepted active-series chain is not canonical: {error}"))?;
+        current.insert(class, (head, record));
+    }
+    current
+        .into_values()
+        .map(|(_, record)| serde_json::to_value(record).map_err(anyhow::Error::from))
+        .collect()
+}
+
+fn verify_active_series_record_signature(
+    record: &arkret_sdk::KeyBackupActiveSeries,
+    keys: &arkret_models_crypto::KeysQueryOutcome,
+) -> Result<()> {
+    if record.auth_data.signature_algorithm
+        != arkret_models_crypto::KeyBackupSignatureAlgorithm::Ed25519
+    {
+        return Err(anyhow!(
+            "active-series record uses an unsupported signature algorithm"
+        ));
+    }
+    let mut unsigned = serde_json::to_value(record)?;
+    unsigned["auth_data"]
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("active-series auth_data is not an object"))?
+        .remove("signature");
+    let message = crate::canonical::canonical_json_bytes(&unsigned)?;
+    let signature = ed25519_dalek::Signature::from_slice(
+        &B64.decode(record.auth_data.signature.as_str())
+            .map_err(|error| anyhow!("decode active-series signature: {error}"))?,
+    )
+    .map_err(|error| anyhow!("parse active-series signature: {error}"))?;
+    let devices = keys
+        .device_keys
+        .get(&record.actor_id)
+        .ok_or_else(|| anyhow!("active-series key query omitted its actor"))?;
+    let a_generation = keys.cross_signing.get(&record.actor_id);
+    let b_generation = keys.device_generations.get(&record.actor_id);
+    if a_generation.is_some() == b_generation.is_some() {
+        return Err(anyhow!(
+            "active-series authority model is absent or conflicted"
+        ));
+    }
+    for (device_id, device) in devices {
+        if !device.is_usable_in_generation(b_generation) {
+            continue;
+        }
+        let Some(device_signing_key) = device.device_signing_key.as_ref() else {
+            continue;
+        };
+        let did_key = device_signing_key.as_str();
+        let Some(multikey) = did_key.strip_prefix("did:key:") else {
+            continue;
+        };
+        let verification_method = record.auth_data.verification_method.as_str();
+        if verification_method != format!("{}#{}", record.actor_id, device_id)
+            && verification_method != did_key
+            && verification_method != format!("{did_key}#{multikey}")
+            && verification_method != format!("{did_key}#device")
         {
-            records.push(json!({
-                "schema": crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA,
-                "backup_kind": class,
-                "active_series_id": series_id,
-            }));
+            continue;
+        }
+        let anchored = match (
+            &record.auth_data.trust_binding,
+            &record.frontier_ref.generation,
+        ) {
+            (
+                arkret_sdk::KeyBackupActiveSeriesTrustBinding::SskGeneration(generation),
+                arkret_sdk::KeyBackupActiveSeriesFrontierGeneration::SskGeneration(frontier),
+            ) => {
+                generation == frontier
+                    && a_generation.is_some_and(|publish| {
+                        publish.generation == *generation
+                            && device
+                                .cross_signing_binding
+                                .as_ref()
+                                .is_some_and(|binding| binding.ssk_generation == generation.get())
+                    })
+            }
+            (
+                arkret_sdk::KeyBackupActiveSeriesTrustBinding::DeviceAuthorizeEventId(event_id),
+                arkret_sdk::KeyBackupActiveSeriesFrontierGeneration::DeviceGenerationRef(frontier),
+            ) => {
+                b_generation.is_some_and(|generation| {
+                    generation.device_generation_status
+                        == arkret_sdk::DeviceGenerationStatus::Active
+                        && generation.current_device_generation_ref == *frontier
+                }) && device.device_authorize_event_id.as_ref() == Some(event_id)
+                    && device.authorized_generation_ref.as_ref() == Some(frontier)
+            }
+            _ => false,
+        };
+        if !anchored {
+            continue;
+        }
+        let decoded = arkret_sdk::decode_multibase_base58btc(multikey)
+            .map_err(|error| anyhow!("active-series Ed25519 key is invalid: {error}"))?;
+        let Some((codec, header_len)) = arkret_sdk::decode_multicodec_varint(&decoded) else {
+            continue;
+        };
+        if codec != 0xed || decoded.len().saturating_sub(header_len) != 32 {
+            continue;
+        }
+        let key_bytes = <[u8; 32]>::try_from(&decoded[header_len..])
+            .map_err(|_| anyhow!("active-series Ed25519 key length is invalid"))?;
+        let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&key_bytes)
+            .map_err(|error| anyhow!("active-series Ed25519 key is invalid: {error}"))?;
+        if verifying_key.verify(&message, &signature).is_ok() {
+            return Ok(());
         }
     }
-    payload["active_series"] = Value::Array(records);
+    Err(anyhow!(
+        "active-series record signature is not anchored to the current trust generation"
+    ))
 }
 
 pub async fn fetch_mls_restore_payload_with_unlock_proof(
@@ -371,19 +564,34 @@ pub async fn fetch_mls_restore_payload_with_unlock_proof(
     actor_id: &str,
     device_id: &str,
 ) -> Result<Value> {
-    let payload = fetch_mls_restore_payload(api).await?;
-    // §7.10 continuous backup makes mls_history series chains long-lived;
-    // restore only needs the TAIL of each series (the tail folds the Realm's
-    // recoverable state), so superseded chain links are skipped entirely —
-    // both to avoid useless restores and to keep the per-principal 24h
-    // full-ciphertext download quota (default 64) from being burned on links.
-    let mls_history_tails = mls_history_series_tail_ids(&payload);
-    let private_plaintext_tail_id =
-        select_mls_private_plaintext_backup(&payload).and_then(|body| {
-            body.get("backup_id")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-        });
+    let payload = fetch_mls_restore_payload(api, actor_id).await?;
+    hydrate_mls_restore_payload_with_unlock_proof(api, payload, actor_id, device_id, None).await
+}
+
+pub async fn fetch_mls_restore_payload_with_recovery_session_unlock_proof(
+    api: &crate::transport::TransportClient,
+    actor_id: &str,
+    device_id: &str,
+    recovery_session: &arkret_sdk::RecoverySessionState,
+) -> Result<Value> {
+    let payload = fetch_mls_restore_payload_after_projection(api, actor_id).await?;
+    hydrate_mls_restore_payload_with_unlock_proof(
+        api,
+        payload,
+        actor_id,
+        device_id,
+        Some(recovery_session),
+    )
+    .await
+}
+
+async fn hydrate_mls_restore_payload_with_unlock_proof(
+    api: &crate::transport::TransportClient,
+    payload: Value,
+    actor_id: &str,
+    device_id: &str,
+    recovery_session: Option<&arkret_sdk::RecoverySessionState>,
+) -> Result<Value> {
     let mut full_backups = Vec::new();
     for entry in payload
         .get("backups")
@@ -396,22 +604,24 @@ pub async fn fetch_mls_restore_payload_with_unlock_proof(
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned();
-        if is_mls_history_backup(&entry) && !mls_history_tails.contains(backup_id.as_str()) {
-            continue;
-        }
-        if is_mls_private_plaintext_backup(&entry)
-            && private_plaintext_tail_id.as_deref() != Some(backup_id.as_str())
-        {
-            continue;
+        let backup_kind = entry
+            .get("backup_kind")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if matches!(
+            backup_kind,
+            "secret_storage" | "mls_history" | "did_recovery"
+        ) {
+            let active_series =
+                super::selection::active_series_id_for_backup_class(&payload, backup_kind);
+            if entry.get("series_id").and_then(Value::as_str) != active_series {
+                continue;
+            }
         }
         if entry.get("ciphertext").and_then(Value::as_str).is_some() {
             full_backups.push(entry);
             continue;
         }
-        let backup_kind = entry
-            .get("backup_kind")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
         if !matches!(
             backup_kind,
             "secret_storage" | "mls_history" | "did_recovery"
@@ -424,40 +634,49 @@ pub async fn fetch_mls_restore_payload_with_unlock_proof(
         } else {
             backup_id.as_str()
         };
-        let full = crate::key_backup::fetch_key_backup_with_active_unlock_proof(
-            api, &entry, actor_id, device_id,
-        )
-        .await
+        let full = match recovery_session {
+            Some(session) => {
+                crate::key_backup::fetch_key_backup_with_recovery_session_unlock_proof(
+                    api, &entry, actor_id, device_id, session,
+                )
+                .await
+            }
+            None => {
+                crate::key_backup::fetch_key_backup_with_active_unlock_proof(
+                    api, &entry, actor_id, device_id,
+                )
+                .await
+            }
+        }
         .map_err(|err| anyhow!("fetch key backup {backup_id} with unlock proof: {err}"))?;
         full_backups.push(full);
     }
-    let mut full_payload = json!({
+    let full_payload = json!({
         "backups": full_backups,
         "active_series": payload.get("active_series").cloned().unwrap_or_else(|| json!([])),
         "next_cursor": payload.get("next_cursor").cloned().unwrap_or(Value::Null),
+        "has_more": false,
         "state": payload.get("state").cloned().unwrap_or_else(|| json!("active")),
     });
-    attach_bootstrap_active_series(&mut full_payload);
     Ok(full_payload)
 }
 
-/// Hydrate only the active MLS-history series tails needed by the silent
+/// Hydrate the complete active MLS-history series needed by the silent
 /// already-unlocked-device restore path.
 ///
 /// The list endpoint intentionally returns metadata-only summaries. Passing
 /// those summaries to the envelope decoder produces a misleading missing-AEAD
 /// error. This helper replaces eligible history summaries with full envelopes
 /// obtained through the standard unlock-proof endpoint while leaving account
-/// recovery metadata available for prompt selection. Private-plaintext
-/// sidecars are omitted because their caller fetches the selected tail through
-/// its own bounded unlock path.
+/// recovery metadata available for prompt selection. Every active chain link
+/// is fetched so `supersedes_digest` can be verified locally before any tail is
+/// used.
 pub async fn fetch_mls_history_restore_payload_with_unlock_proof(
     api: &crate::transport::TransportClient,
     list_payload: &Value,
     actor_id: &str,
     device_id: &str,
 ) -> Result<Value> {
-    let mls_history_tails = mls_history_series_tail_ids(list_payload);
     let mut backups = Vec::new();
     for entry in list_payload
         .get("backups")
@@ -465,20 +684,21 @@ pub async fn fetch_mls_history_restore_payload_with_unlock_proof(
         .cloned()
         .unwrap_or_default()
     {
-        if is_mls_private_plaintext_backup(&entry) {
-            continue;
-        }
         if !is_mls_history_backup(&entry) {
             backups.push(entry);
+            continue;
+        }
+        let active_series = super::selection::active_series_id_for_backup_class(
+            list_payload,
+            crate::key_backup::BackupKind::MlsHistory.as_str(),
+        );
+        if entry.get("series_id").and_then(Value::as_str) != active_series {
             continue;
         }
         let backup_id = entry
             .get("backup_id")
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow!("mls_history backup metadata is missing backup_id"))?;
-        if !mls_history_tails.contains(backup_id) {
-            continue;
-        }
         if entry.get("ciphertext").and_then(Value::as_str).is_some() {
             backups.push(entry);
             continue;
@@ -511,6 +731,7 @@ pub fn restore_mls_history_with_passphrase_from_payload(
     passphrase: &[u8],
 ) -> Result<RestoreReport> {
     let mut report = RestoreReport::default();
+    observe_active_series_versions(list_payload, state_store, actor_id)?;
 
     // Step 1: refresh the local account secret from the server backup when it
     // exists. This deliberately runs even if a local secret is present: a
@@ -541,6 +762,12 @@ pub fn restore_mls_history_with_passphrase_from_payload(
         return Err(anyhow!(
             "no mls_account_secret backup on server; cannot recover MLS history"
         ));
+    }
+    if !select_mls_history_backups(list_payload).is_empty() {
+        verify_active_backup_series(
+            list_payload,
+            crate::key_backup::BackupKind::MlsHistory.as_str(),
+        )?;
     }
 
     restore_history_and_sidecar(
@@ -573,6 +800,17 @@ pub fn restore_mls_history_with_recovery_key_from_payload(
 ) -> Result<RestoreReport> {
     let _ = device_id;
     let mut report = RestoreReport::default();
+    observe_active_series_versions(list_payload, state_store, actor_id)?;
+    verify_active_backup_series(
+        list_payload,
+        crate::key_backup::BackupKind::SecretStorage.as_str(),
+    )?;
+    if !select_mls_history_backups(list_payload).is_empty() {
+        verify_active_backup_series(
+            list_payload,
+            crate::key_backup::BackupKind::MlsHistory.as_str(),
+        )?;
+    }
     let secret_body = select_mls_account_secret_recovery_public_key_backup(list_payload)
         .ok_or_else(|| anyhow!("no recovery_public_key account-secret backup on server"))?;
     let (secret, version) = open_mls_account_secret_recovery_public_key_backup(
@@ -623,6 +861,21 @@ pub fn restore_mls_history_with_local_secret_from_payload(
     device_id: &str,
 ) -> RestoreReport {
     let mut report = RestoreReport::default();
+    if let Err(error) = observe_active_series_versions(list_payload, state_store, actor_id) {
+        report.failed = 1;
+        report.first_error = Some(error.to_string());
+        return report;
+    }
+    if !select_mls_history_backups(list_payload).is_empty()
+        && let Err(error) = verify_active_backup_series(
+            list_payload,
+            crate::key_backup::BackupKind::MlsHistory.as_str(),
+        )
+    {
+        report.failed = 1;
+        report.first_error = Some(error.to_string());
+        return report;
+    }
     restore_history_and_sidecar(
         list_payload,
         state_store,

@@ -349,36 +349,20 @@ fn local_principal_control_member_receipt(
         return Ok(receipt);
     }
 
-    let received_at = crate::clock::now_utc();
-    let mut member = ProposalMemberReceipt {
-        realm_id: event.realm_id.clone(),
+    let adapter = signer.payload_signer_adapter_for_principal(&event.actor_id)?;
+    let member = ProposalMemberReceipt::issue_with_signer(
+        event.realm_id.clone(),
         proposal_digest,
-        received_at,
-        decision_due_at: received_at + chrono::Duration::seconds(30),
-        absolute_due_at: received_at + chrono::Duration::seconds(90),
         authority_set_ref,
-        signature: arkret_wire::PayloadSignature {
-            alg: "EdDSA".to_owned(),
-            verification_method,
-            payload_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))?,
-            created_at: received_at,
-            jws: String::new(),
+        crate::clock::now_utc(),
+        arkret_wire::ControlProposalDecisionPolicy {
+            receipt_sla: chrono::Duration::hours(24),
+            decision_window: chrono::Duration::seconds(30),
+            absolute_horizon: chrono::Duration::seconds(90),
+            max_defers: 2,
         },
-    };
-    member.signature.payload_digest = member.member_digest()?;
-    let transcript = member.canonical_bytes_for_signature()?;
-    let (signed_method, jws) =
-        signer.sign_detached_jws_for_principal(&event.actor_id, &transcript)?;
-    if signed_method != member.signature.verification_method {
-        anyhow::bail!("PCR proposal receipt signer binding changed during signing");
-    }
-    member.signature.jws = jws;
-    member.validate_structural(arkret_wire::ControlProposalDecisionPolicy {
-        receipt_sla: chrono::Duration::hours(24),
-        decision_window: chrono::Duration::seconds(30),
-        absolute_horizon: chrono::Duration::seconds(90),
-        max_defers: 2,
-    })?;
+        &adapter,
+    )?;
     local_proposal_receipts()
         .lock()
         .unwrap_or_else(PoisonError::into_inner)

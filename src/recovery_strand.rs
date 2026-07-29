@@ -834,17 +834,40 @@ pub async fn ensure_recovery_directed_ssk_backup(
         .await?
         .ok_or_else(|| anyhow::anyhow!("active recovery policy is unavailable"))?;
     let generation = publish.generation.get();
-    let list = serde_json::to_value(
-        &api.list_key_backups_by_series(None, Some("secret_storage"))
-            .await?,
-    )?;
+    let list = crate::mls::account_recovery::fetch_mls_restore_payload(api, principal_id).await?;
+    let active_series_id = list
+        .get("active_series")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|record| {
+            record.get("schema").and_then(Value::as_str)
+                == Some(crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA)
+                && record.get("backup_kind").and_then(Value::as_str)
+                    == Some(crate::key_backup::BackupKind::SecretStorage.as_str())
+        })
+        .and_then(|record| record.get("active_series_id"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("secret_storage active-series pointer is unavailable"))?;
+    let active_backups = list
+        .get("backups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|backup| {
+            backup.get("series_id").and_then(Value::as_str) == Some(active_series_id)
+                && backup.get("backup_kind").and_then(Value::as_str)
+                    == Some(crate::key_backup::BackupKind::SecretStorage.as_str())
+        })
+        .collect::<Vec<_>>();
     if let Some(existing) = list
         .get("backups")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .find(|backup| {
-            backup.get("backup_kind").and_then(Value::as_str) == Some("secret_storage")
+            backup.get("series_id").and_then(Value::as_str) == Some(active_series_id)
+                && backup.get("backup_kind").and_then(Value::as_str) == Some("secret_storage")
                 && backup
                     .get("recovery_policy_ref")
                     .and_then(|value| value.get("policy_id"))
@@ -873,13 +896,23 @@ pub async fn ensure_recovery_directed_ssk_backup(
     {
         return Ok(existing.to_owned());
     }
-    let body = build_recovery_directed_ssk_backup_body(
+    let mut body = build_recovery_directed_ssk_backup_body(
         principal_id,
         device_id,
         &policy,
         publish,
         self_signing_key,
     )?;
+    let previous = active_backups
+        .into_iter()
+        .max_by_key(|backup| {
+            backup
+                .get("series_seq")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        })
+        .ok_or_else(|| anyhow::anyhow!("active secret_storage series has no tail"))?;
+    crate::mls::account_recovery::apply_next_series(Some(previous), &mut body)?;
     let backup_id = body
         .get("backup_id")
         .and_then(Value::as_str)

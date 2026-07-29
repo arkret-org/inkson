@@ -1226,7 +1226,8 @@ pub(crate) async fn bootstrap_provisioned_agent(
         },
     };
     let envelope_frontier = binding.managed_frontier_ref.clone();
-    let list_payload = crate::mls::account_recovery::fetch_mls_restore_payload(api).await?;
+    let list_payload =
+        crate::mls::account_recovery::fetch_mls_restore_payload(api, &controller_id).await?;
     let highest_seen = state_store
         .read()
         .key_backup_active_series_highest_seen(&controller_id, "mls_history");
@@ -1446,6 +1447,7 @@ mod tests {
             "policy_id": policy_id,
             "principal_id": controller,
             "version": 1,
+            "acceptance_basis": format!("ak:seal:sha256:{}", "a".repeat(64)),
             "trust_domain": "ak:trust_domain:example.org",
             "allowed_proof_kinds": ["principal_signing"],
             "issued_at": issued_at,
@@ -1458,6 +1460,16 @@ mod tests {
                 "supersedes": null,
                 "trust_domain": "ak:trust_domain:example.org",
                 "allowed_proof_kinds": ["principal_signing"],
+                "publication_authorization_rules": [{
+                    "rule_id": "principal_signing",
+                    "proof_kind": "principal_signing",
+                    "issuer_role": "identity_recovery",
+                    "allowed_actions": ["ak.device.reanchor"],
+                    "issuers": [{
+                        "verification_method": format!("{controller}#device")
+                    }],
+                    "threshold": 1
+                }],
                 "recovery_key_agreements": [{
                     "key_agreement_ref": recipient,
                     "alg": "X25519",
@@ -1474,8 +1486,8 @@ mod tests {
                     "signature": "fixture",
                     "signed_fields": [
                         "schema", "policy_id", "principal_id", "version", "supersedes",
-                        "trust_domain", "allowed_proof_kinds", "recovery_key_agreements",
-                        "issued_at"
+                        "trust_domain", "allowed_proof_kinds",
+                        "publication_authorization_rules", "recovery_key_agreements", "issued_at"
                     ]
                 }
             }
@@ -1864,13 +1876,17 @@ mod tests {
             "active_series": [
                 {
                     "schema": crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA,
+                    "actor_id": controller_id,
                     "backup_kind": "secret_storage",
-                    "active_series_id": account_series_id
+                    "active_series_id": account_series_id,
+                    "series_pointer_version": 1
                 },
                 {
                     "schema": crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA,
+                    "actor_id": controller_id,
                     "backup_kind": "mls_history",
-                    "active_series_id": history_series_id
+                    "active_series_id": history_series_id,
+                    "series_pointer_version": 1
                 }
             ],
             "backups": [account, history]

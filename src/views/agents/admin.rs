@@ -1653,7 +1653,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                         api_token.clone(),
                                                         move |submitter| async move {
                                                             let events = submitter
-                                                                .prepare_sdk_events_batch(vec![
+                                                                .prepare_initial_submissions(vec![
                                                                     drafts.accountability_grant,
                                                                     drafts.selector_claim,
                                                                 ])

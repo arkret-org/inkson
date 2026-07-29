@@ -521,11 +521,24 @@ pub fn RecoveryPanel(
                                 let api_token = token();
                                 let principal_id = account_did();
                                 let requesting_device_id = device_id();
+                                let state_store = state_store;
                                 spawn(async move {
+                                    let recovery_base = base.clone();
                                     let result = with_authed_api(
                                         &base,
                                         api_token,
                                         |api| async move {
+                                            if let Some(completed) =
+                                                crate::mls::account_recovery::resume_pending_fresh_device_recovery(
+                                                    &api,
+                                                    &recovery_base,
+                                                    state_store,
+                                                    words.as_str(),
+                                                )
+                                                .await?
+                                            {
+                                                return Ok(completed);
+                                            }
                                             let policy = crate::recovery_strand::fetch_active_recovery_policy(&api)
                                                 .await?
                                                 .ok_or_else(|| anyhow::anyhow!("no active recovery policy"))?;
@@ -543,26 +556,56 @@ pub fn RecoveryPanel(
                                                 words.as_str(),
                                             )
                                             .await?;
-                                            anyhow::Ok((session, outcome))
+                                            let authoritative = api
+                                                .get_recovery_session(
+                                                    session.recovery_session_id.as_str(),
+                                                )
+                                                .await?;
+                                            if outcome.state != arkret_sdk::SessionState::Verified {
+                                                anyhow::bail!(
+                                                    "recovery proof was not verified (state: {:?})",
+                                                    outcome.state
+                                                );
+                                            }
+                                            match authoritative.identity_model {
+                                                arkret_sdk::RecoveryIdentityModel::CrossSigning => {
+                                                    crate::mls::account_recovery::execute_cross_signing_recovery(
+                                                        &api,
+                                                        &recovery_base,
+                                                        state_store,
+                                                        &authoritative,
+                                                        &outcome,
+                                                        words.as_str(),
+                                                    )
+                                                    .await
+                                                }
+                                                arkret_sdk::RecoveryIdentityModel::EnrollmentAuthority => {
+                                                    crate::mls::account_recovery::execute_enrollment_authority_recovery(
+                                                        &api,
+                                                        &recovery_base,
+                                                        state_store,
+                                                        &authoritative,
+                                                        &outcome,
+                                                        words.as_str(),
+                                                    )
+                                                    .await
+                                                }
+                                            }
                                         },
                                     )
                                     .await;
                                     match result {
-                                        Ok((session, outcome))
-                                            if outcome.state
-                                                == arkret_sdk::SessionState::Verified =>
-                                        {
+                                        Ok(completed) if completed.readiness.is_ready() => {
                                             fresh_recovery_status.set(format!(
-                                                "Recovery proof verified for session {}. Device authorization is still pending; this device is not ready yet.",
-                                                session.recovery_session_id
+                                                "Recovery complete. Transaction {} is durably authorized; {} encrypted history item(s) were restored.",
+                                                completed.transaction_id,
+                                                completed.restore_report.restored
                                             ));
                                         }
-                                        Ok((_session, outcome)) => {
-                                            fresh_recovery_status.set(format!(
-                                                "Recovery proof was not verified (state: {:?}); no device-ready state was granted.",
-                                                outcome.state
-                                            ));
-                                        }
+                                        Ok(completed) => fresh_recovery_status.set(format!(
+                                            "Recovery transaction {} is durable but readiness evidence is incomplete; this device remains recovery_pending.",
+                                            completed.transaction_id
+                                        )),
                                         Err(error) => {
                                             fresh_recovery_status.set(format!(
                                                 "Recovery proof failed safely: {}",

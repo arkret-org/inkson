@@ -173,7 +173,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let http = api.sdk_http_client()?;
     let submitter = api.event_submitter()?;
     let coordinator_service_id = Did::new(submitter.service_id().await?)?;
-    let list_payload = super::restore::fetch_mls_restore_payload(api).await?;
+    let list_payload = super::restore::fetch_mls_restore_payload(api, actor_id).await?;
     let prepared = prepare_rotation_backup_material(
         secure_store.as_ref(),
         actor_id,
@@ -636,7 +636,7 @@ fn rotation_backup_count(transaction: &arkret_wire::SecurityTransaction) -> Resu
 }
 
 #[derive(Clone, Debug)]
-enum ControllerBackupTrustAnchor {
+pub(super) enum ControllerBackupTrustAnchor {
     SskGeneration(u64),
     DeviceGeneration {
         authorize_event_id: String,
@@ -644,7 +644,7 @@ enum ControllerBackupTrustAnchor {
     },
 }
 
-async fn current_controller_backup_trust_anchor(
+pub(super) async fn current_controller_backup_trust_anchor(
     http: &arkret_sdk::http_client::Client,
     actor_id: &str,
     device_id: &str,
@@ -710,14 +710,14 @@ fn active_pointer_version(list_payload: &Value, kind: BackupRotationKind) -> Res
         .ok_or_else(|| anyhow!("active {wire_kind} pointer version is unavailable"))
 }
 
-fn wire_backup_kind(kind: BackupRotationKind) -> &'static str {
+pub(super) fn wire_backup_kind(kind: BackupRotationKind) -> &'static str {
     match kind {
         BackupRotationKind::SecretStorage => "secret_storage",
         BackupRotationKind::MlsHistory => "mls_history",
     }
 }
 
-fn build_active_series_event(
+pub(super) fn build_active_series_event(
     actor_id: &str,
     kind: BackupRotationKind,
     series_id: &str,
