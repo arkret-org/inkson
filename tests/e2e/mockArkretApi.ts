@@ -74,6 +74,12 @@ type MockArkretApiOptions = {
   personalAgentPairingExpiresAt?: string;
   sidecarPendingMemberReconciliations?: Array<Record<string, unknown>>;
   includeSidecarInCircleList?: boolean;
+  additionalActiveAgents?: Array<{
+    agent_id: string;
+    display_name: string;
+    slug: string;
+  }>;
+  demoPrimaryCardTitle?: string;
 };
 
 type MockAccountDevice = {
@@ -284,6 +290,7 @@ export async function mockArkretApi(
     encryption_profile: string;
   }> = [];
   const projectionEvents: Array<Record<string, unknown>> = [];
+  let sidecarAgentIds = ["did:web:agents.example:assistant"];
   const circleStates = new Map<string, MockCircleState>([
     [DEMO_CIRCLE, "active"],
   ]);
@@ -424,6 +431,29 @@ export async function mockArkretApi(
       },
     ],
   });
+  for (const agent of options.additionalActiveAgents ?? []) {
+    personalAgents.set(agent.agent_id, {
+      ...agent,
+      status: "active",
+      created_at: "2026-07-06T00:00:00.000Z",
+      updated_at: "2026-07-06T00:05:00.000Z",
+    });
+    personalAgentKeyStates.set(agent.agent_id, {
+      ...personalAgentKeyStates.get(activeAssistantId),
+      agent_id: agent.agent_id,
+      controller_authorization_ref: `${agent.agent_id}#managed-controller`,
+      authorized_event_ref:
+        "ak:event:01964137-0000-7000-8000-00000000a601",
+      active_authorizations: [
+        {
+          key_id: "runtime-key-2",
+          verification_method: `${agent.agent_id}#runtime-key-2`,
+          authorized_event_ref:
+            "ak:event:01964137-0000-7000-8000-00000000a601",
+        },
+      ],
+    });
+  }
   personalAgents.set("did:web:agents.example:deactivated", {
     agent_id: "did:web:agents.example:deactivated",
     display_name: "Deactivated Agent",
@@ -585,7 +615,7 @@ export async function mockArkretApi(
     {
       strand_id: DEMO_STRAND_LEGAL_REVIEW,
       realm_id: DEMO_REALM,
-      title: "Legal review for public beta",
+      title: options.demoPrimaryCardTitle ?? "Legal review for public beta",
       summary:
         "Finalize external processor wording before launch checklist can move.",
       state: "active",
@@ -2444,6 +2474,12 @@ export async function mockArkretApi(
       route.request().method() === "POST"
     ) {
       const body = await route.request().postDataJSON();
+      if (
+        Array.isArray(body?.addressed_agent_ids) &&
+        body.addressed_agent_ids.every((value: unknown) => typeof value === "string")
+      ) {
+        sidecarAgentIds = [...body.addressed_agent_ids];
+      }
       const contextRef = body?.context_ref ?? {};
       const contextExists = boardStrandProjections.some(
         (strand) =>
@@ -2494,10 +2530,10 @@ export async function mockArkretApi(
           state: "active",
           created_at: "2026-07-20T00:00:00.000Z",
         },
-        desired_agent_ids: ["did:web:agents.example:assistant"],
+        desired_agent_ids: sidecarAgentIds,
         effective_agent_ids:
           sidecarPendingMemberReconciliations.length === 0
-            ? ["did:web:agents.example:assistant"]
+            ? sidecarAgentIds
             : [],
         access_readiness:
           sidecarPendingMemberReconciliations.length === 0

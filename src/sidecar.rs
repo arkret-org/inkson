@@ -157,6 +157,11 @@ const SIDECAR_PENDING_SUBMISSION_PREFIX: &str = "ak.local.sidecar_pending_submis
 /// `encrypted_metadata`, so the request fact must survive locally for later
 /// refolds; other controller devices recover it by decrypting the Event.
 const SIDECAR_EXCHANGE_REQUEST_FACT_PREFIX: &str = "sidecar_exchange_request_fact";
+/// Retryable controller-device-local intent to author a durable close Event.
+/// This record is never folded as terminal truth. Even after the submit is
+/// accepted, the projection remains `responding` until that control Event is
+/// observed in accepted private-Strand history.
+const SIDECAR_AUTO_CLOSE_INTENT_PREFIX: &str = "sidecar_exchange_auto_close_intent";
 
 fn sidecar_exchange_fold_cache_key(
     controller_id: &str,
@@ -227,6 +232,45 @@ pub fn cached_sidecar_exchange_projections(
             ))
     });
     projections
+}
+
+/// Sidecar private Strands known to this controller device. These identifiers
+/// are used only as a local containment boundary: ordinary search, unread,
+/// watch, and public navigation projections must not treat private Sidecar
+/// history as shared Realm content.
+pub(crate) fn known_sidecar_private_strand_ids(
+    store: &crate::state::LocalStateStore,
+    controller_id: &str,
+) -> std::collections::BTreeSet<String> {
+    let mut strand_ids = std::collections::BTreeSet::new();
+    for key in store.private_data_keys() {
+        let belongs_to_controller = [
+            SIDECAR_EXCHANGE_FOLD_CACHE_PREFIX,
+            SIDECAR_PENDING_SUBMISSION_PREFIX,
+            SIDECAR_EXCHANGE_REQUEST_FACT_PREFIX,
+            SIDECAR_AUTO_CLOSE_INTENT_PREFIX,
+        ]
+        .iter()
+        .any(|prefix| key.starts_with(&format!("{prefix}:{controller_id}:")));
+        if !belongs_to_controller {
+            continue;
+        }
+        let Some(raw) = store.load_private_data(controller_id, &key) else {
+            continue;
+        };
+        let private_strand_id = serde_json::from_str::<serde_json::Value>(&raw)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("private_strand_id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned)
+            });
+        if let Some(private_strand_id) = private_strand_id {
+            strand_ids.insert(private_strand_id);
+        }
+    }
+    strand_ids
 }
 
 /// Client-local pre-submission state for one source-routed request intent.
@@ -405,6 +449,164 @@ pub(crate) struct SidecarExchangeScopeHint {
     pub backing_circle_id: arkret_sdk::CircleId,
 }
 
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct PendingSidecarAutoCloseIntent {
+    pub controller_id: String,
+    pub sidecar_id: arkret_sdk::SidecarId,
+    pub private_strand_id: String,
+    pub backing_circle_id: arkret_sdk::CircleId,
+    pub source_realm_id: String,
+    pub exchange_id: arkret_sdk::AgentSidecarExchangeId,
+    pub control: arkret_sdk::AgentSidecarExchangeControl,
+    /// Present only after the server accepted the authored control. It is a
+    /// retry/dedupe marker, not durable close state; history refold remains the
+    /// only path that changes the projection to `complete`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted_control_event_id: Option<String>,
+    #[serde(default)]
+    pub failed_attempts: u32,
+}
+
+fn sidecar_auto_close_intent_key(
+    controller_id: &str,
+    private_strand_id: &str,
+    exchange_id: &str,
+) -> String {
+    format!("{SIDECAR_AUTO_CLOSE_INTENT_PREFIX}:{controller_id}:{private_strand_id}:{exchange_id}")
+}
+
+fn save_pending_sidecar_auto_close_intent(
+    store: &mut crate::state::LocalStateStore,
+    intent: &PendingSidecarAutoCloseIntent,
+) -> anyhow::Result<()> {
+    let key = sidecar_auto_close_intent_key(
+        &intent.controller_id,
+        &intent.private_strand_id,
+        intent.exchange_id.as_str(),
+    );
+    store.save_private_data(&intent.controller_id, key, serde_json::to_string(intent)?);
+    Ok(())
+}
+
+pub(crate) fn pending_sidecar_auto_close_intents(
+    store: &crate::state::LocalStateStore,
+    controller_id: &str,
+    realm_id: &str,
+) -> Vec<PendingSidecarAutoCloseIntent> {
+    let prefix = format!("{SIDECAR_AUTO_CLOSE_INTENT_PREFIX}:{controller_id}:");
+    store
+        .private_data_keys()
+        .into_iter()
+        .filter(|key| key.starts_with(&prefix))
+        .filter_map(|key| store.load_private_data(controller_id, &key))
+        .filter_map(|raw| serde_json::from_str::<PendingSidecarAutoCloseIntent>(&raw).ok())
+        .filter(|intent| {
+            intent.controller_id == controller_id
+                && intent.source_realm_id == realm_id
+                && intent.control.validate().is_ok()
+        })
+        .collect()
+}
+
+static SIDECAR_AUTO_CLOSES_IN_FLIGHT: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::BTreeSet<String>>,
+> = std::sync::OnceLock::new();
+
+struct SidecarAutoCloseGuard {
+    key: String,
+}
+
+impl Drop for SidecarAutoCloseGuard {
+    fn drop(&mut self) {
+        if let Some(in_flight) = SIDECAR_AUTO_CLOSES_IN_FLIGHT.get()
+            && let Ok(mut in_flight) = in_flight.lock()
+        {
+            in_flight.remove(&self.key);
+        }
+    }
+}
+
+fn try_begin_sidecar_auto_close(
+    controller_id: &str,
+    private_strand_id: &str,
+    exchange_id: &str,
+) -> Option<SidecarAutoCloseGuard> {
+    let key = format!("{controller_id}\u{1f}{private_strand_id}\u{1f}{exchange_id}");
+    let mut in_flight = SIDECAR_AUTO_CLOSES_IN_FLIGHT
+        .get_or_init(|| std::sync::Mutex::new(Default::default()))
+        .lock()
+        .ok()?;
+    in_flight
+        .insert(key.clone())
+        .then(|| SidecarAutoCloseGuard { key })
+}
+
+pub(crate) async fn submit_pending_sidecar_auto_close(
+    base_url: &str,
+    api_token: String,
+    device_id: &str,
+    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    intent: PendingSidecarAutoCloseIntent,
+    sidecar_binding: arkret_sdk::SidecarMlsBinding,
+) -> anyhow::Result<()> {
+    if intent.accepted_control_event_id.is_some() {
+        return Ok(());
+    }
+    let Some(_guard) = try_begin_sidecar_auto_close(
+        &intent.controller_id,
+        &intent.private_strand_id,
+        intent.exchange_id.as_str(),
+    ) else {
+        return Ok(());
+    };
+    let seal_view = state_store
+        .read()
+        .seal_view_for_realm(&intent.source_realm_id);
+    let build = crate::views::secure_send::build_sidecar_exchange_control_send(
+        state_store,
+        &seal_view,
+        &intent.source_realm_id,
+        &intent.controller_id,
+        device_id,
+        &intent.private_strand_id,
+        intent.backing_circle_id.as_str(),
+        sidecar_binding,
+        &intent.control,
+    )
+    .map_err(anyhow::Error::msg)?;
+    let api = crate::transport::auth::authed_api_with_sync(base_url, api_token.clone(), None)?;
+    let outcome = crate::views::secure_send::submit_secure_send(
+        &api,
+        state_store,
+        build,
+        &intent.source_realm_id,
+        device_id,
+        base_url.to_owned(),
+        api_token,
+        intent.controller_id.clone(),
+        Some(intent.backing_circle_id.to_string()),
+    )
+    .await;
+    let result = match outcome {
+        crate::views::secure_send::SecureSendOutcome::Sent { event_id, .. } => Ok(event_id),
+        crate::views::secure_send::SecureSendOutcome::CommitFailed { message }
+        | crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => Err(message),
+    };
+    let mut next = intent;
+    match result {
+        Ok(event_id) => {
+            next.accepted_control_event_id = Some(event_id);
+            save_pending_sidecar_auto_close_intent(&mut state_store.write(), &next)?;
+            Ok(())
+        }
+        Err(message) => {
+            next.failed_attempts = next.failed_attempts.saturating_add(1);
+            save_pending_sidecar_auto_close_intent(&mut state_store.write(), &next)?;
+            anyhow::bail!(message)
+        }
+    }
+}
+
 fn sidecar_exchange_request_fact_key(
     controller_id: &str,
     private_strand_id: &str,
@@ -563,8 +765,9 @@ fn event_refs_after(event: &arkret_sdk::Event) -> Vec<arkret_sdk::EventId> {
 }
 
 /// Refold every locally known exchange of `controller_id` in `realm_id` from
-/// Event truth and refresh the local fold cache. Returns the number of cache
-/// entries that changed.
+/// Event truth and refresh the local fold cache. The outcome also reports an
+/// incomparable cached frontier so the caller can fetch complete accepted
+/// history and refold the union.
 ///
 /// Inputs per §7.2.4: durable local request facts (this device's own accepted
 /// requests), plus request/response/internal bindings decrypted from
@@ -576,17 +779,23 @@ fn event_refs_after(event: &arkret_sdk::Event) -> Vec<arkret_sdk::EventId> {
 /// `extra_scope_hints` names private Strands not yet present in any local
 /// record (e.g. the active hosted session); without a Sidecar id AND its
 /// backing Circle id an exchange cannot be folded.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SidecarRefoldOutcome {
+    pub cache_entries_changed: usize,
+    pub backfill_required: bool,
+}
+
 pub(crate) fn refold_sidecar_exchanges_from_history(
     store: &mut crate::state::LocalStateStore,
     controller_id: &str,
     device_id: &str,
     realm_id: &str,
     extra_scope_hints: &[SidecarExchangeScopeHint],
-) -> usize {
+) -> SidecarRefoldOutcome {
     let realm = realm_id.to_owned();
     let controller = controller_id.to_owned();
     let device = device_id.to_owned();
-    refold_sidecar_exchanges_with_decrypt(
+    refold_sidecar_exchanges_with_decrypt_report(
         store,
         controller_id,
         realm_id,
@@ -618,8 +827,28 @@ fn refold_sidecar_exchanges_with_decrypt(
     extra_scope_hints: &[SidecarExchangeScopeHint],
     decrypt: SidecarEnvelopeDecrypt<'_>,
 ) -> usize {
+    refold_sidecar_exchanges_with_decrypt_report(
+        store,
+        controller_id,
+        realm_id,
+        extra_scope_hints,
+        decrypt,
+    )
+    .cache_entries_changed
+}
+
+fn refold_sidecar_exchanges_with_decrypt_report(
+    store: &mut crate::state::LocalStateStore,
+    controller_id: &str,
+    realm_id: &str,
+    extra_scope_hints: &[SidecarExchangeScopeHint],
+    decrypt: SidecarEnvelopeDecrypt<'_>,
+) -> SidecarRefoldOutcome {
     let mut folded = Vec::new();
     let mut fact_upgrades = Vec::<StoredSidecarExchangeRequestFact>::new();
+    let mut auto_close_updates = Vec::<PendingSidecarAutoCloseIntent>::new();
+    let mut auto_close_removals = Vec::<String>::new();
+    let mut backfill_required = false;
     {
         let store_ref: &crate::state::LocalStateStore = store;
         let state = store_ref.load();
@@ -658,7 +887,7 @@ fn refold_sidecar_exchanges_with_decrypt(
         // No known Sidecar private Strand for this controller: nothing can
         // fold, so skip the (event-scan) work entirely.
         if scope_hints.is_empty() {
-            return 0;
+            return SidecarRefoldOutcome::default();
         }
         let stored_index_by_request_event_id = stored_facts
             .iter()
@@ -926,6 +1155,7 @@ fn refold_sidecar_exchanges_with_decrypt(
                             exchange_id = %exchange_id_raw,
                             "Sidecar exchange cache retained: frontier not covered by local history (backfill pending)"
                         );
+                        backfill_required = true;
                         continue;
                     }
                     // An unreadable/invalid cached frontier never blocks the
@@ -946,7 +1176,76 @@ fn refold_sidecar_exchanges_with_decrypt(
                 exchange_controls,
             );
             match fold {
-                Ok(Some(projection)) => folded.push(projection),
+                Ok(Some(projection)) => {
+                    let auto_close_key =
+                        sidecar_auto_close_intent_key(controller_id, strand_id, exchange_id_raw);
+                    if projection.terminal_event_id.is_some() {
+                        auto_close_removals.push(auto_close_key);
+                    } else if exchange_agent_facts.iter().any(|fact| {
+                        fact.actor_id == projection.coordinator_agent_id
+                            && fact.binding.role
+                                == arkret_sdk::AgentSidecarExchangeBindingRole::UserFacingResponse
+                            && fact.binding.completes_exchange == Some(true)
+                            && fact.binding.coordinator_assignment_event_id.as_ref()
+                                == Some(&projection.coordinator_assignment_event_id)
+                            && projection
+                                .user_facing_response_event_ids
+                                .contains(&fact.event_id)
+                    }) {
+                        let mut basis_event_ids = projection.folded_frontier.event_ids.clone();
+                        basis_event_ids.sort_by(|left, right| {
+                            left.as_str().as_bytes().cmp(right.as_str().as_bytes())
+                        });
+                        let control = arkret_sdk::AgentSidecarExchangeControl {
+                            schema: arkret_sdk::AgentSidecarExchangeControlSchema::V1,
+                            exchange_id: projection.exchange_id.clone(),
+                            request_event_id: projection.private_request_event_id.clone(),
+                            basis_event_ids,
+                            action: arkret_sdk::AgentSidecarExchangeControlAction::Close,
+                            response_event_ids: Some(
+                                projection.user_facing_response_event_ids.clone(),
+                            ),
+                            failure_reason_code: None,
+                            expected_coordinator_agent_id: None,
+                            coordinator_agent_id: None,
+                        };
+                        if control.validate().is_ok() {
+                            let existing = store_ref
+                                .load_private_data(controller_id, &auto_close_key)
+                                .and_then(|raw| {
+                                    serde_json::from_str::<PendingSidecarAutoCloseIntent>(&raw).ok()
+                                });
+                            // Once a close submit is accepted, keep waiting for
+                            // that exact Event to arrive through history. A
+                            // newer local fold must not clear the dedupe marker
+                            // and author a second control.
+                            if existing
+                                .as_ref()
+                                .and_then(|intent| intent.accepted_control_event_id.as_ref())
+                                .is_none()
+                            {
+                                auto_close_updates.push(PendingSidecarAutoCloseIntent {
+                                    controller_id: controller_id.to_owned(),
+                                    sidecar_id: sidecar_id.clone(),
+                                    private_strand_id: strand_id.clone(),
+                                    backing_circle_id: scope_hints
+                                        .get(strand_id)
+                                        .expect("scope hint checked above")
+                                        .1
+                                        .clone(),
+                                    source_realm_id: realm_id.to_owned(),
+                                    exchange_id: projection.exchange_id.clone(),
+                                    control,
+                                    accepted_control_event_id: None,
+                                    failed_attempts: existing
+                                        .map(|intent| intent.failed_attempts)
+                                        .unwrap_or_default(),
+                                });
+                            }
+                        }
+                    }
+                    folded.push(projection);
+                }
                 Ok(None) => {}
                 Err(error) => {
                     // Terminal basis not covered locally: backfill required.
@@ -961,6 +1260,14 @@ fn refold_sidecar_exchanges_with_decrypt(
             tracing::warn!(%error, "Sidecar request fact upgrade persistence failed");
         }
     }
+    for key in auto_close_removals {
+        store.remove_private_data(&key);
+    }
+    for intent in auto_close_updates {
+        if let Err(error) = save_pending_sidecar_auto_close_intent(store, &intent) {
+            tracing::warn!(%error, "Sidecar auto-close intent persistence failed");
+        }
+    }
     let mut changed = 0;
     for projection in folded {
         match cache_sidecar_exchange_projection(store, controller_id, &projection) {
@@ -971,7 +1278,10 @@ fn refold_sidecar_exchanges_with_decrypt(
             }
         }
     }
-    changed
+    SidecarRefoldOutcome {
+        cache_entries_changed: changed,
+        backfill_required,
+    }
 }
 
 pub fn cached_sidecar_display_mode(
@@ -1492,6 +1802,8 @@ mod tests {
             pending.exchange_id.clone(),
             arkret_sdk::EventId::new(EXCHANGE_REQUEST_EVENT).unwrap(),
         )
+        .unwrap()
+        .with_completion(arkret_sdk::EventId::new(EXCHANGE_REQUEST_EVENT).unwrap())
         .unwrap();
         let mut metadata = arkret_sdk::MessageMetadata::default();
         metadata.set_sidecar_exchange_binding(&binding).unwrap();
@@ -1545,6 +1857,25 @@ mod tests {
             cached[0].status,
             arkret_sdk::AgentSidecarExchangeStatus::Responding
         );
+        let close_intents =
+            pending_sidecar_auto_close_intents(&store, EXCHANGE_ACCOUNT, &session.source_realm_id);
+        assert_eq!(close_intents.len(), 1);
+        assert_eq!(
+            close_intents[0].control.action,
+            arkret_sdk::AgentSidecarExchangeControlAction::Close
+        );
+        assert_eq!(
+            close_intents[0].control.response_event_ids.as_deref(),
+            Some(&[arkret_sdk::EventId::new(EXCHANGE_RESPONSE_EVENT).unwrap()][..])
+        );
+        assert_eq!(
+            close_intents[0].control.basis_event_ids,
+            vec![arkret_sdk::EventId::new(EXCHANGE_RESPONSE_EVENT).unwrap()]
+        );
+        assert!(
+            close_intents[0].accepted_control_event_id.is_none(),
+            "local intent is retry metadata, never durable close truth"
+        );
         assert_eq!(
             cached[0]
                 .user_facing_response_event_ids
@@ -1572,6 +1903,87 @@ mod tests {
             &passthrough,
         );
         assert_eq!(unchanged, 0);
+
+        // Even a server-accepted submit marker remains client-local retry
+        // metadata. It cannot close the exchange before the accepted control
+        // Event itself arrives through private history.
+        let close_event_id = "ak:event:019f0000-0000-7000-8000-00000000000b";
+        let mut accepted_intent =
+            pending_sidecar_auto_close_intents(&store, EXCHANGE_ACCOUNT, &session.source_realm_id)
+                .pop()
+                .unwrap();
+        accepted_intent.accepted_control_event_id = Some(close_event_id.to_owned());
+        save_pending_sidecar_auto_close_intent(&mut store, &accepted_intent).unwrap();
+        assert_eq!(
+            cached_sidecar_exchange_projections(
+                &store,
+                EXCHANGE_ACCOUNT,
+                session.source_realm_id.as_str(),
+            )[0]
+            .status,
+            arkret_sdk::AgentSidecarExchangeStatus::Responding
+        );
+
+        let mut control_event = arkret_sdk::Event::new(
+            arkret_sdk::events::EventKind::AGENT_SIDECAR_EXCHANGE_CONTROL,
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+            },
+            arkret_sdk::Did::new(EXCHANGE_ACCOUNT).unwrap(),
+            2,
+            arkret_sdk::Hlc::new("01970e589d21-0003-a13f9c2e").unwrap(),
+            serde_json::json!({
+                "strand_id": session.private_strand_id.clone(),
+                "encrypted_payload": serde_json::to_value(&accepted_intent.control).unwrap(),
+            }),
+        )
+        .unwrap();
+        control_event.event_id = arkret_sdk::EventId::new(close_event_id).unwrap();
+        control_event.scope_ref = arkret_wire::ScopeRef::Circle {
+            realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+            circle_id: session.backing_scope_circle_id.clone(),
+        };
+        control_event.refs = accepted_intent
+            .control
+            .basis_event_ids
+            .iter()
+            .map(|event_id| arkret_sdk::EventRef::new(event_id.to_string(), "after"))
+            .collect();
+        store.append_raw_operation(
+            close_event_id,
+            Some(session.source_realm_id.clone()),
+            serde_json::to_value(&control_event).unwrap(),
+        );
+        assert_eq!(
+            refold_sidecar_exchanges_with_decrypt(
+                &mut store,
+                EXCHANGE_ACCOUNT,
+                &session.source_realm_id,
+                &[],
+                &passthrough,
+            ),
+            1
+        );
+        let completed = cached_sidecar_exchange_projections(
+            &store,
+            EXCHANGE_ACCOUNT,
+            session.source_realm_id.as_str(),
+        );
+        assert_eq!(
+            completed[0].status,
+            arkret_sdk::AgentSidecarExchangeStatus::Complete
+        );
+        assert_eq!(
+            completed[0]
+                .terminal_event_id
+                .as_ref()
+                .map(ToString::to_string),
+            Some(close_event_id.to_owned())
+        );
+        assert!(
+            pending_sidecar_auto_close_intents(&store, EXCHANGE_ACCOUNT, &session.source_realm_id,)
+                .is_empty()
+        );
     }
 
     /// F-1 (§7.2.1 / §7.2.2 check 1): a decryptable binding arriving under a
@@ -1719,6 +2131,60 @@ mod tests {
             &author_device_decrypt,
         );
         assert_eq!(unchanged, 0);
+    }
+
+    #[test]
+    fn incomparable_cached_frontier_requests_union_history_backfill() {
+        let mut store = exchange_test_store("incomparable-frontier");
+        let session = session(Vec::new());
+        let pending = exchange_pending_submission(&session);
+        record_accepted_sidecar_exchange_request(&mut store, &pending, EXCHANGE_REQUEST_EVENT)
+            .unwrap();
+        let mut cached = cached_sidecar_exchange_projections(
+            &store,
+            EXCHANGE_ACCOUNT,
+            session.source_realm_id.as_str(),
+        )
+        .pop()
+        .unwrap();
+        let response_event_id = arkret_sdk::EventId::new(EXCHANGE_RESPONSE_EVENT).unwrap();
+        cached.status = arkret_sdk::AgentSidecarExchangeStatus::Responding;
+        cached.participating_agent_ids = vec![arkret_sdk::Did::new(EXCHANGE_AGENT).unwrap()];
+        cached.user_facing_response_event_ids = vec![response_event_id.clone()];
+        cached.folded_frontier = arkret_sdk::AgentSidecarExchangeFoldedFrontier {
+            event_ids: vec![response_event_id.clone()],
+            event_set_digest: arkret_sdk::agent_sidecar_exchange_event_set_digest(&[
+                arkret_sdk::EventId::new(EXCHANGE_REQUEST_EVENT).unwrap(),
+                response_event_id,
+            ])
+            .unwrap(),
+            max_hlc: arkret_sdk::Hlc::new("01970e589d21-0002-a13f9c2e").unwrap(),
+        };
+        cache_sidecar_exchange_projection(&mut store, EXCHANGE_ACCOUNT, &cached).unwrap();
+
+        let no_history_decrypt = |_: &crate::state::LocalStateStore,
+                                  _: &str,
+                                  _: &serde_json::Value|
+         -> Option<Vec<u8>> { None };
+        let outcome = refold_sidecar_exchanges_with_decrypt_report(
+            &mut store,
+            EXCHANGE_ACCOUNT,
+            &session.source_realm_id,
+            &[],
+            &no_history_decrypt,
+        );
+
+        assert_eq!(outcome.cache_entries_changed, 0);
+        assert!(outcome.backfill_required);
+        assert_eq!(
+            cached_sidecar_exchange_projections(
+                &store,
+                EXCHANGE_ACCOUNT,
+                session.source_realm_id.as_str(),
+            )[0],
+            cached,
+            "an incomparable cache is retained until accepted union history arrives"
+        );
     }
 
     /// F-7: only one in-flight submit per `(controller, strand, intent)`;

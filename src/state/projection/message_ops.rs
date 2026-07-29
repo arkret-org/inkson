@@ -81,6 +81,7 @@ fn discussion_kind_is_raw_operation(kind: &str) -> bool {
         "ak.message.create"
             | "ak.message.revise"
             | "ak.message.redact"
+            | "ak.agent.sidecar.exchange.control"
             | "ak.reaction.add"
             | "ak.reaction.remove"
             | "ak.pin.add"
@@ -233,7 +234,32 @@ mod tests {
     }
 
     #[test]
-    fn typed_message_raw_operation_ignores_non_message_events() {
+    fn typed_message_raw_operation_keeps_sidecar_control_and_ignores_unrelated_events() {
+        let sidecar_control = typed_event(
+            arkret_sdk::events::EventKind::AGENT_SIDECAR_EXCHANGE_CONTROL,
+            json!({
+                "strand_id": "ak:strand:01904100-0000-7000-8000-000000000201",
+                "encrypted_payload": {
+                    "schema": "ak.schema.encrypted_envelope.v1",
+                    "suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+                    "key_ref": {
+                        "kind": "mls_group",
+                        "group_id": "AQIDBA",
+                        "epoch": 1,
+                        "group_state_ref": "ak:event:01904100-0000-7000-8000-000000000102"
+                    },
+                    "aad_visibility": "hidden",
+                    "ciphertext": "AQIDBA"
+                }
+            }),
+        );
+        assert!(
+            typed_message_raw_operation_from_event(
+                &serde_json::to_value(&sidecar_control).unwrap()
+            )
+            .is_some()
+        );
+
         // The pre-v1 fixture used `ak.presence`, which is not an Event kind at
         // all any more — presence is Signal ciphertext. Any durable kind
         // outside the discussion allow-list makes the same point.

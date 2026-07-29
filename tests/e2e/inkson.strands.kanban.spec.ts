@@ -192,6 +192,104 @@ test("sidecar display mode persists across tracks and fits a narrow long-agent l
   }
 });
 
+test("sidecar preserves long-history UI state across tracks and modes with multiple agents", async ({
+  page,
+}) => {
+  const longAgentSlug =
+    "research-assistant-with-an-intentionally-long-private-handle";
+  const longCardTitle =
+    "Legal review for a public beta launch with an intentionally long cross-team approval title";
+  await openKanban(page);
+  await page.getByTestId("kanban-card").filter({ hasText: longCardTitle }).click();
+  const detailPopup = page.getByTestId("card-detail-modal");
+  await expect(detailPopup).toContainText(longCardTitle);
+  await detailPopup.getByTestId("card-detail-tab-discussion").click();
+
+  const input = detailPopup.getByTestId("chat-input");
+  for (let index = 0; index < 18; index += 1) {
+    const response = page.waitForResponse(
+      (candidate) =>
+        candidate.url().endsWith("/_arkret/self/events") &&
+        candidate.request().method() === "POST",
+    );
+    await input.fill(`shared history row ${String(index).padStart(2, "0")}`);
+    await detailPopup.getByTestId("send-chat-button").click();
+    await expect((await response).ok()).toBeTruthy();
+  }
+  await expect(detailPopup.getByTestId("chat-message")).toHaveCount(18);
+
+  await detailPopup.getByTestId("card-detail-sidebar-tab-members").click();
+  const agentRows = detailPopup.getByTestId("card-detail-agent-row");
+  await agentRows
+    .filter({ hasText: "Alice Assistant" })
+    .getByTestId("card-detail-member-mention-button")
+    .click();
+  await agentRows
+    .filter({ hasText: "Research Assistant" })
+    .getByTestId("card-detail-member-mention-button")
+    .click();
+  const privateDraft =
+    "@me/assistant @me/research-assistant-with-an-intentionally-long-private-handle preserve this private draft";
+  await input.fill(privateDraft);
+
+  const ensureResponse = page.waitForResponse((response) =>
+    response.url().endsWith("/_arkret/self/agent-sidecars:ensure"),
+  );
+  await detailPopup.getByTestId("send-chat-button").click();
+  await expect((await ensureResponse).ok()).toBeTruthy();
+  await expect(page.getByTestId("sidecar-context-strip")).toBeVisible();
+  await expect(page.getByTestId("sidecar-addressed-now")).toContainText("assistant");
+  await expect(page.getByTestId("sidecar-addressed-now")).toContainText(longAgentSlug);
+  await expect(input).toHaveValue(privateDraft);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const stripMetrics = await page.getByTestId("sidecar-context-strip").evaluate((strip) => ({
+    clientWidth: strip.clientWidth,
+    scrollWidth: strip.scrollWidth,
+  }));
+  expect(stripMetrics.scrollWidth).toBeLessThanOrEqual(stripMetrics.clientWidth + 1);
+
+  const feed = detailPopup.getByTestId("message-list");
+  const firstMessage = detailPopup.getByTestId("chat-message").first();
+  await firstMessage.evaluate((element) => {
+    element.setAttribute("data-e2e-preserved-node", "yes");
+  });
+  const initialScroll = await feed.evaluate((element) => {
+    const target = Math.max(1, Math.floor((element.scrollHeight - element.clientHeight) / 2));
+    element.scrollTop = target;
+    return {
+      scrollTop: element.scrollTop,
+      scrollHeight: element.scrollHeight,
+      clientHeight: element.clientHeight,
+    };
+  });
+  expect(initialScroll.scrollHeight).toBeGreaterThan(initialScroll.clientHeight);
+  expect(initialScroll.scrollTop).toBeGreaterThan(0);
+
+  let fullHistoryRequests = 0;
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (request.method() === "GET" && url.pathname === "/_arkret/self/events") {
+      fullHistoryRequests += 1;
+    }
+  });
+  await page.waitForTimeout(300);
+
+  await page.getByTestId("sidecar-mode-sidecar-only").click();
+  await detailPopup.getByTestId("card-detail-tab-description").click();
+  await detailPopup.getByTestId("card-detail-tab-synthesis").click();
+  await page.getByTestId("sidecar-mode-context-merged").click();
+  await detailPopup.getByTestId("card-detail-tab-discussion").click();
+  await page.getByTestId("sidecar-mode-sidecar-only").click();
+  await page.getByTestId("sidecar-mode-context-merged").click();
+
+  await expect(input).toHaveValue(privateDraft);
+  await expect(firstMessage).toHaveAttribute("data-e2e-preserved-node", "yes");
+  const restoredScroll = await feed.evaluate((element) => element.scrollTop);
+  expect(restoredScroll).toBe(initialScroll.scrollTop);
+  expect(fullHistoryRequests).toBe(0);
+});
+
 test("pending sidecar reconciliation blocks contextual send without claiming readiness", async ({ page }) => {
   await openKanban(page);
   await page.getByTestId("kanban-card").first().click();

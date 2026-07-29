@@ -1558,6 +1558,7 @@ pub fn ChatPanel(
     let controller = use_chat_controller(&selected_realm_id, &initial_strand_id, &account_did);
     let mut migrated_draft_applied_for = use_signal(String::new);
     let mut sidecar_exchange_fold_basis_seen = use_signal(String::new);
+    let sidecar_close_retry_epoch = use_signal(|| 0_u64);
     let mut member_handle_fetching = use_signal(std::collections::BTreeSet::<String>::new);
     {
         let handle_base_url = base_url.clone();
@@ -1955,10 +1956,12 @@ pub fn ChatPanel(
         }
     });
     {
+        let close_base_url = base_url.clone();
         let account_did = account_did.clone();
         let device_id = device_id.clone();
         let selected_realm_id = selected_realm_id.clone();
         let all_messages_for_fold = all_messages_snapshot;
+        let active_sidecar = sidecar_session.clone();
         let session_scope_hints = sidecar_session
             .as_ref()
             .map(|session| {
@@ -1972,6 +1975,7 @@ pub fn ChatPanel(
         use_effect(move || {
             let cursor = sync_cursor();
             let realm_epoch = realm_live_epoch();
+            let close_retry_epoch = sidecar_close_retry_epoch();
             // Accepted rows keyed by protocol message id: a pending
             // submission whose request Event landed (e.g. the cache write
             // raced a crash) is recognised by its message id and folded to
@@ -1988,7 +1992,7 @@ pub fn ChatPanel(
                         .map(|message_id| (message_id, message.id.clone()))
                 })
                 .collect::<std::collections::BTreeMap<_, _>>();
-            let basis = format!("{cursor}\u{1f}{realm_epoch}");
+            let basis = format!("{cursor}\u{1f}{realm_epoch}\u{1f}{close_retry_epoch}");
             if sidecar_exchange_fold_basis_seen.peek().as_str() == basis {
                 return;
             }
@@ -2012,13 +2016,84 @@ pub fn ChatPanel(
             // Receive-side Event-truth fold: decrypt exchange bindings and
             // durable control Events from the synced private-Strand history
             // and refresh the local fold cache (`zh/models/sidecar.md` §7.2.4).
-            crate::sidecar::refold_sidecar_exchanges_from_history(
+            let refold = crate::sidecar::refold_sidecar_exchanges_from_history(
                 &mut store,
                 &account_did,
                 &device_id,
                 &selected_realm_id,
                 &session_scope_hints,
             );
+            let retryable_closes = crate::sidecar::pending_sidecar_auto_close_intents(
+                &store,
+                &account_did,
+                &selected_realm_id,
+            )
+            .into_iter()
+            .filter(|intent| intent.accepted_control_event_id.is_none())
+            .collect::<Vec<_>>();
+            drop(store);
+            if refold.backfill_required {
+                let base = close_base_url.clone();
+                let credential = token();
+                let realm = selected_realm_id.clone();
+                let mut store = state_store;
+                let mut live_epoch = realm_live_epoch;
+                spawn(async move {
+                    let outcome = async {
+                        let api =
+                            crate::transport::auth::authed_api_with_sync(&base, credential, None)?;
+                        let backfill = api.event_submitter()?.backfill(&realm).await?;
+                        Ok::<_, anyhow::Error>(backfill.event_values())
+                    }
+                    .await;
+                    match outcome {
+                        Ok(events) => {
+                            let changed = crate::sync_engine::ingest_message_projection_events(
+                                &mut store.write(),
+                                &realm,
+                                &events,
+                            );
+                            if changed > 0 {
+                                live_epoch.set(live_epoch().wrapping_add(1));
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, "Sidecar union-history backfill failed");
+                        }
+                    }
+                });
+            }
+            let Some(session) = active_sidecar.as_ref() else {
+                return;
+            };
+            let Ok(sidecar_binding) = session.mls_binding() else {
+                return;
+            };
+            for intent in retryable_closes {
+                if intent.private_strand_id != session.private_strand_id
+                    || intent.sidecar_id != session.sidecar_id
+                    || intent.backing_circle_id != session.backing_scope_circle_id
+                {
+                    continue;
+                }
+                let base = close_base_url.clone();
+                let credential = token();
+                let device = device_id.clone();
+                let binding = sidecar_binding.clone();
+                let store = state_store;
+                let mut retry_epoch = sidecar_close_retry_epoch;
+                spawn(async move {
+                    if let Err(error) = crate::sidecar::submit_pending_sidecar_auto_close(
+                        &base, credential, &device, store, intent, binding,
+                    )
+                    .await
+                    {
+                        tracing::warn!(%error, "Sidecar durable auto-close submit failed; retry scheduled");
+                        crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(2)).await;
+                        retry_epoch.set(retry_epoch().wrapping_add(1));
+                    }
+                });
+            }
         });
     }
     let all_messages_snapshot = all_messages_snapshot.read().clone();
