@@ -909,7 +909,7 @@ fn authority_ticket_issue_request(
     })
 }
 
-fn authorize_recovery_device_request(
+pub(crate) fn authorize_recovery_device_request(
     transaction: &SecurityTransaction,
     ticket: RecoveryAuthorityTicket,
     account_authority_endpoint: &str,

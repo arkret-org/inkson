@@ -27,11 +27,11 @@ use arkret_wire::{
     EventsSubmitBatchRequestBody, GrantId, Hash, NonEmptyString, PayloadProof, PayloadSignature,
     PolicyId, PreparedEventUnit, PromoteRecoverySessionGrantOutcome,
     PromoteRecoverySessionGrantRequest, ProposalMemberReceipt, ReceiptId,
-    RecoveryAuthorityHolderProof, RecoveryAuthorityTicketId, RecoveryBinding, RecoveryPreparedPlan,
-    RecoveryTransactionCreateRequest, RiskTier, SecurityRotationTransactionCreateRequest,
-    SecurityTransaction, SecurityTransactionBinding, SecurityTransactionCreateRequest,
-    SecurityTransactionPreparedPlan, SecurityTransactionState, SecurityTransactionStep,
-    TransactionId, TypedTrustDomainId, proof_kind,
+    RecoveryAuthorityHolderProof, RecoveryAuthorityTicket, RecoveryAuthorityTicketId,
+    RecoveryBinding, RecoveryPreparedPlan, RecoveryTransactionCreateRequest, RiskTier,
+    SecurityRotationTransactionCreateRequest, SecurityTransaction, SecurityTransactionBinding,
+    SecurityTransactionCreateRequest, SecurityTransactionPreparedPlan, SecurityTransactionState,
+    SecurityTransactionStep, TransactionId, TypedTrustDomainId, proof_kind,
 };
 use chrono::{DateTime, Utc};
 use garth::{SecurityTransactionEngine, SecurityTransactionStore, SecurityTransactionTransport};
@@ -825,6 +825,76 @@ pub fn prepare_enrollment_authority_recovery_transaction(
         plan,
     )
     .map_err(anyhow::Error::from)
+}
+
+/// Public-only result exposed to the cross-repository joint harness.
+///
+/// The recovery-key-derived HPKE private key deliberately stays inside the
+/// normal Inkson preparation path and is dropped before this value returns.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub struct JointEnrollmentAuthorityRecoveryPreparation {
+    pub create_request: RecoveryTransactionCreateRequest,
+    pub proof_summary: arkret_sdk::ProofSummary,
+    pub account_authority_endpoint: String,
+    pub verified_session: RecoverySessionState,
+}
+
+/// Prepare the exact enrollment-authority recovery transaction used by the
+/// product client while allowing cotest to drive each durable participant
+/// boundary independently.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub async fn prepare_joint_enrollment_authority_recovery(
+    principal_http: arkret_sdk::http_client::Client,
+    principal_server_url: &str,
+    session: &RecoverySessionState,
+    proof_outcome: &arkret_sdk::RecoverySessionProofSubmitOutcome,
+    recovery_words: &str,
+    recovery_holder_jkt: &str,
+) -> anyhow::Result<JointEnrollmentAuthorityRecoveryPreparation> {
+    let api = crate::transport::TransportClient::from_http(
+        principal_http,
+        crate::transport::RequestContext::new(""),
+    );
+    let prepared = crate::mls::account_recovery::prepare_enrollment_authority_recovery(
+        &api,
+        principal_server_url,
+        session,
+        proof_outcome,
+        recovery_words,
+        recovery_holder_jkt,
+    )
+    .await?;
+    Ok(JointEnrollmentAuthorityRecoveryPreparation {
+        create_request: prepared.create_request,
+        proof_summary: prepared.proof_summary,
+        account_authority_endpoint: prepared.account_authority_endpoint,
+        verified_session: prepared.verified_session,
+    })
+}
+
+/// Build the holder-bound Account Authority participant request through the
+/// same Inkson implementation used by the product recovery workflow.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn joint_recovery_device_authorization_request(
+    transaction: &SecurityTransaction,
+    ticket: RecoveryAuthorityTicket,
+    account_authority_endpoint: &str,
+    holder_seed_base64url: &str,
+    holder_jkt: &str,
+) -> anyhow::Result<arkret_wire::AuthorizeRecoveryDeviceRequest> {
+    let holder = crate::identity::account_auth::grant_dpop::device_handle_from_seed(
+        holder_seed_base64url,
+        holder_jkt,
+    )?;
+    crate::mls::account_recovery::authorize_recovery_device_request(
+        transaction,
+        ticket,
+        account_authority_endpoint,
+        &holder,
+    )
 }
 
 #[derive(Clone, Debug)]

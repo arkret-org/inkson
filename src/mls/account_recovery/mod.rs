@@ -44,7 +44,8 @@ pub use backup_body::{
     open_mls_account_secret_recovery_public_key_backup,
 };
 pub(crate) use recovery_transaction::{
-    execute_cross_signing_recovery, execute_enrollment_authority_recovery,
+    authorize_recovery_device_request, execute_cross_signing_recovery,
+    execute_enrollment_authority_recovery, prepare_enrollment_authority_recovery,
     resume_pending_fresh_device_recovery,
 };
 pub use restore::{
