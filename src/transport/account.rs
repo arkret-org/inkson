@@ -9,8 +9,8 @@
 //! facade path while dropping the per-domain facade method.
 //!
 //! The account-data resource writes (`set_account_data`,
-//! `set_private_account_data`, `delete_account_data`,
-//! plus the event-authored `submit_read_cursor_advance`) are free functions taking an
+//! `update_account_data_with_merge`, `delete_account_data`, plus the
+//! event-authored `submit_read_cursor_advance`) are free functions taking an
 //! [`crate::event_submit::EventSubmitter`], reached through
 //! [`crate::transport::auth::with_event_submitter`]; the account-data actor-scope
 //! lookup they need runs through `submitter.http()`.
@@ -1311,81 +1311,161 @@ pub async fn submit_did_operation(
 }
 
 const ACCOUNT_DATA_RESOURCE_PATH: &str = "/_arkret/self/account_data";
+const MAX_ACCOUNT_DATA_CAS_ATTEMPTS: usize = 4;
 
-async fn account_data_current_revision(
+#[derive(Clone, Debug)]
+pub(crate) struct AccountDataSnapshot {
+    pub revision: u64,
+    pub entry: Option<arkret_sdk::AccountDataRow>,
+}
+
+fn account_data_snapshot_from_details(
+    type_key: &str,
+    details: &std::collections::BTreeMap<String, Value>,
+) -> anyhow::Result<AccountDataSnapshot> {
+    let details = serde_json::from_value::<arkret_sdk::AccountDataCasConflictDetails>(
+        Value::Object(details.clone().into_iter().collect()),
+    )
+    .map_err(|error| anyhow::anyhow!("invalid account_data CAS details: {error}"))?;
+    if details.account_data_key != type_key {
+        anyhow::bail!(
+            "account_data CAS details key mismatch: expected {type_key}, got {}",
+            details.account_data_key
+        );
+    }
+    if let Some(entry) = details.current_entry.as_ref()
+        && (entry.account_data_key != type_key || entry.revision != details.current_revision)
+    {
+        anyhow::bail!("account_data CAS details current_entry does not match current revision");
+    }
+    Ok(AccountDataSnapshot {
+        revision: details.current_revision,
+        entry: details.current_entry,
+    })
+}
+
+fn account_data_conflict_snapshot(
+    type_key: &str,
+    error: &arkret_sdk::http_client::Error,
+) -> anyhow::Result<Option<AccountDataSnapshot>> {
+    let arkret_sdk::http_client::Error::Api { status: 409, error } = error else {
+        return Ok(None);
+    };
+    if error.error.code != "cas_conflict" {
+        return Ok(None);
+    }
+    account_data_snapshot_from_details(type_key, &error.error.details).map(Some)
+}
+
+pub(crate) async fn account_data_snapshot(
     http: &arkret_sdk::http_client::Client,
     type_key: &str,
-) -> anyhow::Result<u64> {
+) -> anyhow::Result<AccountDataSnapshot> {
     let path = format!(
         "{ACCOUNT_DATA_RESOURCE_PATH}/{}",
         crate::wire_helpers::path_component(type_key),
     );
     match http.get::<arkret_sdk::AccountDataRow>(&path).await {
-        Ok(entry) => Ok(entry.revision),
-        Err(arkret_sdk::http_client::Error::Api { status: 404, error }) => error
-            .error
-            .details
-            .get("current_revision")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| {
-                anyhow::anyhow!("account_data not_found omitted required current_revision")
-            }),
+        Ok(entry) => {
+            if entry.account_data_key != type_key {
+                anyhow::bail!("account_data response key mismatch");
+            }
+            Ok(AccountDataSnapshot {
+                revision: entry.revision,
+                entry: Some(entry),
+            })
+        }
+        Err(arkret_sdk::http_client::Error::Api { status: 404, error }) => {
+            account_data_snapshot_from_details(type_key, &error.error.details)
+        }
         Err(error) => Err(error.into()),
     }
 }
 
-/// Replace a per-account value through the canonical CAS resource binding.
+/// Apply a domain merge against the latest Account Data value and retry
+/// compare-and-set conflicts with the authoritative conflict snapshot.
+pub(crate) async fn update_account_data_with_merge<F>(
+    submitter: &EventSubmitter,
+    type_key: &str,
+    mut merge: F,
+) -> anyhow::Result<Value>
+where
+    F: FnMut(Option<&arkret_sdk::AccountDataRow>) -> anyhow::Result<Value>,
+{
+    let path = format!(
+        "{ACCOUNT_DATA_RESOURCE_PATH}/{}",
+        crate::wire_helpers::path_component(type_key),
+    );
+    let mut snapshot = account_data_snapshot(submitter.http(), type_key).await?;
+    for attempt in 1..=MAX_ACCOUNT_DATA_CAS_ATTEMPTS {
+        let body = arkret_sdk::AccountDataReplaceRequestBody {
+            expected_revision: snapshot.revision,
+            content: merge(snapshot.entry.as_ref())?,
+        };
+        match submitter
+            .http()
+            .put::<_, arkret_sdk::AccountDataRow>(&path, &body)
+            .await
+        {
+            Ok(entry) => return serde_json::to_value(entry).map_err(anyhow::Error::from),
+            Err(error) => {
+                let Some(current) = account_data_conflict_snapshot(type_key, &error)? else {
+                    return Err(error.into());
+                };
+                if attempt == MAX_ACCOUNT_DATA_CAS_ATTEMPTS {
+                    anyhow::bail!(
+                        "account_data CAS retry exhausted after {MAX_ACCOUNT_DATA_CAS_ATTEMPTS} attempts: {error}"
+                    );
+                }
+                snapshot = current;
+            }
+        }
+    }
+    unreachable!("bounded account_data CAS loop always returns")
+}
+
+/// Replace a per-account whole value through the canonical CAS binding.
+///
+/// This is the explicit whole-value replacement strategy: the latest local
+/// command remains the candidate after a conflict. Domains with richer merge
+/// rules use `update_account_data_with_merge` directly.
 pub async fn set_account_data(
     submitter: &EventSubmitter,
     type_key: &str,
     content: Value,
 ) -> anyhow::Result<Value> {
-    let expected_revision = account_data_current_revision(submitter.http(), type_key).await?;
-    let path = format!(
-        "{ACCOUNT_DATA_RESOURCE_PATH}/{}",
-        crate::wire_helpers::path_component(type_key),
-    );
-    let body = arkret_sdk::AccountDataReplaceRequestBody {
-        expected_revision,
-        content,
-    };
-    let entry: arkret_sdk::AccountDataRow = submitter.http().put(&path, &body).await?;
-    serde_json::to_value(entry).map_err(anyhow::Error::from)
-}
-
-/// Replace an encrypted private account-data value. When the caller has not
-/// retained a revision, read the authoritative revision before writing.
-pub async fn set_private_account_data(
-    submitter: &EventSubmitter,
-    type_key: &str,
-    encrypted_payload: Value,
-    expected_revision: Option<u64>,
-) -> anyhow::Result<Value> {
-    let expected_revision = match expected_revision {
-        Some(revision) => revision,
-        None => account_data_current_revision(submitter.http(), type_key).await?,
-    };
-    let path = format!(
-        "{ACCOUNT_DATA_RESOURCE_PATH}/{}",
-        crate::wire_helpers::path_component(type_key),
-    );
-    let body = arkret_sdk::AccountDataReplaceRequestBody {
-        expected_revision,
-        content: encrypted_payload,
-    };
-    let entry: arkret_sdk::AccountDataRow = submitter.http().put(&path, &body).await?;
-    serde_json::to_value(entry).map_err(anyhow::Error::from)
+    update_account_data_with_merge(submitter, type_key, |_| Ok(content.clone())).await
 }
 
 /// Delete an account-data entry through the versioned physical-delete binding.
 pub async fn delete_account_data(submitter: &EventSubmitter, type_key: &str) -> anyhow::Result<()> {
-    let expected_revision = account_data_current_revision(submitter.http(), type_key).await?;
-    let path = format!(
-        "{ACCOUNT_DATA_RESOURCE_PATH}/{}?expected_revision={expected_revision}",
-        crate::wire_helpers::path_component(type_key),
-    );
-    let _: arkret_sdk::AccountDataDeleteOutcome = submitter.http().delete(&path).await?;
-    Ok(())
+    let mut snapshot = account_data_snapshot(submitter.http(), type_key).await?;
+    for attempt in 1..=MAX_ACCOUNT_DATA_CAS_ATTEMPTS {
+        let path = format!(
+            "{ACCOUNT_DATA_RESOURCE_PATH}/{}?expected_revision={}",
+            crate::wire_helpers::path_component(type_key),
+            snapshot.revision,
+        );
+        match submitter
+            .http()
+            .delete::<arkret_sdk::AccountDataDeleteOutcome>(&path)
+            .await
+        {
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                let Some(current) = account_data_conflict_snapshot(type_key, &error)? else {
+                    return Err(error.into());
+                };
+                if attempt == MAX_ACCOUNT_DATA_CAS_ATTEMPTS {
+                    anyhow::bail!(
+                        "account_data delete CAS retry exhausted after {MAX_ACCOUNT_DATA_CAS_ATTEMPTS} attempts: {error}"
+                    );
+                }
+                snapshot = current;
+            }
+        }
+    }
+    unreachable!("bounded account_data delete CAS loop always returns")
 }
 
 pub async fn submit_read_cursor_advance(
@@ -1401,6 +1481,57 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn account_data_cas_conflict_uses_authoritative_current_entry() {
+        let current_entry = json!({
+            "account_data_key": "ak.client.ui_state",
+            "revision": 8,
+            "content": {"ciphertext": "current"},
+            "updated_at": "2026-07-30T00:00:00.000Z"
+        });
+        let error = arkret_sdk::http_client::Error::Api {
+            status: 409,
+            error: Box::new(
+                arkret_wire::ErrorEnvelope::new("cas_conflict", "expected_revision does not match")
+                    .with_detail("account_data_key", json!("ak.client.ui_state"))
+                    .with_detail("current_revision", json!(8))
+                    .with_detail("current_entry", current_entry),
+            ),
+        };
+
+        let snapshot = account_data_conflict_snapshot("ak.client.ui_state", &error)
+            .unwrap()
+            .expect("CAS conflict snapshot");
+        assert_eq!(snapshot.revision, 8);
+        assert_eq!(
+            snapshot.entry.expect("live entry").content,
+            json!({"ciphertext": "current"})
+        );
+    }
+
+    #[test]
+    fn account_data_cas_conflict_rejects_mismatched_entry_revision() {
+        let error = arkret_sdk::http_client::Error::Api {
+            status: 409,
+            error: Box::new(
+                arkret_wire::ErrorEnvelope::new("cas_conflict", "expected_revision does not match")
+                    .with_detail("account_data_key", json!("ak.client.ui_state"))
+                    .with_detail("current_revision", json!(8))
+                    .with_detail(
+                        "current_entry",
+                        json!({
+                            "account_data_key": "ak.client.ui_state",
+                            "revision": 7,
+                            "content": {"ciphertext": "stale"},
+                            "updated_at": "2026-07-30T00:00:00.000Z"
+                        }),
+                    ),
+            ),
+        };
+
+        assert!(account_data_conflict_snapshot("ak.client.ui_state", &error).is_err());
+    }
 
     #[test]
     fn account_viewer_projection_uses_signed_handle_claim() {

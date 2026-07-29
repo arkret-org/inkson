@@ -171,19 +171,16 @@ pub async fn upload_actor_private_file(
     if derived_account_data_key != account_data_key {
         anyhow::bail!("file-transfer account_data key derivation drift");
     }
-    let envelope = seal_record_envelope(&record, crypto, &account_data_key, actor_id)?;
-    let server_response = crate::transport::account::set_account_data(
+    let (item, server_response) = store_file_transfer_record(
         &api.event_submitter()?,
         &account_data_key,
-        envelope,
+        &record,
+        crypto,
+        actor_id,
     )
     .await?;
     Ok(FileTransferUploadResult {
-        item: FileTransferItem {
-            account_data_key,
-            record,
-            updated_at: None,
-        },
+        item,
         server_response,
     })
 }
@@ -222,13 +219,17 @@ pub async fn upload_device_bound_file(
     if derived_account_data_key != account_data_key {
         anyhow::bail!("file-transfer account_data key derivation drift");
     }
-    let envelope = seal_record_envelope(&record, crypto, &account_data_key, actor_id)?;
-    let server_response = crate::transport::account::set_account_data(
+    let (item, server_response) = store_file_transfer_record(
         &api.event_submitter()?,
         &account_data_key,
-        envelope,
+        &record,
+        crypto,
+        actor_id,
     )
     .await?;
+    if item.record != record {
+        anyhow::bail!("file-transfer CAS merge selected an existing record");
+    }
 
     let mut device_message_responses = Vec::with_capacity(dispatches.len());
     let http = api.sdk_http_client()?;
@@ -247,14 +248,49 @@ pub async fn upload_device_bound_file(
     }
 
     Ok(FileTransferDeviceBoundUploadResult {
-        item: FileTransferItem {
-            account_data_key,
-            record,
-            updated_at: None,
-        },
+        item,
         server_response,
         device_message_responses,
     })
+}
+
+async fn store_file_transfer_record(
+    submitter: &crate::event_submit::EventSubmitter,
+    account_data_key: &str,
+    candidate: &FileTransferRecord,
+    crypto: &FileTransferCryptoContext,
+    actor_id: &str,
+) -> anyhow::Result<(FileTransferItem, Value)> {
+    let candidate_envelope = seal_record_envelope(candidate, crypto, account_data_key, actor_id)?;
+    let response = crate::transport::account::update_account_data_with_merge(
+        submitter,
+        account_data_key,
+        |current| merge_file_transfer_account_data(current, candidate, &candidate_envelope, crypto),
+    )
+    .await?;
+    let item = file_transfer_item_from_account_data(&response, crypto)?;
+    Ok((item, response))
+}
+
+fn merge_file_transfer_account_data(
+    current: Option<&arkret_sdk::AccountDataRow>,
+    candidate: &FileTransferRecord,
+    candidate_envelope: &Value,
+    crypto: &FileTransferCryptoContext,
+) -> anyhow::Result<Value> {
+    let Some(current) = current else {
+        return Ok(candidate_envelope.clone());
+    };
+    let current_value = serde_json::to_value(current)?;
+    let current_item = file_transfer_item_from_account_data(&current_value, crypto)?;
+    if current_item.record.status == FileTransferStatus::Deleted {
+        anyhow::bail!("file-transfer transfer_key is terminal deleted; create a new transfer_id");
+    }
+    if current_item.record.updated_hlc >= candidate.updated_hlc {
+        Ok(current.content.clone())
+    } else {
+        Ok(candidate_envelope.clone())
+    }
 }
 
 pub async fn decrypt_file_transfer_item(
@@ -1120,6 +1156,66 @@ mod tests {
             recipient_sk,
             dispatches[0].content.clone(),
         )
+    }
+
+    #[test]
+    fn file_transfer_cas_merge_uses_hlc_and_preserves_terminal_delete() {
+        let crypto =
+            FileTransferCryptoContext::from_account_secret(&test_account_secret()).unwrap();
+        let prepared = prepare_actor_private_file(
+            &crypto,
+            ACTOR,
+            DEVICE,
+            Some("merge.txt"),
+            "text/plain",
+            b"merge".to_vec(),
+        )
+        .unwrap();
+        let blob_ref = format!(
+            "ak:blob:sha256:{}",
+            prepared.content_digest.trim_start_matches("sha256:")
+        );
+        let mut candidate = prepared
+            .into_record(blob_ref, b"merge".len() as u64)
+            .unwrap();
+        candidate.updated_hlc = "019041000000-0002-deadbeef".to_owned();
+        let account_data_key = record_account_key(&candidate, &crypto).unwrap();
+        let candidate_envelope =
+            seal_record_envelope(&candidate, &crypto, &account_data_key, ACTOR).unwrap();
+
+        let mut current = candidate.clone();
+        current.updated_hlc = "019041000000-0001-deadbeef".to_owned();
+        let current_envelope =
+            seal_record_envelope(&current, &crypto, &account_data_key, ACTOR).unwrap();
+        let mut current_row = arkret_sdk::AccountDataRow {
+            account_data_key: account_data_key.clone(),
+            revision: 3,
+            content: current_envelope,
+            updated_at: chrono::Utc::now(),
+        };
+        assert_eq!(
+            merge_file_transfer_account_data(
+                Some(&current_row),
+                &candidate,
+                &candidate_envelope,
+                &crypto,
+            )
+            .unwrap(),
+            candidate_envelope
+        );
+
+        current.status = FileTransferStatus::Deleted;
+        current_row.content =
+            seal_record_envelope(&current, &crypto, &account_data_key, ACTOR).unwrap();
+        assert!(
+            merge_file_transfer_account_data(
+                Some(&current_row),
+                &candidate,
+                &candidate_envelope,
+                &crypto,
+            )
+            .is_err()
+        );
     }
 
     #[test]
