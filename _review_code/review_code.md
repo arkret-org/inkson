@@ -137,3 +137,20 @@
 - Prevention dimension: projection visibility is not authorization or
   membership. UI gates must consume the typed membership state rather than
   infer it from object presence.
+
+## 2026-07-30 — managed Agent PCR control writes asked the Principal Server for proposal receipts
+
+- Severity: P1 provisioning blocker.
+- Status: resolved in the publication-wrapper routing path; covered by the delegated-PCR
+  authority unit test. The full live Agent gate is rerun before task closure.
+- Evidence: Agent allocation and managed-PCR genesis succeeded, but the first `ak.mls.genesis`
+  durable attempt called `/_arkret/self/control-proposal-receipts`; Soland correctly returned
+  `policy_violation: this service is not a current proposal authority`, leaving the Event queued
+  and withholding the pairing card.
+- Resolution: the standard publication wrapper now recognizes both self-PCR authority and the
+  protocol's exact managed Agent delegation shape (`actor_id=Agent`, distinct `executed_by`,
+  `authorization_ref=<Agent DID>#managed-controller`). Those PCR control writes use the active
+  delegated controller signer and the shared SDK receipt authoring primitive; unrelated Realm
+  control moves still collect receipts from the remote current authority.
+- Prevention dimension: receipt routing must derive from the governed Realm's authority model,
+  not from whether the PCR id happens to equal the self-principal deterministic id.

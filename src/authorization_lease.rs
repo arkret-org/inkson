@@ -298,10 +298,8 @@ pub async fn standard_initial_submission(
 ) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
     let mut submission = initial_submission(event)?;
     if event.seal_basis.is_some() {
-        let member_receipt = if event.realm_id
-            == arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&event.actor_id))?
-        {
-            local_principal_control_member_receipt(event)?
+        let member_receipt = if uses_local_pcr_proposal_authority(event)? {
+            local_pcr_member_receipt(event)?
         } else {
             http.issue_control_proposal_receipt(&arkret_wire::ProposalReceiptIssueRequest {
                 event: event.clone(),
@@ -324,9 +322,19 @@ pub async fn standard_initial_submission(
     Ok(submission)
 }
 
-fn local_principal_control_member_receipt(
-    event: &arkret_sdk::Event,
-) -> anyhow::Result<ProposalMemberReceipt> {
+fn uses_local_pcr_proposal_authority(event: &arkret_sdk::Event) -> anyhow::Result<bool> {
+    let self_pcr = event.realm_id
+        == arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&event.actor_id))?;
+    let managed_authorization_ref = format!("{}#managed-controller", event.actor_id);
+    let managed_pcr = event
+        .executed_by
+        .as_ref()
+        .is_some_and(|executor| executor != &event.actor_id)
+        && event.authorization_ref.as_deref() == Some(managed_authorization_ref.as_str());
+    Ok(self_pcr || managed_pcr)
+}
+
+fn local_pcr_member_receipt(event: &arkret_sdk::Event) -> anyhow::Result<ProposalMemberReceipt> {
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("PCR proposal receipt requires an active device signer"))?;
     let verification_method = signer.verification_method_for_principal(&event.actor_id)?;
@@ -542,6 +550,22 @@ mod tests {
         clear_leases();
         let error = initial_submission(&event()).unwrap_err().to_string();
         assert!(error.contains("re-authorized"), "{error}");
+    }
+
+    #[test]
+    fn managed_agent_pcr_control_uses_the_delegated_local_authority() {
+        let mut managed = event();
+        managed.actor_id = arkret_sdk::Did::new("did:web:agent.example").unwrap();
+        managed.executed_by = Some(arkret_sdk::Did::new("did:web:alice.example").unwrap());
+        managed.authorization_ref = Some("did:web:agent.example#managed-controller".to_owned());
+        assert!(uses_local_pcr_proposal_authority(&managed).unwrap());
+
+        managed.authorization_ref = Some("did:web:agent.example#other-delegation".to_owned());
+        assert!(!uses_local_pcr_proposal_authority(&managed).unwrap());
+
+        managed.authorization_ref = Some("did:web:agent.example#managed-controller".to_owned());
+        managed.executed_by = Some(managed.actor_id.clone());
+        assert!(!uses_local_pcr_proposal_authority(&managed).unwrap());
     }
 
     fn rebind_and_resign(lease: &mut AuthorizationLease, basis_ref: arkret_wire::LeaseBasisRef) {
