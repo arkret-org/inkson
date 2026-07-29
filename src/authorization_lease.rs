@@ -281,7 +281,7 @@ pub async fn standard_initial_submission(
             local_principal_control_member_receipt(event)?
         } else {
             http.issue_control_proposal_receipt(
-                &arkret_wire::ControlProposalReceiptIssueRequestBody {
+                &arkret_wire::ProposalReceiptIssueRequest {
                     event: event.clone(),
                     authorization_lease: submission.authorization_lease.clone(),
                     cba_proof_bundles: submission.cba_proof_bundles.clone(),
@@ -353,7 +353,7 @@ fn local_principal_control_member_receipt(
     }
     member.signature.jws = jws;
     member.validate_structural(arkret_wire::ControlProposalDecisionPolicy {
-        receipt_sla: Some(chrono::Duration::hours(24)),
+        receipt_sla: chrono::Duration::hours(24),
         decision_window: chrono::Duration::seconds(30),
         absolute_horizon: chrono::Duration::seconds(90),
         max_defers: 2,
