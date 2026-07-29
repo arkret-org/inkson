@@ -601,7 +601,7 @@ pub(crate) async fn prepare_enrollment_authority_recovery(
     )?;
     reanchor_event.prev_refs = actor_frontier.frontier_event_ids.clone();
     reanchor_event.refs.push(EventRef::new(
-        expected_entry_ref.clone(),
+        rotation.version_id.clone(),
         "did_recovery_anchor",
     ));
     let root_did = arkret_sdk::Did::new(
