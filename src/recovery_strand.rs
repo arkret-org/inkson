@@ -609,7 +609,7 @@ fn validate_active_policy_key_material(
     summary: &ActiveRecoveryPolicy,
     principal_id: &str,
     key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<DidUrl> {
     if summary.principal_id.as_str() != principal_id.trim() {
         anyhow::bail!(
             "active recovery policy principal `{}` does not match requested principal `{}`",
@@ -644,22 +644,58 @@ fn validate_active_policy_key_material(
             "supplied Recovery Key does not match the active policy backup recipient; use the staged recovery-key handoff workflow"
         );
     };
-    let proof_key_matches = policy
+    let proof_key = policy
         .recovery_keys
         .as_deref()
         .unwrap_or_default()
         .iter()
-        .any(|entry| {
+        .find(|entry| {
             &entry.key_agreement_ref == agreement_ref
                 && entry.public_key_multibase.as_str()
                     == key_material.recovery_proof_public_key_multikey
         });
-    if !proof_key_matches {
+    let Some(proof_key) = proof_key else {
         anyhow::bail!(
             "supplied Recovery Key does not match the active policy recovery proof key; use the staged recovery-key handoff workflow"
         );
-    }
-    Ok(())
+    };
+    Ok(proof_key.verification_method.clone())
+}
+
+pub fn build_recovery_unlock_proof_from_words(
+    session: &arkret_sdk::RecoverySessionState,
+    policy: &ActiveRecoveryPolicy,
+    recovery_words: &str,
+) -> anyhow::Result<arkret_sdk::RecoverySessionProof> {
+    let normalized = crate::recovery_crypto::normalize_recovery_key_input(recovery_words)
+        .ok_or_else(|| anyhow::anyhow!("Recovery Key must contain exactly 24 valid words"))?;
+    let key_material = arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
+        &normalized,
+        "",
+        0,
+    )?;
+    let recovery_secret_ref =
+        validate_active_policy_key_material(policy, session.principal_id.as_str(), &key_material)?;
+    arkret_sdk::identity_root::build_recovery_unlock_proof(
+        session,
+        recovery_secret_ref.as_str(),
+        &key_material,
+    )
+    .map_err(anyhow::Error::from)
+}
+
+pub async fn submit_recovery_unlock_proof(
+    api: &TransportClient,
+    session: &arkret_sdk::RecoverySessionState,
+    policy: &ActiveRecoveryPolicy,
+    recovery_words: &str,
+) -> anyhow::Result<arkret_sdk::RecoverySessionProofSubmitOutcome> {
+    let proof = build_recovery_unlock_proof_from_words(session, policy, recovery_words)?;
+    api.submit_recovery_proof(
+        session.recovery_session_id.as_str(),
+        &RecoverySessionProofSubmitRequestBody { proof },
+    )
+    .await
 }
 
 pub async fn ensure_recovery_policy_and_did_recovery_backup(
