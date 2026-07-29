@@ -299,6 +299,7 @@ fn session_grant_runtime() -> SessionGrantRuntimeHandle {
 
 pub fn reset_session_grant_runtime() {
     session_grant_runtime().reset();
+    crate::authorization_lease::clear_leases();
     crate::event_submit::reset_verified_recovery_gates();
     crate::identity::authoring_generation::reset_verified_authoring_generations();
 }

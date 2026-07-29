@@ -6,20 +6,9 @@
 //! and the lease — not `created_at`, and not when a verifier first sees the
 //! Event — is what bounds the revocation window.
 //!
-//! ## What this module does NOT do
-//!
-//! It does not mint leases. Minting one requires the issuer signing keys of the
-//! authority set named by `authority_set_ref` and a `basis_ref` into the
-//! accepted CBA basis, neither of which a client device holds by virtue of
-//! being able to sign Events. A device that signed its own lease would be
-//! asserting the revocation bound it is supposed to be constrained by.
-//!
-//! The lease therefore has to arrive from the authority. See the migration
-//! notes: the spec registers no operation for a client to obtain one, so
-//! [`install_lease`] is currently the only entry point and the submit path
-//! fails closed with [`AuthorizationLeaseUnavailable`] until something calls
-//! it. That is the required behaviour anyway once a lease expires: first
-//! publication stops and the user must re-authorize.
+//! The authenticated Principal Server issues leases through the standard
+//! `ak.self.authorization_leases.command.issue` operation after a read-only
+//! pre-admission pass. The client never mints, edits, or extends lease bytes.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock, PoisonError};
@@ -44,7 +33,7 @@ pub enum AuthorizationLeaseUnavailable {
     },
 }
 
-type LeaseKey = (String, String, String);
+type LeaseKey = (String, String, String, String, String, String);
 
 fn leases() -> &'static Mutex<BTreeMap<LeaseKey, AuthorizationLease>> {
     static LEASES: OnceLock<Mutex<BTreeMap<LeaseKey, AuthorizationLease>>> = OnceLock::new();
@@ -60,11 +49,18 @@ fn local_proposal_receipts() -> &'static Mutex<BTreeMap<ProposalReceiptKey, Prop
     RECEIPTS.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
-fn key(actor_id: &str, scope_ref: &arkret_sdk::ScopeRef, action: &str) -> anyhow::Result<LeaseKey> {
+fn lease_key(lease: &AuthorizationLease) -> anyhow::Result<LeaseKey> {
     Ok((
-        actor_id.to_owned(),
-        serde_json::to_string(scope_ref)?,
-        action.to_owned(),
+        lease.actor_id.as_str().to_owned(),
+        lease.device_id.as_str().to_owned(),
+        serde_json::to_string(&lease.scope_ref)?,
+        lease.action.clone(),
+        serde_json::to_string(&lease.basis_ref)?,
+        lease
+            .authority_set_ref
+            .authority_set_digest
+            .as_str()
+            .to_owned(),
     ))
 }
 
@@ -77,11 +73,26 @@ pub fn install_lease(lease: AuthorizationLease) -> anyhow::Result<()> {
     lease
         .validate_structural()
         .map_err(|error| anyhow::anyhow!("authorization lease is invalid: {error}"))?;
-    let key = key(lease.actor_id.as_str(), &lease.scope_ref, &lease.action)?;
-    leases()
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .insert(key, lease);
+    let key = lease_key(&lease)?;
+    let mut held = leases().lock().unwrap_or_else(PoisonError::into_inner);
+    held.retain(|candidate, _| {
+        candidate.0 != key.0
+            || candidate.1 != key.1
+            || candidate.2 != key.2
+            || candidate.3 != key.3
+            || candidate.4 != key.4
+            || candidate.5 == key.5
+    });
+    if matches!(lease.basis_ref, arkret_wire::LeaseBasisRef::AnchorUnit(_)) {
+        held.retain(|candidate, _| {
+            candidate.0 != key.0
+                || candidate.1 != key.1
+                || candidate.2 != key.2
+                || candidate.3 != key.3
+                || candidate.4 == key.4
+        });
+    }
+    held.insert(key, lease);
     Ok(())
 }
 
@@ -110,12 +121,22 @@ pub fn lease_for_event(
         actor_id: event.actor_id.as_str().to_owned(),
     };
     let scope = serde_json::to_string(&event.scope_ref).map_err(|_| missing())?;
+    let expected_basis = if let Some(seal_ref) = &event.seal_ref {
+        serde_json::to_string(&arkret_wire::LeaseBasisRef::Seal(seal_ref.clone()))
+            .map_err(|_| missing())?
+    } else if let Some(seal_basis) = &event.seal_basis {
+        serde_json::to_string(&arkret_wire::LeaseBasisRef::Joined(seal_basis.clone()))
+            .map_err(|_| missing())?
+    } else {
+        String::new()
+    };
     let held = leases().lock().unwrap_or_else(PoisonError::into_inner);
     let mut matching = held
         .iter()
-        .filter(|((actor_id, lease_scope, action), lease)| {
+        .filter(|((actor_id, _, lease_scope, action, basis, _), lease)| {
             actor_id == event.actor_id.as_str()
                 && lease_scope == &scope
+                && (expected_basis.is_empty() || basis == &expected_basis)
                 && lease_covers_event_kind(action, event.kind.as_str())
                 && lease.actor_id == event.actor_id
                 && lease.scope_ref == event.scope_ref
@@ -160,9 +181,8 @@ pub async fn acquire_for_events(
         intents: Vec::new(),
     };
     let idempotency_key = crate::operation::uuid_v7();
-    let outcome: arkret_wire::AuthorizationLeaseIssueOutcome = http
-        .post_with_options(
-            "/_arkret/self/authorization-leases",
+    let outcome = http
+        .issue_authorization_leases(
             &request,
             &arkret_sdk::http_client::ClientRequestOptions::new()
                 .request_id(idempotency_key.clone())
@@ -170,13 +190,6 @@ pub async fn acquire_for_events(
         )
         .await
         .map_err(anyhow::Error::from)?;
-    if outcome.authorization_leases.len() != events.len() {
-        anyhow::bail!(
-            "authorization lease response cardinality mismatch: expected {}, received {}",
-            events.len(),
-            outcome.authorization_leases.len()
-        );
-    }
     for (event, lease) in events.iter().zip(&outcome.authorization_leases) {
         if lease.actor_id != event.actor_id
             || lease.scope_ref != event.scope_ref
@@ -234,6 +247,16 @@ pub async fn ensure_for_events(
     http: &arkret_sdk::http_client::Client,
     events: &[arkret_sdk::Event],
 ) -> anyhow::Result<()> {
+    if events.is_empty() {
+        anyhow::bail!("authorization lease issuance requires at least one Event");
+    }
+    if events
+        .iter()
+        .any(|event| event.seal_ref.is_none() && event.seal_basis.is_none())
+    {
+        acquire_for_events(http, events).await?;
+        return Ok(());
+    }
     let now = crate::clock::now_utc();
     if events
         .iter()
@@ -499,7 +522,19 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    use chrono::{TimeZone, Utc};
+
     use super::*;
+
+    fn test_guard() -> MutexGuard<'static, ()> {
+        static GUARD: OnceLock<Mutex<()>> = OnceLock::new();
+        GUARD
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
 
     fn scope() -> arkret_sdk::ScopeRef {
         arkret_sdk::ScopeRef::Realm {
@@ -524,8 +559,101 @@ mod tests {
     /// the lease is the only thing that bounds the revocation window.
     #[test]
     fn submission_without_a_lease_fails_closed() {
+        let _guard = test_guard();
         clear_leases();
         let error = initial_submission(&event()).unwrap_err().to_string();
         assert!(error.contains("re-authorized"), "{error}");
+    }
+
+    fn rebind_and_resign(lease: &mut AuthorizationLease, basis_ref: arkret_wire::LeaseBasisRef) {
+        lease.basis_ref = basis_ref;
+        let digest = lease.lease_digest().unwrap();
+        lease.proofs[0].payload_digest = digest;
+    }
+
+    #[test]
+    fn lookup_never_reuses_a_lease_across_basis() {
+        let _guard = test_guard();
+        clear_leases();
+        let now = Utc.with_ymd_and_hms(2026, 7, 28, 1, 0, 0).unwrap();
+        let expires_at = Utc.with_ymd_and_hms(2026, 7, 28, 8, 0, 0).unwrap();
+        let realm_id = match scope() {
+            arkret_sdk::ScopeRef::Realm { realm_id } => realm_id,
+            _ => unreachable!(),
+        };
+        let mut first = test_support::lease(
+            realm_id.clone(),
+            "did:web:alice.example",
+            "ak.member.state",
+            now,
+            expires_at,
+        );
+        let first_basis =
+            arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "a".repeat(64))).unwrap();
+        rebind_and_resign(&mut first, arkret_wire::LeaseBasisRef::Seal(first_basis));
+        install_lease(first).unwrap();
+
+        let mut second = test_support::lease(
+            realm_id,
+            "did:web:alice.example",
+            "ak.member.state",
+            now,
+            expires_at,
+        );
+        let second_basis =
+            arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "c".repeat(64))).unwrap();
+        rebind_and_resign(
+            &mut second,
+            arkret_wire::LeaseBasisRef::Seal(second_basis.clone()),
+        );
+        install_lease(second.clone()).unwrap();
+
+        let mut target = event();
+        target.seal_ref = Some(second_basis);
+        let selected = lease_for_event(&target, now).unwrap();
+        assert_eq!(selected.basis_ref, second.basis_ref);
+        assert_eq!(leases().lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn authority_set_rotation_evicts_the_previous_partition() {
+        let _guard = test_guard();
+        clear_leases();
+        let issued_at = Utc.with_ymd_and_hms(2026, 7, 28, 1, 0, 0).unwrap();
+        let expires_at = Utc.with_ymd_and_hms(2026, 7, 28, 8, 0, 0).unwrap();
+        let realm_id = match scope() {
+            arkret_sdk::ScopeRef::Realm { realm_id } => realm_id,
+            _ => unreachable!(),
+        };
+        let first = test_support::lease(
+            realm_id,
+            "did:web:alice.example",
+            "ak.member.state",
+            issued_at,
+            expires_at,
+        );
+        install_lease(first.clone()).unwrap();
+
+        let mut rotated = first;
+        rotated.authority_set_policy.source.source_digest =
+            arkret_sdk::Hash::new(format!("sha256:{}", "c".repeat(64))).unwrap();
+        rotated.authority_set_policy.source.generation_ref = "2".to_owned();
+        rotated.authority_set_ref.authority_set_digest =
+            rotated.authority_set_policy.digest().unwrap();
+        let digest = rotated.lease_digest().unwrap();
+        rotated.proofs[0].payload_digest = digest;
+        let expected_digest = rotated.authority_set_ref.authority_set_digest.clone();
+        install_lease(rotated).unwrap();
+
+        let held = leases().lock().unwrap_or_else(PoisonError::into_inner);
+        assert_eq!(held.len(), 1);
+        assert_eq!(
+            held.values()
+                .next()
+                .unwrap()
+                .authority_set_ref
+                .authority_set_digest,
+            expected_digest
+        );
     }
 }
