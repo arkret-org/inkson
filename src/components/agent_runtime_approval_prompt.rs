@@ -371,19 +371,27 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                                 &key_state,
                                                 &body,
                                             )?;
+                                        let submitter = api.event_submitter()?;
+                                        let authorize_submission = submitter
+                                            .prepare_initial_submissions(vec![
+                                                authorize_event,
+                                            ])
+                                            .await?
+                                            .into_iter()
+                                            .next()
+                                            .ok_or_else(|| {
+                                                anyhow::anyhow!(
+                                                    "agent authorize submission was not prepared"
+                                                )
+                                            })?;
                                         let pair_request = into_agent_key_pair_request(
                                             body,
                                             requested_scope_disclosure,
-                                            authorize_event.clone(),
+                                            authorize_submission,
                                             authorization.signing_key_binding,
                                         );
-                                        let outcome = api
-                                            .event_submitter()?
-                                            .agent_key_pair_with_authorize_event(
-                                                pair_request,
-                                                &authorize_event,
-                                            )
-                                            .await?;
+                                        let outcome =
+                                            submitter.agent_key_pair(&pair_request).await?;
                                         let recovery_refresh_error = bootstrap_provisioned_agent(
                                             &api,
                                             state_store,

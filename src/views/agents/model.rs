@@ -13,11 +13,10 @@ use arkret_models_collaboration::governance::agent_participation::AgentParticipa
 use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
     AgentKeyPairRequestBody, AgentKeySupersession, AgentPairingBootstrap,
-    AgentProvisionEventDrafts, AgentRequestedScopeDisclosure,
-    AgentRuntimeApprovalControllerProjection, AgentSigningKeyBinding, AgentSigningPublicKey, Did,
-    DidUrl, Event, EventId, GrantConstraint, GrantConstraintEffect, GrantConstraintKind,
-    GrantConstraintSubkind, Hash, KeyState, NonEmptyString, OpaqueLocalId, Proof, RealmId,
-    RequestId,
+    AgentRequestedScopeDisclosure, AgentRuntimeApprovalControllerProjection,
+    AgentSigningKeyBinding, AgentSigningPublicKey, Did, DidUrl, Event, EventId, GrantConstraint,
+    GrantConstraintEffect, GrantConstraintKind, GrantConstraintSubkind, Hash, KeyState,
+    NonEmptyString, OpaqueLocalId, Proof, RealmId, RequestId,
 };
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -27,7 +26,7 @@ pub fn build_agent_provision_event_drafts(
     controller_realm_id: &RealmId,
     agent_id: &Did,
     agent_slug: &str,
-) -> anyhow::Result<AgentProvisionEventDrafts> {
+) -> anyhow::Result<arkret_bootstrap::AgentProvisionEventDrafts> {
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("no active controller signer"))?;
     let created_at = crate::clock::now_utc();
@@ -422,7 +421,7 @@ fn json_invalid_input(error: impl std::fmt::Display) -> serde_json::Error {
 pub fn into_agent_key_pair_request(
     request: AgentRuntimeApprovalControllerProjection,
     requested_scope_disclosure: AgentRequestedScopeDisclosure,
-    authorize_event: Event,
+    authorize_event: arkret_wire::EventInitialSubmission,
     signing_key_binding: AgentSigningKeyBinding,
 ) -> AgentKeyPairRequestBody {
     AgentKeyPairRequestBody {
