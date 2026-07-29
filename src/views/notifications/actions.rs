@@ -64,7 +64,7 @@ pub(crate) fn refresh_notifications(
                     Some(&response.updates.notifications),
                     &response.updates.account_data,
                 );
-                let joined_realms = joined_realm_ids(&response, &account_did);
+                let joined_realms = joined_realm_ids(&response.realm_entries, &account_did);
                 merge_invite_notifications(
                     &mut raw_notifications,
                     invite_notifications,
@@ -84,6 +84,7 @@ pub(crate) fn refresh_notifications(
                     hydrate_notifications_with_privacy_gate(
                         raw_notifications,
                         &local_state,
+                        &account_did,
                         push_rules.as_ref(),
                         effective_dnd,
                         &privacy_gate,
@@ -369,7 +370,7 @@ fn accept_invite_notification(
                     push_rules_from_account_data(&account_did, &sync.updates.account_data);
                 let account_dnd =
                     dnd_settings_from_account_data(&account_did, &sync.updates.account_data);
-                let mut hidden_realms = joined_realm_ids(&sync, &account_did);
+                let mut hidden_realms = joined_realm_ids(&sync.realm_entries, &account_did);
                 hidden_realms.insert(accepted_realm.clone());
                 let mut realm_title_hints = BTreeMap::new();
                 if let Some(label) = realm_label
@@ -415,6 +416,7 @@ fn accept_invite_notification(
                     hydrate_notifications_with_privacy_gate(
                         raw_notifications,
                         &local_state,
+                        &account_did,
                         push_rules.as_ref(),
                         effective_dnd,
                         &privacy_gate,

@@ -6,9 +6,10 @@ mod tests {
 
     use super::super::model::{
         UiNotificationAction, actor_is_joined_member, append_invite_notifications,
-        drop_joined_invite_notifications, hydrate_notifications, notification_eval_context,
-        notification_overrides_realm_mute, raw_notifications_from_sources, read_cursor_targets,
-        realm_is_muted, realm_title_hints_from_invites,
+        drop_joined_invite_notifications, hydrate_notifications, hydrate_notifications_for_actor,
+        notification_eval_context, notification_overrides_realm_mute,
+        raw_notifications_from_sources, read_cursor_targets, realm_is_muted,
+        realm_title_hints_from_invites,
     };
     use crate::notification_rules::WatchLevel;
     use crate::state::projection::notifications::{test_event_notification, test_invite};
@@ -134,6 +135,44 @@ mod tests {
             &arkret_sdk::RealmSyncEntry::default(),
             actor_id
         ));
+    }
+
+    #[test]
+    fn hydrate_pending_invite_uses_typed_local_membership() {
+        let actor_id = "did:webvh:z6mkfixture:bob.example";
+        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000002";
+        let projection = |membership: &str| {
+            json!({
+                "members": [{
+                    "actor_id": actor_id,
+                    "membership": membership
+                }]
+            })
+        };
+        let invite = || test_invite(1, realm_id, None, None);
+
+        let mut invited_state = ClientLocalState::default();
+        invited_state
+            .realm_tree_projections
+            .insert(realm_id.to_owned(), projection("invite"));
+        let mut invited_raw = Vec::new();
+        append_invite_notifications(&mut invited_raw, vec![invite()], &BTreeSet::new());
+        assert_eq!(
+            hydrate_notifications_for_actor(invited_raw, &invited_state, actor_id).len(),
+            1,
+            "a visible invite preview must retain its pending invite notification"
+        );
+
+        let mut joined_state = ClientLocalState::default();
+        joined_state
+            .realm_tree_projections
+            .insert(realm_id.to_owned(), projection("join"));
+        let mut joined_raw = Vec::new();
+        append_invite_notifications(&mut joined_raw, vec![invite()], &BTreeSet::new());
+        assert!(
+            hydrate_notifications_for_actor(joined_raw, &joined_state, actor_id).is_empty(),
+            "an authoritative joined membership must suppress stale invites"
+        );
     }
 
     #[test]

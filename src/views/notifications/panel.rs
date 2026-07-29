@@ -36,6 +36,7 @@ pub fn NotificationsPanel(
     let initial_notifications = hydrate_notifications_with_privacy_gate(
         initial_state.notification_projection.clone(),
         &initial_state,
+        &account_did,
         None,
         initial_state.notification_dnd_settings.as_ref(),
         &initial_privacy_gate,

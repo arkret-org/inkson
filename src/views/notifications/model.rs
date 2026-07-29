@@ -16,14 +16,17 @@ use crate::models::AccountSyncStep;
 use crate::notification_rules::{
     DndSettings, NotificationEvalContext, PushRulesConfig, WatchLevel, evaluate_notification,
 };
+#[cfg(test)]
+pub(crate) use crate::state::projection::notifications::actor_is_joined_member;
 // Notification wire-payload projection primitives now live in the sync
 // projection layer (`projection::notifications`, YGN-ARCH-01 step 3). They
 // are re-exported here so the notification view's other call sites and the
 // crate-level `views::notifications::*` re-export keep resolving unchanged.
 pub(crate) use crate::state::projection::notifications::{
     append_invite_notifications, default_notification_title, drop_joined_invite_notifications,
-    invite_notification_target_for_dedupe, merge_invite_notifications, notification_id_for_dedupe,
-    notification_kind_wire, raw_notifications_from_sources, realm_title_hints_from_invites,
+    invite_notification_target_for_dedupe, joined_realm_ids, merge_invite_notifications,
+    notification_id_for_dedupe, notification_kind_wire, raw_notifications_from_sources,
+    realm_title_hints_from_invites,
 };
 use crate::state::{ClientLocalState, LocalSealView, LocalStateStore, StoredNotification};
 
@@ -118,24 +121,6 @@ pub(crate) fn notification_value_read_by_cursor(
     )
 }
 
-pub(crate) fn joined_realm_ids(response: &AccountSyncStep, actor_id: &str) -> BTreeSet<String> {
-    response
-        .realm_entries
-        .iter()
-        .filter(|(_, entry)| actor_is_joined_member(entry, actor_id))
-        .map(|(realm_id, _)| realm_id.as_str().to_owned())
-        .collect()
-}
-
-pub(crate) fn actor_is_joined_member(entry: &arkret_sdk::RealmSyncEntry, actor_id: &str) -> bool {
-    entry.members.as_ref().is_some_and(|members| {
-        members.iter().any(|member| {
-            member.actor_id.as_str() == actor_id
-                && member.membership == arkret_sdk::MembershipState::Join
-        })
-    })
-}
-
 pub(crate) fn apply_sync_projection_to_store(
     store: &mut LocalStateStore,
     response: &AccountSyncStep,
@@ -166,8 +151,25 @@ pub(crate) fn hydrate_notifications(
     hydrate_notifications_with_privacy_gate(
         raw_notifications,
         local_state,
+        "",
         push_rules,
         dnd,
+        &crate::sidecar::SidecarPrivacyGate::default(),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn hydrate_notifications_for_actor(
+    raw_notifications: Vec<StoredNotification>,
+    local_state: &ClientLocalState,
+    actor_id: &str,
+) -> Vec<UiNotification> {
+    hydrate_notifications_with_privacy_gate(
+        raw_notifications,
+        local_state,
+        actor_id,
+        None,
+        None,
         &crate::sidecar::SidecarPrivacyGate::default(),
     )
 }
@@ -175,15 +177,16 @@ pub(crate) fn hydrate_notifications(
 pub(crate) fn hydrate_notifications_with_privacy_gate(
     raw_notifications: Vec<StoredNotification>,
     local_state: &ClientLocalState,
+    actor_id: &str,
     push_rules: Option<&PushRulesConfig>,
     dnd: Option<&DndSettings>,
     sidecar_privacy_gate: &crate::sidecar::SidecarPrivacyGate,
 ) -> Vec<UiNotification> {
-    let joined_realms = local_state
-        .realm_tree_projections
-        .keys()
-        .cloned()
-        .collect::<BTreeSet<_>>();
+    let joined_realms =
+        crate::state::projection::notifications::joined_realm_ids_from_local_projections(
+            &local_state.realm_tree_projections,
+            actor_id,
+        );
     let mut seen_invite_targets = BTreeSet::new();
     let mut notifications = raw_notifications
         .into_iter()

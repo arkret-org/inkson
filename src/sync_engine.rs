@@ -643,6 +643,7 @@ impl AccountPostCommitHook<crate::client_core::InksonAccountTransport> for Inkso
                             apply_notification_projection(
                                 store,
                                 &response,
+                                &self.ctx.account_did,
                                 step.initial,
                                 Some(invite_notifications),
                             );
@@ -1899,7 +1900,13 @@ pub fn apply_response(
             );
 
             synced_theme = apply_account_data(store, response, &account_did);
-            apply_notification_projection(store, response, is_full_sync, invite_notifications);
+            apply_notification_projection(
+                store,
+                response,
+                &account_did,
+                is_full_sync,
+                invite_notifications,
+            );
             store.ingest_to_device_messages(&response.updates.to_device);
             if cursor_can_advance {
                 store.save_sync_cursor(response.cursor.clone());
@@ -2624,6 +2631,7 @@ fn invalidate_cache_for_revocation_events(
 fn apply_notification_projection(
     store: &mut LocalStateStore,
     response: &AccountSyncStep,
+    account_did: &str,
     is_full_sync: bool,
     invite_notifications: Option<
         Vec<arkret_models_collaboration::governance::operation_wire::Invite>,
@@ -2634,11 +2642,10 @@ fn apply_notification_projection(
         || !response.updates.account_data.is_empty()
         || invite_notifications.is_some();
     let mut notification_projection = store.notification_projection();
-    let joined_realms = response
-        .realm_projections
-        .keys()
-        .cloned()
-        .collect::<BTreeSet<_>>();
+    let joined_realms = crate::state::projection::notifications::joined_realm_ids(
+        &response.realm_entries,
+        account_did,
+    );
     crate::state::projection::notifications::apply_notification_projection(
         &mut notification_projection,
         &response.updates.notifications,
@@ -3735,6 +3742,7 @@ mod tests {
         apply_notification_projection(
             &mut store,
             &response,
+            "",
             false,
             Some(vec![crate::state::projection::notifications::test_invite(
                 0x10,
@@ -3756,6 +3764,64 @@ mod tests {
         assert!(projection.iter().any(|entry| {
             entry.notification_id() == "invite:ak:invite:0196419b-0000-7000-8000-000000000010"
         }));
+    }
+
+    #[test]
+    fn notification_projection_filters_invites_by_typed_membership() {
+        let mut store = temp_store("invite-membership-projection");
+        let actor_id = "did:webvh:z6mkfixture:bob.example";
+        let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000011";
+        let invite =
+            || crate::state::projection::notifications::test_invite(0x10, realm_id, None, None);
+        let response = |membership: &str| {
+            let mut response = empty_response("sx:invite-membership");
+            let realm_id = arkret_sdk::RealmId::new(realm_id).unwrap();
+            let entry = serde_json::from_value::<arkret_sdk::RealmSyncEntry>(json!({
+                "members": [{
+                    "actor_id": actor_id,
+                    "membership": membership
+                }]
+            }))
+            .unwrap();
+            response
+                .realm_entries
+                .insert(realm_id.clone(), entry.clone());
+            response.realm_projections.insert(
+                realm_id.as_str().to_owned(),
+                serde_json::to_value(entry).unwrap(),
+            );
+            response
+        };
+
+        apply_notification_projection(
+            &mut store,
+            &response("invite"),
+            actor_id,
+            false,
+            Some(vec![invite()]),
+        );
+        assert!(
+            store
+                .notification_projection()
+                .iter()
+                .any(|entry| entry.invite().is_some()),
+            "an invite membership projection must preserve the pending invite"
+        );
+
+        apply_notification_projection(
+            &mut store,
+            &response("join"),
+            actor_id,
+            false,
+            Some(vec![invite()]),
+        );
+        assert!(
+            store
+                .notification_projection()
+                .iter()
+                .all(|entry| entry.invite().is_none()),
+            "a joined membership projection must drop the stale invite"
+        );
     }
 
     #[test]

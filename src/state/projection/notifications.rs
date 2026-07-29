@@ -9,11 +9,56 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use arkret_models_collaboration::governance::operation_wire::Invite;
 use arkret_sdk::{
-    Notification, NotificationData, NotificationDelta, NotificationDeltaAction, NotificationKind,
+    MemberRosterEntry, MembershipState, Notification, NotificationData, NotificationDelta,
+    NotificationDeltaAction, NotificationKind, RealmId, RealmSyncEntry,
 };
 use serde_json::Value;
 
 use crate::state::{StoredInviteNotification, StoredNotification};
+
+pub(crate) fn actor_is_joined_member(entry: &RealmSyncEntry, actor_id: &str) -> bool {
+    entry.members.as_ref().is_some_and(|members| {
+        members.iter().any(|member| {
+            member.actor_id.as_str() == actor_id && member.membership == MembershipState::Join
+        })
+    })
+}
+
+pub(crate) fn joined_realm_ids(
+    entries: &BTreeMap<RealmId, RealmSyncEntry>,
+    actor_id: &str,
+) -> BTreeSet<String> {
+    entries
+        .iter()
+        .filter(|(_, entry)| actor_is_joined_member(entry, actor_id))
+        .map(|(realm_id, _)| realm_id.as_str().to_owned())
+        .collect()
+}
+
+pub(crate) fn joined_realm_ids_from_local_projections(
+    projections: &BTreeMap<String, Value>,
+    actor_id: &str,
+) -> BTreeSet<String> {
+    projections
+        .iter()
+        .filter(|(_, projection)| {
+            projection
+                .get("members")
+                .and_then(Value::as_array)
+                .is_some_and(|members| {
+                    members.iter().any(|member| {
+                        serde_json::from_value::<MemberRosterEntry>(member.clone()).is_ok_and(
+                            |member| {
+                                member.actor_id.as_str() == actor_id
+                                    && member.membership == MembershipState::Join
+                            },
+                        )
+                    })
+                })
+        })
+        .map(|(realm_id, _)| realm_id.clone())
+        .collect()
+}
 
 pub(crate) fn notification_kind_wire(kind: &NotificationKind) -> &'static str {
     match kind {
