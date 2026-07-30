@@ -109,13 +109,18 @@
 
 - Severity: P2 protocol-authoring drift risk.
 - Status: resolved; covered by SDK receipt authoring tests and the live onboarding gate.
-- Evidence: while tracing a separate frontier policy-validation failure, `event_submit` and
+- Evidence: while tracing separate live-gate failures, `event_submit` and
   `fresh_device_recovery` were found to manually rebuild member timestamps, digest and detached JWS
   even though `authorization_lease` already used the SDK
-  `ProposalMemberReceipt::issue_with_signer` path.
-- Resolution: both duplicate implementations now use the SDK helper with the authenticated
-  principal-bound signer adapter and assemble the aggregate through
-  `ControlProposalReceipt::from_member_receipts`.
+  `ProposalMemberReceipt::issue_with_signer` path. A later pairing run exposed a third
+  `EventSubmitter::prepare_initial_submissions` path that still bypassed the corrected authority
+  router, hashed `NotaryValue::single_did(actor)` and signed as the managed Agent rather than its
+  controller.
+- Resolution: `fresh_device_recovery` uses the SDK helper, while every normal initial publication
+  now passes through `authorization_lease::standard_initial_submission`; the stale local receipt
+  author and the SDK callback detour were deleted. The one publication wrapper selects the exact
+  authority value and principal-bound signer, then assembles the aggregate through the SDK/wire
+  receipt constructors.
 - Prevention dimension: canonical signed protocol artifacts must have one SDK authoring primitive;
   product clients choose authority context and signer but do not copy transcript construction.
 
@@ -159,6 +164,7 @@
   typed founding `NotaryValue`; their receipt is signed under the `executed_by` controller DID and
   its active device verification method through the shared SDK authoring primitive. Self-PCR
   receipts remain actor-signed, while unrelated Realm control moves still collect receipts from the
-  remote current authority.
+  remote current authority. The batch-preparation entry point now calls this same wrapper instead of
+  carrying a second local-authority implementation.
 - Prevention dimension: receipt routing must derive from the governed Realm's authority model,
   not from whether the PCR id happens to equal the self-principal deterministic id.

@@ -29,31 +29,6 @@ use crate::ephemeral::{ensure_events_submit_accepted, validate_outgoing_register
 use crate::models::{BackfillView, ServiceDescribe, SubmitEventResult};
 use crate::operation::uuid_v7;
 
-fn author_local_proposal_receipt(
-    event: &arkret_sdk::Event,
-    signer: &crate::event_signer::InksonEventSigner,
-) -> anyhow::Result<arkret_wire::ControlProposalReceipt> {
-    use arkret_wire::{
-        ControlProposalDecisionPolicy, ControlProposalReceipt, Hash, ProposalMemberReceipt,
-    };
-
-    let policy = ControlProposalDecisionPolicy::default();
-    let proposal_digest = Hash::new(event.event_digest()?)?;
-    let authority_set_ref = Hash::new(arkret_sdk::canonical::canonical_sha256(
-        &arkret_wire::notary::NotaryValue::single_did(event.actor_id.clone()),
-    )?)?;
-    let adapter = signer.payload_signer_adapter_for_principal(&event.actor_id)?;
-    let member = ProposalMemberReceipt::issue_with_signer(
-        event.realm_id.clone(),
-        proposal_digest,
-        authority_set_ref,
-        crate::clock::now_utc(),
-        policy,
-        &adapter,
-    );
-    ControlProposalReceipt::from_member_receipts(vec![member?], policy).map_err(Into::into)
-}
-
 /// Authenticated durable/ephemeral event submission engine extracted from the
 /// former `TransportClient` events surface. Constructed per authenticated call from
 /// the shared SDK http-client (see `crate::transport::auth::with_event_submitter`).
@@ -2107,15 +2082,15 @@ impl EventSubmitter {
         events: Vec<arkret_sdk::Event>,
     ) -> anyhow::Result<Vec<arkret_wire::EventInitialSubmission>> {
         let events = self.prepare_sdk_events_batch(events).await?;
-        let signer = crate::event_signer::active_signer()
-            .ok_or_else(|| anyhow::anyhow!("no active proposal-authority signer"))?;
-        self.http
-            .prepare_initial_submissions_with_local_proposal_authority(&events, |event, _lease| {
-                author_local_proposal_receipt(event, signer.as_ref())
-                    .map_err(|error| arkret_sdk::http_client::Error::Protocol(error.to_string()))
-            })
-            .await
-            .map_err(anyhow::Error::from)
+        crate::authorization_lease::ensure_for_events(&self.http, &events).await?;
+
+        let mut submissions = Vec::with_capacity(events.len());
+        for event in &events {
+            submissions.push(
+                crate::authorization_lease::standard_initial_submission(&self.http, event).await?,
+            );
+        }
+        Ok(submissions)
     }
 
     /// `POST /_arkret/self/signal` — `ak.self.signal.command.send`.
