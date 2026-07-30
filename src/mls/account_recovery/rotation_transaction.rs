@@ -1,4 +1,6 @@
 use anyhow::{Context, Result, anyhow};
+pub(super) use arkret_models_collaboration::events_payloads::key_backup::ControllerBackupTrustAnchor;
+use arkret_models_collaboration::events_payloads::key_backup::resolve_controller_backup_trust_anchor;
 use arkret_models_crypto::{BackupSeriesEraseRequestBody, BackupSeriesEraseStatus};
 use arkret_wire::{
     BackupObjectRef, BackupRotationKind, BackupSeriesId, CLIENT_STEP_ATTESTATION_SIGNED_FIELDS,
@@ -610,15 +612,14 @@ fn rotation_backup_count(transaction: &arkret_wire::SecurityTransaction) -> Resu
         .sum())
 }
 
-#[derive(Clone, Debug)]
-pub(super) enum ControllerBackupTrustAnchor {
-    SskGeneration(u64),
-    DeviceGeneration {
-        authorize_event_id: String,
-        generation_ref: String,
-    },
-}
-
+/// Resolve the controller trust anchor from the current accepted keys/query
+/// projection.
+///
+/// The mixed-A/B and stale-generation rules live in the SDK
+/// (`resolve_controller_backup_trust_anchor`) so every client and the test
+/// harnesses share one implementation; this is just the transport call.
+/// Nothing here may synthesise a generation number: the whole point of the
+/// anchor is that it comes from the authority's current state.
 pub(super) async fn current_controller_backup_trust_anchor(
     http: &arkret_sdk::http_client::Client,
     actor_id: &str,
@@ -627,47 +628,8 @@ pub(super) async fn current_controller_backup_trust_anchor(
     let actor = Did::new(actor_id.to_owned())?;
     let device = arkret_sdk::DeviceId::new(device_id.to_owned())?;
     let outcome = crate::transport::keys::query_keys(http, actor_id, device_id).await?;
-    let record = outcome
-        .device_keys
-        .get(&actor)
-        .and_then(|devices| devices.get(&device))
-        .ok_or_else(|| anyhow!("current device is absent from keys/query"))?;
-    let generation = outcome.device_generations.get(&actor);
-    if !record.is_usable_in_generation(generation) {
-        return Err(anyhow!(
-            "current device is not usable in the active trust generation"
-        ));
-    }
-    match (
-        record.cross_signing_binding.as_ref(),
-        generation,
-        record.authorized_generation_ref.as_ref(),
-        record.device_authorize_event_id.as_ref(),
-    ) {
-        (Some(binding), None, None, _) => {
-            let publish = outcome
-                .cross_signing
-                .get(&actor)
-                .ok_or_else(|| anyhow!("keys/query omitted current cross-signing state"))?;
-            if publish.generation.get() != binding.ssk_generation {
-                return Err(anyhow!("cross-signing generation changed"));
-            }
-            Ok(ControllerBackupTrustAnchor::SskGeneration(
-                binding.ssk_generation,
-            ))
-        }
-        (None, Some(generation), Some(bound), Some(authorize_event_id))
-            if generation.device_generation_status
-                == arkret_sdk::DeviceGenerationStatus::Active
-                && bound.as_str() == generation.current_device_generation_ref.as_str() =>
-        {
-            Ok(ControllerBackupTrustAnchor::DeviceGeneration {
-                authorize_event_id: authorize_event_id.to_string(),
-                generation_ref: generation.current_device_generation_ref.to_string(),
-            })
-        }
-        _ => Err(anyhow!("current device trust model is mixed or incomplete")),
-    }
+    resolve_controller_backup_trust_anchor(&outcome, &actor, &device)
+        .map_err(|error| anyhow!("controller backup trust anchor unavailable: {error}"))
 }
 
 fn active_pointer_version(list_payload: &Value, kind: BackupRotationKind) -> Result<u64> {
@@ -725,19 +687,13 @@ pub(super) fn build_active_series_event(
             "signed_fields": ACTIVE_SERIES_SIGNED_FIELDS
         }
     });
-    match trust_anchor {
-        ControllerBackupTrustAnchor::SskGeneration(generation) => {
-            payload["frontier_ref"]["ssk_generation"] = json!(generation);
-            payload["auth_data"]["ssk_generation"] = json!(generation);
-        }
-        ControllerBackupTrustAnchor::DeviceGeneration {
-            authorize_event_id,
-            generation_ref,
-        } => {
-            payload["frontier_ref"]["device_generation_ref"] = json!(generation_ref);
-            payload["auth_data"]["device_authorize_event_id"] = json!(authorize_event_id);
-        }
-    }
+    // Both halves come from the one anchor, so `frontier_ref` and `auth_data`
+    // cannot end up describing different trust models -- which is exactly what
+    // the receiver rejects as `key_backup_active_series_generation_binding_mismatch`.
+    let (frontier_member, frontier_value) = trust_anchor.frontier_ref_member();
+    payload["frontier_ref"][frontier_member] = frontier_value;
+    let (auth_member, auth_value) = trust_anchor.auth_data_member();
+    payload["auth_data"][auth_member] = auth_value;
     let mut unsigned = payload.clone();
     unsigned["auth_data"]
         .as_object_mut()
