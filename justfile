@@ -1,3 +1,10 @@
+# Cargo parallelism for the local gate. Windows and low-memory runners OOM the
+# linker at full parallelism: rustc fails to mmap an rlib with `os error 1455`
+# (the pagefile is too small), which surfaces as a *test* failure. One job
+# removes it. Raise this on a machine with headroom.
+gate_jobs := env_var_or_default("INKSON_GATE_JOBS", "1")
+gate_dir := env_var_or_default("INKSON_GATE_DIR", "target/gate")
+
 # Show available local tasks.
 default:
     @just --list
@@ -60,6 +67,20 @@ signing-dry-run: desktop-build
 # Run Rust tests.
 test:
     cargo test
+
+# Run the local test gate with bounded parallelism and saved artifacts.
+#
+# Prefer this over `just test` for a full run: `cargo test` prints a line per
+# test and this suite has ~1800 of them, so the failure summary at the end is
+# exactly what a truncated scrollback loses. The logic lives in
+# `scripts/gate.sh` so it runs without `just` installed. Read
+# `{{ gate_dir }}/summary.txt` for the verdict, never the terminal tail.
+#
+# Extra arguments go to `cargo test`:
+#
+#     just gate --lib recovery
+gate *args:
+    INKSON_GATE_JOBS={{ gate_jobs }} INKSON_GATE_DIR={{ gate_dir }} sh scripts/gate.sh {{ args }}
 
 # Run the browser-only wasm-bindgen integration tests. Requires
 # wasm-bindgen-test-runner 0.2.123 and a WebDriver-compatible Chrome install.
