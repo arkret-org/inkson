@@ -162,6 +162,24 @@ fn managed_agent_initial_seal_required(error: &anyhow::Error) -> bool {
     })
 }
 
+/// True when an Agent provably has nothing to contribute to the shared managed
+/// recovery series because its own PCR bootstrap never completed.
+///
+/// Both halves are required, and both come from the Principal Server rather
+/// than from local state: the recovery projection is still `Pending` (no series
+/// was ever published for this Agent) and the Realm Seal frontier reports no
+/// accepted device-signed Seal. Together they mean there is no frontier to bind
+/// and no recoverable state to drop. A `Ready` / `Stale` Agent, or a `Pending`
+/// one whose frontier failed for any other reason, MUST keep failing closed —
+/// excluding either would silently narrow recovery coverage.
+fn managed_pcr_setup_never_completed(
+    recovery: &AgentPcrRecoveryState,
+    error: &anyhow::Error,
+) -> bool {
+    matches!(recovery, AgentPcrRecoveryState::Pending)
+        && managed_agent_initial_seal_required(error)
+}
+
 fn next_mls_history_pointer(
     current: Option<&MlsHistoryActiveSeries>,
     orphaned_series_ids: impl IntoIterator<Item = String>,
@@ -794,15 +812,39 @@ async fn collect_current_managed_pcr_backup_items(
             );
         }
         let realm_id = key_state.principal_control_realm_id.as_str();
-        let frontier = submitter
-            .events_frontier_realm_seal_view(realm_id)
-            .await
-            .map_err(|error| {
-                anyhow::anyhow!(
+        let frontier = match submitter.events_frontier_realm_seal_view(realm_id).await {
+            Ok(frontier) => frontier,
+            // An Agent whose PCR bootstrap never completed has nothing to put
+            // in the shared recovery series: the Principal Server reports its
+            // recovery projection as `Pending` AND serves no accepted
+            // device-signed Seal, so there is no frontier to bind and no
+            // recoverable state to lose. Hard-failing here let one interrupted
+            // provision block every later Agent for good. Skipping is
+            // convergent: when that Agent's own setup finishes it re-collects
+            // the whole set and republishes a series that covers it.
+            //
+            // Both conditions are required. A `Pending` Agent whose frontier
+            // fails for any other reason, or a `Ready`/`Stale` Agent that has
+            // real recovery state, still fails closed — dropping either from
+            // the series would silently narrow recovery coverage.
+            Err(error)
+                if managed_pcr_setup_never_completed(&key_state.pcr_recovery, &error) =>
+            {
+                tracing::warn!(
+                    target: "inkson::agents",
+                    agent_id = key_state.agent_id.as_str(),
+                    "Agent PCR recovery setup never completed; excluding it from this recovery \
+                     series until its own setup finishes: {error}"
+                );
+                continue;
+            }
+            Err(error) => {
+                return Err(anyhow::anyhow!(
                     "Agent {} PCR frontier is unavailable; finish its recovery setup first: {error}",
                     key_state.agent_id.as_str()
-                )
-            })?;
+                ));
+            }
+        };
         let snapshot = state_store.read().mls_snapshot_for(realm_id).ok_or_else(|| {
             anyhow::anyhow!(
                 "Agent {} has no local PCR MLS state; restore it before rotating the shared recovery series",
@@ -1414,6 +1456,64 @@ mod tests {
             403,
             "capability_denied"
         )));
+    }
+
+    fn ready_recovery() -> AgentPcrRecoveryState {
+        AgentPcrRecoveryState::Ready {
+            backup_id: arkret_sdk::BackupId::new(
+                "ak:backup:01964137-0000-7000-8000-000000000010".to_owned(),
+            )
+            .unwrap(),
+            series_id: arkret_sdk::BackupSeriesId::new(
+                "ak:backup_series:01964137-0000-7000-8000-000000000011".to_owned(),
+            )
+            .unwrap(),
+            series_seq: 1,
+            managed_frontier_ref: ManagedFrontierRef {
+                frontier_digest: arkret_sdk::Hash::new(
+                    "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_owned(),
+                )
+                .unwrap(),
+                seal_ref: "ak:seal:01964137-0000-7000-8000-000000000012".to_owned(),
+                mls_epoch: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn pending_agent_without_an_accepted_seal_is_excluded_from_the_series() {
+        // One interrupted provision must not block every later Agent: the
+        // Principal Server reports both "no series published" and "no accepted
+        // device-signed Seal", so there is nothing to lose by skipping it.
+        assert!(managed_pcr_setup_never_completed(
+            &AgentPcrRecoveryState::Pending,
+            &api_error(503, "frontier_unavailable")
+        ));
+        assert!(managed_pcr_setup_never_completed(
+            &AgentPcrRecoveryState::Pending,
+            &api_error(404, "not_found")
+        ));
+    }
+
+    #[test]
+    fn an_agent_with_recovery_state_still_fails_the_series_closed() {
+        // Ready/Stale Agents own real recovery material — dropping them would
+        // silently narrow coverage, so the frontier error must propagate.
+        assert!(!managed_pcr_setup_never_completed(
+            &ready_recovery(),
+            &api_error(503, "frontier_unavailable")
+        ));
+        // A Pending Agent whose frontier failed for an unrelated reason is not
+        // evidence that its setup never ran.
+        assert!(!managed_pcr_setup_never_completed(
+            &AgentPcrRecoveryState::Pending,
+            &api_error(503, "service_unavailable")
+        ));
+        assert!(!managed_pcr_setup_never_completed(
+            &AgentPcrRecoveryState::Pending,
+            &api_error(403, "capability_denied")
+        ));
     }
 
     #[test]
