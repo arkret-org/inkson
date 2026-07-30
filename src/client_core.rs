@@ -33,9 +33,13 @@ impl garth::AsyncSyncTransport for InksonAccountTransport {
     fn sync_async<'a>(
         &'a self,
         request: arkret_sdk::SyncRequestBody,
+        options: arkret_sdk::http_client::ClientRequestOptions,
     ) -> garth::BoxSyncFuture<'a, arkret_sdk::AccountSubscribeBatch> {
         Box::pin(async move {
-            let batch = self.http.account_subscribe_batch(&request).await?;
+            let batch = self
+                .http
+                .account_subscribe_batch_with_options(&request, &options)
+                .await?;
             Ok(batch)
         })
     }
@@ -439,7 +443,6 @@ pub async fn account_subscribe_snapshot_outcome(
         catchup: Some(true),
         filter: None,
         subscriptions: None,
-        wait_for: None,
     };
     match http.account_subscribe_batch(&request).await {
         Ok(batch) => Ok(AccountSubscribeSnapshotResult::Batch(batch)),

@@ -92,59 +92,14 @@ pub fn build_call_state(
     }))
 }
 
-/// Decrypted `ak.call.signal` body.
-///
-/// The pre-v1 rail carried this as the plaintext `payload` of a wire envelope.
-/// In v1 it only ever exists after a `SignalEnvelope` has been decrypted, so it
-/// is a local type rather than an SDK wire type.
-#[derive(Clone, Debug, PartialEq)]
-pub struct CallSignalBody {
-    pub call_id: String,
-    pub signal_kind: String,
-    pub sequence: u64,
-    pub data: Option<serde_json::Value>,
-}
-
-impl CallSignalBody {
-    /// Parse and validate a decrypted Signal plaintext body.
-    pub fn from_plaintext(body: &serde_json::Value) -> Result<Self, String> {
-        if body.get("kind").and_then(serde_json::Value::as_str) != Some("ak.call.signal") {
-            return Err("decrypted signal is not ak.call.signal".to_owned());
-        }
-        let call_id = body
-            .get("call_id")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| "ak.call.signal body omits call_id".to_owned())?
-            .to_owned();
-        let signal_kind = body
-            .get("signal_kind")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| "ak.call.signal body omits signal_kind".to_owned())?
-            .to_owned();
-        if !CALL_SIGNAL_KINDS.contains(&signal_kind.as_str()) {
-            return Err(format!(
-                "ak.call.signal signal_kind {signal_kind:?} is not in the canonical enum"
-            ));
-        }
-        let sequence = body
-            .get("payload_sequence")
-            .and_then(serde_json::Value::as_u64)
-            .ok_or_else(|| "ak.call.signal body omits payload_sequence".to_owned())?;
-        Ok(Self {
-            call_id,
-            signal_kind,
-            sequence,
-            data: body.get("data").cloned(),
-        })
-    }
-}
-
 /// Outcome of feeding a decrypted `ak.call.signal` body through the receiver.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CallSignalIngestOutcome {
     /// The body validated and the per-`(realm, call, actor, device)` sequence
     /// advanced strictly forward.
-    Accepted { body: CallSignalBody },
+    Accepted {
+        body: arkret_sdk::CallSignalPlaintext,
+    },
     /// `payload_sequence` rolled back or repeated — the receiver drops the
     /// signal and SHOULD emit a local `hangup` for `call_id`.
     SeqRollback { call_id: String, seq: u64 },
@@ -189,24 +144,28 @@ impl CallSignalReceiver {
         key: CallSignalSeqKey,
         body: &serde_json::Value,
     ) -> CallSignalIngestOutcome {
-        let body = match CallSignalBody::from_plaintext(body) {
+        let body = match serde_json::from_value::<arkret_sdk::CallSignalPlaintext>(body.clone()) {
             Ok(body) => body,
-            Err(reason) => return CallSignalIngestOutcome::Rejected { reason },
+            Err(error) => {
+                return CallSignalIngestOutcome::Rejected {
+                    reason: error.to_string(),
+                };
+            }
         };
         if let Some(previous) = self.seen.get(&key)
-            && body.sequence <= *previous
+            && body.seq <= *previous
         {
             tracing::warn!(
                 target: "inkson::webrtc",
                 "ak.call.signal sequence rollback: {} <= {previous}",
-                body.sequence
+                body.seq
             );
             return CallSignalIngestOutcome::SeqRollback {
-                call_id: body.call_id,
-                seq: body.sequence,
+                call_id: body.call_id.as_str().to_owned(),
+                seq: body.seq,
             };
         }
-        self.seen.insert(key, body.sequence);
+        self.seen.insert(key, body.seq);
         CallSignalIngestOutcome::Accepted { body }
     }
 }

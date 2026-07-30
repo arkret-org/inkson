@@ -174,13 +174,17 @@ pub fn decode_call_signal(
     envelope: &arkret_wire::SignalEnvelope,
     plaintext: &Value,
 ) -> Option<DecodedCallSignal> {
-    let body = crate::webrtc::CallSignalBody::from_plaintext(plaintext).ok()?;
-    let data = body.data.clone().unwrap_or(Value::Null);
+    let body = serde_json::from_value::<arkret_sdk::CallSignalPlaintext>(plaintext.clone()).ok()?;
+    let signal_kind = serde_json::to_value(body.signal_kind)
+        .ok()?
+        .as_str()?
+        .to_owned();
+    let data = Value::Object(body.data.into_iter().collect());
     Some(DecodedCallSignal {
         realm_id: envelope.realm_id.as_str().to_owned(),
-        call_id: body.call_id,
-        signal_kind: body.signal_kind,
-        seq: body.sequence,
+        call_id: body.call_id.as_str().to_owned(),
+        signal_kind,
+        seq: body.seq,
         sender_actor: envelope.sender_actor_id.as_str().to_owned(),
         sender_device: envelope.sender_device_id.as_str().to_owned(),
         video: invite_wants_video(&data),

@@ -129,6 +129,36 @@ impl SignalPayload {
                 anyhow::anyhow!("message stream plaintext encoding failed: {error}")
             });
         }
+        if let Self::CallSignal {
+            call_id,
+            signal_kind,
+            data,
+        } = self
+        {
+            let signal_kind: arkret_sdk::CallSignalKind =
+                serde_json::from_value(Value::String(signal_kind.clone())).map_err(|_| {
+                    anyhow::anyhow!(
+                        "call signal_kind {:?} is not in the canonical enum",
+                        signal_kind
+                    )
+                })?;
+            let data = data
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("call signal data is required"))?
+                .as_object()
+                .ok_or_else(|| anyhow::anyhow!("call signal data must be an object"))?
+                .clone()
+                .into_iter()
+                .collect();
+            return arkret_sdk::CallSignalPlaintext::new(
+                call_id.clone(),
+                signal_kind,
+                sequence.0,
+                data,
+            )
+            .canonical_plaintext()
+            .map_err(|error| anyhow::anyhow!("call signal plaintext encoding failed: {error}"));
+        }
         let body = match self {
             Self::Typing { strand_id, typing } => json!({
                 "kind": "ak.typing",
@@ -189,24 +219,7 @@ impl SignalPayload {
                 body["kind"] = Value::String("ak.receipt.read".to_owned());
                 body
             }
-            Self::CallSignal {
-                call_id,
-                signal_kind,
-                data,
-            } => {
-                if !crate::webrtc::CALL_SIGNAL_KINDS.contains(&signal_kind.as_str()) {
-                    anyhow::bail!("call signal_kind {signal_kind:?} is not in the canonical enum");
-                }
-                let mut body = json!({
-                    "kind": "ak.call.signal",
-                    "call_id": call_id.as_str(),
-                    "signal_kind": signal_kind,
-                });
-                if let Some(data) = data {
-                    body["data"] = data.clone();
-                }
-                body
-            }
+            Self::CallSignal { .. } => unreachable!("handled by the SDK closed call shape"),
             Self::MessageStream(_) => unreachable!("handled before generic Signal encoding"),
         };
         let mut body = body;

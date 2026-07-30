@@ -253,7 +253,7 @@ pub(super) fn push_notification_rules_account_data(
         "rule_id": "override.priority",
         "kind": "override",
         "enabled": true,
-        "evaluation_locus": "server",
+        "evaluation_locus": "client",
         "conditions": [
             {"kind": "field_match", "field": "priority", "pattern": ["critical", "high", "urgent", "priority"]}
         ],
@@ -266,7 +266,7 @@ pub(super) fn push_notification_rules_account_data(
                 "rule_id": format!("override.mute-realm.{realm_id}"),
                 "kind": "override",
                 "enabled": true,
-                "evaluation_locus": "server",
+                "evaluation_locus": "client",
                 "conditions": [
                     {"kind": "field_match", "field": "realm_id", "pattern": realm_id}
                 ],
@@ -290,7 +290,7 @@ pub(super) fn push_notification_rules_account_data(
                 "rule_id": format!("underride.realm-mentions-only.{realm_id}"),
                 "kind": "underride",
                 "enabled": true,
-                "evaluation_locus": "server",
+                "evaluation_locus": "client",
                 "conditions": [
                     {"kind": "field_match", "field": "realm_id", "pattern": realm_id}
                 ],
@@ -305,7 +305,7 @@ pub(super) fn push_notification_rules_account_data(
                 "rule_id": format!("underride.realm-all.{realm_id}"),
                 "kind": "underride",
                 "enabled": true,
-                "evaluation_locus": "server",
+                "evaluation_locus": "client",
                 "conditions": [
                     {"kind": "field_match", "field": "realm_id", "pattern": realm_id}
                 ],
@@ -318,7 +318,7 @@ pub(super) fn push_notification_rules_account_data(
         "rule_id": "default.notify",
         "kind": "underride",
         "enabled": true,
-        "evaluation_locus": "server",
+        "evaluation_locus": "client",
         "conditions": [],
         "actions": ["notify"]
     }));

@@ -1506,6 +1506,7 @@ fn apply_mention_sidecar_digestes(
     event: &mut arkret_sdk::Event,
     realm_id: &str,
     mentions: &[MentionNode],
+    exporter_secret: Option<&[u8]>,
 ) {
     let mention_dids = mentions
         .iter()
@@ -1517,7 +1518,16 @@ fn apply_mention_sidecar_digestes(
     if mention_dids.is_empty() {
         return;
     }
-    let hashes = crate::messaging::mentions::mention_sidecar_digestes(realm_id, &mention_dids);
+    let Some(exporter_secret) = exporter_secret else {
+        return;
+    };
+    let Ok(hashes) = crate::messaging::mentions::mention_sidecar_digestes(
+        exporter_secret,
+        realm_id,
+        &mention_dids,
+    ) else {
+        return;
+    };
     if let Some(content) = event
         .payload
         .get_mut("content")

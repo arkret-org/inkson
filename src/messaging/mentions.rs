@@ -10,12 +10,11 @@
 //! described in `discovery/push-notifications.md §4.5` and the
 //! `chat-advanced.md` spec — the server must be able to route a
 //! notification to the mentioned actor without learning that actor's
-//! DID in plaintext. We compute `SHA256(salt || did)` and surface it
+//! DID in plaintext. We compute the epoch-scoped MLS exporter HMAC and surface it
 //! as `content.mention_sidecar_digest` inside the outgoing
 //! `ak.message.create` payload.
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 /// One row in the mention picker dropdown.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -228,28 +227,30 @@ pub fn replace_active_mention_token(
 /// hashes (`content.mention_sidecar_digest`) it can match against per-actor
 /// inbox subscriptions without learning the mentioned DID.
 ///
-/// `salt` is the per-Realm mention salt issued by soland; until that
-/// projection exists, callers pass the realm_id as a stand-in (the
-/// hash is still collision-resistant against random DIDs; the privacy
-/// guarantee just degrades to "server already knew the realm_id").
-///
 /// Returns lowercase hex.
-pub fn mention_sidecar_digest(salt: &str, did: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(salt.as_bytes());
-    hasher.update(b"|");
-    hasher.update(did.as_bytes());
-    let out = hasher.finalize();
-    crate::canonical::hex_encode(&out)
+pub fn mention_sidecar_digest(
+    exporter_secret: &[u8],
+    realm_id: &str,
+    did: &str,
+) -> Result<String, String> {
+    let realm_id = arkret_sdk::RealmId::new(realm_id).map_err(|error| error.to_string())?;
+    let did = arkret_sdk::Did::new(did).map_err(|error| error.to_string())?;
+    let out = arkret_sdk::mls::mention_routing_hmac(exporter_secret, &realm_id, &did)
+        .map_err(|error| error.to_string())?;
+    Ok(crate::canonical::hex_encode(&out))
 }
 
 /// Build the full sidecar hash list for a `ak.message.create` payload.
 /// The output is `["hash1", "hash2", ...]` matching the wire shape
 /// expected by the notification routing layer.
-pub fn mention_sidecar_digestes(salt: &str, mentioned_dids: &[String]) -> Vec<String> {
+pub fn mention_sidecar_digestes(
+    exporter_secret: &[u8],
+    realm_id: &str,
+    mentioned_dids: &[String],
+) -> Result<Vec<String>, String> {
     mentioned_dids
         .iter()
-        .map(|did| mention_sidecar_digest(salt, did))
+        .map(|did| mention_sidecar_digest(exporter_secret, realm_id, did))
         .collect()
 }
 
@@ -404,26 +405,33 @@ mod tests {
 
     #[test]
     fn sidecar_hash_is_deterministic_and_hex() {
-        let hash_a = mention_sidecar_digest("salt", "did:web:alice.example");
-        let hash_b = mention_sidecar_digest("salt", "did:web:alice.example");
+        let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
+        let hash_a = mention_sidecar_digest(&[0x11; 32], realm, "did:web:alice.example").unwrap();
+        let hash_b = mention_sidecar_digest(&[0x11; 32], realm, "did:web:alice.example").unwrap();
         assert_eq!(hash_a, hash_b);
         assert_eq!(hash_a.len(), 64); // SHA-256 hex
         assert!(hash_a.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]
-    fn sidecar_hash_changes_with_salt() {
-        let a = mention_sidecar_digest("salt-1", "did:web:alice.example");
-        let b = mention_sidecar_digest("salt-2", "did:web:alice.example");
+    fn sidecar_hash_changes_with_epoch_exporter() {
+        let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
+        let a = mention_sidecar_digest(&[0x11; 32], realm, "did:web:alice.example").unwrap();
+        let b = mention_sidecar_digest(&[0x22; 32], realm, "did:web:alice.example").unwrap();
         assert_ne!(a, b);
     }
 
     #[test]
     fn sidecar_hash_does_not_leak_did_substring() {
-        // Even with a known salt, the hash output must not contain the
+        // Even with a known exporter, the hash output must not contain the
         // raw DID — that's the whole point of the sidecar.
         let did = "did:web:alice.example";
-        let hash = mention_sidecar_digest("salt", did);
+        let hash = mention_sidecar_digest(
+            &[0x11; 32],
+            "ak:realm:01904100-0000-7000-8000-000000000001",
+            did,
+        )
+        .unwrap();
         assert!(!hash.contains("alice"));
     }
 }

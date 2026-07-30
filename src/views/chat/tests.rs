@@ -814,7 +814,7 @@ fn mention_sidecar_digestes_are_applied_to_replayed_events() {
     )
     .expect("builds");
 
-    apply_mention_sidecar_digestes(&mut event, realm, &mentions);
+    apply_mention_sidecar_digestes(&mut event, realm, &mentions, Some(&[0x42; 32]));
 
     let hashes = event.payload["content"]["mention_sidecar_digest"]
         .as_array()

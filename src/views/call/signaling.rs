@@ -415,11 +415,14 @@ pub(super) async fn emit_signal(
         realm_id: arkret_sdk::RealmId::new(realm_id.trim().to_owned())
             .map_err(|error| format!("invalid call signal realm_id: {error}"))?,
     };
+    if !data.is_object() {
+        return Err("call signal data must be an object".to_owned());
+    }
     let payload = crate::signal::SignalPayload::CallSignal {
         call_id: arkret_sdk::CallId::new(call_id)
             .map_err(|error| format!("invalid call_id: {error}"))?,
         signal_kind: signal_kind.to_owned(),
-        data: (!data.is_null()).then_some(data),
+        data: Some(data),
     };
     let (actor, device) = (actor.to_owned(), device.to_owned());
     let material = material.clone();
