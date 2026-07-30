@@ -1861,8 +1861,23 @@ fn history_share_source_authorization_ref_from_events(events: &[Value]) -> Optio
     })
 }
 
+/// Resolve the authorization this actor names on an `ak.realm_key.share`.
+///
+/// Two legitimate sources, in the order the authorization graph defines them
+/// (`capabilities.md` §3.2):
+///
+/// 1. an ordinary revocable `ak.capability.grant` whose `actions[]` literally carries
+///    `ak.realm_key.share` for this actor — the Realm owner MAY issue one to itself, and a
+///    delegated key-share provider only ever has this form;
+/// 2. otherwise the Realm authority-root cell, when this actor is its current controller. That
+///    branch is the genesis base case: v1 has no genesis self-grant, so the owner's
+///    `ak.realm_key.share` authority comes from the root cell under an accepted Seal, never from a
+///    projection mirror.
+///
+/// Returning `None` silently downgrades every recovery recipient to `Unverified`,
+/// so the fallback is a correctness requirement, not a convenience.
 fn realm_key_share_capability_ref_from_events(events: &[Value], actor_id: &str) -> Option<String> {
-    events.iter().rev().find_map(|event| {
+    let literal_grant = events.iter().rev().find_map(|event| {
         let kind = event
             .get("kind")
             .or_else(|| event.get("event_kind"))
@@ -1890,6 +1905,39 @@ fn realm_key_share_capability_ref_from_events(events: &[Value], actor_id: &str) 
             .map(str::trim)
             .filter(|grant_id| grant_id.starts_with("ak:grant:"))
             .map(ToOwned::to_owned)
+    });
+    literal_grant.or_else(|| {
+        realm_authority_root_controller(events)
+            .filter(|controller| controller == actor_id.trim())
+            .map(|_| arkret_wire::REALM_AUTHORITY_ROOT_CELL.to_owned())
+    })
+}
+
+/// Current controller of the Realm authority-root cell, read from the projected
+/// event log.
+///
+/// `ak.realm.create` is the only registered writer of
+/// `ak.component.realm.authority_root.v1` in v1 (contract-registry.json), and its
+/// registered `value_projection` sets `controller_id = payload.object.created_by`.
+/// This reads that one cell input, so it is not the forbidden `realm_state.owner`
+/// / membership / bare `created_by` fallback — those are projection mirrors of a
+/// different fact.
+fn realm_authority_root_controller(events: &[Value]) -> Option<String> {
+    events.iter().rev().find_map(|event| {
+        let kind = event
+            .get("kind")
+            .or_else(|| event.get("event_kind"))
+            .and_then(Value::as_str)?;
+        if kind != arkret_sdk::events::EventKind::REALM_CREATE {
+            return None;
+        }
+        event
+            .get("payload")
+            .unwrap_or(event)
+            .get("object")?
+            .get("created_by")
+            .and_then(Value::as_str)
+            .map(|created_by| created_by.trim().to_owned())
     })
 }
 
@@ -4792,6 +4840,52 @@ mod tests {
         assert_eq!(
             history_share_source_authorization_ref_from_events(&events).as_deref(),
             Some(event_id)
+        );
+    }
+
+    #[test]
+    fn realm_key_share_ref_prefers_an_explicit_grant_over_the_authority_root() {
+        let actor = "did:web:alice.example";
+        let events = vec![
+            json!({
+                "kind": "ak.realm.create",
+                "payload": {"object": {"created_by": actor}}
+            }),
+            json!({
+                "kind": "ak.capability.grant",
+                "payload": {
+                    "grant_id": "ak:grant:01904100-0000-7000-8000-000000000201",
+                    "grant": {
+                        "subject": actor,
+                        "actions": ["ak.realm_key.share"]
+                    }
+                }
+            }),
+        ];
+
+        assert_eq!(
+            realm_key_share_capability_ref_from_events(&events, actor).as_deref(),
+            Some("ak:grant:01904100-0000-7000-8000-000000000201")
+        );
+    }
+
+    #[test]
+    fn realm_key_share_ref_falls_back_to_the_authority_root_for_the_controller() {
+        let actor = "did:web:alice.example";
+        let events = vec![json!({
+            "kind": "ak.realm.create",
+            "payload": {"object": {"created_by": actor}}
+        })];
+
+        // Without this branch the owner silently downgrades every recovery
+        // recipient to `Unverified`, because v1 issues no genesis self-grant.
+        assert_eq!(
+            realm_key_share_capability_ref_from_events(&events, actor).as_deref(),
+            Some(arkret_wire::REALM_AUTHORITY_ROOT_CELL)
+        );
+        assert!(
+            realm_key_share_capability_ref_from_events(&events, "did:web:bob.example").is_none(),
+            "a non-controller MUST NOT claim the root cell"
         );
     }
 

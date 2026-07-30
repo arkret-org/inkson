@@ -84,7 +84,6 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         kinds,
         vec![
             "ak.realm.create",
-            "ak.capability.grant",
             "ak.realm.policy_bundle",
             "ak.realm.join_rule",
             "ak.realm.history_visibility",
@@ -95,16 +94,13 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             "ak.member.state",
         ]
     );
-    assert_eq!(
-        events[1].payload["grant"]["actions"],
-        json!(arkret_policy::realm_bootstrap::REALM_FOUNDING_GRANT_ACTIONS),
-        "Realm builder must use the SDK-owned closed founding action set"
-    );
+    // realm-and-space.md §2.5: v1 has no founding `ak.capability.grant` slot;
+    // genesis authority is the authority-root cell the create contract writes.
     assert!(
-        events[1].payload["grant"]["actions"]
-            .as_array()
-            .is_some_and(|actions| actions.iter().any(|action| action == "ak.message.create")),
-        "founding grant must make the creator's first message capability reachable"
+        events
+            .iter()
+            .all(|event| event.kind.as_str() != "ak.capability.grant"),
+        "ordinary Realm genesis carries no capability grant"
     );
 
     let create = &events[0];
@@ -144,12 +140,26 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     // v1 has no producer `effects[]`: the genesis leaf set is what the
     // registered `ak.realm.create` contract projects.
     let create_writes = crate::operation::direct_registered_cell_writes(create).unwrap();
-    assert_eq!(create_writes.len(), 4);
+    // realm-and-space.md §2.5: Realm metadata, creator membership, the create
+    // audit append, the founding notary and the founding authority-root cell.
+    assert_eq!(create_writes.len(), 5);
     assert_eq!(
         create_writes[0].cell.as_str(),
         arkret_bootstrap::REALM_METADATA_CELL
     );
     assert_eq!(create_writes[0].op.op_type, arkret_sdk::LatticeOpType::Set);
+    assert!(
+        create_writes
+            .iter()
+            .any(|write| write.cell.as_str() == arkret_bootstrap::REALM_AUTHORITY_ROOT_CELL),
+        "genesis MUST materialize the Realm authority-root cell"
+    );
+    assert_eq!(
+        create.payload["object"]["capability_action_registry_digest"],
+        serde_json::to_value(arkret_sdk::current_capability_action_registry_digest().unwrap())
+            .unwrap(),
+        "the create-locked registry digest is the authority-root cell's basis"
+    );
     for event in &events {
         // `OrdinaryRealmBootstrap` is the one context in which a control write
         // may carry no CBA basis: the genesis transaction predates any accepted
@@ -167,7 +177,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             )
         });
     }
-    for facet in &events[2..9] {
+    for facet in &events[1..8] {
         assert!(
             crate::operation::project_registered_cell_writes(facet)
                 .unwrap()
@@ -185,73 +195,54 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     // signer attaches the detached JWS proof at submit time.
     assert!(create.proofs.is_empty());
 
-    let founding = &events[1];
-    assert_eq!(
-        founding.payload["grant"]["issuer"],
-        create.actor_id.as_str()
-    );
-    assert_eq!(
-        founding.payload["grant"]["subject"],
-        create.actor_id.as_str()
-    );
-    assert_eq!(
-        founding.payload["grant"]["resources"][0]["match_scope"],
-        "realm_wide"
-    );
-    assert_eq!(
-        founding.payload["grant"]["capability_action_registry_digest"],
-        serde_json::to_value(arkret_sdk::current_capability_action_registry_digest().unwrap())
-            .unwrap()
-    );
-
-    // Bootstrap order: create, founding grant, encryption floor policy, join_rule,
+    // Bootstrap order: create, encryption floor policy, join_rule,
     // history_visibility, history_sharing_policy, discovery,
     // plaintext_visible, delivery binding policy, creator member join.
     assert_eq!(
-        events[2].payload["value"]["content_encryption_floor"],
+        events[1].payload["value"]["content_encryption_floor"],
         RECOMMENDED_REALM_ENCRYPTION_FLOOR
     );
     assert_eq!(
-        events[2].payload["value"]["metadata_encryption_floor"],
+        events[1].payload["value"]["metadata_encryption_floor"],
         RECOMMENDED_REALM_ENCRYPTION_FLOOR
     );
-    assert_eq!(events[2].payload["value"]["policy_revision"], 1);
+    assert_eq!(events[1].payload["value"]["policy_revision"], 1);
     assert_eq!(
-        events[2].payload["value"]["content_scheme"],
+        events[1].payload["value"]["content_scheme"],
         "mls_exporter_aead_v1"
     );
-    assert_eq!(events[3].payload["value"], "invite");
-    assert_eq!(events[4].payload["value"], "shared");
+    assert_eq!(events[2].payload["value"], "invite");
+    assert_eq!(events[3].payload["value"], "shared");
     assert_eq!(
-        events[5].payload["value"]["default_key_share"],
+        events[4].payload["value"]["default_key_share"],
         "event_time_visibility"
     );
     assert_eq!(
-        events[5].payload["value"]["pre_join_history"],
+        events[4].payload["value"]["pre_join_history"],
         "visibility_condition_allowed"
     );
     assert_eq!(
-        events[5].payload["value"]["allowed_key_sources"],
+        events[4].payload["value"]["allowed_key_sources"],
         json!(["verified_member_device"])
     );
     assert_eq!(
-        events[5].payload["value"]["allowed_receiver_states"],
+        events[4].payload["value"]["allowed_receiver_states"],
         json!(["active_member"])
     );
     assert_eq!(
-        events[5].payload["value"]["audit"],
+        events[4].payload["value"]["audit"],
         json!({
             "share_audit_event_required": false,
             "access_audit_required": false
         })
     );
-    assert_eq!(events[6].payload["value"], "listed");
+    assert_eq!(events[5].payload["value"], "listed");
     assert_eq!(
-        events[7].payload["services"][0]["service_id"],
+        events[6].payload["services"][0]["service_id"],
         "did:web:server.example"
     );
     assert_eq!(
-        events[7].payload["services"][0]["data_classes"],
+        events[6].payload["services"][0]["data_classes"],
         json!([
             "message_content",
             "full_text_index",
@@ -260,10 +251,10 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         ])
     );
     assert_eq!(
-        events[8].payload["allowed_binding_sources"],
+        events[7].payload["allowed_binding_sources"],
         json!(["realm_policy"])
     );
-    assert_eq!(events[9].payload["membership"], "join");
+    assert_eq!(events[8].payload["membership"], "join");
     assert!(events.iter().all(|event| {
         event
             .payload

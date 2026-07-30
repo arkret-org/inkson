@@ -282,6 +282,10 @@ pub async fn bootstrap_principal(
                 checkpoint.version_id.clone(),
                 arkret_bootstrap::DID_INCEPTION_REF_ROLE,
             ),
+            capability_action_registry_digest:
+                arkret_sdk::current_capability_action_registry_digest().map_err(|error| {
+                    anyhow::anyhow!("load capability action registry digest: {error}")
+                })?,
             event_id: arkret_sdk::EventId::new(checkpoint.bootstrap_create_event_id.clone())?,
             created_at,
             hlc: arkret_sdk::Hlc::new(checkpoint.bootstrap_hlc.clone())?,

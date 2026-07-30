@@ -564,44 +564,18 @@ async fn materialize_direct_conversation(
     let device_id = signer.device_id().ok_or_else(|| {
         anyhow::anyhow!("direct conversation materialization signer has no device id")
     })?;
-    let mut founding_grant_event = draft.founding_grant_event.clone();
-    crate::event_submit::attach_capability_grant_payload_proof_with_signer(
-        &mut founding_grant_event,
-        &signer,
-    )?;
-    // The grant's OR-Set write is derived from the registered contract; the
-    // producer only has to be sure it evaluates before the Event ships.
-    crate::operation::project_registered_cell_writes(&founding_grant_event).map_err(|error| {
-        anyhow::anyhow!("direct conversation founding grant has no evaluable contract: {error}")
+    // contact-and-direct-conversation.md: the peer join rides inside the atomic
+    // genesis batch, so it proves Realm authority with the *staged* root proof
+    // bound to the same batch's `ak.realm.create`. Anything submitted after that
+    // batch is accepted MUST use the accepted-Seal form instead.
+    let staged_root_proof = arkret_policy::realm_bootstrap::staged_root_authorization(
+        &draft.realm_event,
+    )
+    .map_err(|error| {
+        anyhow::anyhow!("direct conversation genesis has no staged root proof: {error}")
     })?;
-    let founding_grant_id = founding_grant_event
-        .payload
-        .get("grant_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            anyhow::anyhow!("direct conversation founding grant omitted payload.grant_id")
-        })?
-        .to_owned();
-    let mut main_strand_grant_event = draft.main_strand_grant_event.clone();
-    crate::event_submit::attach_capability_grant_payload_proof_with_signer(
-        &mut main_strand_grant_event,
-        &signer,
-    )?;
-    crate::operation::project_registered_cell_writes(&main_strand_grant_event).map_err(
-        |error| {
-            anyhow::anyhow!(
-                "direct conversation main Strand grant has no evaluable contract: {error}"
-            )
-        },
-    )?;
-    let main_strand_grant_id = main_strand_grant_event
-        .payload
-        .get("grant_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            anyhow::anyhow!("direct conversation main Strand grant omitted payload.grant_id")
-        })?
-        .to_owned();
+    let mut peer_member_event = draft.peer_member_event.clone();
+    peer_member_event.authorization_ref = Some(staged_root_proof.authorization_ref().to_owned());
     let bootstrap_key =
         pending_direct_conversation_bootstrap_key(draft.materialization_id.as_str());
     let mut accepted = accepted_direct_materialization_events(&submitter, &realm_id).await;
@@ -622,11 +596,11 @@ async fn materialize_direct_conversation(
                     &draft.realm_event,
                 )
                 .await?;
-                let mut bootstrap_events = vec![draft.realm_event.clone(), founding_grant_event];
+                let mut bootstrap_events = vec![draft.realm_event.clone()];
                 if let Some(creator_member_event) = &draft.creator_member_event {
                     bootstrap_events.push(creator_member_event.clone());
                 }
-                bootstrap_events.push(draft.peer_member_event.clone());
+                bootstrap_events.push(peer_member_event.clone());
                 let pending = PendingDirectConversationBootstrap {
                     events: submitter.prepare_sdk_events_batch(bootstrap_events).await?,
                 };
@@ -661,40 +635,17 @@ async fn materialize_direct_conversation(
     save_direct_conversation_realm_projection(&mut state_store, &realm_id, &actor_id, peer);
     refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id, None).await?;
 
-    if !accepted.contains(draft.main_strand_grant_event.event_id.as_str()) {
-        let pre_strand_grant_seal_frontier =
-            state_store.read().seal_view_for_realm(&realm_id).frontier;
-        main_strand_grant_event.authorization_ref = Some(founding_grant_id);
-        submitter
-            .submit_sdk_event(&main_strand_grant_event)
-            .await
-            .map_err(|error| {
-                anyhow::anyhow!("submit direct conversation main Strand grant: {error}")
-            })?;
-        accepted = wait_for_direct_materialization_events(
-            &submitter,
-            &realm_id,
-            [draft.main_strand_grant_event.event_id.as_str()],
-        )
-        .await?;
-        refresh_direct_conversation_seal(
-            &submitter,
-            &mut state_store,
-            &realm_id,
-            Some(&pre_strand_grant_seal_frontier),
-        )
-        .await?;
-    } else {
-        // A resumed materialization may observe the grant only after the Seal
-        // covering it has already become the current frontier. Requiring a
-        // second frontier advance in that case waits for an Event this run did
-        // not submit and turns a successful recovery into a false timeout.
-        refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id, None).await?;
-    }
-
     if !accepted.contains(draft.main_strand_event.event_id.as_str()) {
         let mut main_strand_event = draft.main_strand_event.clone();
-        main_strand_event.authorization_ref = Some(main_strand_grant_id);
+        // Submitted after the genesis batch is canonical accepted: the creator
+        // is already an `ak.realm.owner` whose operational coverage includes
+        // `ak.strand.create`, so this Event names the authority-root cell under
+        // an accepted Seal and MUST NOT reuse the staged genesis proof.
+        main_strand_event.authorization_ref = Some(
+            arkret_policy::realm_bootstrap::RealmAuthorityRootProof::AcceptedSeal
+                .authorization_ref()
+                .to_owned(),
+        );
         submitter
             .submit_sdk_event(&main_strand_event)
             .await
@@ -1673,72 +1624,5 @@ mod tests {
             event.payload["reason"],
             json!("agent_participation_disabled")
         );
-    }
-
-    #[test]
-    fn direct_founding_grant_gets_a_verifiable_issuer_attestation() {
-        let actor = "did:web:alice.example";
-        let event: arkret_sdk::Event = serde_json::from_value(json!({
-            "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
-            "kind": "ak.capability.grant",
-            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002",
-            "scope_ref": {"kind": "realm", "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002"},
-            "actor_id": actor,
-            "actor_seq": 2,
-            "created_at": "2026-07-21T08:00:00.000Z",
-            "hlc": "019041000000-0002-a13f9c2e",
-            "prev_refs": [],
-            "payload": {
-                "grant_id": "ak:grant:01904100-0000-7000-8000-000000000003",
-                "grant": {
-                    "id": "ak:grant:01904100-0000-7000-8000-000000000003",
-                    "schema": "ak.schema.capability.v1",
-                    "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002",
-                    "issuer": actor,
-                    "subject": actor,
-                    "actions": ["ak.realm.configure"],
-                    "resources": [{
-                        "kind": "realm",
-                        "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002",
-                        "match_scope": "realm_wide"
-                    }],
-                    "issued_at": "2026-07-21T08:00:00.000Z",
-                    "proofs": []
-                }
-            },
-            "proofs": []
-        }))
-        .expect("unsigned founding grant Event");
-        let signer = crate::event_signer::build_ed25519_device_signer(
-            [17_u8; 32],
-            "did:key:zfixture",
-            "ak:device:01904100-0000-7000-8000-000000000004",
-        );
-
-        let mut signed = event;
-        crate::event_submit::attach_capability_grant_payload_proof_with_signer(
-            &mut signed,
-            &signer,
-        )
-        .expect("sign founding grant");
-        let grant: arkret_sdk::CapabilityGrant =
-            serde_json::from_value(signed.payload["grant"].clone()).expect("signed grant");
-        assert_eq!(grant.proofs.len(), 1);
-        let proof = &grant.proofs[0];
-        assert_eq!(
-            proof.proof_purpose,
-            Some(arkret_sdk::PayloadProofPurpose::IssuerAttestation)
-        );
-        assert_eq!(proof.payload_digest, grant.payload_digest().unwrap());
-        let public_key = arkret_sdk::signatures::PublicKeyMaterial::Ed25519Multibase {
-            value: signer.public_key_multibase().expect("local public key"),
-        };
-        arkret_sdk::signatures::Ed25519DetachedJwsVerifier::new()
-            .verify_detached_jws(
-                &proof.jws,
-                &grant.canonical_proof_binding_bytes(proof).unwrap(),
-                &public_key,
-            )
-            .expect("issuer attestation verifies");
     }
 }

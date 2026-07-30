@@ -159,13 +159,11 @@ pub fn build_realm_bootstrap_events(
         trust_domain,
         content_scheme,
     )?);
-    // realm-and-space.md §2.5: an ordinary Realm is one genesis transaction.
-    // The explicit, revocable founding grant MUST immediately follow create.
-    let founding_grant_id = format!("ak:grant:{}", crate::operation::uuid_v7());
-    events.push(
-        crate::operation::ak_ops::realm_founding_grant(realm_id, actor_id, &founding_grant_id)
-            .build_sdk_event("inkson")?,
-    );
+    // realm-and-space.md §2.5: an ordinary Realm is one genesis transaction of
+    // `ak.realm.create` plus the closed follow-up facet whitelist. The creator's
+    // root authority is the `ak.component.realm.authority_root.v1` cell the
+    // create Event's registered reducer contract writes, so there is no
+    // wire slot for a self-issued genesis grant.
     if let Some(policy_bundle) =
         recommended_realm_policy_bundle_for_profile(encryption_profile, content_scheme)
     {
@@ -386,6 +384,15 @@ fn build_realm_genesis_object(
     let notary_profile_typed: arkret_sdk::NotaryProfile =
         parse_wire_enum("notary_profile", notary_profile)?;
     let notary = realm_genesis_notary(notary_profile_typed, notary_did)?;
+    // realm-and-space.md §2.5: the create-locked registry digest is the basis
+    // the Realm's authority-root cell is seeded with, so the owner ceiling is
+    // pinned to the snapshot this client actually authored against.
+    let capability_action_registry_digest = arkret_sdk::current_capability_action_registry_digest()
+        .map_err(|err| {
+            anyhow::anyhow!(
+                "embedded capability-action registry unavailable for realm.create: {err}"
+            )
+        })?;
 
     let mut object = arkret_sdk::Realm::new(
         realm_object_id,
@@ -394,6 +401,7 @@ fn build_realm_genesis_object(
         trust_domain_typed,
         notary_profile_typed,
         notary,
+        capability_action_registry_digest,
     );
     // `Realm::new` seeds `schema_refs` with the core profile; an ordinary Realm
     // declares only the Realm schema itself.
