@@ -83,7 +83,6 @@ fn realm_create_envelope_carries_real_proof_and_real_anchor() {
         "single_did",
         "sha256",
         "ak:trust_domain:server.example",
-        &[],
         None,
         None,
     )

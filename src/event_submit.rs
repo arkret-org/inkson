@@ -2900,7 +2900,6 @@ mod tests {
             "single_did",
             "sha256",
             "ak:trust_domain:did.web.example",
-            &[],
             None,
             None,
         )

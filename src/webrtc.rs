@@ -344,11 +344,15 @@ mod tests {
     #[test]
     fn every_canonical_signal_kind_round_trips_sender_to_receiver() {
         for kind in CALL_SIGNAL_KINDS {
-            let body = CallSignalBody::from_plaintext(&call_signal_body(1, kind))
-                .expect("canonical signal_kind must parse");
-            assert_eq!(body.signal_kind, *kind);
-            assert_eq!(body.call_id, TEST_CALL);
-            assert_eq!(body.sequence, 1);
+            let body: arkret_sdk::CallSignalPlaintext =
+                serde_json::from_value(call_signal_body(1, kind))
+                    .expect("canonical signal_kind must parse");
+            assert_eq!(
+                serde_json::to_value(&body.signal_kind).unwrap(),
+                serde_json::json!(kind)
+            );
+            assert_eq!(body.call_id.as_str(), TEST_CALL);
+            assert_eq!(body.seq, 1);
         }
     }
 
@@ -373,7 +377,7 @@ mod tests {
         // the ciphertext is authenticated but not trusted.
         let mut hostile = call_signal_body(1, "invite");
         hostile["signal_kind"] = serde_json::json!("sdp_offer");
-        assert!(CallSignalBody::from_plaintext(&hostile).is_err());
+        assert!(serde_json::from_value::<arkret_sdk::CallSignalPlaintext>(hostile).is_err());
     }
 
     #[test]
@@ -404,15 +408,28 @@ mod tests {
     #[test]
     fn plaintext_missing_the_dedupe_sequence_is_rejected() {
         let mut without_sequence = call_signal_body(1, "invite");
-        without_sequence
-            .as_object_mut()
-            .unwrap()
-            .remove("payload_sequence");
-        assert!(CallSignalBody::from_plaintext(&without_sequence).is_err());
+        without_sequence.as_object_mut().unwrap().remove("seq");
+        assert!(
+            serde_json::from_value::<arkret_sdk::CallSignalPlaintext>(without_sequence.clone())
+                .is_err()
+        );
+
+        // `payload_sequence` was the pre-`bcf57efa` field name. The closed
+        // `CallSignalPlaintext` schema must reject it as an unknown field rather
+        // than accept it as an alias for `seq`.
+        let mut legacy_sequence = call_signal_body(1, "invite");
+        {
+            let object = legacy_sequence.as_object_mut().unwrap();
+            let seq = object.remove("seq").expect("encoder emits seq");
+            object.insert("payload_sequence".to_owned(), seq);
+        }
+        assert!(
+            serde_json::from_value::<arkret_sdk::CallSignalPlaintext>(legacy_sequence).is_err()
+        );
 
         let mut wrong_kind = call_signal_body(1, "invite");
         wrong_kind["kind"] = serde_json::json!("ak.typing");
-        assert!(CallSignalBody::from_plaintext(&wrong_kind).is_err());
+        assert!(serde_json::from_value::<arkret_sdk::CallSignalPlaintext>(wrong_kind).is_err());
 
         let mut rx = CallSignalReceiver::new();
         assert!(matches!(

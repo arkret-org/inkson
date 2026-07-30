@@ -334,7 +334,6 @@ fn build_realm_create_event_matches_event_schema() {
         "single_did",
         "sha256",
         "ak:trust_domain:server.example",
-        &[],
         None,
         None,
     )
@@ -530,4 +529,66 @@ fn build_plaintext_visible_services_event_matches_event_schema() {
     .expect("non-empty service list yields Some(envelope)");
     stamp_wire_fields(&mut envelope);
     assert_envelope_matches_schema("build_plaintext_visible_services_event", &envelope);
+}
+
+/// R94 regression. `realm.schema.json` is closed (46 properties,
+/// `unevaluatedProperties: false`) and has no `plaintext_visible_services`
+/// property; the fact's only carrier is the dedicated
+/// `ak.realm.plaintext_visible_services` Event. The earlier
+/// `build_realm_create_event` gate only ever passed an empty service list, so a
+/// second declaration on the Realm object survived every schema gate.
+///
+/// This asserts both halves: a non-empty caller list must keep the create
+/// object schema-valid AND must materialize exactly one dedicated facet Event.
+#[test]
+fn realm_bootstrap_keeps_plaintext_services_off_the_closed_realm_object() {
+    let events = event_builders::build_realm_bootstrap_events(
+        TEST_REALM_ID,
+        TEST_ACTOR_ID,
+        TEST_SERVICE_ID,
+        "Engineering",
+        None,
+        "listed",
+        "invite",
+        "shared",
+        "mls_rfc9420",
+        "standard",
+        "restricted",
+        "single_did",
+        "sha256",
+        "ak:trust_domain:server.example",
+        &[],
+        &["did:web:server.example".to_owned()],
+        None,
+        None,
+    )
+    .expect("build_realm_bootstrap_events succeeds");
+
+    let mut create = events
+        .iter()
+        .find(|event| event.kind == EventKind::RealmCreate)
+        .cloned()
+        .expect("bootstrap chain emits ak.realm.create");
+    assert!(
+        create.payload["object"]
+            .get("plaintext_visible_services")
+            .is_none(),
+        "ak.realm.create object must not declare plaintext_visible_services; \
+         realm.schema.json is closed and does not define that property"
+    );
+    stamp_wire_fields(&mut create);
+    assert_envelope_matches_schema(
+        "build_realm_bootstrap_events[create with plaintext services]",
+        &create,
+    );
+
+    let facets = events
+        .iter()
+        .filter(|event| event.kind == EventKind::RealmPlaintextVisibleServices)
+        .count();
+    assert_eq!(
+        facets, 1,
+        "the caller's plaintext service list must materialize exactly one \
+         ak.realm.plaintext_visible_services Event"
+    );
 }

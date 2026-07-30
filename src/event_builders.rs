@@ -157,7 +157,6 @@ pub fn build_realm_bootstrap_events(
         notary_profile,
         digest_algorithm,
         trust_domain,
-        plaintext_visible_services,
         alias,
         content_scheme,
     )?);
@@ -337,7 +336,6 @@ pub fn build_realm_create_event(
     notary_profile: &str,
     digest_algorithm: &str,
     trust_domain: &str,
-    plaintext_visible_services: &[String],
     alias: Option<&str>,
     content_scheme: Option<&str>,
 ) -> anyhow::Result<arkret_sdk::Event> {
@@ -403,15 +401,12 @@ pub fn build_realm_create_event(
     {
         object["alias"] = Value::String(alias.trim().trim_start_matches('#').to_owned());
     }
-    let plaintext_services = plaintext_visible_services
-        .iter()
-        .map(|service| service.trim())
-        .filter(|service| !service.is_empty())
-        .map(|service| Value::String(service.to_owned()))
-        .collect::<Vec<_>>();
-    if !plaintext_services.is_empty() {
-        object["plaintext_visible_services"] = Value::Array(plaintext_services);
-    }
+    // `plaintext_visible_services` is NOT a property of the closed
+    // realm.schema.json (46 properties, `unevaluatedProperties: false`). Its
+    // only carrier is the dedicated `ak.realm.plaintext_visible_services`
+    // Event, which `build_realm_bootstrap_events` emits in the same batch via
+    // `build_plaintext_visible_services_event`. Declaring it on the object as
+    // well produced a second, schema-invalid truth for the same fact.
 
     // ak.component.realm.create.v1 is an ordered-log genesis singleton;
     // the bootstrap write asserts head_eq null and sets the realm metadata.
@@ -464,7 +459,6 @@ pub fn build_managed_agent_pcr_create_event(
         "single_did",
         "sha256",
         trust_domain,
-        &[],
         None,
         Some("mls_rfc9420"),
     )?;
@@ -477,7 +471,10 @@ pub fn build_managed_agent_pcr_create_event(
         object["fields"] = json!({"purpose": "principal_control"});
         object["content_encryption_floor"] = Value::String("e2ee_required".to_owned());
         object["metadata_encryption_floor"] = Value::String("e2ee_required".to_owned());
-        object["plaintext_visible_services"] = json!([]);
+        // No `plaintext_visible_services` declaration: it is not a property of
+        // the closed realm.schema.json, and an empty list is indistinguishable
+        // from absence. A managed Agent PCR claims no plaintext-visible
+        // service.
         object["history_sharing_policy"] = json!({
             "version": 1,
             "default_key_share": "deny",
