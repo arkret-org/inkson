@@ -214,7 +214,12 @@ fn test_seal_basis() -> arkret_sdk::SealBasis {
         "realm_id": TEST_REALM_ID,
         "seal_id": TEST_ANCHOR_REF,
         "control_event_set_root": TEST_ROOT_HASH,
-        "state_root": TEST_ROOT_HASH
+        "state_root": TEST_ROOT_HASH,
+        "governance_health": {
+            "status": "healthy",
+            "pending_proposals": [],
+            "retained_faults": []
+        }
     }))
     .expect("test RealmSealFrontierView is valid");
     view.seal_basis()

@@ -2,10 +2,9 @@ use anyhow::{Context, Result, anyhow};
 use arkret_models_crypto::{BackupSeriesEraseRequestBody, BackupSeriesEraseStatus};
 use arkret_wire::{
     BackupObjectRef, BackupRotationKind, BackupSeriesId, CLIENT_STEP_ATTESTATION_SIGNED_FIELDS,
-    ClientStepAttestation, ClientStepAttestationAuthData, ControlProposalReceipt,
-    ControlProposalReceiptKind, Did, EventInitialSubmission, EventsSubmitBatchRequestBody, Hash,
-    LeaseBasisRef, ProposalReceiptIssueRequest, RiskTier, SecurityTransactionBinding,
-    SecurityTransactionState, SecurityTransactionStep, TransactionId,
+    ClientStepAttestation, ClientStepAttestationAuthData, Did, EventsSubmitBatchRequestBody, Hash,
+    LeaseBasisRef, RiskTier, SecurityTransactionBinding, SecurityTransactionState,
+    SecurityTransactionStep, TransactionId,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -215,35 +214,11 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     all_events.push(revoke);
     all_events.extend(pointer_events);
     let signed_events = submitter.prepare_sdk_events_batch(all_events).await?;
-    let leases = crate::authorization_lease::acquire_for_events(&http, &signed_events).await?;
+    crate::authorization_lease::acquire_for_events(&http, &signed_events).await?;
     let mut submissions = Vec::with_capacity(signed_events.len());
-    for (event, lease) in signed_events.into_iter().zip(leases) {
-        let member = http
-            .issue_control_proposal_receipt(&ProposalReceiptIssueRequest {
-                event: event.clone(),
-                authorization_lease: lease.clone(),
-                cba_proof_bundles: Vec::new(),
-            })
-            .await?
-            .member_receipt;
-        let receipt = ControlProposalReceipt {
-            kind: ControlProposalReceiptKind::ProposalReceipt,
-            realm_id: member.realm_id.clone(),
-            proposal_digest: member.proposal_digest.clone(),
-            received_at: member.received_at,
-            decision_due_at: member.decision_due_at,
-            absolute_due_at: member.absolute_due_at,
-            defer_count: 0,
-            authority_set_ref: member.authority_set_ref.clone(),
-            member_receipts: vec![member],
-        };
-        receipt.validate_protocol_bounds()?;
-        submissions.push(EventInitialSubmission {
-            event,
-            authorization_lease: lease,
-            cba_proof_bundles: Vec::new(),
-            control_proposal_receipt: Some(receipt),
-        });
+    for event in signed_events {
+        submissions
+            .push(crate::authorization_lease::standard_initial_submission(&http, &event).await?);
     }
     let revoke_submission = EventsSubmitBatchRequestBody {
         events: vec![submissions.remove(0)],
