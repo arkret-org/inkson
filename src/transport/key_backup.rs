@@ -84,7 +84,12 @@ fn key_backup_authorized_event_ref_for_device(viewer: &Value, device_id: &str) -
             device.get("device_id").and_then(Value::as_str) == Some(device_id)
                 && device.get("status").and_then(Value::as_str) == Some("active")
         })
-        .and_then(|device| device.get("authorized_event_ref").and_then(Value::as_str))
+        .and_then(|device| {
+            device
+                .get("device_authorize_event_id")
+                .or_else(|| device.get("authorized_event_ref"))
+                .and_then(Value::as_str)
+        })
         .map(str::trim)
         .filter(|event_id| !event_id.is_empty())
         .map(str::to_owned)
@@ -160,15 +165,39 @@ impl crate::transport::TransportClient {
         else {
             return Ok(());
         };
-        let viewer = match crate::transport::keys::list_devices(&self.sdk_http_client()?).await {
-            Ok(viewer) => viewer,
-            Err(_) => return Ok(()),
-        };
+        let http = self.sdk_http_client()?;
+        let viewer = crate::transport::keys::list_devices(&http).await.ok();
         // `key_backup_authorized_event_ref_for_device` reads the viewer's
         // `devices[]` leniently via `Value` accessors; serialize the typed
         // `AccountView` back to its wire JSON so the helper sees the same shape.
-        let viewer = serde_json::to_value(&viewer)?;
-        let Some(event_id) = key_backup_authorized_event_ref_for_device(&viewer, &device_id) else {
+        let viewer_event_id = viewer
+            .map(serde_json::to_value)
+            .transpose()?
+            .as_ref()
+            .and_then(|viewer| key_backup_authorized_event_ref_for_device(viewer, &device_id));
+        let actor_id = payload
+            .get("actor_id")
+            .and_then(Value::as_str)
+            .or_else(|| payload.get("principal_id").and_then(Value::as_str));
+        let query_event_id = if viewer_event_id.is_none() {
+            if let Some(actor_id) = actor_id {
+                let actor = arkret_sdk::Did::new(actor_id.to_owned())?;
+                let device = arkret_sdk::DeviceId::new(device_id.clone())?;
+                let outcome =
+                    crate::transport::keys::query_keys(&http, actor_id, &device_id).await?;
+                outcome
+                    .device_keys
+                    .get(&actor)
+                    .and_then(|devices| devices.get(&device))
+                    .and_then(|record| record.device_authorize_event_id.as_ref())
+                    .map(ToString::to_string)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let Some(event_id) = viewer_event_id.or(query_event_id) else {
             return Ok(());
         };
         let signed = crate::key_backup::sign_key_backup_with_active_device_and_trust_anchor(

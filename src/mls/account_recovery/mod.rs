@@ -44,6 +44,8 @@ pub use backup_body::{
     open_mls_account_secret_recovery_public_key_backup,
 };
 #[cfg(debug_assertions)]
+pub use recovery_transaction::unlock_joint_recovery_backups;
+#[cfg(debug_assertions)]
 pub(crate) use recovery_transaction::{
     authorize_recovery_device_request, prepare_enrollment_authority_recovery,
 };

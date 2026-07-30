@@ -101,6 +101,7 @@ pub(crate) async fn prepare_cross_signing_recovery(
         verified_session.principal_id.as_str(),
         verified_session.requesting_device_id.as_str(),
         &verified_session,
+        &key_material,
     )
     .await?;
     let active_series = super::selection::active_series_id_for_backup_class(
@@ -883,6 +884,54 @@ fn recovery_backup_classes_unlocked(
         .collect()
 }
 
+/// Exercise the product restore path for the joint recovery harness without
+/// exposing the recovery-derived private key or plaintext account secret.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub async fn unlock_joint_recovery_backups(
+    principal_http: arkret_sdk::http_client::Client,
+    session: &arkret_sdk::RecoverySessionState,
+    recovery_words: &str,
+) -> anyhow::Result<Vec<arkret_models_crypto::RecoveryBackupClassUnlocked>> {
+    let api = crate::transport::TransportClient::from_http(
+        principal_http,
+        crate::transport::RequestContext::new(""),
+    );
+    let recovery_material =
+        arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
+            recovery_words,
+            "",
+            0,
+        )?;
+    let restore_payload = super::fetch_mls_restore_payload_with_recovery_session_unlock_proof(
+        &api,
+        session.principal_id.as_str(),
+        session.requesting_device_id.as_str(),
+        session,
+        &recovery_material,
+    )
+    .await?;
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let mut state_store = crate::state::LocalStateStore::default();
+    let report = super::restore_mls_history_with_recovery_key_from_payload(
+        &restore_payload,
+        &mut state_store,
+        secure_store.as_ref(),
+        session.principal_id.as_str(),
+        session.requesting_device_id.as_str(),
+        &recovery_material.backup_hpke_serialized_private_key,
+        (session.policy_id.as_str(), session.policy_version),
+    )?;
+    if !report.account_secret_imported || report.failed != 0 {
+        anyhow::bail!(
+            "joint recovery backup restore was incomplete: imported={}, failed={}",
+            report.account_secret_imported,
+            report.failed
+        );
+    }
+    recovery_backup_classes_unlocked(&restore_payload)
+}
+
 fn apply_recovery_basis(event: &mut Event, basis: &LeaseBasisRef) {
     match basis {
         LeaseBasisRef::Seal(seal) => event.seal_ref = Some(seal.clone()),
@@ -969,8 +1018,46 @@ pub(crate) async fn execute_enrollment_authority_recovery(
     .await?;
     let verified_session = prepared.verified_session.clone();
     let session = &verified_session;
-    let transaction_id = prepared.create_request.transaction_id.clone();
+    // Unlock and durably import the backup snapshot while the transaction's
+    // session-bound device generation is still the current trust generation.
+    // Re-anchor deliberately advances that generation, so postponing restore
+    // until afterward makes the accepted active-series signature look stale.
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let recovery_material =
+        arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
+            recovery_words,
+            "",
+            0,
+        )?;
+    let restore_payload = super::fetch_mls_restore_payload_with_recovery_session_unlock_proof(
+        api,
+        session.principal_id.as_str(),
+        session.requesting_device_id.as_str(),
+        session,
+        &recovery_material,
+    )
+    .await?;
+    let restore_report = {
+        let mut store = state_store.write();
+        super::restore_mls_history_with_recovery_key_from_payload(
+            &restore_payload,
+            &mut store,
+            secure_store.as_ref(),
+            session.principal_id.as_str(),
+            session.requesting_device_id.as_str(),
+            prepared.recovery_private_key.as_slice(),
+            (session.policy_id.as_str(), session.policy_version),
+        )?
+    };
+    let restore_report_committed =
+        restore_report.account_secret_imported && restore_report.failed == 0;
+    {
+        let store = state_store.write();
+        let barrier = store.begin_durable_flush()?;
+        drop(store);
+        barrier.wait().await?;
+    }
+    let transaction_id = prepared.create_request.transaction_id.clone();
     let transaction_store =
         crate::security_transaction::InksonSecurityTransactionStore::new(secure_store.clone());
     let staged_secret_ref = transaction_store
@@ -1069,34 +1156,6 @@ pub(crate) async fn execute_enrollment_authority_recovery(
     }
 
     reject_terminal_recovery_transaction(&transaction, secure_store.as_ref())?;
-    let restore_payload = super::fetch_mls_restore_payload_with_recovery_session_unlock_proof(
-        api,
-        session.principal_id.as_str(),
-        session.requesting_device_id.as_str(),
-        &session,
-    )
-    .await?;
-    let restore_report = {
-        let mut store = state_store.write();
-        super::restore_mls_history_with_recovery_key_from_payload(
-            &restore_payload,
-            &mut store,
-            secure_store.as_ref(),
-            session.principal_id.as_str(),
-            session.requesting_device_id.as_str(),
-            prepared.recovery_private_key.as_slice(),
-            (session.policy_id.as_str(), session.policy_version),
-        )?
-    };
-    let restore_report_committed =
-        restore_report.account_secret_imported && restore_report.failed == 0;
-    {
-        let store = state_store.write();
-        let barrier = store.begin_durable_flush()?;
-        drop(store);
-        barrier.wait().await?;
-    }
-
     if transaction.state != SecurityTransactionState::Completed {
         if let Some(retried) = workflow
             .retry_byte_identical_pending(&transaction_id)
@@ -1372,6 +1431,7 @@ pub(crate) async fn resume_pending_fresh_device_recovery(
         session.principal_id.as_str(),
         session.requesting_device_id.as_str(),
         &session,
+        &recovery_material,
     )
     .await?;
     let restore_report = {
@@ -1612,11 +1672,18 @@ pub(crate) async fn execute_cross_signing_recovery(
     }
 
     reject_terminal_recovery_transaction(&transaction, secure_store.as_ref())?;
+    let recovery_material =
+        arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
+            recovery_words,
+            "",
+            0,
+        )?;
     let restore_payload = super::fetch_mls_restore_payload_with_recovery_session_unlock_proof(
         api,
         session.principal_id.as_str(),
         session.requesting_device_id.as_str(),
         session,
+        &recovery_material,
     )
     .await?;
     let restore_report = {

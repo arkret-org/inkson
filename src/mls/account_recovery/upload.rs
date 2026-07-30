@@ -59,9 +59,41 @@ async fn ensure_initial_active_series(
         &frontier,
         &trust_anchor,
     )?;
+    let active_series_event_id = event.event_id.clone();
     submitter
         .submit_sdk_events_batch(control_realm.as_str(), vec![event], None)
         .await?;
+    let mut accepted = http
+        .events_query_all_pages(control_realm.as_str())
+        .await?
+        .events
+        .into_iter()
+        .filter(|event| event.actor_id.as_str() == actor_id)
+        .collect::<Vec<_>>();
+    accepted.sort_by_key(|event| event.actor_seq);
+    if accepted.last().map(|event| &event.event_id) != Some(&active_series_event_id) {
+        return Err(anyhow!(
+            "accepted {wire_kind} active-series Event is not the actor frontier"
+        ));
+    }
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow!("active device signer is required"))?;
+    let hlc = crate::signing_stamp::issue_protocol_hlc(actor_id, device_id, &control_realm)?;
+    let seal = signer
+        .sign_self_principal_linear_successor_seal(&accepted, &frontier, hlc)
+        .map_err(|error| anyhow!("sign {wire_kind} active-series successor Seal: {error}"))?;
+    let active_series_digest =
+        arkret_sdk::Hash::new(accepted.last().expect("checked").event_digest()?)?;
+    let seal_outcome = http.events_submit_seal(&seal).await?;
+    if !seal_outcome
+        .accepted_event_digests
+        .iter()
+        .any(|digest| digest == &active_series_digest)
+    {
+        return Err(anyhow!(
+            "Principal Server did not seal the {wire_kind} active-series Event"
+        ));
+    }
 
     let verified = fetch_mls_restore_payload(api, actor_id).await?;
     if super::selection::active_series_id_for_backup_class(&verified, wire_kind) != Some(series_id)

@@ -119,9 +119,18 @@ pub fn sign_key_backup_with_active_device_and_trust_anchor(
         object.remove("auth_data");
     }
     let signed_fields = key_backup_signed_fields_for_body(body);
+    let verification_method = body
+        .get("actor_id")
+        .and_then(Value::as_str)
+        .map(|actor_id| arkret_sdk::Did::new(actor_id.to_owned()))
+        .transpose()?
+        .map(|principal| signer.verification_method_for_principal(&principal))
+        .transpose()
+        .map_err(|error| anyhow::anyhow!("key backup principal binding: {error}"))?
+        .unwrap_or_else(|| signer.verification_method().to_owned());
     let mut auth = json!({
         "device_id": device_id,
-        "verification_method": signer.verification_method(),
+        "verification_method": verification_method,
         "signature_algorithm": KEY_BACKUP_RAW_SIGNATURE_ALGORITHM,
         "signed_fields": signed_fields,
     });
@@ -245,9 +254,15 @@ pub fn build_key_backup_unlock_proof_active(
     principal_id: &str,
     requesting_device_id: &str,
     recovery_session: Option<&Value>,
+    recovery_key: Option<(&[u8; 32], &str)>,
 ) -> anyhow::Result<Value> {
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("active signer is required for key backup unlock proof"))?;
+    let active_signer = if recovery_key.is_none() {
+        Some(crate::event_signer::active_signer().ok_or_else(|| {
+            anyhow::anyhow!("active signer is required for key backup unlock proof")
+        })?)
+    } else {
+        None
+    };
     let backup_id = required_str_anyhow(backup, "backup_id")?;
     let backup_kind = required_str_anyhow(backup, "backup_kind")?;
     let series_id = required_str_anyhow(backup, "series_id")?;
@@ -290,6 +305,15 @@ pub fn build_key_backup_unlock_proof_active(
         "proof_digest",
         "issued_at",
     ];
+    let verification_method = recovery_key
+        .map(|(_, method)| method.to_owned())
+        .unwrap_or_else(|| {
+            active_signer
+                .as_ref()
+                .expect("checked above")
+                .verification_method()
+                .to_owned()
+        });
     let mut proof = json!({
         "schema": KEY_BACKUP_UNLOCK_PROOF_SCHEMA,
         "recovery_session_id": recovery_session_id,
@@ -303,15 +327,23 @@ pub fn build_key_backup_unlock_proof_active(
         "proof_digest": proof_digest,
         "issued_at": issued_at,
         "auth_data": {
-            "verification_method": signer.verification_method(),
+            "verification_method": verification_method,
             "signature_algorithm": KEY_BACKUP_RAW_SIGNATURE_ALGORITHM,
             "signed_fields": signed_fields,
         }
     });
     let payload = crate::canonical::canonical_json_bytes(&proof)?;
-    let signature = signer
-        .sign_raw(&payload)
-        .map_err(|err| anyhow::anyhow!("key backup unlock proof sign: {err:?}"))?;
+    let signature = if let Some((seed, _)) = recovery_key {
+        SigningKey::from_bytes(seed)
+            .sign(&payload)
+            .to_bytes()
+            .to_vec()
+    } else {
+        active_signer
+            .expect("checked above")
+            .sign_raw(&payload)
+            .map_err(|err| anyhow::anyhow!("key backup unlock proof sign: {err:?}"))?
+    };
     proof["auth_data"]["signature"] = Value::String(B64.encode(signature));
     Ok(proof)
 }
@@ -328,6 +360,7 @@ pub async fn fetch_key_backup_with_active_unlock_proof(
         principal_id,
         requesting_device_id,
         None,
+        None,
     )
     .await
 }
@@ -338,6 +371,7 @@ pub async fn fetch_key_backup_with_recovery_session_unlock_proof(
     principal_id: &str,
     requesting_device_id: &str,
     recovery_session: &arkret_sdk::RecoverySessionState,
+    recovery_key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
 ) -> anyhow::Result<Value> {
     recovery_session.validate()?;
     if recovery_session.principal_id.as_str() != principal_id
@@ -356,6 +390,19 @@ pub async fn fetch_key_backup_with_recovery_session_unlock_proof(
         principal_id,
         requesting_device_id,
         Some(&session),
+        Some((
+            &recovery_key_material.recovery_proof_seed,
+            recovery_session
+                .proof_summary
+                .as_ref()
+                .and_then(|summary| summary.verification_method.as_ref())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "verified recovery session omitted recovery verification method"
+                    )
+                })?
+                .as_str(),
+        )),
     )
     .await
 }
@@ -366,6 +413,7 @@ async fn fetch_key_backup_with_unlock_proof(
     principal_id: &str,
     requesting_device_id: &str,
     recovery_session: Option<&Value>,
+    recovery_key: Option<(&[u8; 32], &str)>,
 ) -> anyhow::Result<Value> {
     let backoff_scope = key_backup_unlock_backoff_scope(api, principal_id)?;
     if let Some(retry_after_ms) = key_backup_unlock_backoff_remaining_ms(&backoff_scope) {
@@ -389,6 +437,7 @@ async fn fetch_key_backup_with_unlock_proof(
         principal_id,
         requesting_device_id,
         recovery_session,
+        recovery_key,
     )?;
     let backup = match api
         .get_key_backup_with_unlock_proof(&backup_id, &proof)
@@ -425,6 +474,7 @@ pub async fn fetch_key_backup_for_verified_recovery_session(
         session.principal_id.as_str(),
         session.requesting_device_id.as_str(),
         Some(&session_value),
+        None,
     )?;
     let backup = api
         .get_key_backup_with_unlock_proof(&backup_id, &proof)
@@ -540,6 +590,7 @@ mod tests {
             &backup,
             "did:web:alice.example",
             "ak:device:0196419b-0000-7000-8000-000000000003",
+            None,
             None,
         )
         .expect("unlock proof builds");

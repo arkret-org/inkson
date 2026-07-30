@@ -951,13 +951,29 @@ pub async fn establish_joint_recovery_policy_and_backup(
         principal_http,
         crate::transport::RequestContext::new(""),
     );
-    crate::recovery_strand::ensure_recovery_policy_and_did_recovery_backup(
+    let did_recovery_backup_id =
+        crate::recovery_strand::ensure_recovery_policy_and_did_recovery_backup(
+            &api,
+            principal_id,
+            device_id,
+            recovery_words,
+        )
+        .await?;
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    crate::mls::runtime::load_or_create_account_mls_secret(
+        secure_store.as_ref(),
+        principal_id,
+        device_id,
+    )?;
+    crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
         &api,
+        secure_store.as_ref(),
         principal_id,
         device_id,
         recovery_words,
     )
-    .await
+    .await?;
+    Ok(did_recovery_backup_id)
 }
 
 /// Prepare the exact enrollment-authority recovery transaction used by the
@@ -1327,6 +1343,8 @@ pub fn sign_terminal_receipt_continue(
             .into_iter()
             .map(str::to_owned),
     );
+    let replacement_verification_method =
+        signer.verification_method_for_principal(&resource.principal_id)?;
 
     let mut receipt = RecoveryReceipt {
         schema: "ak.schema.recovery_receipt.v1".to_owned(),
@@ -1361,7 +1379,7 @@ pub fn sign_terminal_receipt_continue(
         started_at: observation.started_at,
         completed_at: observation.completed_at,
         auth_data: RecoveryReceiptAuthData {
-            verification_method: signer.verification_method().to_owned(),
+            verification_method: replacement_verification_method.clone(),
             signature_algorithm: "Ed25519".to_owned(),
             signature: String::new(),
             signed_fields,
@@ -1383,7 +1401,7 @@ pub fn sign_terminal_receipt_continue(
         attestation_digest: Hash::new(arkret_sdk::canonical::sha256_digest(&artifact_bytes))?,
         artifact,
         auth_data: ClientStepAttestationAuthData {
-            verification_method: signer.verification_method().to_owned(),
+            verification_method: replacement_verification_method,
             alg: "EdDSA".to_owned(),
             signature: String::new(),
             signed_fields: CLIENT_STEP_ATTESTATION_SIGNED_FIELDS

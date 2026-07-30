@@ -452,6 +452,37 @@ impl InksonEventSigner {
         .map_err(|error| EventSignerError::Backend(error.to_string()))
     }
 
+    pub fn sign_self_principal_linear_successor_seal(
+        &self,
+        events: &[arkret_sdk::Event],
+        predecessor: &arkret_sdk::RealmSealFrontierView,
+        hlc: arkret_sdk::Hlc,
+    ) -> Result<arkret_sdk::Seal, EventSignerError> {
+        let principal = events.first().ok_or_else(|| {
+            EventSignerError::Encoding(
+                "principal successor Seal requires accepted Event history".to_owned(),
+            )
+        })?;
+        let device_id = self.device_id.as_deref().ok_or_else(|| {
+            EventSignerError::Encoding(
+                "principal successor Seal requires a bound device_id".to_owned(),
+            )
+        })?;
+        let signer = InksonPayloadSignerAdapter {
+            owner: self,
+            did: principal.actor_id.clone(),
+            verification_method: format!("{}#{device_id}", principal.actor_id),
+        };
+        arkret_bootstrap::build_self_principal_linear_successor_seal(
+            events,
+            predecessor,
+            hlc,
+            &signer,
+            &crate::operation::cell_write_projector,
+        )
+        .map_err(|error| EventSignerError::Backend(error.to_string()))
+    }
+
     /// Sign a managed Agent PCR Seal as the controller device named by the
     /// Agent DID's accepted delegation. The wire signer is rebound to the
     /// controller DID and the authenticated `<controller>#<device_id>` method.

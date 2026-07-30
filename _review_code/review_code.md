@@ -168,3 +168,32 @@
   carrying a second local-authority implementation.
 - Prevention dimension: receipt routing must derive from the governed Realm's authority model,
   not from whether the PCR id happens to equal the self-principal deterministic id.
+
+## 2026-07-30 — recovery signing identities drifted across four artifact builders
+
+- Severity: P1 lost-device recovery blocker.
+- Status: resolved in the key-backup, active-series, rotation, and terminal-receipt paths; the
+  four-service B-model happy path now reaches `Completed`.
+- Evidence: the same replacement device key was variously labelled `<principal>#device`,
+  `<principal>#<device_id>`, and its local `did:key` identity. Service-attested verification
+  correctly accepts only the principal- and device-bound method.
+- Resolution: every principal control artifact now derives its verification method through
+  `verification_method_for_principal`; key-backup upload also resolves the accepted
+  `device_authorize_event_id` through viewer or keys-query and re-signs with that trust anchor.
+- Follow-up optimization: replace the remaining raw `verification_method()` calls in
+  principal-scoped protocol authoring with a single typed `PrincipalDeviceSigner` adapter, so an
+  unscoped signer cannot compile at these boundaries.
+
+## 2026-07-30 — recovery restore duplicated trust resolution and ran after generation rotation
+
+- Severity: P1 recovery correctness and maintainability.
+- Status: ordering and incorrect cross-service call resolved.
+- Evidence: restore queried an Account Authority viewer through a Principal Server transport,
+  rebuilt device trust selection independently, and originally downloaded backups after reanchor
+  advanced the accepted generation.
+- Resolution: restore derives device candidates from accepted active-series Event proofs, uses
+  the standard keys query, and durably imports the recovery snapshot before reanchor.
+- Follow-up optimization: consolidate backup trust-anchor lookup, active-series verification, and
+  recovery-session unlock authoring behind one typed SDK workflow. The legacy
+  `fetch_key_backup_for_verified_recovery_session` API still lacks recovery key material and should
+  be removed or replaced rather than retained as a misleading partially usable entry point.

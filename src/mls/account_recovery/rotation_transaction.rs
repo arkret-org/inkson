@@ -728,6 +728,8 @@ pub(super) fn build_active_series_event(
 ) -> Result<arkret_sdk::Event> {
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
+    let principal = Did::new(actor_id.to_owned())?;
+    let verification_method = signer.verification_method_for_principal(&principal)?;
     let issued_at = arkret_sdk::canonical::format_timestamp_canonical(crate::clock::now_utc());
     let mut payload = json!({
         "schema": crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA,
@@ -742,7 +744,7 @@ pub(super) fn build_active_series_event(
         },
         "issued_at": issued_at,
         "auth_data": {
-            "verification_method": signer.verification_method(),
+            "verification_method": verification_method,
             "signature_algorithm": "Ed25519",
             "signature": "pending",
             "signed_fields": ACTIVE_SERIES_SIGNED_FIELDS
@@ -771,7 +773,7 @@ pub(super) fn build_active_series_event(
             .encode(signer.sign_raw(&crate::canonical::canonical_json_bytes(&unsigned)?)?),
     );
     crate::operation::OperationBuilder::new(
-        arkret_sdk::principal_control_realm_id(&Did::new(actor_id.to_owned())?),
+        arkret_sdk::principal_control_realm_id(&principal),
         actor_id,
         crate::operation::EventKind::KeyBackupActiveSeries,
     )
