@@ -77,7 +77,7 @@ pub(crate) fn mls_policy_root_from_seal_view(
     arkret_sdk::Hash::new(hash).map_err(|err| format!("invalid MLS policy root hash: {err:?}"))
 }
 
-fn projection_creator_matches_actor(projection: &Value, actor_id: &str) -> bool {
+pub(crate) fn projection_creator_matches_actor(projection: &Value, actor_id: &str) -> bool {
     let actor = actor_id.trim();
     if actor.is_empty() {
         return false;

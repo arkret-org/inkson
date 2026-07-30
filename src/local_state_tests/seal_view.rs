@@ -369,3 +369,153 @@ fn seal_views_aggregates_across_realms() {
     assert!(all.contains_key("ak:realm:one"));
     assert!(all.contains_key("ak:realm:two"));
 }
+
+// ── sync-body merge (client-sync.md publishes no Seal view on the Realm delta)
+
+fn conflict_bottoms_body(cell: &str) -> serde_json::Value {
+    serde_json::json!({
+        "bottoms": [{
+            "cell": cell,
+            "status": "conflict",
+            "bottom": {
+                "kind": "conflict",
+                "cells": [cell],
+                "event_ids": [
+                    "ak:event:0196419b-0000-7000-8000-000000000001",
+                    "ak:event:0196419b-0000-7000-8000-000000000002"
+                ]
+            }
+        }]
+    })
+}
+
+#[test]
+fn sync_body_without_seal_view_preserves_the_authoritative_frontier() {
+    let path = temp_state_path("seal-merge-preserve");
+    let mut store = LocalStateStore::with_path(path.clone());
+    store.set_realm_seal_view(
+        "ak:realm:demo",
+        LocalSealView {
+            frontier: vec!["ak:seal:sha256:aaa".to_owned()],
+            state_root: Some("ak:state:sha256:abc".to_owned()),
+            mls_epoch: Some(3),
+            ..Default::default()
+        },
+    );
+
+    // `RealmSyncEntry` has no `seal_view` field, so every real sync body looks
+    // like this. It says nothing about the frontier and must not clear it.
+    let cell = "ak:cell:ak.component.strand.position.v1:ak:space:board:ak:strand:card";
+    store.merge_realm_seal_view_from_sync_body("ak:realm:demo", &conflict_bottoms_body(cell));
+
+    let view = store.seal_view_for_realm("ak:realm:demo");
+    assert_eq!(view.frontier, vec!["ak:seal:sha256:aaa".to_owned()]);
+    assert_eq!(view.state_root.as_deref(), Some("ak:state:sha256:abc"));
+    assert_eq!(view.mls_epoch, Some(3));
+    assert_eq!(view.move_seal_ref(), "ak:seal:sha256:aaa");
+    // The projection-only bottoms are still refreshed from the body.
+    assert!(view.bottom_cells.contains_key(cell));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn sync_body_bottoms_do_not_accumulate_across_windows() {
+    let path = temp_state_path("seal-merge-bottoms");
+    let mut store = LocalStateStore::with_path(path.clone());
+    let first = "ak:cell:ak.component.strand.position.v1:ak:space:board:ak:strand:first";
+    let second = "ak:cell:ak.component.strand.position.v1:ak:space:board:ak:strand:second";
+    store.merge_realm_seal_view_from_sync_body("ak:realm:demo", &conflict_bottoms_body(first));
+    store.merge_realm_seal_view_from_sync_body("ak:realm:demo", &conflict_bottoms_body(second));
+
+    let view = store.seal_view_for_realm("ak:realm:demo");
+    assert!(!view.bottom_cells.contains_key(first));
+    assert!(view.bottom_cells.contains_key(second));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn sync_body_with_seal_view_still_replaces_the_stored_view() {
+    let path = temp_state_path("seal-merge-replace");
+    let mut store = LocalStateStore::with_path(path.clone());
+    store.set_realm_seal_view(
+        "ak:realm:demo",
+        LocalSealView {
+            frontier: vec!["ak:seal:sha256:aaa".to_owned()],
+            ..Default::default()
+        },
+    );
+    store.merge_realm_seal_view_from_sync_body(
+        "ak:realm:demo",
+        &serde_json::json!({
+            "seal_view": {
+                "frontier": ["ak:seal:sha256:bbb"],
+                "state_root": "ak:state:sha256:def"
+            }
+        }),
+    );
+
+    let view = store.seal_view_for_realm("ak:realm:demo");
+    assert_eq!(view.frontier, vec!["ak:seal:sha256:bbb".to_owned()]);
+    assert_eq!(view.state_root.as_deref(), Some("ak:state:sha256:def"));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn sync_merge_keeps_the_verified_governance_proof_a_bare_set_would_evict() {
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
+    let anchor = "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    let body = conflict_bottoms_body("ak:cell:ak.component.member.state.v1:did:webvh:zfixture:a");
+
+    let merge_path = temp_state_path("seal-merge-proof");
+    let mut merged = LocalStateStore::with_path(merge_path.clone());
+    crate::mls::governance_proof::seed_test_governance_proof(
+        &mut merged,
+        realm,
+        None,
+        "dGVzdC1tbHM",
+        0,
+        1,
+    );
+    let request =
+        crate::mls::governance_proof::proof_request(&merged, realm, None, "dGVzdC1tbHM", 0, 1)
+            .expect("proof request");
+    merged.set_realm_seal_view(
+        realm,
+        LocalSealView {
+            frontier: vec![anchor.to_owned()],
+            ..Default::default()
+        },
+    );
+    merged.merge_realm_seal_view_from_sync_body(realm, &body);
+    assert!(
+        merged
+            .cached_mls_governance_proof(&request, chrono::Utc::now())
+            .expect("cache read")
+            .is_some(),
+        "a sync body carrying no Seal view must not evict a verified proof",
+    );
+
+    // Contrast: the pre-fix behaviour — replacing the view with the empty one
+    // derived from the same body — drops the proof, which is what left every
+    // later encrypted write with no verified binding.
+    let evict_path = temp_state_path("seal-evict-proof");
+    let mut evicted = LocalStateStore::with_path(evict_path.clone());
+    crate::mls::governance_proof::seed_test_governance_proof(
+        &mut evicted,
+        realm,
+        None,
+        "dGVzdC1tbHM",
+        0,
+        1,
+    );
+    evicted.set_realm_seal_view(realm, LocalSealView::from_sync_body(&body));
+    assert!(
+        evicted
+            .cached_mls_governance_proof(&request, chrono::Utc::now())
+            .expect("cache read")
+            .is_none()
+    );
+
+    let _ = std::fs::remove_file(merge_path);
+    let _ = std::fs::remove_file(evict_path);
+}

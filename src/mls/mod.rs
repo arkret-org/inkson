@@ -6,6 +6,9 @@
 
 pub mod account_recovery;
 pub(crate) mod admission;
+/// Replayable creator-side MLS bootstrap (accepted Seal view → verified
+/// governance proof → epoch-0 snapshot → `ak.mls.genesis`).
+pub(crate) mod creator_bootstrap;
 pub mod durability;
 pub mod governance;
 pub(crate) mod governance_proof;

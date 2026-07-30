@@ -1202,11 +1202,12 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 // Thread the per-Realm Seal view (frontier /
                                 // leaves / state_root / bottom cells) into the
                                 // local store so Move builders + UI can read
-                                // it. Bodies without an `seal_view` field
-                                // produce a Default view (empty frontier =
-                                // sentinel) so we still record presence.
-                                let view = crate::state::LocalSealView::from_sync_body(body);
-                                store.set_realm_seal_view(id.clone(), view);
+                                // it. Bodies WITHOUT a `seal_view` field carry
+                                // no statement about the frontier at all, so
+                                // they may only refresh the projection-only
+                                // bottom cells — see
+                                // `LocalSealView::merged_from_sync_body`.
+                                store.merge_realm_seal_view_from_sync_body(id, body);
                                 store.ingest_move_event_states(id, body);
                             }
                             crate::disappearing::shred_expired_message_plaintext_from_sync_realms(

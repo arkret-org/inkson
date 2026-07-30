@@ -269,6 +269,22 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
+    /// Fold a per-Realm `/sync` body into the stored Seal view.
+    ///
+    /// This is the ONLY entry point the sync path may use. `client-sync.md`
+    /// defines no Seal view on the Realm delta, so a body without `seal_view`
+    /// says nothing about the frontier; replacing the stored view with the
+    /// resulting empty one would drop the authoritative frontier obtained from
+    /// `ak.self.events.query.frontier` and make [`Self::set_realm_seal_view`]
+    /// evict every verified MLS governance proof for the Realm. See
+    /// [`LocalSealView::merged_from_sync_body`].
+    pub fn merge_realm_seal_view_from_sync_body(&mut self, realm_id: &str, body: &Value) {
+        let merged = self
+            .seal_view_for_realm(realm_id)
+            .merged_from_sync_body(body);
+        self.set_realm_seal_view(realm_id.to_owned(), merged);
+    }
+
     /// All known Seal views — handy for app-wide UI banners.
     pub fn seal_views(&self) -> BTreeMap<String, LocalSealView> {
         self.load().seal_views

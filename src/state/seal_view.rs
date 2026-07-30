@@ -335,6 +335,38 @@ impl LocalSealView {
         view
     }
 
+    /// Fold a per-Realm `/sync` body into the view already stored locally.
+    ///
+    /// `client-sync.md` §4/§5 defines no Seal view on the Realm delta —
+    /// `RealmSyncEntry` has no such field, and the one adjacent field it does
+    /// define (`state_at_window_start`) is explicitly projection-only ("实现仍
+    /// MUST NOT 把它当作权威 cell value"). The authoritative frontier /
+    /// `state_root` come from `ak.self.events.query.frontier` and from
+    /// governance proof bundles that passed the `encryption-and-audit.md`
+    /// §2.5.1.1 verification order.
+    ///
+    /// So a sync body WITHOUT `seal_view` carries no statement about the
+    /// frontier at all — treating its absence as "the frontier is empty" (what
+    /// [`Self::from_sync_body`] returns) overwrites the authoritative value with
+    /// a sentinel and, through
+    /// [`LocalStateStore::set_realm_seal_view`](crate::state::LocalStateStore::set_realm_seal_view),
+    /// evicts every verified governance proof for the Realm. Only the
+    /// projection-only `bottoms` are refreshed in that case.
+    ///
+    /// A body that DOES carry `seal_view` is a full authoritative snapshot and
+    /// replaces the stored view as before.
+    pub fn merged_from_sync_body(&self, body: &Value) -> Self {
+        if body.get("seal_view").is_some() {
+            return Self::from_sync_body(body);
+        }
+        let mut merged = self.clone();
+        // `bottom_cells` is a per-window projection: rebuild it from this body
+        // instead of accumulating stale conflicts across sync windows.
+        merged.bottom_cells.clear();
+        merged.ingest_structured_bottoms(body);
+        merged
+    }
+
     fn ingest_structured_bottoms(&mut self, body: &Value) {
         let Some(entries) = body.get("bottoms").and_then(|v| v.as_array()) else {
             return;

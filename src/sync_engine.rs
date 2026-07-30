@@ -54,7 +54,7 @@ use serde_json::{Value, json};
 use crate::api_error::{is_auth_expired_error, is_terminal_session_grant_error};
 use crate::models::{AccountSyncStep, RealmTreeNodeKind};
 use crate::runtime::projection::{ClientProjectionEvent, ProjectionSink, SyncStatusEvent};
-use crate::state::{LocalSealView, LocalStateStore, RawOperationRecord};
+use crate::state::{LocalStateStore, RawOperationRecord};
 use crate::transport::TransportClient;
 
 /// Connection-status label surfaced to the app shell's status signal.
@@ -1877,8 +1877,7 @@ pub fn apply_response(
                         response.collaboration_role(id),
                     );
                 }
-                let view = LocalSealView::from_sync_body(&projection);
-                store.set_realm_seal_view(id.to_owned(), view);
+                store.merge_realm_seal_view_from_sync_body(id, &projection);
                 store.ingest_move_event_states(id, &projection);
                 let _ = ingest_kanban_state_events_from_projection(store, id, &projection)
                     + ingest_discussion_state_events_from_projection(store, id, &projection)

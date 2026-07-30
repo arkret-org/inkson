@@ -28,7 +28,7 @@ pub(crate) use crate::state::projection::notifications::{
     notification_id_for_dedupe, notification_kind_wire, raw_notifications_from_sources,
     realm_title_hints_from_invites,
 };
-use crate::state::{ClientLocalState, LocalSealView, LocalStateStore, StoredNotification};
+use crate::state::{ClientLocalState, LocalStateStore, StoredNotification};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum UiNotificationGroup {
@@ -135,8 +135,7 @@ pub(crate) fn apply_sync_projection_to_store(
         );
         store.save_realm_tree_projection(id.clone(), projection);
         store.save_realm_collaboration_role(id.clone(), response.collaboration_role(id));
-        let view = LocalSealView::from_sync_body(body);
-        store.set_realm_seal_view(id.clone(), view);
+        store.merge_realm_seal_view_from_sync_body(id, body);
         store.ingest_move_event_states(id, body);
     }
 }

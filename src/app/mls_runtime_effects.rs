@@ -962,6 +962,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             let detect_session = session.clone();
             let detect_actor = actor.clone();
             let detect_device = device.clone();
+            let creator_bootstrap_realm_id = bootstrap_realm_id.clone();
             let mut state_store_for_probe = state_store_for_bootstrap;
             spawn(async move {
                 match bootstrap_mls_welcome_for_realm(
@@ -989,6 +990,42 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     Ok(_) => {}
                     Err(error) => {
                         last_error_task.set(Some(format!("MLS Welcome bootstrap: {error}")));
+                    }
+                }
+
+                // A Realm creator never gets a Welcome, so the branch above
+                // does nothing for them. Their epoch-0 bootstrap runs once in
+                // the create wizard; if that attempt was interrupted (component
+                // unmount, network failure, closed tab) the Realm is left with
+                // no pinned governance anchor and no local snapshot, and every
+                // encrypted write fails permanently. Replay it here — the gate
+                // is creator-only, so the trusted anchor still comes from the
+                // `encryption-and-audit.md` §2.5.1.1 "Realm create" source, and
+                // the pin still happens only after full bundle verification.
+                if crate::mls::creator_bootstrap::creator_mls_bootstrap_pending(
+                    &state_store_for_probe.read(),
+                    &creator_bootstrap_realm_id,
+                    &detect_actor,
+                ) {
+                    match crate::transport::auth::authed_api(&detect_base, detect_session.clone()) {
+                        Ok(api) => {
+                            if let Err(error) =
+                                crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis(
+                                    &api,
+                                    state_store_task,
+                                    &creator_bootstrap_realm_id,
+                                    &detect_actor,
+                                    &detect_device,
+                                )
+                                .await
+                            {
+                                last_error_task
+                                    .set(Some(format!("creator MLS bootstrap: {error}")));
+                            }
+                        }
+                        Err(error) => {
+                            last_error_task.set(Some(format!("creator MLS bootstrap: {error}")));
+                        }
                     }
                 }
 

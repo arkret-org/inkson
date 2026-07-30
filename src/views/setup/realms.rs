@@ -925,99 +925,25 @@ pub(super) fn RealmsSection(
                                                         if crate::security_state::encryption_profile_is_encrypted(
                                                             &encryption_profile,
                                                         ) {
-                                                            let secure = crate::secure_key_store::default_secure_key_store("inkson");
-                                                            let seal_view = match wait_for_realm_seal_view(
-                                                                &submitter,
-                                                                &realm_id,
-                                                            )
-                                                            .await
-                                                            {
-                                                                Ok(view) => view,
-                                                                Err(err) => {
-                                                                    let message = format!(
-                                                                        "created {}; refreshing the accepted Seal view before MLS setup failed: {err}",
-                                                                        realm_id
-                                                                    );
-                                                                    realm_create_busy.set(false);
-                                                                    realm_state.set(message.clone());
-                                                                    crate::components::feedback::toast_error(
-                                                                        "feedback.realm_create_failed",
-                                                                        vec![],
-                                                                        Some(message),
-                                                                    );
-                                                                    return;
-                                                                }
-                                                            };
-                                                            state_store.write().set_realm_seal_view(
-                                                                realm_id.clone(),
-                                                                crate::state::LocalSealView {
-                                                                    frontier: vec![seal_view.seal_id.to_string()],
-                                                                    state_root: Some(seal_view.state_root.to_string()),
-                                                                    ..Default::default()
-                                                                },
-                                                            );
-                                                            let genesis_proof_request = match crate::mls::governance_proof::proof_request(
-                                                                &state_store.read(),
-                                                                &realm_id,
-                                                                None,
-                                                                arkret_sdk::base64url_encode(realm_id.as_bytes()),
-                                                                0,
-                                                                0,
-                                                            ) {
-                                                                Ok(request) => request,
-                                                                Err(err) => {
-                                                                    let message = format!(
-                                                                        "created {}; preparing the MLS governance proof request failed: {err}",
-                                                                        realm_id
-                                                                    );
-                                                                    realm_create_busy.set(false);
-                                                                    realm_state.set(message.clone());
-                                                                    crate::components::feedback::toast_error(
-                                                                        "feedback.realm_create_failed",
-                                                                        vec![],
-                                                                        Some(message),
-                                                                    );
-                                                                    return;
-                                                                }
-                                                            };
-                                                            if let Err(err) = crate::mls::governance_proof::fetch_verify_and_cache_proof(
-                                                                &api,
-                                                                state_store,
-                                                                &genesis_proof_request,
-                                                            )
-                                                            .await
-                                                            {
-                                                                let message = format!(
-                                                                    "created {}; verifying the accepted governance proof before MLS setup failed: {err}",
-                                                                    realm_id
-                                                                );
-                                                                realm_create_busy.set(false);
-                                                                realm_state.set(message.clone());
-                                                                crate::components::feedback::toast_error(
-                                                                    "feedback.realm_create_failed",
-                                                                    vec![],
-                                                                    Some(message),
-                                                                );
-                                                                return;
-                                                            }
-                                                            let (snapshot, creator_genesis_summary) = {
-                                                                let mut store = state_store.write();
-                                                                match crate::mls::runtime::ensure_creator_mls_snapshot(
-                                                                    &mut store,
-                                                                    secure.as_ref(),
+                                                            // Acquiring the accepted Seal view, verifying + pinning the
+                                                            // governance proof, creating the epoch-0 group and landing
+                                                            // `ak.mls.genesis` all live in the shared creator bootstrap so
+                                                            // an interrupted attempt (unmount / network / closed tab) is
+                                                            // replayed by the per-Realm bootstrap effect instead of leaving
+                                                            // the Realm permanently unable to perform encrypted writes.
+                                                            let bootstrap =
+                                                                match crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis(
+                                                                    &api,
+                                                                    state_store,
                                                                     &realm_id,
                                                                     &actor,
                                                                     &device,
-                                                                ) {
-                                                                    Ok(summary) => {
-                                                                        (store.mls_snapshot_for(&realm_id), summary)
-                                                                    }
+                                                                )
+                                                                .await
+                                                                {
+                                                                    Ok(outcome) => outcome,
                                                                     Err(err) => {
-                                                                        let message = format!(
-                                                                            "created {}; MLS initial group setup failed: {}",
-                                                                            realm_id,
-                                                                            err.user_message()
-                                                                        );
+                                                                        let message = format!("created {realm_id}; {err}");
                                                                         realm_create_busy.set(false);
                                                                         realm_state.set(message.clone());
                                                                         crate::components::feedback::toast_error(
@@ -1027,97 +953,8 @@ pub(super) fn RealmsSection(
                                                                         );
                                                                         return;
                                                                     }
-                                                                }
-                                                            };
-                                                            // Emit the one-time ak.mls.genesis for the
-                                                            // freshly-created creator group at epoch 0,
-                                                            // BEFORE any ak.mls.commit can bump the epoch.
-                                                            // A duplicate (mls_genesis_already_exists) is
-                                                            // treated as success only after resolving its
-                                                            // accepted Event id. Failure is non-fatal:
-                                                            // soland lazily defaults a never-seen group to
-                                                            // epoch 0, so commits still work; we just leave
-                                                            // the genesis_emitted flag unset to retry later
-                                                            // via the kanban encrypted-write path.
-                                                            let genesis_event = creator_genesis_summary
-                                                                .as_ref()
-                                                                .and_then(|genesis_summary| {
-                                                                    let mut store = state_store.write();
-                                                                    if store.mls_genesis_emitted_for(&realm_id) {
-                                                                        return None;
-                                                                    }
-                                                                    match crate::mls::group_events::build_creator_mls_genesis_event(
-                                                                        &mut store,
-                                                                        &realm_id,
-                                                                        &actor,
-                                                                        &device,
-                                                                        Some(genesis_summary),
-                                                                    ) {
-                                                                        Ok(event) => event,
-                                                                        Err(err) => {
-                                                                            tracing::warn!(
-                                                                                error = %err,
-                                                                                realm = %realm_id,
-                                                                                "building ak.mls.genesis event failed",
-                                                                            );
-                                                                            None
-                                                                        }
-                                                                    }
-                                                                });
-                                                            if let Some(genesis_event) = genesis_event {
-                                                                let genesis_event_id =
-                                                                    genesis_event.event_id.clone();
-                                                                let accepted_genesis_event_id =
-                                                                    match api.event_submitter() {
-                                                                    Ok(submitter) => {
-                                                                        match submitter
-                                                                            .submit_sdk_event(&genesis_event)
-                                                                            .await
-                                                                        {
-                                                                            Ok(_) => Ok(genesis_event_id),
-                                                                            Err(error)
-                                                                                if error
-                                                                                    .to_string()
-                                                                                    .contains("mls_genesis_already_exists") =>
-                                                                            {
-                                                                                match submitter
-                                                                                    .find_mls_genesis_event_id(&realm_id)
-                                                                                    .await
-                                                                                {
-                                                                                    Ok(Some(event_id)) => Ok(event_id),
-                                                                                    Ok(None) => Err(anyhow::anyhow!(
-                                                                                        "MLS genesis already exists server-side but its accepted Event id is unavailable"
-                                                                                    )),
-                                                                                    Err(error) => Err(error),
-                                                                                }
-                                                                            }
-                                                                            Err(error) => Err(error),
-                                                                        }
-                                                                    }
-                                                                    Err(err) => Err(err),
                                                                 };
-                                                                match accepted_genesis_event_id {
-                                                                    Ok(accepted_event_id) => {
-                                                                        state_store.write().mark_mls_genesis_emitted_with_event(
-                                                                            realm_id.clone(),
-                                                                            &accepted_event_id,
-                                                                        );
-                                                                    }
-                                                                    Err(err) => {
-                                                                        let text = err.to_string();
-                                                                        tracing::warn!(
-                                                                            error = %text,
-                                                                            realm = %realm_id,
-                                                                            "ak.mls.genesis submit failed; soland will default epoch 0 and the kanban write path will retry",
-                                                                        );
-                                                                    }
-                                                                }
-                                                            }
-                                                            if let Some(snapshot) = snapshot {
-                                                                let snapshot = state_store
-                                                                    .read()
-                                                                    .mls_snapshot_for(&realm_id)
-                                                                    .unwrap_or(snapshot);
+                                                            if let Some(snapshot) = bootstrap.fresh_snapshot {
                                                                 // §7.10: a brand-new Realm has no prior series, so
                                                                 // this resolves to a genesis envelope — and it seeds
                                                                 // the series-tail cache so post-commit continuous
@@ -1307,27 +1144,4 @@ pub(super) fn RealmsSection(
             }
         }
     }
-}
-
-async fn wait_for_realm_seal_view(
-    submitter: &crate::event_submit::EventSubmitter,
-    realm_id: &str,
-) -> anyhow::Result<arkret_sdk::RealmSealFrontierView> {
-    const ATTEMPTS: usize = 20;
-    const DELAY: std::time::Duration = std::time::Duration::from_millis(250);
-
-    for attempt in 0..ATTEMPTS {
-        match submitter.events_frontier_realm_seal_view(realm_id).await {
-            Ok(view) => return Ok(view),
-            Err(error)
-                if attempt + 1 < ATTEMPTS
-                    && (error.to_string().contains("404")
-                        || error.to_string().contains("no accepted Seal")) =>
-            {
-                crate::runtime_helpers::sleep_for(DELAY).await;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    unreachable!("realm Seal retry loop returns on its final attempt")
 }
