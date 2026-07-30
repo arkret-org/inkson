@@ -57,7 +57,9 @@ fn range_completeness(input: Value) -> Result<Value> {
         Event, EventId, EventRequirements, Hash, PayloadProofPurpose, PayloadSigner, Proof,
         ScopeRef,
     };
-    use arkret_signatures::{Ed25519PayloadSigner, SignEventOptions, sign_event};
+    use arkret_signatures::{
+        Ed25519PayloadSigner, SignEventOptions, sign_event_with_digest_suite,
+    };
 
     let input: RangeCompletenessInput =
         serde_json::from_value(input).context("parse range-completeness input")?;
@@ -195,10 +197,11 @@ fn range_completeness(input: Value) -> Result<Value> {
         proofs: Vec::new(),
         requirements: EventRequirements::default(),
     };
-    sign_event(
+    sign_event_with_digest_suite(
         &mut event,
         &signer,
         &verification_method,
+        digest_suite,
         SignEventOptions::new().with_created_at(observed_at),
     )?;
 
