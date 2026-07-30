@@ -4,8 +4,9 @@ use crate::ephemeral::validate_outgoing_registered_event_payload;
 use crate::event_builders::{
     build_device_message_envelope, build_member_state_transition_event,
     build_realm_bootstrap_events, build_realm_create_event, build_realm_state_event,
-    build_signed_device_verification_proof, build_space_create_event,
-    ensure_device_verification_proof_is_signed, recommended_history_sharing_policy_for_visibility,
+    build_sas_key_verification_content, build_signed_device_verification_proof,
+    build_space_create_event, ensure_device_verification_proof_is_signed,
+    recommended_history_sharing_policy_for_visibility,
 };
 use crate::operation::{EventKind, OperationBuilder};
 use crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR;
@@ -762,6 +763,7 @@ fn device_verification_proof_requires_signed_envelope() {
         &signing,
     )
     .unwrap();
+    let proof = proof.to_value().unwrap();
     ensure_device_verification_proof_is_signed(&proof).expect("signed proof");
     assert_eq!(
         proof["device_envelope"]["type"].as_str(),
@@ -783,4 +785,139 @@ fn device_verification_proof_requires_signed_envelope() {
             .count(),
         3
     );
+}
+
+/// A6 — the transcript moved from a hand-built `json!` object to
+/// [`crate::event_builders::DeviceVerificationTranscript`]. The signature is
+/// computed over the canonical bytes of that object, so a member that appears,
+/// disappears, or changes spelling invalidates every proof already signed by a
+/// peer device. This pins the canonical bytes against the pre-migration
+/// literal for both the full and the minimal variant.
+#[test]
+fn device_verification_transcript_canonical_bytes_are_unchanged() {
+    fn canonical(value: &serde_json::Value) -> String {
+        String::from_utf8(crate::canonical::canonical_json_bytes(value).unwrap()).unwrap()
+    }
+
+    let signing = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+    let full = build_signed_device_verification_proof(
+        "did:web:alice.example",
+        "ak:device:alice",
+        "ak:device:bob",
+        "sas",
+        Some([1234, 5678, 9012]),
+        Some("alice-x25519"),
+        Some("bob-x25519"),
+        &signing,
+    )
+    .unwrap();
+    let created_at = full.device_envelope.created_at.clone();
+    // Byte-for-byte the object the previous `json!` builder produced.
+    let legacy_full = json!({
+        "type": "ak.device.verification.proof.v1",
+        "from_actor": "did:web:alice.example",
+        "from_device": "ak:device:alice",
+        "target_device": "ak:device:bob",
+        "method": "sas",
+        "created_at": created_at,
+        "sas_decimal": [1234, 5678, 9012],
+        "local_public_key": "alice-x25519",
+        "peer_public_key": "bob-x25519",
+    });
+    assert_eq!(
+        canonical(&serde_json::to_value(&full.device_envelope).unwrap()),
+        canonical(&legacy_full)
+    );
+
+    // The optional members were absent — not null — before the migration.
+    let minimal = build_signed_device_verification_proof(
+        "did:web:alice.example",
+        "ak:device:alice",
+        "ak:device:bob",
+        "sas_key",
+        None,
+        None,
+        None,
+        &signing,
+    )
+    .unwrap();
+    let created_at = minimal.device_envelope.created_at.clone();
+    let legacy_minimal = json!({
+        "type": "ak.device.verification.proof.v1",
+        "from_actor": "did:web:alice.example",
+        "from_device": "ak:device:alice",
+        "target_device": "ak:device:bob",
+        "method": "sas_key",
+        "created_at": created_at,
+    });
+    assert_eq!(
+        canonical(&serde_json::to_value(&minimal.device_envelope).unwrap()),
+        canonical(&legacy_minimal)
+    );
+}
+
+/// A6 — `ak.key.verification.key` content used to carry only the proof block,
+/// so it satisfied none of the members `device-message.schema.json` requires
+/// (`transaction_id`, `from_device`, `key`). The schema gate lives in
+/// `tests/conformance_gates.rs`; this pins the builder's own contract.
+#[test]
+fn sas_key_verification_content_carries_the_required_members() {
+    let signing = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
+    let proof = build_signed_device_verification_proof(
+        "did:web:alice.example",
+        "ak:device:01904100-0000-7000-8000-0000000000aa",
+        "ak:device:01904100-0000-7000-8000-0000000000bb",
+        "sas_key",
+        None,
+        Some("alice-x25519-public"),
+        None,
+        &signing,
+    )
+    .unwrap();
+    let content = build_sas_key_verification_content(
+        "019041000000700080000000000c",
+        "alice-x25519-public",
+        proof,
+    )
+    .unwrap();
+    assert_eq!(
+        content["transaction_id"].as_str(),
+        Some("019041000000700080000000000c")
+    );
+    assert_eq!(
+        content["from_device"].as_str(),
+        Some("ak:device:01904100-0000-7000-8000-0000000000aa")
+    );
+    assert_eq!(content["key"].as_str(), Some("alice-x25519-public"));
+    ensure_device_verification_proof_is_signed(&content).expect("proof rides in the same object");
+}
+
+#[test]
+fn sas_key_verification_content_rejects_a_blank_key_or_an_off_spec_transaction_id() {
+    let signing = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
+    let proof = || {
+        build_signed_device_verification_proof(
+            "did:web:alice.example",
+            "ak:device:01904100-0000-7000-8000-0000000000aa",
+            "ak:device:01904100-0000-7000-8000-0000000000bb",
+            "sas_key",
+            None,
+            None,
+            None,
+            &signing,
+        )
+        .unwrap()
+    };
+    assert!(build_sas_key_verification_content("txn-1", "   ", proof()).is_err());
+    // `ak:transaction:<uuidv7>` — what `arkret_sdk::TransactionId` would produce.
+    // The colon is outside `^[A-Za-z0-9._~=-]{1,128}$`.
+    assert!(
+        build_sas_key_verification_content(
+            "ak:transaction:01904100-0000-7000-8000-0000000000cc",
+            "alice-x25519-public",
+            proof(),
+        )
+        .is_err()
+    );
+    assert!(build_sas_key_verification_content("", "alice-x25519-public", proof()).is_err());
 }

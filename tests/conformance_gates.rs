@@ -152,6 +152,38 @@ fn assert_matches_payload_def(label: &str, def_name: &str, value: &Value) {
     }
 }
 
+/// Validate a value against a whole spec schema file, or against one `$defs`
+/// entry inside it when `def_name` is set.
+///
+/// The payload-def helper above is hard-wired to `event-payload.schema.json`;
+/// device messages and service DTOs live in their own files.
+fn assert_matches_schema(label: &str, filename: &str, def_name: Option<&str>, value: &Value) {
+    let reference = match def_name {
+        Some(def_name) => format!("{}#/$defs/{def_name}", spec_schema_id(filename)),
+        None => spec_schema_id(filename),
+    };
+    let schema = Value::Object(
+        [("$ref".to_owned(), Value::String(reference.clone()))]
+            .into_iter()
+            .collect(),
+    );
+    let validator = jsonschema::options()
+        .with_registry(spec_schema_registry())
+        .build(&schema)
+        .unwrap_or_else(|err| panic!("{reference} compiles: {err}"));
+    if !validator.is_valid(value) {
+        let errors: Vec<String> = validator
+            .iter_errors(value)
+            .map(|err| format!("  - {} (at {})", err, err.instance_path()))
+            .collect();
+        panic!(
+            "{label}: value failed {reference} validation:\n{}\nvalue was:\n{}",
+            errors.join("\n"),
+            serde_json::to_string_pretty(value).unwrap_or_default()
+        );
+    }
+}
+
 /// Deterministic Ed25519 key the test process uses for signing
 /// envelopes. The seed is fixed so reruns are byte-identical; in
 /// production this is loaded from the OS keychain.
@@ -836,4 +868,98 @@ fn managed_agent_pcr_genesis_leaves_history_sharing_policy_to_the_profile() {
     );
     stamp_wire_fields(&mut create);
     assert_envelope_matches_schema("build_managed_agent_pcr_bootstrap_events[create]", &create);
+}
+
+/// A6 — the SAS public-key exchange sends `ak.key.verification.key`, whose
+/// content `device-message.schema.json` constrains: every
+/// `ak.key.verification.*` content MUST carry `transaction_id` + `from_device`,
+/// and this kind additionally `key`. Inkson sent only the signed proof block,
+/// so the message was invalid against the schema on every send — invisible
+/// because nothing validated a device message against it. The signed transcript
+/// still rides along; that content object is `additionalProperties: true`.
+#[test]
+fn sas_key_verification_device_message_matches_device_message_schema() {
+    let signing = SigningKey::from_bytes(&[11u8; 32]);
+    let from_device = "ak:device:01904100-0000-7000-8000-0000000000aa";
+    let target_device = "ak:device:01904100-0000-7000-8000-0000000000bb";
+    let proof = event_builders::build_signed_device_verification_proof(
+        TEST_ACTOR_ID,
+        from_device,
+        target_device,
+        "sas_key",
+        None,
+        Some("alice-x25519-public"),
+        None,
+        &signing,
+    )
+    .expect("build_signed_device_verification_proof succeeds");
+    let content = event_builders::build_sas_key_verification_content(
+        "0190410000007000800000000abc",
+        "alice-x25519-public",
+        proof,
+    )
+    .expect("build_sas_key_verification_content succeeds");
+
+    let request = event_builders::build_device_message_envelope(
+        "ak:device_message:01904100-0000-7000-8000-0000000000cc",
+        "did:web:bob.example",
+        target_device,
+        "ak.key.verification.key",
+        "2026-04-26T00:10:00.000Z",
+        content.clone(),
+    )
+    .expect("build_device_message_envelope succeeds");
+    let request = serde_json::to_value(&request).expect("send request serializes");
+    assert_matches_schema(
+        "build_device_message_envelope[ak.key.verification.key]",
+        "service-operation-dtos.schema.json",
+        Some("DeviceMessagesSendRequestBody"),
+        &request,
+    );
+
+    // The send DTO is closed and carries no sender identity; the delivered
+    // envelope is where `key_verification_content` actually applies, so build
+    // the server-side view the recipient sees and validate that.
+    let target = &request["messages"]["did:web:bob.example"][target_device];
+    let delivered = serde_json::json!({
+        "message_id": target["message_id"],
+        "kind": target["kind"],
+        "sender_principal_id": TEST_ACTOR_ID,
+        "sender_device_id": from_device,
+        "recipient_principal_id": "did:web:bob.example",
+        "recipient_device_id": target_device,
+        "sent_at": "2026-04-26T00:00:00.000Z",
+        "expires_at": target["expires_at"],
+        "content": target["content"],
+    });
+    assert_matches_schema(
+        "delivered ak.key.verification.key device message",
+        "device-message.schema.json",
+        None,
+        &delivered,
+    );
+
+    // Non-vacuity: the shape this replaced — the bare proof block — must fail
+    // the same validator, otherwise the gate proves nothing.
+    let mut legacy = delivered.clone();
+    legacy["content"] = serde_json::json!({
+        "device_envelope": delivered["content"]["device_envelope"],
+        "signature": delivered["content"]["signature"],
+    });
+    let device_message_schema = Value::Object(
+        [(
+            "$ref".to_owned(),
+            Value::String(spec_schema_id("device-message.schema.json")),
+        )]
+        .into_iter()
+        .collect(),
+    );
+    let validator = jsonschema::options()
+        .with_registry(spec_schema_registry())
+        .build(&device_message_schema)
+        .expect("device-message.schema.json compiles");
+    assert!(
+        !validator.is_valid(&legacy),
+        "the pre-A6 content (proof block only) must fail device-message.schema.json"
+    );
 }

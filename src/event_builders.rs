@@ -1438,6 +1438,60 @@ pub fn build_device_message_envelope(
     )
 }
 
+/// Wire name of the device verification transcript this module signs.
+pub const DEVICE_VERIFICATION_PROOF_TYPE: &str = "ak.device.verification.proof.v1";
+
+/// The bytes a device signs when it confirms a SAS / key verification.
+///
+/// This shape is deliberately **local** rather than an SDK type. `arkret-spec`
+/// leaves `device-message.schema.json#/properties/content` open and registers
+/// no verification-transcript `$defs`, so an SDK type would invent a wire shape
+/// the spec does not define — the same rule that keeps
+/// `ak.realm.policy_bundle` a hand-built value (arkret-work
+/// `review/spec-open/2026-07-30-realm-policy-payload-shape-gaps.md`).
+///
+/// What the struct does buy is the property this task is about: the transcript
+/// can no longer gain or lose a member by accident, because the bytes handed to
+/// the signer are produced from these fields and nothing else. The member set
+/// and the `skip_serializing_if` choices reproduce the previous hand-built
+/// object byte-for-byte under canonical JSON — pinned by
+/// `device_verification_transcript_canonical_bytes_are_unchanged`, which exists
+/// so that already-signed proofs keep verifying.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct DeviceVerificationTranscript {
+    #[serde(rename = "type")]
+    pub transcript_type: String,
+    pub from_actor: String,
+    pub from_device: String,
+    pub target_device: String,
+    pub method: String,
+    pub created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sas_decimal: Option<[u16; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_public_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_public_key: Option<String>,
+}
+
+/// A [`DeviceVerificationTranscript`] plus the detached JWS over its canonical
+/// bytes. Rides inside the open part of a `ak.key.verification.*` device
+/// message content (see [`build_sas_key_verification_content`]).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SignedDeviceVerificationProof {
+    pub device_envelope: DeviceVerificationTranscript,
+    pub signature: arkret_sdk::Proof,
+}
+
+impl SignedDeviceVerificationProof {
+    /// JSON form used where an untyped block is required (device-message
+    /// `content`, UI state, test assertions).
+    pub fn to_value(&self) -> anyhow::Result<Value> {
+        serde_json::to_value(self)
+            .map_err(|error| anyhow::anyhow!("serialize device verification proof: {error}"))
+    }
+}
+
 pub fn build_signed_device_verification_proof(
     from_actor: &str,
     from_device: &str,
@@ -1447,25 +1501,21 @@ pub fn build_signed_device_verification_proof(
     local_public_key: Option<&str>,
     peer_public_key: Option<&str>,
     signing_key: &ed25519_dalek::SigningKey,
-) -> anyhow::Result<Value> {
-    let mut body = json!({
-        "type": "ak.device.verification.proof.v1",
-        "from_actor": from_actor,
-        "from_device": from_device,
-        "target_device": target_device,
-        "method": method,
-        "created_at": payload_timestamp_wire(event_timestamp()),
-    });
-    if let Some(sas_decimal) = sas_decimal {
-        body["sas_decimal"] = json!(sas_decimal);
-    }
-    if let Some(local_public_key) = local_public_key {
-        body["local_public_key"] = Value::String(local_public_key.to_owned());
-    }
-    if let Some(peer_public_key) = peer_public_key {
-        body["peer_public_key"] = Value::String(peer_public_key.to_owned());
-    }
-    let canonical = arkret_sdk::canonical::canonical_json_bytes(&body)
+) -> anyhow::Result<SignedDeviceVerificationProof> {
+    let body = DeviceVerificationTranscript {
+        transcript_type: DEVICE_VERIFICATION_PROOF_TYPE.to_owned(),
+        from_actor: from_actor.to_owned(),
+        from_device: from_device.to_owned(),
+        target_device: target_device.to_owned(),
+        method: method.to_owned(),
+        created_at: payload_timestamp_wire(event_timestamp()),
+        sas_decimal,
+        local_public_key: local_public_key.map(str::to_owned),
+        peer_public_key: peer_public_key.map(str::to_owned),
+    };
+    let transcript = serde_json::to_value(&body)
+        .map_err(|error| anyhow::anyhow!("serialize device verification proof: {error}"))?;
+    let canonical = arkret_sdk::canonical::canonical_json_bytes(&transcript)
         .map_err(|error| anyhow::anyhow!("canonicalize device verification proof: {error}"))?;
     let verification_method = format!("{}#inkson-device", from_device);
     let signer = arkret_sdk::signatures::proof::Ed25519DetachedJwsSigner::new(
@@ -1474,7 +1524,7 @@ pub fn build_signed_device_verification_proof(
     );
     let payload_digest = arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&canonical))
         .map_err(|error| anyhow::anyhow!("hash device verification proof: {error}"))?;
-    let proof = arkret_sdk::signatures::proof::build_proof_envelope(
+    let signature = arkret_sdk::signatures::proof::build_proof_envelope(
         arkret_sdk::signatures::proof::detached_jws_kind(),
         "EdDSA",
         verification_method,
@@ -1483,11 +1533,64 @@ pub fn build_signed_device_verification_proof(
         None,
         signer.sign_detached_jws(&canonical),
     );
-    Ok(json!({
-        "device_envelope": body,
-        "signature": serde_json::to_value(&proof)
-            .map_err(|error| anyhow::anyhow!("serialize device verification proof: {error}"))?,
-    }))
+    Ok(SignedDeviceVerificationProof {
+        device_envelope: body,
+        signature,
+    })
+}
+
+/// `ak.key.verification.key` device-message content carrying the sender's
+/// public key and the signed verification transcript.
+///
+/// `device-message.schema.json` requires `transaction_id` + `from_device` on
+/// every `ak.key.verification.*` content and additionally `key` on
+/// `ak.key.verification.key`. Inkson used to send only
+/// `{device_envelope, signature}`, so the message satisfied none of the three
+/// and any receiver validating against the schema had to reject it; the proof
+/// block itself is legal because that content object is
+/// `additionalProperties: true`.
+///
+/// `transaction_id` is a bare UUIDv7 rather than `arkret_sdk::TransactionId`:
+/// the spec's `transaction_id` pattern is `^[A-Za-z0-9._~=-]{1,128}$`, which
+/// the SDK type's `ak:transaction:` prefix cannot match. Recorded in arkret-work
+/// `review/code/2026-07-31-sdk-key-verification-transaction-id-off-spec.md`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SasKeyVerificationContent {
+    pub transaction_id: String,
+    pub from_device: String,
+    pub key: String,
+    pub device_envelope: DeviceVerificationTranscript,
+    pub signature: arkret_sdk::Proof,
+}
+
+pub fn build_sas_key_verification_content(
+    transaction_id: &str,
+    public_key_b64: &str,
+    proof: SignedDeviceVerificationProof,
+) -> anyhow::Result<Value> {
+    // `device-message.schema.json#/$defs/transaction_id`.
+    if transaction_id.is_empty()
+        || transaction_id.len() > 128
+        || !transaction_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._~=-".contains(&byte))
+    {
+        anyhow::bail!(
+            "key verification transaction_id must match ^[A-Za-z0-9._~=-]{{1,128}}$, got {transaction_id:?}"
+        )
+    }
+    if public_key_b64.trim().is_empty() {
+        anyhow::bail!("ak.key.verification.key content requires a non-empty key")
+    }
+    let content = SasKeyVerificationContent {
+        transaction_id: transaction_id.to_owned(),
+        from_device: proof.device_envelope.from_device.clone(),
+        key: public_key_b64.to_owned(),
+        device_envelope: proof.device_envelope,
+        signature: proof.signature,
+    };
+    serde_json::to_value(&content)
+        .map_err(|error| anyhow::anyhow!("serialize key verification content: {error}"))
 }
 
 pub fn ensure_device_verification_proof_is_signed(proof: &Value) -> anyhow::Result<()> {

@@ -513,7 +513,7 @@ pub fn VerifyDevicePanel(
                                                         return;
                                                     }
                                                 };
-                                                let signed_content = match crate::event_builders::build_signed_device_verification_proof(
+                                                let proof = match crate::event_builders::build_signed_device_verification_proof(
                                                     &account,
                                                     &from_device,
                                                     &target,
@@ -526,6 +526,21 @@ pub fn VerifyDevicePanel(
                                                     Ok(proof) => proof,
                                                     Err(error) => {
                                                         sas_send_status.set(format!("send failed: could not sign key envelope: {error}"));
+                                                        return;
+                                                    }
+                                                };
+                                                // device-message.schema.json requires transaction_id +
+                                                // from_device on every ak.key.verification.* content and
+                                                // `key` on this kind; the signed proof rides in the open
+                                                // part of the same object.
+                                                let signed_content = match crate::event_builders::build_sas_key_verification_content(
+                                                    &crate::operation::uuid_v7(),
+                                                    &public_b64,
+                                                    proof,
+                                                ) {
+                                                    Ok(content) => content,
+                                                    Err(error) => {
+                                                        sas_send_status.set(format!("send failed: {error}"));
                                                         return;
                                                     }
                                                 };
