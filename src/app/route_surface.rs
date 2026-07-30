@@ -474,6 +474,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         if crate::views::applets::applets_enabled() {
                             crate::views::applets::AppletsPanel {
                                 token,
+                                account_did,
                                 selected_realm_id: selected_realm_id(),
                             }
                         } else {

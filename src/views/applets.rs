@@ -30,14 +30,14 @@ use std::collections::BTreeSet;
 use arkret_models_collaboration::account_lifecycle::AppletRevokeRequestBody;
 use arkret_models_integration::{
     AppletActorPolicy, AppletApprovalRequest, AppletBotMembership, AppletGhostActorMode,
-    AppletInstallPreviewRequestBody, AppletInstallRequestBody, ScopeGrant,
+    AppletInstallPlan, AppletInstallPreviewRequestBody, AppletInstallRequestBody, AppletPackage,
 };
 use arkret_wire::{AppletRevokeMode, ScopeRef};
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::Value;
 
-use crate::transport::auth::with_authed_sdk_client;
+use crate::transport::auth::{with_authed_sdk_client, with_event_submitter};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::dialog::Dialog;
@@ -100,24 +100,176 @@ pub fn parse_applet_approval_actions(raw: &str) -> Vec<String> {
         .collect()
 }
 
-/// Pull `plan_digest` + `approved_scopes` out of the canonical InstallPlan the
-/// preview returns. `applet-install-plan.schema.json` makes both required, so a
-/// missing `plan_digest` is a hard error the caller surfaces rather than
-/// committing a digest-less (always-rejected) install.
-pub fn parse_install_plan(plan: &Value) -> Result<(String, Vec<ScopeGrant>), String> {
-    let plan_digest = plan
-        .get("plan_digest")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "preview returned no plan_digest".to_owned())?
-        .to_owned();
-    let approved_scopes = plan
-        .get("approved_scopes")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let approved_scopes = serde_json::from_value::<Vec<ScopeGrant>>(Value::Array(approved_scopes))
-        .map_err(|err| format!("preview approved_scopes invalid: {err}"))?;
-    Ok((plan_digest, approved_scopes))
+#[derive(Clone)]
+struct AppletInstallPreviewSnapshot {
+    package: AppletPackage,
+    effective_scope: ScopeRef,
+    plan: AppletInstallPlan,
+}
+
+fn approved_actions_from_plan(
+    plan: &AppletInstallPlan,
+    package: &AppletPackage,
+) -> anyhow::Result<Vec<String>> {
+    if plan.schema != AppletInstallPlan::SCHEMA {
+        anyhow::bail!("preview returned unsupported schema {}", plan.schema);
+    }
+    if plan.compute_plan_digest()? != plan.plan_digest {
+        anyhow::bail!("preview plan_digest does not cover the returned plan");
+    }
+    if plan.registration_epoch != package.registration_epoch {
+        anyhow::bail!("preview registration_epoch does not match the Applet package");
+    }
+    let requested = package
+        .requested_scopes
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let mut approved = BTreeSet::new();
+    for scope in &plan.approved_scopes {
+        for action in &scope.actions {
+            if !requested.contains(action.as_str()) {
+                anyhow::bail!("preview approved an action the Applet did not request: {action}");
+            }
+            if !approved.insert(action.clone()) {
+                anyhow::bail!("preview approved the same action more than once: {action}");
+            }
+        }
+    }
+    if approved.is_empty() {
+        anyhow::bail!("preview approved no Applet capability actions");
+    }
+    Ok(approved.into_iter().collect())
+}
+
+fn operation_builder_for_scope(
+    scope: &ScopeRef,
+    actor_id: &str,
+    kind: arkret_sdk::events::kinds::EventKind,
+) -> crate::operation::OperationBuilder {
+    match scope {
+        ScopeRef::Realm { realm_id } => {
+            crate::operation::OperationBuilder::new(realm_id.to_string(), actor_id, kind)
+        }
+        ScopeRef::Circle {
+            realm_id,
+            circle_id,
+        } => crate::operation::OperationBuilder::new(realm_id.to_string(), actor_id, kind)
+            .circle_id(circle_id.to_string()),
+        _ => unreachable!("Applet install schema only permits Realm and Circle scopes"),
+    }
+}
+
+fn applet_install_resource(scope: &ScopeRef) -> anyhow::Result<arkret_sdk::WireResourceSelector> {
+    let value = match scope {
+        ScopeRef::Realm { realm_id } => serde_json::json!({
+            "kind": "realm",
+            "realm_id": realm_id,
+        }),
+        ScopeRef::Circle {
+            realm_id,
+            circle_id,
+        } => serde_json::json!({
+            "kind": "circle",
+            "realm_id": realm_id,
+            "circle_id": circle_id,
+            "match_scope": "exact",
+        }),
+        _ => anyhow::bail!("Applet install schema only permits Realm and Circle scopes"),
+    };
+    serde_json::from_value(value)
+        .map_err(|error| anyhow::anyhow!("encode Applet grant resource selector: {error}"))
+}
+
+fn build_formal_applet_install_events(
+    snapshot: &AppletInstallPreviewSnapshot,
+    actor_id: &str,
+) -> anyhow::Result<(arkret_sdk::Event, Vec<arkret_sdk::Event>)> {
+    let actor = arkret_sdk::Did::new(actor_id.trim().to_owned())
+        .map_err(|error| anyhow::anyhow!("invalid install actor DID: {error}"))?;
+    if snapshot.plan.effective_scope != snapshot.effective_scope {
+        anyhow::bail!("preview effective_scope no longer matches the install target");
+    }
+    let registration_submission = match snapshot.plan.events_to_submit.as_slice() {
+        [submission]
+            if submission.event_kind
+                == arkret_sdk::events::kinds::EventKind::AppletRegistration.as_str() =>
+        {
+            submission
+        }
+        _ => anyhow::bail!("preview must contain exactly one Applet registration payload"),
+    };
+    let registration = operation_builder_for_scope(
+        &snapshot.effective_scope,
+        actor_id,
+        arkret_sdk::events::kinds::EventKind::AppletRegistration,
+    )
+    .body(Value::Object(
+        registration_submission
+            .payload
+            .clone()
+            .into_iter()
+            .collect(),
+    ))
+    .build_sdk_event("inkson")?;
+
+    let actions = approved_actions_from_plan(&snapshot.plan, &snapshot.package)?;
+    let applet_id = arkret_sdk::AppletId::new(snapshot.package.applet_id.clone())
+        .map_err(|error| anyhow::anyhow!("Applet grant requires a typed applet_id: {error}"))?;
+    let constraint = arkret_sdk::GrantConstraint::applet_delegation(
+        applet_id,
+        snapshot.package.service_id.clone(),
+        snapshot.package.registration_epoch.clone(),
+    );
+    let resource = applet_install_resource(&snapshot.effective_scope)?;
+    let realm_id = match &snapshot.effective_scope {
+        ScopeRef::Realm { realm_id } | ScopeRef::Circle { realm_id, .. } => realm_id.clone(),
+        _ => unreachable!("validated Applet effective scope"),
+    };
+    let issued_at = crate::clock::now_utc_millis();
+    let registry_digest = arkret_sdk::current_capability_action_registry_digest()
+        .map_err(|error| anyhow::anyhow!("load capability action registry digest: {error}"))?;
+    let mut grant_events = Vec::with_capacity(actions.len());
+    for action in actions {
+        let grant_id = arkret_sdk::GrantId::new(arkret_sdk::new_prefixed_uuid7("ak:grant:"))?;
+        let grant = arkret_sdk::CapabilityGrant {
+            id: grant_id.clone(),
+            schema: arkret_wire::CAPABILITY_SCHEMA.to_owned(),
+            realm_id: Some(realm_id.clone()),
+            issuer: actor.clone(),
+            subject: arkret_sdk::CapabilitySubject::Did(snapshot.package.service_id.clone()),
+            actions: vec![action],
+            resources: vec![resource.clone()],
+            capability_action_registry_digest: Some(registry_digest.clone()),
+            constraints: vec![constraint.clone()],
+            parent_grant_id: None,
+            issued_at,
+            not_before: None,
+            expires_at: None,
+            updated_by: None,
+            updated_at: None,
+            revoked_by: None,
+            revoked_at: None,
+            proofs: Vec::new(),
+        };
+        let payload = arkret_sdk::CapabilityGrantPayload {
+            grant: Some(grant),
+            grant_id,
+            subject: None,
+            actions: None,
+            resources: None,
+        };
+        grant_events.push(
+            operation_builder_for_scope(
+                &snapshot.effective_scope,
+                actor_id,
+                arkret_sdk::events::kinds::EventKind::CapabilityGrant,
+            )
+            .body(serde_json::to_value(payload)?)
+            .build_sdk_event("inkson")?,
+        );
+    }
+    Ok((registration, grant_events))
 }
 
 /// Whether the local UI should expose applet install / registration panels.
@@ -174,7 +326,11 @@ pub fn classify_manifest_input(raw: &str) -> ManifestInputKind {
 }
 
 #[component]
-pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element {
+pub fn AppletsPanel(
+    token: Signal<String>,
+    account_did: Signal<String>,
+    selected_realm_id: String,
+) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let state_store = crate::app::SessionContext::get().state_store;
@@ -183,13 +339,10 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
     // ─────────────────────────────────────────────────────────────
     let mut install_open = use_signal(|| false);
     let mut install_manifest = use_signal(String::new);
-    let mut install_verified = use_signal(|| false);
     let mut install_status = use_signal(String::new);
-    // P3 install wizard: the previewed plan_digest the commit MUST echo, and
-    // the resolved approved-scope count surfaced after preview.
-    let mut install_plan_digest = use_signal(String::new);
-    let mut install_approved_scopes = use_signal(|| 0usize);
-    let mut install_approved_scope_values = use_signal(Vec::<ScopeGrant>::new);
+    // The exact typed preview snapshot is the sole confirm-state authority.
+    // Any input change discards it atomically.
+    let mut install_preview = use_signal(|| Option::<AppletInstallPreviewSnapshot>::None);
     let mut install_approve_actions = use_signal(String::new);
     let mut install_ghost_actors_allowed = use_signal(|| false);
     // Optional Circle scope for the install. Blank = Realm-wide; a `ak:circle:…`
@@ -387,10 +540,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                             value: "{install_manifest}",
                             oninput: move |event: FormEvent| {
                                 install_manifest.set(event.value());
-                                install_verified.set(false);
-                                install_plan_digest.set(String::new());
-                                install_approved_scope_values.set(Vec::new());
-                                install_approved_scopes.set(0);
+                                install_preview.set(None);
                             },
                             style: "width: 100%; min-height: 60px;",
                         }
@@ -404,10 +554,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                             value: "{install_circle_id}",
                             oninput: move |event: FormEvent| {
                                 install_circle_id.set(event.value());
-                                install_verified.set(false);
-                                install_plan_digest.set(String::new());
-                                install_approved_scope_values.set(Vec::new());
-                                install_approved_scopes.set(0);
+                                install_preview.set(None);
                             },
                             style: "width: 100%; min-height: 32px;",
                         }
@@ -417,10 +564,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                             value: "{install_approve_actions}",
                             oninput: move |event: FormEvent| {
                                 install_approve_actions.set(event.value());
-                                install_verified.set(false);
-                                install_plan_digest.set(String::new());
-                                install_approved_scope_values.set(Vec::new());
-                                install_approved_scopes.set(0);
+                                install_preview.set(None);
                             },
                             style: "width: 100%; min-height: 48px;",
                         }
@@ -430,10 +574,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                 checked: if install_ghost_actors_allowed() { CheckboxState::Checked } else { CheckboxState::Unchecked },
                                 on_checked_change: move |state: CheckboxState| {
                                     install_ghost_actors_allowed.set(bool::from(state));
-                                    install_verified.set(false);
-                                    install_plan_digest.set(String::new());
-                                    install_approved_scope_values.set(Vec::new());
-                                    install_approved_scopes.set(0);
+                                    install_preview.set(None);
                                 },
                             }
                             span { "allow Applet-managed Ghost Actors" }
@@ -452,8 +593,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                         let raw = install_manifest();
                                         let kind = classify_manifest_input(&raw);
                                         let Some(package) = applet_package_from_manifest(&kind) else {
-                                            install_verified.set(false);
-                                            install_plan_digest.set(String::new());
+                                            install_preview.set(None);
                                             install_status
                                                 .set("manifest must be a complete Applet package JSON body".to_owned());
                                             return;
@@ -477,8 +617,8 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                 }
                                             };
                                             let body = AppletInstallPreviewRequestBody {
-                                                applet_package: package,
-                                                effective_scope,
+                                                applet_package: package.clone(),
+                                                effective_scope: effective_scope.clone(),
                                                 approval_request: approval_request(
                                                     parse_applet_approval_actions(&approve_actions),
                                                     ghost_actors_allowed,
@@ -489,31 +629,36 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                             })
                                             .await;
                                             match result {
-                                                // `parse_install_plan` reads the plan via lenient
-                                                // `Value` accessors; serialize the typed
-                                                // `AppletInstallPlan` back to its wire JSON.
-                                                Ok(plan) => match parse_install_plan(
-                                                    &serde_json::to_value(&plan).unwrap_or_default(),
-                                                ) {
-                                                    Ok((digest, scopes)) => {
-                                                        let scope_count = scopes.len();
-                                                        install_plan_digest.set(digest.clone());
-                                                        install_approved_scopes.set(scope_count);
-                                                        install_approved_scope_values.set(scopes);
-                                                        install_verified.set(true);
+                                                Ok(plan) => match approved_actions_from_plan(&plan, &package) {
+                                                    Ok(actions) if plan.effective_scope == effective_scope => {
+                                                        let scope_count = plan.approved_scopes.len();
+                                                        let digest = plan.plan_digest.to_string();
+                                                        install_preview.set(Some(AppletInstallPreviewSnapshot {
+                                                            package,
+                                                            effective_scope,
+                                                            plan,
+                                                        }));
                                                         install_status.set(format!(
-                                                            "plan ready ({} scope(s)); digest {}",
+                                                            "plan ready ({} scope(s), {} action(s)); digest {}",
                                                             scope_count,
+                                                            actions.len(),
                                                             short_protocol_id(&digest),
                                                         ));
                                                     }
+                                                    Ok(_) => {
+                                                        install_preview.set(None);
+                                                        install_status.set(
+                                                            "preview invalid: effective_scope does not match the request"
+                                                                .to_owned(),
+                                                        );
+                                                    }
                                                     Err(err) => {
-                                                        install_verified.set(false);
+                                                        install_preview.set(None);
                                                         install_status.set(format!("preview invalid: {err}"));
                                                     }
                                                 },
                                                 Err(err) => {
-                                                    install_verified.set(false);
+                                                    install_preview.set(None);
                                                     install_status.set(format!(
                                                         "preview failed: {}", err.display()
                                                     ));
@@ -524,71 +669,58 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                 },
                                 "Preview plan"
                             }
-                            // Step 2 — commit: echo plan_digest + approved_scopes
-                            // back via `applet_install` with an Idempotency-Key.
+                            // Step 2 — author caller-signed formal Events from
+                            // the exact preview snapshot, then commit them with
+                            // its plan_digest and an Idempotency-Key.
                             Button {
-                                variant: if install_verified() { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                                disabled: !install_verified(),
+                                variant: if install_preview().is_some() { ButtonVariant::Primary } else { ButtonVariant::Secondary },
+                                disabled: install_preview().is_none(),
                                 "data-testid": "applet-install-confirm-button",
                                 onclick: {
                                     let base = base_url.clone();
-                                    let realm = selected_realm_id.clone();
                                     move |_| {
-                                        let raw = install_manifest();
-                                        let kind = classify_manifest_input(&raw);
-                                        let Some(package) = applet_package_from_manifest(&kind) else {
-                                            install_status.set("manifest no longer valid".to_owned());
-                                            return;
-                                        };
-                                        let digest = install_plan_digest();
-                                        if digest.is_empty() {
+                                        let Some(snapshot) = install_preview() else {
                                             install_status.set("preview the plan before installing".to_owned());
                                             return;
-                                        }
+                                        };
                                         let base = base.clone();
-                                        let realm = realm.clone();
                                         let api_token = token();
-                                        let circle = install_circle_id();
-                                        let approved_scopes = install_approved_scope_values();
+                                        let actor_id = account_did();
                                         let ghost_actors_allowed = install_ghost_actors_allowed();
                                         install_status.set("installing applet…".to_owned());
                                         spawn(async move {
-                                            let digest_typed = match arkret_sdk::Hash::new(digest.clone()) {
-                                                Ok(h) => h,
-                                                Err(err) => {
-                                                    install_status.set(format!("bad plan_digest: {err:?}"));
-                                                    return;
-                                                }
-                                            };
-                                            let effective_scope = match applet_effective_scope(
-                                                &realm,
-                                                Some(circle.as_str()),
-                                            ) {
-                                                Ok(scope) => scope,
-                                                Err(err) => {
-                                                    install_status.set(err);
-                                                    return;
-                                                }
-                                            };
-                                            let body = AppletInstallRequestBody {
-                                                plan_digest: digest_typed,
-                                                applet_package: package,
-                                                effective_scope,
-                                                approved_scopes,
-                                                actor_policy: Some(AppletActorPolicy {
-                                                    bot_membership: Some(AppletBotMembership::Join),
-                                                    ghost_actor_mode: Some(if ghost_actors_allowed {
-                                                        AppletGhostActorMode::PolicyDeclared
-                                                    } else {
-                                                        AppletGhostActorMode::Disallowed
-                                                    }),
-                                                }),
-                                                e2ee_policy: None,
-                                                widget_policy: None,
-                                            };
                                             let idem = crate::operation::uuid_v7();
-                                            let result = with_authed_sdk_client(&base, api_token, |http| async move {
-                                                http.applet_install(&idem, &body).await.map_err(anyhow::Error::from)
+                                            let result = with_event_submitter(&base, api_token, |submitter| async move {
+                                                let (registration, grants) =
+                                                    build_formal_applet_install_events(&snapshot, &actor_id)?;
+                                                let mut events = Vec::with_capacity(1 + grants.len());
+                                                events.push(registration);
+                                                events.extend(grants);
+                                                let mut events =
+                                                    submitter.prepare_sdk_events_batch(events).await?;
+                                                let registration_event = events.remove(0);
+                                                let body = AppletInstallRequestBody {
+                                                    plan_digest: snapshot.plan.plan_digest.clone(),
+                                                    applet_package: snapshot.package,
+                                                    effective_scope: snapshot.effective_scope,
+                                                    registration_event,
+                                                    capability_grant_events: events,
+                                                    actor_policy: Some(AppletActorPolicy {
+                                                        bot_membership: Some(AppletBotMembership::Join),
+                                                        ghost_actor_mode: Some(if ghost_actors_allowed {
+                                                            AppletGhostActorMode::PolicyDeclared
+                                                        } else {
+                                                            AppletGhostActorMode::Disallowed
+                                                        }),
+                                                    }),
+                                                    e2ee_policy: None,
+                                                    widget_policy: None,
+                                                };
+                                                submitter
+                                                    .http()
+                                                    .applet_install(&idem, &body)
+                                                    .await
+                                                    .map_err(anyhow::Error::from)
                                             })
                                             .await;
                                             match result {
@@ -621,10 +753,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                         install_circle_id.set(String::new());
                                                         install_approve_actions.set(String::new());
                                                         install_ghost_actors_allowed.set(false);
-                                                        install_verified.set(false);
-                                                        install_plan_digest.set(String::new());
-                                                        install_approved_scope_values.set(Vec::new());
-                                                        install_approved_scopes.set(0);
+                                                        install_preview.set(None);
                                                     }
                                                 }
                                                 Err(err) => install_status.set(format!(
@@ -846,8 +975,8 @@ mod tests {
     // ── P3 install wizard helpers ───────────────────────────────
 
     use super::{
-        applet_effective_scope, applet_package_from_manifest, parse_applet_approval_actions,
-        parse_install_plan,
+        applet_effective_scope, applet_install_resource, applet_package_from_manifest,
+        parse_applet_approval_actions,
     };
 
     #[test]
@@ -894,24 +1023,31 @@ mod tests {
     }
 
     #[test]
-    fn parse_install_plan_requires_plan_digest() {
-        let plan = serde_json::json!({
-            "plan_digest": "sha256:deadbeef",
-            "approved_scopes": [{
-                "actions": ["ak.message.create", "ak.applet.ghost.provision"],
-                "realm_ids": ["ak:realm:01904100-0000-7000-8000-000000000010"],
-                "constraints": []
-            }],
-        });
-        let (digest, scopes) = parse_install_plan(&plan).unwrap();
-        assert_eq!(digest, "sha256:deadbeef");
-        assert_eq!(scopes.len(), 1);
-        assert_eq!(scopes[0].actions[0], "ak.message.create");
+    fn applet_grant_resource_is_the_exact_effective_scope() {
+        let realm_scope =
+            applet_effective_scope("ak:realm:01904100-0000-7000-8000-000000000010", None).unwrap();
+        assert_eq!(
+            serde_json::to_value(applet_install_resource(&realm_scope).unwrap()).unwrap(),
+            serde_json::json!({
+                "kind": "realm",
+                "realm_id": "ak:realm:01904100-0000-7000-8000-000000000010"
+            })
+        );
 
-        // Missing plan_digest is a hard error (never commit a digest-less
-        // install — soland would reject it with applet_install_plan_mismatch).
-        let bad = serde_json::json!({ "approved_scopes": [] });
-        assert!(parse_install_plan(&bad).is_err());
+        let circle_scope = applet_effective_scope(
+            "ak:realm:01904100-0000-7000-8000-000000000010",
+            Some("ak:circle:01904100-0000-7000-8000-0000000000c1"),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(applet_install_resource(&circle_scope).unwrap()).unwrap(),
+            serde_json::json!({
+                "kind": "circle",
+                "realm_id": "ak:realm:01904100-0000-7000-8000-000000000010",
+                "circle_id": "ak:circle:01904100-0000-7000-8000-0000000000c1",
+                "match_scope": "exact"
+            })
+        );
     }
 
     #[test]
