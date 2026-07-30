@@ -475,17 +475,16 @@ pub fn build_managed_agent_pcr_create_event(
         // the closed realm.schema.json, and an empty list is indistinguishable
         // from absence. A managed Agent PCR claims no plaintext-visible
         // service.
-        object["history_sharing_policy"] = json!({
-            "version": 1,
-            "default_key_share": "deny",
-            "pre_join_history": "deny",
-            "allowed_key_sources": ["key_backup"],
-            "allowed_receiver_states": ["active_member"],
-            "audit": {
-                "share_audit_event_required": true,
-                "access_audit_required": true
-            }
-        });
+        //
+        // No `history_sharing_policy` either, for the same closed-object
+        // reason plus a profile one: the
+        // `ak.profile.principal_control_realm.v1` event-kind policy is
+        // `allowlist_only` and does not admit the
+        // `ak.realm.history_sharing_policy` Control Move, so a PCR can never
+        // carry that policy at all. Its `history_visibility = "restricted"` is
+        // pinned by the same profile's `realm_defaults`, exactly like the
+        // SDK-authored self-principal PCR genesis
+        // (`arkret_bootstrap::build_self_principal_pcr_create`).
         object["notary"] = json!({
             "kind": "single_did",
             "did": agent_id,
@@ -1434,5 +1433,77 @@ mod notary_derivation_tests {
         assert!(notary.get("recovery_members").is_none());
         assert!(notary.get("controller_organization").is_none());
         assert!(notary.get("recovery_controller_organizations").is_none());
+    }
+
+    /// Mirror of the Principal Server's `ak.realm.create` candidate gate
+    /// (`validate_realm_proposal_policy` — soland
+    /// `routing/events/operations/semantics.rs`): the authored
+    /// `payload.object` MUST deserialize into the closed
+    /// `ak.schema.realm.v1` model. `deny_unknown_fields` means any member
+    /// the closed schema does not declare is rejected with
+    /// `Realm candidate object violates ak.schema.realm.v1`, so authoring
+    /// MUST NOT double-write facet state (`plaintext_visible_services`,
+    /// `history_sharing_policy`, …) into the Realm object.
+    fn assert_realm_candidate_matches_closed_schema(event: &arkret_sdk::Event) {
+        let mut candidate = event
+            .payload
+            .get("object")
+            .cloned()
+            .expect("ak.realm.create payload carries object");
+        if let Some(object) = candidate.as_object_mut() {
+            object.remove("operation_id");
+        }
+        let realm: arkret_models_collaboration::objects::realm::Realm =
+            serde_json::from_value(candidate)
+                .unwrap_or_else(|error| panic!("Realm candidate violates ak.schema.realm.v1: {error}"));
+        realm
+            .validate_kind_invariants()
+            .unwrap_or_else(|error| panic!("Realm candidate kind invariants: {error}"));
+    }
+
+    #[test]
+    fn ordinary_realm_create_candidate_matches_closed_schema() {
+        let events = build_realm_bootstrap_events(
+            "ak:realm:01964137-0000-7000-8000-000000000077",
+            "did:web:alice.example",
+            "did:web:alice.example",
+            "Ordinary Realm",
+            Some("summary"),
+            "invite_only",
+            "invite",
+            "shared",
+            "mls_rfc9420",
+            "standard",
+            "closed",
+            "single_did",
+            "sha256",
+            "ak:trust_domain:did.web.example",
+            &[],
+            &["did:web:media.example".to_owned()],
+            None,
+            None,
+        )
+        .unwrap();
+        assert_realm_candidate_matches_closed_schema(&events[0]);
+        // The plaintext-visible service surface stays a dedicated facet
+        // Control Move in the same genesis batch — never a Realm object member.
+        assert!(
+            events
+                .iter()
+                .any(|event| event.kind.as_str() == "ak.realm.plaintext_visible_services")
+        );
+    }
+
+    #[test]
+    fn managed_agent_pcr_create_candidate_matches_closed_schema() {
+        let event = build_managed_agent_pcr_create_event(
+            "ak:realm:01964137-0000-7000-8000-000000000099",
+            "did:web:agent.example",
+            "did:web:alice.example",
+            "did:web:agent.example#managed-controller",
+            "ak:trust_domain:did.web.example",
+        )
+        .unwrap();
+        assert_realm_candidate_matches_closed_schema(&event);
     }
 }
