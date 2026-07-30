@@ -197,3 +197,18 @@
   recovery-session unlock authoring behind one typed SDK workflow. The legacy
   `fetch_key_backup_for_verified_recovery_session` API still lacks recovery key material and should
   be removed or replaced rather than retained as a misleading partially usable entry point.
+
+## 2026-07-30 — managed Agent authority lookup replayed transitions without frozen pre-state
+
+- Severity: P1 Agent replacement blocker.
+- Status: resolved; covered by the managed-PCR authority regression and the live replacement gate.
+- Evidence: the first pairing succeeded, but the replacement Agent's runtime-key approval failed
+  while deriving the immutable proposal authority. The lookup replayed the complete accepted PCR
+  history through a stateless materializer; a later `ak.agent.key.revoke` correctly required frozen
+  pre-state that this authoring path cannot supply.
+- Resolution: authority lookup now selects the one accepted `ak.realm.create`, validates that
+  delegated managed-PCR genesis and its complete leaf set, and derives the immutable notary digest
+  from that create alone. Later state transitions no longer participate in genesis-authority
+  derivation.
+- Prevention dimension: immutable genesis authority and current materialized state are different
+  queries. Callers that only need the former must not replay pre-state-dependent transitions.

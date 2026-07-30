@@ -361,13 +361,6 @@ fn managed_agent_pcr_authority_set_ref_from_events(
     event: &arkret_sdk::Event,
     accepted_events: &[arkret_sdk::Event],
 ) -> anyhow::Result<arkret_sdk::Hash> {
-    arkret_bootstrap::materialize_managed_agent_pcr_control(
-        accepted_events,
-        &crate::operation::cell_write_projector,
-    )
-    .map_err(|error| {
-        anyhow::anyhow!("managed Agent PCR authority materialization failed: {error}")
-    })?;
     let mut creates = accepted_events.iter().filter(|candidate| {
         candidate.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE
             && candidate.realm_id == event.realm_id
@@ -381,6 +374,18 @@ fn managed_agent_pcr_authority_set_ref_from_events(
     if creates.next().is_some() {
         anyhow::bail!("managed Agent PCR has multiple matching create Events");
     }
+    // The proposal authority is immutable genesis material. Replaying the
+    // complete accepted log here is both unnecessary and incorrect once a
+    // later transition (for example `ak.agent.key.revoke`) requires frozen
+    // pre-state. Validate the delegated create and its full genesis leaf set,
+    // then derive the authority digest from that accepted create only.
+    arkret_bootstrap::materialize_managed_agent_pcr_control(
+        std::slice::from_ref(create),
+        &crate::operation::cell_write_projector,
+    )
+    .map_err(|error| {
+        anyhow::anyhow!("managed Agent PCR authority materialization failed: {error}")
+    })?;
     let notary = create
         .payload
         .get("object")
@@ -678,6 +683,55 @@ mod tests {
         )
         .unwrap();
         assert_eq!(authority, expected);
+    }
+
+    #[test]
+    fn managed_agent_pcr_authority_ignores_later_prestate_dependent_writes() {
+        let agent_id = arkret_sdk::Did::new("did:web:agent.example").unwrap();
+        let controller_id = arkret_sdk::Did::new("did:web:alice.example").unwrap();
+        let realm_id =
+            arkret_sdk::RealmId::new("ak:realm:01964137-0000-7000-8000-000000000099").unwrap();
+        let authorization_ref =
+            arkret_sdk::DidUrl::new("did:web:agent.example#managed-controller").unwrap();
+        let mut accepted = crate::event_builders::build_managed_agent_pcr_bootstrap_events(
+            realm_id.as_str(),
+            agent_id.as_str(),
+            controller_id.as_str(),
+            authorization_ref.as_str(),
+            "ak:trust_domain:did.web.example",
+        )
+        .unwrap();
+        accepted.push(
+            arkret_event_draft::build_agent_key_revoke_event(
+                &arkret_sdk::AgentKeyRevokePayload {
+                    agent_id: agent_id.clone(),
+                    key_id: arkret_sdk::NonEmptyString::new("runtime-1").unwrap(),
+                    revoked_by: controller_id.clone(),
+                    revoked_at: Utc::now(),
+                    reason: Some("replacement".to_owned()),
+                },
+                arkret_sdk::EventId::new("ak:event:01964137-0000-7000-8000-0000000000aa").unwrap(),
+                arkret_sdk::ScopeRef::Realm {
+                    realm_id: realm_id.clone(),
+                },
+                agent_id.clone(),
+                controller_id.clone(),
+                authorization_ref,
+                1,
+                arkret_sdk::Hlc::new("000000000001-0000-00000000").unwrap(),
+            )
+            .unwrap(),
+        );
+
+        let mut target = event();
+        target.realm_id = realm_id.clone();
+        target.scope_ref = arkret_sdk::ScopeRef::Realm { realm_id };
+        target.actor_id = agent_id;
+        target.executed_by = Some(controller_id);
+        target.authorization_ref = Some("did:web:agent.example#managed-controller".to_owned());
+
+        managed_agent_pcr_authority_set_ref_from_events(&target, &accepted)
+            .expect("later frozen-pre-state writes must not redefine the genesis authority");
     }
 
     fn rebind_and_resign(lease: &mut AuthorizationLease, basis_ref: arkret_wire::LeaseBasisRef) {
