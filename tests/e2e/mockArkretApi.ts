@@ -101,7 +101,8 @@ type InksonWireCommand =
   | "sha256-canonical-json"
   | "mls-governance-proof"
   | "proposal-receipt"
-  | "ingress-receipts";
+  | "ingress-receipts"
+  | "range-completeness";
 type InksonWireCanonicalJson = { canonical: string };
 type InksonWireDigest = { digest: string };
 
@@ -318,6 +319,9 @@ export async function mockArkretApi(
     encryption_profile: string;
   }> = [];
   const projectionEvents: Array<Record<string, unknown>> = [];
+  let serverDidDocument: Record<string, unknown> = {
+    id: "did:web:server.local",
+  };
   let sidecarAgentIds = ["did:web:agents.example:assistant"];
   const circleStates = new Map<string, MockCircleState>([
     [DEMO_CIRCLE, "active"],
@@ -1408,8 +1412,41 @@ export async function mockArkretApi(
       const actorId = url.searchParams.get("actor_id");
       const realmId = url.searchParams.get("realm_id");
       if (actorId && realmId) {
+        const actorEvents = projectionEvents.filter(
+          (event) =>
+            eventRealmId(event) === realmId && event.actor_id === actorId,
+        );
+        const referenced = new Set(
+          actorEvents.flatMap((event) =>
+            Array.isArray(event.prev_refs)
+              ? event.prev_refs.filter(
+                  (eventId): eventId is string => typeof eventId === "string",
+                )
+              : [],
+          ),
+        );
+        const heads = actorEvents
+          .map((event) => event.event_id)
+          .filter(
+            (eventId): eventId is string =>
+              typeof eventId === "string" && !referenced.has(eventId),
+          )
+          .sort();
+        const nextActorSeq =
+          actorEvents.reduce(
+            (highest, event) =>
+              typeof event.actor_seq === "number"
+                ? Math.max(highest, event.actor_seq)
+                : highest,
+            -1,
+          ) + 1;
         return json(route, {
-          frontier: realmActorFrontier(realmId, actorId),
+          frontier: realmActorFrontier(
+            realmId,
+            actorId,
+            nextActorSeq,
+            heads,
+          ),
         });
       }
       if (actorId) {
@@ -1690,7 +1727,7 @@ export async function mockArkretApi(
           "ak.self.events.query.describe",
         ],
         supported_bindings: [{ kind: "http_json" }],
-        supported_features: [],
+        supported_features: ["events_query_range_completeness"],
         auth_metadata: {
           mode: "development",
           account_authority: {
@@ -1730,7 +1767,7 @@ export async function mockArkretApi(
           max_visibility: "none",
           notes: "E2EE-only mock: no plaintext-visible service surface.",
         },
-        implemented_features: [],
+        implemented_features: ["events_query_range_completeness"],
         claimed_profiles: [],
         verified_profiles: [],
         experimental_features: [],
@@ -2661,7 +2698,28 @@ export async function mockArkretApi(
             requestedRealms.includes(eventRealmId(event)),
           )
         : projectionEvents;
-      return json(route, { events, next_cursor: null, has_more: false });
+      const response: Record<string, unknown> = {
+        events,
+        next_cursor: null,
+        has_more: false,
+      };
+      if (
+        url.searchParams.get("include_completeness") === "true" &&
+        events.length >= 2 &&
+        events.some((event) => event.kind === "ak.key_backup.active_series")
+      ) {
+        const realmId = eventRealmId(events[0]);
+        const fixture = inksonWire<{
+          range_completeness: Record<string, unknown>;
+          did_document: Record<string, unknown>;
+        }>("range-completeness", {
+          realm_id: realmId,
+          events,
+        });
+        response.range_completeness = fixture.range_completeness;
+        serverDidDocument = fixture.did_document;
+      }
+      return json(route, response);
     }
 
     // NB: no `/_arkret/self/snapshot/head` route. The mock's describe does
@@ -2689,7 +2747,10 @@ export async function mockArkretApi(
     ) {
       const body = await route.request().postDataJSON();
       return json(route, {
-        did_document: { id: body.did },
+        did_document:
+          body.did === "did:web:server.local"
+            ? serverDidDocument
+            : { id: body.did },
         key_log_head: null,
         seq: 0,
         receipts: [],

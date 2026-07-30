@@ -376,10 +376,11 @@ async fn fetch_authoritative_active_series(
 ) -> Result<Vec<Value>> {
     let actor = arkret_sdk::Did::new(actor_id.to_owned())
         .map_err(|error| anyhow!("invalid backup actor_id: {error}"))?;
-    let realm_id = arkret_sdk::principal_control_realm_id(&actor);
+    let realm_id = arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&actor))
+        .map_err(|error| anyhow!("invalid principal control Realm id: {error}"))?;
     let events = api
         .http()
-        .events_query_all_pages(realm_id.as_str())
+        .events_query_all_pages_with_completeness(realm_id.as_str())
         .await
         .map_err(|error| anyhow!("read key backup active-series control stream: {error}"))?;
     let mut active_events = events
@@ -390,6 +391,7 @@ async fn fetch_authoritative_active_series(
     if active_events.is_empty() {
         return Ok(Vec::new());
     }
+    verify_active_series_range_completeness(api, &realm_id, &events, &active_events).await?;
     let viewer = api
         .http()
         .account_viewer()
@@ -454,6 +456,177 @@ async fn fetch_authoritative_active_series(
         .into_values()
         .map(|(_, record)| serde_json::to_value(record).map_err(anyhow::Error::from))
         .collect()
+}
+
+async fn verify_active_series_range_completeness(
+    api: &crate::transport::TransportClient,
+    realm_id: &arkret_sdk::RealmId,
+    outcome: &arkret_sdk::EventsQueryOutcome,
+    active_events: &[&arkret_sdk::Event],
+) -> Result<()> {
+    use arkret_sdk::identity::DidResolver as _;
+
+    let digest_algorithm = outcome
+        .events
+        .iter()
+        .find(|event| event.kind.as_str() == "ak.realm.create")
+        .and_then(|event| {
+            event
+                .payload
+                .get("object")
+                .and_then(|object| object.get("digest_algorithm"))
+                .or_else(|| event.payload.get("digest_algorithm"))
+        })
+        .and_then(Value::as_str)
+        .unwrap_or("sha256");
+    let digest_suite = arkret_sdk::canonical::digest_suite(digest_algorithm)
+        .map_err(|error| anyhow!("unsupported active-series Realm digest algorithm: {error}"))?;
+    let describe = api
+        .event_submitter()
+        .map_err(|error| anyhow!("build active-series completeness client: {error}"))?
+        .events_describe()
+        .await
+        .map_err(|error| anyhow!("describe active-series completeness support: {error}"))?;
+    if !describe
+        .supported_features
+        .iter()
+        .any(|feature| feature == "events_query_range_completeness")
+    {
+        return Err(anyhow!(
+            "first-device active-series recovery requires events_query_range_completeness"
+        ));
+    }
+    let completeness = outcome.range_completeness.as_ref().ok_or_else(|| {
+        anyhow!("first-device active-series recovery received no range-completeness evidence")
+    })?;
+    if completeness.attestation_refs.is_empty() || completeness.attestations.is_empty() {
+        return Err(anyhow!(
+            "first-device active-series recovery received empty range-completeness evidence"
+        ));
+    }
+    let referenced = completeness
+        .attestation_refs
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut first_error = None;
+    for attestation_event in &completeness.attestations {
+        if !referenced.contains(&attestation_event.event_id) {
+            first_error.get_or_insert_with(|| {
+                "inline range-completeness Event is not present in attestation_refs".to_owned()
+            });
+            continue;
+        }
+        let payload =
+            match attestation_event.payload_as::<arkret_sdk::RangeCompletenessAttestation>() {
+                Ok(payload) => payload,
+                Err(error) => {
+                    first_error.get_or_insert_with(|| {
+                        format!("decode active-series range-completeness payload: {error}")
+                    });
+                    continue;
+                }
+            };
+        if payload.issuer != describe.service_id
+            || attestation_event.actor_id != describe.service_id
+        {
+            first_error.get_or_insert_with(|| {
+                "active-series completeness issuer does not match the described service".to_owned()
+            });
+            continue;
+        }
+        let document =
+            crate::mls::governance_proof::resolve_proof_signer_document(api, &payload.issuer)
+                .await
+                .map_err(anyhow::Error::msg)?;
+        let mut resolver = crate::mls::governance_proof::StaticProofDidResolver::default();
+        resolver
+            .documents
+            .insert(payload.issuer.as_str().to_owned(), document);
+        let outer_verified = attestation_event.proofs.iter().all(|proof| {
+            let Ok(mut context) = arkret_sdk::event_proof_verification_context(attestation_event)
+            else {
+                return false;
+            };
+            context.replay_window = chrono::Duration::MAX;
+            arkret_sdk::verify_event_proof_with_did_resolver_context(
+                attestation_event,
+                proof,
+                &resolver,
+                context,
+            )
+            .is_ok_and(|verification| verification.valid)
+        });
+        if !outer_verified {
+            first_error.get_or_insert_with(|| {
+                "active-series range-completeness Event signature is invalid".to_owned()
+            });
+            continue;
+        }
+        let mut unsigned_payload = serde_json::to_value(&payload)?;
+        unsigned_payload
+            .as_object_mut()
+            .ok_or_else(|| anyhow!("range-completeness payload is not an object"))?
+            .remove("proofs");
+        let canonical_payload = crate::canonical::canonical_json_bytes(&unsigned_payload)?;
+        let payload_verified = payload.proofs.iter().all(|proof| {
+            let mut context = arkret_sdk::signatures::ProofVerificationContext::new(
+                payload.issuer.clone(),
+                proof.event_digest.clone(),
+            );
+            context.replay_window = chrono::Duration::MAX;
+            arkret_sdk::verify_canonical_proof_with_did_resolver(
+                &canonical_payload,
+                proof,
+                &payload.issuer,
+                &context,
+                &resolver,
+            )
+            .is_ok_and(|verification| verification.valid)
+        });
+        if !payload_verified {
+            first_error.get_or_insert_with(|| {
+                "active-series range-completeness payload witness signature is invalid".to_owned()
+            });
+            continue;
+        }
+        let verified = match arkret_sdk::verify_full_realm_range_completeness_with_suite(
+            attestation_event,
+            &outcome.events,
+            realm_id,
+            digest_suite,
+            false,
+            &std::collections::BTreeSet::new(),
+        ) {
+            Ok(verified) => verified,
+            Err(error) => {
+                first_error
+                    .get_or_insert_with(|| format!("verify active-series completeness: {error}"));
+                continue;
+            }
+        };
+        if active_events
+            .iter()
+            .any(|event| !verified.covered_event_ids.contains(&event.event_id))
+        {
+            first_error.get_or_insert_with(|| {
+                "range-completeness evidence does not cover every active-series Event".to_owned()
+            });
+            continue;
+        }
+        if !resolver.supports(&payload.issuer) {
+            first_error.get_or_insert_with(|| {
+                "range-completeness issuer DID was not authority-resolved".to_owned()
+            });
+            continue;
+        }
+        return Ok(());
+    }
+    Err(anyhow!(
+        "{}",
+        first_error.unwrap_or_else(|| {
+            "no usable active-series range-completeness attestation was returned".to_owned()
+        })
+    ))
 }
 
 fn verify_active_series_record_signature(

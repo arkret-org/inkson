@@ -58,24 +58,25 @@ test("fresh-device proof is validated locally, cleared on submit, and fails clos
 test("new Recovery Key remains plaintext only through custody confirmation", async ({
   page,
 }) => {
-  await gotoAndDismissRecovery(page, "/settings/recovery");
-  const panel = latestTestId(page, "recovery-panel");
-
-  await panel.getByTestId("recovery-key-regenerate").click();
-  const displayed = panel.getByTestId("recovery-key-current");
-  const recoveryWords = (await displayed.textContent())?.trim() ?? "";
+  const setup = latestTestId(page, "recovery-key-setup-modal");
+  await expect(setup).toBeVisible();
+  const displayed = setup.getByTestId("recovery-key-setup-generated-key");
+  await expect(displayed).toBeVisible();
+  const recoveryWords = (await displayed.inputValue()).trim();
   const words = recoveryWords.split(/\s+/);
   expect(words).toHaveLength(24);
-  await expect(panel.getByTestId("recovery-key-live-warning")).toBeVisible();
+  await expect(
+    setup.getByTestId("recovery-key-setup-generated-key-warning"),
+  ).toBeVisible();
 
-  await panel
-    .getByTestId("recovery-key-confirm-input")
+  await setup
+    .getByTestId("recovery-key-setup-confirm-key")
     .fill(words.slice(0, 23).join(" "));
-  await panel.getByTestId("recovery-key-clear-live").click();
-  await expect(panel.getByTestId("recovery-key-status")).toContainText(
+  await setup.getByTestId("recovery-key-setup-saved").click();
+  await expect(setup.getByTestId("recovery-key-setup-status")).toContainText(
     "23 of 24 words",
   );
-  await expect(displayed).toContainText(words[0]);
+  await expect(displayed).toHaveValue(recoveryWords);
 });
 
 test("security diagnostics route recovery actions to the canonical panel", async ({

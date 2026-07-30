@@ -33,8 +33,8 @@ impl GovernanceProofStateStore for crate::runtime::input::StateStoreHandle {
 }
 
 #[derive(Default)]
-struct StaticProofDidResolver {
-    documents: BTreeMap<String, arkret_sdk::DidDocument>,
+pub(crate) struct StaticProofDidResolver {
+    pub(crate) documents: BTreeMap<String, arkret_sdk::DidDocument>,
 }
 
 impl DidResolver for StaticProofDidResolver {
@@ -351,7 +351,7 @@ pub(crate) async fn fetch_verify_and_cache_proof_bundle<S: GovernanceProofStateS
     Ok(bundle)
 }
 
-async fn resolve_proof_signer_document(
+pub(crate) async fn resolve_proof_signer_document(
     api: &crate::transport::TransportClient,
     did: &arkret_sdk::Did,
 ) -> Result<arkret_sdk::DidDocument, String> {
