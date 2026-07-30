@@ -361,8 +361,11 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
 
 #[test]
 fn default_history_sharing_policy_matches_prejoin_visibility() {
-    let shared = recommended_history_sharing_policy_for_visibility("shared")
-        .expect("shared visibility should install a key sharing policy");
+    let shared = serde_json::to_value(
+        recommended_history_sharing_policy_for_visibility("shared")
+            .expect("shared visibility should install a key sharing policy"),
+    )
+    .expect("history sharing policy serializes");
     assert_eq!(shared["default_key_share"], "event_time_visibility");
     assert_eq!(shared["pre_join_history"], "visibility_condition_allowed");
     assert_eq!(

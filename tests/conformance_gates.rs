@@ -43,25 +43,13 @@ fn spec_artifact(path: &str) -> PathBuf {
 // J1 — Event-schema validation gate
 // ----------------------------------------------------------------------
 
-/// Compile the event-schema once per test process.
-fn event_schema_validator() -> &'static jsonschema::Validator {
-    static VALIDATOR: OnceLock<jsonschema::Validator> = OnceLock::new();
-    VALIDATOR.get_or_init(|| {
-        let event_schema_path = spec_artifact("schemas/event-envelope.schema.json");
+/// Every `spec/v1/artifacts/schemas/*.json` resource, registered under its
+/// `$id` plus the relative aliases the spec files `$ref` each other by.
+/// Compiled once per test process and shared by every validator below.
+fn spec_schema_registry() -> &'static Registry<'static> {
+    static REGISTRY: OnceLock<Registry<'static>> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
         let schemas_dir = spec_artifact("schemas");
-
-        let event_schema_raw = fs::read_to_string(&event_schema_path).unwrap_or_else(|err| {
-            panic!("read {} failed: {err}", event_schema_path.display());
-        });
-        let event_schema: Value = serde_json::from_str(&event_schema_raw)
-            .expect("event-envelope.schema.json parses as JSON");
-
-        let event_schema_id = event_schema
-            .get("$id")
-            .and_then(Value::as_str)
-            .unwrap_or("https://arkret.org/v1/schemas/event-envelope.schema.json")
-            .to_owned();
-
         let mut registry = Registry::new();
         for entry in fs::read_dir(&schemas_dir).unwrap_or_else(|err| {
             panic!("read schemas dir {} failed: {err}", schemas_dir.display());
@@ -94,15 +82,74 @@ fn event_schema_validator() -> &'static jsonschema::Validator {
                     .unwrap_or_else(|err| panic!("register schema alias {alias}: {err}"));
             }
         }
+        registry.prepare().expect("schema registry prepares")
+    })
+}
 
-        let registry = registry.prepare().expect("schema registry prepares");
+/// Read one spec schema file and return its `$id`.
+fn spec_schema_id(filename: &str) -> String {
+    let path = spec_artifact(&format!("schemas/{filename}"));
+    let raw = fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("read {} failed: {err}", path.display()));
+    let schema: Value =
+        serde_json::from_str(&raw).unwrap_or_else(|err| panic!("{filename} parses as JSON: {err}"));
+    schema
+        .get("$id")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("{filename} declares no $id"))
+        .to_owned()
+}
+
+/// Compile the event-schema once per test process.
+fn event_schema_validator() -> &'static jsonschema::Validator {
+    static VALIDATOR: OnceLock<jsonschema::Validator> = OnceLock::new();
+    VALIDATOR.get_or_init(|| {
+        let event_schema_path = spec_artifact("schemas/event-envelope.schema.json");
+        let event_schema_raw = fs::read_to_string(&event_schema_path).unwrap_or_else(|err| {
+            panic!("read {} failed: {err}", event_schema_path.display());
+        });
+        let event_schema: Value = serde_json::from_str(&event_schema_raw)
+            .expect("event-envelope.schema.json parses as JSON");
+        let event_schema_id = event_schema
+            .get("$id")
+            .and_then(Value::as_str)
+            .unwrap_or("https://arkret.org/v1/schemas/event-envelope.schema.json")
+            .to_owned();
 
         jsonschema::options()
-            .with_registry(&registry)
+            .with_registry(spec_schema_registry())
             .with_base_uri(event_schema_id.as_str())
             .build(&event_schema)
             .expect("event-schema compiles")
     })
+}
+
+/// Validate a value against one `event-payload.schema.json#/$defs/<def_name>`.
+///
+/// Used where the *payload* has a dedicated closed def that the envelope
+/// schema's per-kind `allOf` does not point at; validating the envelope alone
+/// would then silently skip the closed check.
+fn assert_matches_payload_def(label: &str, def_name: &str, value: &Value) {
+    let reference = Value::String(format!(
+        "{}#/$defs/{def_name}",
+        spec_schema_id("event-payload.schema.json")
+    ));
+    let schema = Value::Object([("$ref".to_owned(), reference)].into_iter().collect());
+    let validator = jsonschema::options()
+        .with_registry(spec_schema_registry())
+        .build(&schema)
+        .unwrap_or_else(|err| panic!("{def_name} compiles: {err}"));
+    if !validator.is_valid(value) {
+        let errors: Vec<String> = validator
+            .iter_errors(value)
+            .map(|err| format!("  - {} (at {})", err, err.instance_path()))
+            .collect();
+        panic!(
+            "{label}: value failed {def_name} validation:\n{}\nvalue was:\n{}",
+            errors.join("\n"),
+            serde_json::to_string_pretty(value).unwrap_or_default()
+        );
+    }
 }
 
 /// Deterministic Ed25519 key the test process uses for signing
@@ -429,16 +476,21 @@ fn build_realm_history_sharing_policy_event_matches_event_schema() {
     let mut envelope = event_builders::build_realm_history_sharing_policy_event(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
-        serde_json::json!({
-            "version": 1,
-            "default_key_share": "event_time_visibility",
-            "allowed_key_sources": ["verified_member_device"],
-            "allowed_receiver_states": ["active_member"],
-            "audit": {
-                "share_audit_event_required": true,
-                "access_audit_required": true
-            }
-        }),
+        arkret_sdk::HistorySharingPolicyPayloadValue {
+            version: 1,
+            default_key_share: arkret_sdk::HistoryKeyShareDefault::EventTimeVisibility,
+            pre_join_history: None,
+            post_removal_recovery: None,
+            allowed_key_sources: vec![arkret_sdk::HistoryKeySource::VerifiedMemberDevice],
+            allowed_receiver_states: Some(vec![
+                arkret_sdk::HistorySharingReceiverClass::ActiveMember,
+            ]),
+            audit: arkret_sdk::HistorySharingPolicyPayloadValueAudit {
+                share_audit_event_required: true,
+                access_audit_required: true,
+            },
+            restricted_rules: None,
+        },
     )
     .expect("build_realm_history_sharing_policy_event succeeds");
     stamp_wire_fields(&mut envelope);
@@ -529,6 +581,116 @@ fn build_plaintext_visible_services_event_matches_event_schema() {
     .expect("non-empty service list yields Some(envelope)");
     stamp_wire_fields(&mut envelope);
     assert_envelope_matches_schema("build_plaintext_visible_services_event", &envelope);
+}
+
+/// The genesis `ak.realm.delivery_binding_policy` value is authored through
+/// the SDK `DeliveryBindingPolicyPayload` strong type; this gate pins the
+/// emitted body against the closed
+/// `event-payload.schema.json#/$defs/delivery_binding_policy_payload`.
+///
+/// It deliberately does NOT run the envelope gate: `event-envelope.schema.json`
+/// routes this kind to the generic `state_payload` (`{value,state,reason}`,
+/// `additionalProperties:false`), which contradicts the dedicated flat def the
+/// same artifact set declares — and the flat form is what soland's
+/// `apply_delivery_binding_policy` / `enforce_delivery_binding_policy` read.
+/// Tracked by arkret-work `review/spec-open/
+/// 2026-07-30-realm-policy-payload-shape-gaps.md` gap 2.
+#[test]
+fn realm_bootstrap_delivery_binding_policy_matches_payload_schema() {
+    let events = event_builders::build_realm_bootstrap_events(
+        TEST_REALM_ID,
+        TEST_ACTOR_ID,
+        TEST_SERVICE_ID,
+        "Engineering",
+        None,
+        "listed",
+        "invite",
+        "shared",
+        "mls_rfc9420",
+        "standard",
+        "restricted",
+        "single_did",
+        "sha256",
+        "ak:trust_domain:server.example",
+        &[],
+        &[],
+        None,
+        None,
+    )
+    .expect("build_realm_bootstrap_events succeeds");
+
+    let policy = events
+        .iter()
+        .find(|event| event.kind == EventKind::RealmDeliveryBindingPolicy)
+        .cloned()
+        .expect("bootstrap chain emits ak.realm.delivery_binding_policy");
+    assert_eq!(
+        policy.payload["allowed_recipient_services"],
+        serde_json::json!([TEST_SERVICE_ID]),
+        "the recipient-service allow-list must stay a closed DID list, never the \
+         [\"*\"] unrestricted sentinel"
+    );
+    assert_matches_payload_def(
+        "build_realm_bootstrap_events[delivery_binding_policy]",
+        "delivery_binding_policy_payload",
+        &serde_json::to_value(&policy.payload).expect("payload serializes"),
+    );
+}
+
+/// Realm alias has no registered wire carrier: `realm.schema.json` declares no
+/// `alias` property and `event-kind-registry.json` has no `ak.realm.alias`
+/// facet kind. The builder must therefore refuse the input outright instead of
+/// authoring `payload.object.alias`, which every closed-schema validator —
+/// including soland's `validate_realm_proposal_policy` — rejects wholesale.
+/// Remove this gate when spec finding
+/// `2026-07-30-realm-object-closed-schema-missing-carriers` gap 1 lands.
+#[test]
+fn realm_create_rejects_alias_until_a_wire_carrier_is_adjudicated() {
+    let error = event_builders::build_realm_create_event(
+        TEST_REALM_ID,
+        TEST_ACTOR_ID,
+        TEST_SERVICE_ID,
+        "Engineering",
+        None,
+        "listed",
+        "invite",
+        "shared",
+        "mls_rfc9420",
+        "standard",
+        "restricted",
+        "single_did",
+        "sha256",
+        "ak:trust_domain:server.example",
+        Some("#engineering"),
+        None,
+    )
+    .expect_err("an alias-carrying create has no schema-valid wire form");
+    let message = error.to_string();
+    assert!(
+        message.contains("realm alias has no registered wire carrier"),
+        "the error must name the missing carrier, not fail late on the wire: {message}"
+    );
+
+    // A blank / sigil-only alias is "no alias" and must still succeed.
+    event_builders::build_realm_create_event(
+        TEST_REALM_ID,
+        TEST_ACTOR_ID,
+        TEST_SERVICE_ID,
+        "Engineering",
+        None,
+        "listed",
+        "invite",
+        "shared",
+        "mls_rfc9420",
+        "standard",
+        "restricted",
+        "single_did",
+        "sha256",
+        "ak:trust_domain:server.example",
+        Some("  "),
+        None,
+    )
+    .expect("an empty alias is indistinguishable from absence");
 }
 
 /// R94 regression. `realm.schema.json` is closed (46 properties,

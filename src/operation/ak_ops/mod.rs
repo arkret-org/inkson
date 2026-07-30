@@ -94,7 +94,13 @@ pub(super) fn morph_id_value(value: &str) -> anyhow::Result<arkret_sdk::MorphId>
         .map_err(|err| anyhow::anyhow!("invalid morph id {value:?}: {err:?}"))
 }
 
-pub(super) fn object_create_payload_value<T: serde::Serialize>(
+/// Serialize a create-event `{object}` envelope.
+///
+/// `T` is bounded by [`arkret_sdk::ProtocolCreateObject`], not by bare
+/// `Serialize`: the envelope must never be reachable with a hand-built
+/// `serde_json::Value` object, which would let any member past the closed
+/// object schema until the receiver rejected the whole Event.
+pub(super) fn object_create_payload_value<T: arkret_sdk::ProtocolCreateObject>(
     object: T,
     context: &str,
 ) -> anyhow::Result<Value> {

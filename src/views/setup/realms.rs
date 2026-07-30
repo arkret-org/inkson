@@ -245,13 +245,28 @@ pub(super) fn RealmsSection(
                                     oninput: move |event: FormEvent| realm_summary.set(event.value())
                                 }
                             }
+                            // Realm alias has no registered wire carrier yet:
+                            // `realm.schema.json` declares no `alias` property and
+                            // there is no `ak.realm.alias` Event kind, so
+                            // `build_realm_create_event` refuses a non-empty alias
+                            // rather than author an Event the Principal Server must
+                            // reject. Leaving the field writable would turn an
+                            // optional input into a hard create failure. Re-enable
+                            // (drop `disabled` + restore the label) once
+                            // arkret-work review/spec-open
+                            // 2026-07-30-realm-object-closed-schema-missing-carriers
+                            // gap 1 is adjudicated.
                             div { class: "setup-field",
-                                Label { html_for: "realm-alias-input-input", "Realm alias (optional)" }
+                                Label {
+                                    html_for: "realm-alias-input-input",
+                                    "Realm alias (unavailable — no protocol carrier yet)"
+                                }
                                 Input {
                                     id: "realm-alias-input-input",
                                     "data-testid": "realm-alias-input",
                                     value: "{alias_value}",
                                     placeholder: "engineering",
+                                    disabled: true,
                                     oninput: move |event: FormEvent| realm_alias.set(event.value())
                                 }
                             }

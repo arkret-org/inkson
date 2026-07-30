@@ -2894,7 +2894,10 @@ mod tests {
             "invite_only",
             "invite",
             "shared",
-            "plaintext",
+            // `encryption_profile` is the closed realm.schema.json enum
+            // {none, mls_rfc9420, external}; "plaintext" was never a member and
+            // only survived here because the object used to be hand-built JSON.
+            "none",
             "standard",
             "open",
             "single_did",
