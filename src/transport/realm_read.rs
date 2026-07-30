@@ -82,7 +82,7 @@ pub async fn collection_projection(
         .collection_projection(view_id, &body)
         .await
         .map_err(anyhow::Error::from)?;
-    Ok(view.into())
+    Ok(view)
 }
 
 /// Read the verified Realm ↔ organization relationships projection

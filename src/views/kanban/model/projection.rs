@@ -205,8 +205,8 @@ pub(crate) fn collection_projection_to_columns(
         .groups
         .iter()
         .map(|group| KanbanColumn {
-            id: group.key.clone(),
-            title: group.title.clone(),
+            id: group.key.as_str().to_owned(),
+            title: group.title.as_str().to_owned(),
             rank: group.rank.clone().unwrap_or_default(),
             cards: group
                 .items
@@ -228,27 +228,19 @@ pub(crate) fn collection_projection_to_columns(
 /// opaque hash; `lazy_link=true` is surfaced via `history_visibility`
 /// without leaking room contents.
 pub(crate) fn card_from_projection_item(
-    item: &crate::state::projection_views::ProjectionRowView,
+    item: &crate::state::projection_views::ProjectionRow,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> KanbanCard {
-    let id = item
-        .object
-        .get("id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("ak:strand:unknown")
-        .to_owned();
+    let object = serde_json::to_value(&item.object).unwrap_or(Value::Null);
+    let id = item.object.id.clone();
     let title = item
         .object
-        .get("title")
-        .and_then(|v| v.as_str())
+        .title
+        .as_deref()
         .unwrap_or("(untitled)")
         .to_owned();
     let primary_strand_id = id.clone();
-    let discussion = item
-        .state
-        .as_ref()
-        .and_then(|state| state.get("discussion"))
-        .filter(|d| d.is_object());
+    let discussion = item.state.get("discussion").filter(|d| d.is_object());
     let (external_visibility, history_visibility) = discussion
         .map(|d| {
             let visibility = d.get("visibility").and_then(Value::as_str).unwrap_or("");
@@ -290,19 +282,12 @@ pub(crate) fn card_from_projection_item(
     // in the column from the API's view of the cas-register cell. Falls
     // back to "" so the seed-conversion path still works when the
     // projection omits position metadata (e.g. group-level rank only).
-    let rank = item.position_rank().unwrap_or_default();
-    // Registered `projection_object` keeps business metadata under the
-    // free-form `fields` object; read top-level keys leniently first for
-    // servers that flatten them.
-    let object_fields = item.object.get("fields");
+    let rank =
+        crate::state::projection_views::projection_row_position_rank(item).unwrap_or_default();
+    let object_fields = &item.object.fields;
     let object_str = |keys: &[&str]| -> String {
         for key in keys {
-            if let Some(value) = item
-                .object
-                .get(*key)
-                .or_else(|| object_fields.and_then(|fields| fields.get(*key)))
-                .and_then(Value::as_str)
-            {
+            if let Some(value) = object_fields.get(*key).and_then(Value::as_str) {
                 return value.to_owned();
             }
         }
@@ -315,11 +300,11 @@ pub(crate) fn card_from_projection_item(
     // X10.2: bind the private-field value exprs once so the text + locked
     // checks read the same source.
     let item_body_field =
-        collection_item_private_field_value(&item.object, KANBAN_BODY_PRIVATE_FIELD_PATHS);
+        collection_item_private_field_value(&object, KANBAN_BODY_PRIVATE_FIELD_PATHS);
     let item_body_value = item_body_field.map(|(value, _)| value);
     let item_body_path = item_body_field.map(|(_, path)| path).unwrap_or("body");
     let item_synthesis_field =
-        collection_item_private_field_value(&item.object, KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS);
+        collection_item_private_field_value(&object, KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS);
     let item_synthesis_value = item_synthesis_field.map(|(value, _)| value);
     let item_synthesis_path = item_synthesis_field
         .map(|(_, path)| path)
@@ -357,10 +342,8 @@ pub(crate) fn card_from_projection_item(
         created_at,
         updated_by,
         updated_at,
-        labels: item
-            .object
-            .get("fields")
-            .and_then(|f| f.get("labels"))
+        labels: object_fields
+            .get("labels")
             .and_then(|labels| labels.as_array())
             .map(|arr| {
                 arr.iter()
@@ -370,20 +353,15 @@ pub(crate) fn card_from_projection_item(
             .unwrap_or_default(),
         assignee: "—".to_owned(),
         assigned_to_relations: Vec::new(),
-        due: item
-            .object
-            .get("fields")
-            .and_then(|f| {
-                f.get("due_at")
-                    .or_else(|| f.get("due"))
-                    .or_else(|| f.get("due_date"))
-            })
+        due: object_fields
+            .get("due_at")
+            .or_else(|| object_fields.get("due"))
+            .or_else(|| object_fields.get("due_date"))
             .and_then(|v| v.as_str())
             .unwrap_or("—")
             .to_owned(),
         calendar_rsvp: CalendarRsvpDisplay::default(),
-        calendar_schedule_basis_refs: item
-            .object
+        calendar_schedule_basis_refs: object_fields
             .get("schedule_revision_heads")
             .and_then(Value::as_array)
             .map(|values| {
@@ -394,7 +372,8 @@ pub(crate) fn card_from_projection_item(
                     .collect()
             })
             .unwrap_or_default(),
-        calendar: object_fields
+        calendar: object
+            .get("fields")
             .and_then(Value::as_object)
             .map(|fields| calendar_fields_from_metadata(fields, decrypt_ctx, &primary_strand_id))
             .unwrap_or_default(),
@@ -402,7 +381,7 @@ pub(crate) fn card_from_projection_item(
         locked_strand,
         external_visibility,
         history_visibility,
-        security_encrypted: crate::security_state::strand_projection_security_state(&item.object),
+        security_encrypted: crate::security_state::strand_projection_security_state(&object),
         state: CardState::Synced,
         lifecycle: StrandLifecycleState::Active,
     }

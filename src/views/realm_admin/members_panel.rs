@@ -107,6 +107,7 @@ struct MemberProfile {
     actor_id: String,
     subject_id: Option<String>,
     invite_id: Option<String>,
+    invite_is_direct: Option<bool>,
     display_name: Option<String>,
     avatar_blob_ref: Option<arkret_sdk::BlobRef>,
     handles: Vec<String>,
@@ -124,6 +125,7 @@ impl MemberProfile {
             actor_id: actor_id.into(),
             subject_id: None,
             invite_id: None,
+            invite_is_direct: None,
             display_name: None,
             avatar_blob_ref: None,
             handles: Vec::new(),
@@ -371,6 +373,9 @@ fn merge_member_profile(target: &mut MemberProfile, incoming: MemberProfile) {
     }
     if target.invite_id.is_none() {
         target.invite_id = incoming.invite_id;
+    }
+    if target.invite_is_direct.is_none() {
+        target.invite_is_direct = incoming.invite_is_direct;
     }
     if target.display_name.is_none() {
         target.display_name = incoming.display_name;
@@ -653,6 +658,9 @@ fn upsert_pending_invite_profile(
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned);
         }
+        if existing.invite_is_direct.is_none() {
+            existing.invite_is_direct = Some(arkret_sdk::Did::new(actor_id.to_owned()).is_ok());
+        }
         apply_label(existing);
         return;
     }
@@ -662,6 +670,7 @@ fn upsert_pending_invite_profile(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned);
+    profile.invite_is_direct = Some(arkret_sdk::Did::new(actor_id.to_owned()).is_ok());
     apply_label(&mut profile);
     rows.push(profile);
     rows.sort_by(|left, right| left.actor_id.cmp(&right.actor_id));
@@ -683,15 +692,25 @@ fn local_pending_invite_profile_from_raw_operation(
     if !matches!(state.as_str(), "pending" | "pending_invite" | "invite") {
         return None;
     }
-    let actor_id = trimmed_string(
-        payload
-            .get("invitee")
-            .or_else(|| payload.get("actor_id"))
-            .or_else(|| payload.get("member")),
-    )?;
+    let direct_invitee = trimmed_string(payload.get("invitee"))
+        .filter(|invitee| arkret_sdk::Did::new(invitee.clone()).is_ok());
+    let invite_id = trimmed_string(payload.get("invite_id").or_else(|| payload.get("id")));
+    let actor_id = direct_invitee
+        .clone()
+        .or_else(|| {
+            trimmed_string(
+                payload
+                    .get("invitee_label")
+                    .or_else(|| payload.get("threepid"))
+                    .or_else(|| payload.get("address"))
+                    .or_else(|| payload.get("token_hint")),
+            )
+        })
+        .or_else(|| invite_id.as_ref().map(|id| format!("invite:{id}")))?;
     let mut profile = MemberProfile::bare(actor_id.clone());
     profile.membership = Some("invite".to_owned());
-    profile.invite_id = trimmed_string(payload.get("invite_id").or_else(|| payload.get("id")));
+    profile.invite_id = invite_id;
+    profile.invite_is_direct = Some(direct_invitee.is_some());
     if let Some(label) = trimmed_string(
         payload
             .get("invitee_label")
@@ -1202,6 +1221,7 @@ fn PendingInviteRow(
     account_did: String,
     selected_realm_id: String,
     can_cancel_invite: bool,
+    can_revoke_invite: bool,
     mut members: Signal<Vec<MemberProfile>>,
     mut frontier_state: Signal<String>,
     mut status_msg: Signal<String>,
@@ -1213,9 +1233,27 @@ fn PendingInviteRow(
     let member_label = profile.primary_label();
     let avatar_blob_ref = profile.avatar_blob_ref.as_ref().map(ToString::to_string);
     let invite_id = profile.invite_id.clone().unwrap_or_default();
-    let can_cancel_this_invite = can_cancel_invite && !invite_id.trim().is_empty();
-    let cancel_title = if can_cancel_this_invite {
-        "Cancel pending invite"
+    let invite_class_known = profile.invite_is_direct.is_some();
+    let direct_invitee = profile
+        .invite_is_direct
+        .is_some_and(|direct| direct)
+        .then(|| arkret_sdk::Did::new(member.clone()).ok())
+        .flatten()
+        .map(|invitee| invitee.to_string());
+    let is_direct_invite = direct_invitee.is_some();
+    let can_terminate_this_invite = invite_class_known
+        && (if is_direct_invite {
+            can_cancel_invite
+        } else {
+            can_revoke_invite
+        })
+        && !invite_id.trim().is_empty();
+    let cancel_title = if can_terminate_this_invite {
+        if is_direct_invite {
+            "Cancel pending direct invite"
+        } else {
+            "Revoke pending token or 3PID invite"
+        }
     } else {
         "Invite id is not available yet"
     };
@@ -1295,11 +1333,14 @@ fn PendingInviteRow(
                 }
             }
             div { class: "actions",
-                if can_cancel_invite {
+                if invite_class_known
+                    && ((is_direct_invite && can_cancel_invite)
+                        || (!is_direct_invite && can_revoke_invite))
+                {
                     Button {
                         variant: ButtonVariant::Secondary,
                         "data-testid": "cancel-pending-invite-button",
-                        disabled: !can_cancel_this_invite,
+                        disabled: !can_terminate_this_invite,
                         title: "{cancel_title}",
                         onclick: {
                             let base = base_url.clone();
@@ -1308,6 +1349,7 @@ fn PendingInviteRow(
                             let invite_id = invite_id.clone();
                             let member = member.clone();
                             let member_label = member_label.clone();
+                            let direct_invitee = direct_invitee.clone();
                             move |_| {
                                 if invite_id.trim().is_empty() {
                                     status_msg.set("invite id is not available yet".to_owned());
@@ -1319,26 +1361,40 @@ fn PendingInviteRow(
                                 let invite_id = invite_id.clone();
                                 let member = member.clone();
                                 let member_label = member_label.clone();
+                                let direct_invitee = direct_invitee.clone();
                                 let api_token = token();
                                 spawn(async move {
                                     let request_realm = realm.clone();
                                     let request_invite_id = invite_id.clone();
+                                    let request_invitee = direct_invitee.clone();
+                                    let is_direct = request_invitee.is_some();
                                     match crate::transport::auth::with_event_submitter(
                                         &base,
                                         api_token,
                                         |sub| async move {
-                                            crate::transport::realm_write::cancel_realm_invite(
-                                                &sub,
-                                                &request_realm,
-                                                &actor,
-                                                &request_invite_id,
-                                                // An admin withdrawing an open
-                                                // invite is `revoked`, not the
-                                                // invitee's `rejected`.
-                                                "revoked",
-                                                Some("admin_cancel"),
-                                            )
-                                            .await
+                                            if let Some(invitee) = request_invitee {
+                                                crate::transport::realm_write::cancel_realm_invite(
+                                                    &sub,
+                                                    &request_realm,
+                                                    &actor,
+                                                    &request_invite_id,
+                                                    &invitee,
+                                                    "revoked",
+                                                    Some("admin_cancel"),
+                                                )
+                                                .await
+                                            } else {
+                                                crate::transport::realm_write::revoke_realm_invite(
+                                                    &sub,
+                                                    &request_realm,
+                                                    &actor,
+                                                    &request_invite_id,
+                                                    None,
+                                                    "revoked",
+                                                    "admin_revoke",
+                                                )
+                                                .await
+                                            }
                                         },
                                     )
                                     .await
@@ -1349,9 +1405,13 @@ fn PendingInviteRow(
                                                 format!("ak:operation:{}", crate::operation::uuid_v7()),
                                                 Some(realm.clone()),
                                                 json!({
-                                                    "kind": "ak.invite.cancel",
+                                                    "kind": if is_direct {
+                                                        "ak.invite.cancel"
+                                                    } else {
+                                                        "ak.invite.revoke"
+                                                    },
                                                     "invite_id": invite_id.clone(),
-                                                    "invitee": member.clone(),
+                                                    "invitee": direct_invitee.clone(),
                                                     "state": "revoked",
                                                     "event_id": resp.event_id,
                                                 }),
@@ -1362,7 +1422,10 @@ fn PendingInviteRow(
                                                     && !(profile.actor_id == member && profile.is_pending_invite())
                                             });
                                             members.set(next_members);
-                                            status_msg.set(format!("cancelled invite for {member_label}"));
+                                            status_msg.set(format!(
+                                                "{} invite for {member_label}",
+                                                if is_direct { "cancelled" } else { "revoked" }
+                                            ));
                                         }
                                         Err(err) => status_msg.set(format!(
                                             "cancel invite failed: {}",
@@ -1372,7 +1435,7 @@ fn PendingInviteRow(
                                 });
                             }
                         },
-                        "Cancel invite"
+                        {if is_direct_invite { "Cancel invite" } else { "Revoke invite" }}
                     }
                 }
             }
@@ -3218,6 +3281,16 @@ pub fn RealmMembersPanel(
                         .await
                     }
                     .await;
+                    let revoke_invite = async {
+                        crate::transport::realm_read::authz_check(
+                            &api.sdk_http_client()?,
+                            &actor,
+                            "ak.invite.revoke",
+                            &realm,
+                        )
+                        .await
+                    }
+                    .await;
                     // Member removal has no standalone capability action in
                     // v1; it is governed by Realm management authority. Probe
                     // the registered `ak.realm.admin` action (management,
@@ -3236,11 +3309,11 @@ pub fn RealmMembersPanel(
                         .await
                     }
                     .await;
-                    Ok::<_, anyhow::Error>((invite, cancel_invite, remove))
+                    Ok::<_, anyhow::Error>((invite, cancel_invite, revoke_invite, remove))
                 })
                 .await
                 {
-                    Ok((invite, cancel_invite, remove)) => {
+                    Ok((invite, cancel_invite, revoke_invite, remove)) => {
                         let can_invite = invite
                             .as_ref()
                             .map(crate::transport::realm_read::authz_allowed)
@@ -3249,11 +3322,19 @@ pub fn RealmMembersPanel(
                             .as_ref()
                             .map(crate::transport::realm_read::authz_allowed)
                             .unwrap_or(false);
+                        let can_revoke_invite = revoke_invite
+                            .as_ref()
+                            .map(crate::transport::realm_read::authz_allowed)
+                            .unwrap_or(false);
                         let can_remove = remove
                             .as_ref()
                             .map(crate::transport::realm_read::authz_allowed)
                             .unwrap_or(false);
-                        if invite.is_err() && cancel_invite.is_err() && remove.is_err() {
+                        if invite.is_err()
+                            && cancel_invite.is_err()
+                            && revoke_invite.is_err()
+                            && remove.is_err()
+                        {
                             status_msg.set(
                                 "member action permission check failed; write controls hidden"
                                     .to_owned(),
@@ -3263,6 +3344,7 @@ pub fn RealmMembersPanel(
                             loaded: true,
                             can_invite,
                             can_cancel_invite,
+                            can_revoke_invite,
                             can_remove,
                         });
                     }
@@ -3284,6 +3366,7 @@ pub fn RealmMembersPanel(
     let member_permissions = permissions();
     let can_invite = member_permissions.can_invite;
     let can_cancel_invite = member_permissions.can_cancel_invite;
+    let can_revoke_invite = member_permissions.can_revoke_invite;
     let can_remove = member_permissions.can_remove;
 
     // Roster → grouped by controller → filtered → paged window. Filtering
@@ -4022,7 +4105,12 @@ pub fn RealmMembersPanel(
                     if !status_msg().is_empty() {
                         div { class: "muted", "data-testid": "realm-members-status", "{status_msg()}" }
                     }
-                    if member_permissions.loaded && !can_invite && !can_cancel_invite && !can_remove {
+                    if member_permissions.loaded
+                        && !can_invite
+                        && !can_cancel_invite
+                        && !can_revoke_invite
+                        && !can_remove
+                    {
                         div {
                             class: "muted",
                             "data-testid": "realm-member-actions-hidden",
@@ -4125,6 +4213,7 @@ pub fn RealmMembersPanel(
                                             account_did: account_did.clone(),
                                             selected_realm_id: selected_realm_id.clone(),
                                             can_cancel_invite,
+                                            can_revoke_invite,
                                             members,
                                             frontier_state,
                                             status_msg,
@@ -5031,6 +5120,30 @@ mod tests {
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].actor_id, "did:web:bob.example");
         assert_eq!(pending[0].handles, vec!["bob:example.com"]);
+        assert_eq!(pending[0].invite_is_direct, Some(true));
+    }
+
+    #[test]
+    fn token_invite_profile_is_classified_for_high_risk_revoke() {
+        let realm_id = "ak:realm:test";
+        let invite_id = "ak:invite:01904100-0000-7000-8000-000000000002";
+        let mut store = temp_store("raw-token-invite");
+        store.append_raw_operation(
+            "ak:event:invite-token".to_owned(),
+            Some(realm_id.to_owned()),
+            serde_json::json!({
+                "kind": "ak.invite.create",
+                "invite_id": invite_id,
+                "threepid": "email:masked@example.com",
+                "state": "pending"
+            }),
+        );
+
+        let profiles = projected_member_profiles_for_realm(&store, realm_id);
+        let (_, pending) = split_member_profiles(profiles);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].invite_id.as_deref(), Some(invite_id));
+        assert_eq!(pending[0].invite_is_direct, Some(false));
     }
 
     #[test]

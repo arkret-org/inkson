@@ -10,9 +10,6 @@ use crate::event_builders::{
 use crate::operation::{EventKind, OperationBuilder};
 use crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR;
 use crate::realm_helpers::{patch_touches_create_locked_encryption_profile, validate_join_rule_v1};
-use crate::state::projection_views::{
-    LifecycleProjectionView, SpaceContainerProjectionView, StrandProjectionView,
-};
 
 #[test]
 fn realm_metadata_patch_rejects_create_locked_encryption_profile() {
@@ -33,50 +30,6 @@ fn realm_metadata_patch_rejects_create_locked_encryption_profile() {
         "title": "Renamed Realm",
         "summary": "Still editable"
     })));
-}
-
-#[test]
-fn lifecycle_projection_response_accepts_spec_keys() {
-    let canonical_spaces: LifecycleProjectionView<SpaceContainerProjectionView> =
-        serde_json::from_value(json!({
-            "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
-            "total": 1,
-            "spaces": [{
-                "space_id": "ak:space:01904100-0000-7000-8000-f10dc0000001",
-                "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
-                "kind": "board",
-                "title": "Launch board",
-                "state": "active"
-            }]
-        }))
-        .unwrap();
-    assert_eq!(
-        canonical_spaces.items[0].space_id,
-        "ak:space:01904100-0000-7000-8000-f10dc0000001"
-    );
-    assert_eq!(canonical_spaces.total, 1);
-
-    let strands: LifecycleProjectionView<StrandProjectionView> = serde_json::from_value(json!({
-        "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
-        "strands": [{
-            "strand_id": "ak:strand:01904100-0000-7000-8000-f20dc0000001",
-            "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
-            "title": "Card",
-            "summary": "Projection-backed card",
-            "board_space_id": "ak:space:01904100-0000-7000-8000-b0ard0000001",
-            "list_space_id": "ak:space:01904100-0000-7000-8000-l15t00000001",
-            "rank": "U",
-            "fields": { "labels": ["demo"] },
-            "state": "archived"
-        }]
-    }))
-    .unwrap();
-    assert_eq!(strands.items[0].realm_id, strands.realm_id);
-    assert_eq!(strands.items[0].state, "archived");
-    assert_eq!(
-        strands.items[0].board_space_id.as_deref(),
-        Some("ak:space:01904100-0000-7000-8000-b0ard0000001")
-    );
 }
 
 // The five plaintext `EphemeralEnvelope` builder tests that lived here

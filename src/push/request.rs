@@ -13,7 +13,6 @@ use chrono::Utc;
 
 use super::APP_ID;
 use super::token_source::{current_platform, default_gateway_binding, push_preferences};
-use crate::models::PushRegisterView;
 
 pub fn build_unregister_request(
     device_id: &str,
@@ -60,16 +59,4 @@ pub fn registration_state_from_response(
     let registered_at = arkret_sdk::canonical::format_timestamp_canonical(Utc::now());
 
     build_registration_state(&binding, request, response, Some(registered_at.as_str()))
-}
-
-pub fn push_register_view_from_chime_response(
-    response: ChimePushRegisterDeviceOutcome,
-) -> PushRegisterView {
-    PushRegisterView {
-        ok: response.ok,
-        registration_id: response.registration_id,
-        expires_at: response
-            .expires_at
-            .map(arkret_sdk::canonical::format_timestamp_canonical),
-    }
 }

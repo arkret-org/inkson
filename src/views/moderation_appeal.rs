@@ -18,7 +18,7 @@
 //!
 //! The full reviewer surface (Review/Decision/Close authoring) is admin
 //! scope and lives in `realm_admin.rs` once wired. See
-//! `// TODO(round23-T06)` markers below for the deferred pieces.
+//! `// TODO(moderation-appeal-blob-upload)` markers below for deferred pieces.
 
 use chrono::Utc;
 use dioxus::prelude::*;
@@ -209,7 +209,7 @@ pub fn AppealEntrypoint(
                         status.set(String::new());
                         spawn(async move {
                             let appeal_id = new_appeal_id();
-                            // TODO(round23-T06): once the blob upload path
+                            // TODO(moderation-appeal-blob-upload): once the blob upload path
                             // settles for appeal narratives in E2EE Realms,
                             // POST the reason as a `ak:blob:…` ref instead
                             // of inlining the string. For now we inline so

@@ -1271,11 +1271,13 @@ pub(super) fn locate_strand_position_in_projection(
 ) -> StrandPositionExpectation {
     for group in &projection.groups {
         for item in &group.items {
-            let item_id = item.object.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let item_id = item.object.id.as_str();
             if item_id == strand_id {
-                if let Some(rank) = item.position_rank() {
+                if let Some(rank) =
+                    crate::state::projection_views::projection_row_position_rank(item)
+                {
                     return StrandPositionExpectation::At {
-                        list_space_id: group.key.clone(),
+                        list_space_id: group.key.as_str().to_owned(),
                         rank,
                     };
                 }

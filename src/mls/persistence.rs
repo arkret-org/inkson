@@ -755,22 +755,25 @@ mod tests {
             DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001".to_owned()).unwrap(),
         )
         .unwrap();
-        let group = identity.create_group(b"ak:realm:round28-snapshot").unwrap();
+        let group = identity
+            .create_group(b"ak:realm:01904100-0000-7000-8000-000000000028")
+            .unwrap();
         let record = group.export_state_record().unwrap();
         let original_group_id = record.group_id.clone();
         let original_epoch = record.epoch;
 
         let bytes = serde_json::to_vec(&record).unwrap();
         let envelope = encrypt_state(
-            "ak:realm:round28-snapshot",
+            "ak:realm:01904100-0000-7000-8000-000000000028",
             &original_group_id,
             original_epoch,
             &bytes,
-            "round28-secret",
+            "mls-snapshot-passphrase",
             b"deterministic-salt-for-test",
         );
 
-        let restored = restore_envelope(&envelope, "round28-secret", original_epoch).unwrap();
+        let restored =
+            restore_envelope(&envelope, "mls-snapshot-passphrase", original_epoch).unwrap();
         assert_eq!(restored.group_id(), original_group_id);
         assert_eq!(restored.epoch(), original_epoch);
     }

@@ -894,7 +894,7 @@ pub fn VerifyDevicePanel(
                                         // submit path will be rejected by the
                                         // server if the value disagrees with
                                         // the deployment.
-                                        // TODO(round4-cross-signing-trust-domain):
+                                        // TODO(cross-signing-trust-domain):
                                         // surface a clear "connect required"
                                         // error before the run begins instead
                                         // of relying on server-side rejection.

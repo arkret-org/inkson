@@ -429,7 +429,7 @@ fn inkson_accepts_server_contract_payloads() {
     .unwrap();
     assert!(!device_receive.limited);
 
-    let push: inkson::models::PushRegisterView = serde_json::from_value(json!({
+    let push: inkson::models::PushRegisterDeviceOutcome = serde_json::from_value(json!({
         "ok": true,
         "registration_id": "ak:push:dev_alice",
         "expires_at": null

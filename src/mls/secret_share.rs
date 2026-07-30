@@ -74,17 +74,6 @@ impl std::fmt::Debug for SecretShareRequester {
     }
 }
 
-/// `ak.secret.request.content`, parsed by the responding (existing) device.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ParsedSecretRequest {
-    pub request_id: String,
-    pub secret_id: String,
-    /// Requesting (new) device; equals the envelope `sender_device_id`.
-    pub from_device: String,
-    /// base64url X25519 HPKE public key to seal the response to.
-    pub recipient_hpke_public_key: String,
-}
-
 /// Plaintext recovered by the requesting device after a successful open.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OpenedSecret {
@@ -122,23 +111,22 @@ pub fn build_request_content(
 }
 
 /// Parse and validate an inbound `ak.secret.request.content`.
-pub fn parse_request_content(content: &Value) -> Result<ParsedSecretRequest> {
+pub fn parse_request_content(
+    content: &Value,
+) -> Result<arkret_crypto::secret_share::SecretShareRequestContent> {
     let content: arkret_crypto::secret_share::SecretShareRequestContent =
         serde_json::from_value(content.clone())
             .map_err(|err| anyhow!("decode ak.secret.request.content: {err}"))?;
-    let request_id = content.request_id;
-    let secret_id = content.secret_id;
-    if secret_id != SECRET_SHARE_SECRET_ID {
-        bail!("ak.secret.request.secret_id {secret_id:?} is not supported");
+    content
+        .validate()
+        .map_err(|err| anyhow!("invalid ak.secret.request.content: {err}"))?;
+    if content.secret_id != SECRET_SHARE_SECRET_ID {
+        bail!(
+            "ak.secret.request.secret_id {:?} is not supported",
+            content.secret_id
+        );
     }
-    let from_device = content.from_device.as_str().to_owned();
-    let recipient_hpke_public_key = content.recipient_hpke_public_key;
-    Ok(ParsedSecretRequest {
-        request_id,
-        secret_id,
-        from_device,
-        recipient_hpke_public_key,
-    })
+    Ok(content)
 }
 
 /// Build `ak.secret.send.content` on the responding (existing) device: seal the
@@ -150,7 +138,7 @@ pub fn parse_request_content(content: &Value) -> Result<ParsedSecretRequest> {
 /// `DeviceMessageTarget.expires_at`; it is part of the HPKE AAD and so MUST be
 /// the exact string later put on the wire.
 pub fn build_send_content(
-    request: &ParsedSecretRequest,
+    request: &arkret_crypto::secret_share::SecretShareRequestContent,
     account_secret: &StoredAccountMlsSecret,
     account_did: &str,
     self_device_id: &str,
@@ -168,7 +156,7 @@ pub fn build_send_content(
         account_did,
         self_device_id,
         account_did,
-        &request.from_device,
+        request.from_device.as_str(),
         expires_at,
     )?;
     let sealed = hpke_backup::hpke_seal(&recipient_pk, SECRET_SHARE_HPKE_INFO, &aad, &plaintext)?;
@@ -312,7 +300,7 @@ pub async fn send_request(
 /// invoking it.
 pub async fn respond_to_request(
     api: &crate::transport::TransportClient,
-    request: &ParsedSecretRequest,
+    request: &arkret_crypto::secret_share::SecretShareRequestContent,
     account_secret: &StoredAccountMlsSecret,
     account_did: &str,
     self_device_id: &str,
@@ -329,7 +317,7 @@ pub async fn respond_to_request(
         &api.sdk_http_client()?,
         &format!("ak.secret.send:{}", request.request_id),
         account_did,
-        &request.from_device,
+        request.from_device.as_str(),
         SECRET_SHARE_KIND_SEND,
         &expires_at,
         content,
@@ -433,7 +421,7 @@ mod tests {
         let requester = new_secret_request().unwrap();
         let request_content = build_request_content(&requester, NEW_DEVICE).unwrap();
         let parsed = parse_request_content(&request_content).unwrap();
-        assert_eq!(parsed.from_device, NEW_DEVICE);
+        assert_eq!(parsed.from_device.as_str(), NEW_DEVICE);
         let send = build_send_content(&parsed, &stored_secret(), ACCOUNT_DID, OLD_DEVICE, EXPIRES)
             .unwrap();
         (requester, send)

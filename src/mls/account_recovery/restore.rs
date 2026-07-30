@@ -544,12 +544,10 @@ async fn verify_active_series_range_completeness(
             .documents
             .insert(payload.issuer.as_str().to_owned(), document);
         let outer_verified = attestation_event.proofs.iter().all(|proof| {
-            let Ok(mut context) =
-                arkret_sdk::event_proof_verification_context_with_digest_suite(
-                    attestation_event,
-                    digest_suite,
-                )
-            else {
+            let Ok(mut context) = arkret_sdk::event_proof_verification_context_with_digest_suite(
+                attestation_event,
+                digest_suite,
+            ) else {
                 return false;
             };
             context.replay_window = chrono::Duration::MAX;

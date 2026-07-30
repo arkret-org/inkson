@@ -1,6 +1,6 @@
 //! Invite create / accept / cancel builders.
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::{OperationBuilder, invite_ref_payload_value};
 
@@ -74,6 +74,7 @@ pub fn invite_cancel(
     realm_id: &str,
     actor: &str,
     invite_id: &str,
+    invitee: &str,
     target_state: &str,
     reason: Option<&str>,
 ) -> anyhow::Result<OperationBuilder> {
@@ -83,12 +84,20 @@ pub fn invite_cancel(
         );
     }
     let mut body = invite_ref_payload_value(invite_id, reason)?;
+    let invitee = arkret_sdk::Did::new(invitee.to_owned())
+        .map_err(|err| anyhow::anyhow!("invitee not a DID {invitee:?}: {err}"))?;
     body.as_object_mut()
         .ok_or_else(|| anyhow::anyhow!("invite ref payload is not an object"))?
-        .insert(
-            "target_state".to_owned(),
-            serde_json::Value::String(target_state.to_owned()),
-        );
+        .extend([
+            (
+                "invitee".to_owned(),
+                serde_json::Value::String(invitee.to_string()),
+            ),
+            (
+                "target_state".to_owned(),
+                serde_json::Value::String(target_state.to_owned()),
+            ),
+        ]);
     Ok(OperationBuilder::new(
         realm_id,
         actor,
@@ -96,4 +105,57 @@ pub fn invite_cancel(
     )
     .target_ref(invite_id)
     .body(body))
+}
+
+/// Build the high-risk `ak.invite.revoke` path used by token/3PID invites.
+/// A directed invite may also use this path, but then its frozen invitee
+/// binding must be supplied so the reducer can atomically close member.state.
+pub fn invite_revoke(
+    realm_id: &str,
+    actor: &str,
+    invite_id: &str,
+    invitee: Option<&str>,
+    target_state: &str,
+    reason_code: &str,
+) -> anyhow::Result<OperationBuilder> {
+    if !matches!(
+        target_state,
+        "revoked"
+            | "expired"
+            | "revoked_by_capability_loss"
+            | "revoked_by_inviter_left"
+            | "invalidated_by_rate_limit"
+    ) {
+        anyhow::bail!("ak.invite.revoke target_state is not terminal: {target_state:?}");
+    }
+    if reason_code.trim().is_empty() {
+        anyhow::bail!("ak.invite.revoke reason_code is required");
+    }
+    let mut body = invite_ref_payload_value(invite_id, None)?;
+    let body = body
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("invite ref payload is not an object"))?;
+    body.insert(
+        "target_state".to_owned(),
+        serde_json::Value::String(target_state.to_owned()),
+    );
+    body.insert(
+        "reason_code".to_owned(),
+        serde_json::Value::String(reason_code.to_owned()),
+    );
+    if let Some(invitee) = invitee {
+        let invitee = arkret_sdk::Did::new(invitee.to_owned())
+            .map_err(|err| anyhow::anyhow!("invitee not a DID {invitee:?}: {err}"))?;
+        body.insert(
+            "invitee".to_owned(),
+            serde_json::Value::String(invitee.to_string()),
+        );
+    }
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        arkret_sdk::events::kinds::EventKind::InviteRevoke,
+    )
+    .target_ref(invite_id)
+    .body(Value::Object(body.clone())))
 }

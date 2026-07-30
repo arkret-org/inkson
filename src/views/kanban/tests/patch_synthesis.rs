@@ -783,54 +783,44 @@ fn apply_card_detail_draft_marks_card_queued() {
 /// position, return `At { list_space_id, rank }`; absent ⇒ `Initial`.
 #[test]
 fn locate_strand_position_finds_present_strand_with_rank() {
-    use crate::state::projection_views::{
-        CollectionProjectionGroupView, CollectionProjectionView, ProjectionRowView,
-        StateFrontierView,
-    };
-    let projection = CollectionProjectionView {
-        projection: "collection".to_owned(),
-        renderer: Some("board".to_owned()),
-        view_id: "ak:view:01904100-0000-7000-8000-000000000001".to_owned(),
-        realm_id: None,
-        frontier: StateFrontierView::default(),
-        groups: vec![CollectionProjectionGroupView {
-            key: "ak:space:01list-review".to_owned(),
-            title: "Review".to_owned(),
-            rank: Some("U".to_owned()),
-            source: None,
-            items: vec![ProjectionRowView {
-                object: serde_json::json!({
-                    "id": "ak:strand:01wanted",
-                    "title": "Find me",
-                }),
-                render: None,
-                display: None,
-                // Registered `collection_position` relation model.
-                position: Some(serde_json::json!({
+    let projection: arkret_sdk::CollectionProjectionView =
+        serde_json::from_value(serde_json::json!({
+            "projection": "collection",
+            "renderer": "board",
+            "view_id": "ak:view:01904100-0000-7000-8000-000000000001",
+            "frontier": {
+                "state_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "groups": [{
+                "key": "ak:space:01904100-0000-7000-8000-000000000021",
+                "title": "Review",
+                "rank": "U",
+                "items": [{
+                    "object": {
+                        "id": "ak:strand:01904100-0000-7000-8000-000000000023",
+                        "kind": "strand",
+                        "title": "Find me"
+                    },
+                    "position": {
                     "model": "relation",
-                    "scope_container_id": "ak:space:01board",
-                    "container_id": "ak:space:01list-review",
+                    "scope_container_id": "ak:space:01904100-0000-7000-8000-000000000020",
+                    "container_id": "ak:space:01904100-0000-7000-8000-000000000021",
                     "relation_kind": "contains",
-                    "relation_id": "ak:relation:01rel",
-                    "rank": "h3",
-                })),
-                state: None,
-            }],
-            next_cursor: None,
-            limited: false,
-            wip_state: None,
-            total_estimate: None,
-        }],
-        items: Vec::new(),
-        next_cursor: None,
-        total_estimate: None,
-        stale: None,
-    };
-    let expected = locate_strand_position_in_projection(&projection, "ak:strand:01wanted");
+                    "relation_id": "ak:relation:01904100-0000-7000-8000-000000000022",
+                    "rank": "h3"
+                }}],
+                "limited": false
+            }]
+        }))
+        .unwrap();
+    let expected = locate_strand_position_in_projection(
+        &projection,
+        "ak:strand:01904100-0000-7000-8000-000000000023",
+    );
     assert_eq!(
         expected,
         StrandPositionExpectation::At {
-            list_space_id: "ak:space:01list-review".to_owned(),
+            list_space_id: "ak:space:01904100-0000-7000-8000-000000000021".to_owned(),
             rank: "h3".to_owned(),
         }
     );
@@ -841,19 +831,17 @@ fn locate_strand_position_finds_present_strand_with_rank() {
 /// is actually non-initial, which is the safe behaviour.
 #[test]
 fn locate_strand_position_missing_strand_returns_initial() {
-    use crate::state::projection_views::{CollectionProjectionView, StateFrontierView};
-    let projection = CollectionProjectionView {
-        projection: "collection".to_owned(),
-        renderer: Some("board".to_owned()),
-        view_id: "ak:view:01904100-0000-7000-8000-000000000001".to_owned(),
-        realm_id: None,
-        frontier: StateFrontierView::default(),
-        groups: Vec::new(),
-        items: Vec::new(),
-        next_cursor: None,
-        total_estimate: None,
-        stale: None,
-    };
+    let projection: arkret_sdk::CollectionProjectionView =
+        serde_json::from_value(serde_json::json!({
+            "projection": "collection",
+            "renderer": "board",
+            "view_id": "ak:view:01904100-0000-7000-8000-000000000001",
+            "frontier": {
+                "state_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "groups": []
+        }))
+        .unwrap();
     let expected = locate_strand_position_in_projection(&projection, "ak:strand:01missing");
     assert_eq!(expected, StrandPositionExpectation::Initial);
 }

@@ -34,7 +34,7 @@ use dioxus_primitives::checkbox::CheckboxState;
 use crate::i18n::tr;
 use crate::models::{
     DisclosureLevel, INVITE_RECEIVE_POLICY_SCHEMA, InviteDisclosurePolicy, InviteReceiveAction,
-    InviteReceivePolicy, default_invite_receive_policy,
+    InviteReceivePolicy,
 };
 use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
 use crate::ui::button::{Button, ButtonVariant};
@@ -154,9 +154,32 @@ fn constraints_lines(constraints: &arkret_wire::ReceivePolicyConstraints) -> Vec
 
 #[component]
 pub fn InvitePolicySettingsCard(token: Signal<String>, account_did: Signal<String>) -> Element {
+    let subject_id = match arkret_sdk::Did::new(account_did()) {
+        Ok(subject_id) => subject_id,
+        Err(error) => {
+            return rsx! {
+                div { class: "event", "data-testid": "invite-policy-panel",
+                    div { class: "error", "Invalid account DID: {error}" }
+                }
+            };
+        }
+    };
+    let subject_key = subject_id.as_str().to_owned();
+    rsx! {
+        InvitePolicySettingsCardBody {
+            key: "{subject_key}",
+            token,
+            subject_id,
+        }
+    }
+}
+
+#[component]
+fn InvitePolicySettingsCardBody(token: Signal<String>, subject_id: arkret_sdk::Did) -> Element {
     // A4 — base_url from session context instead of a prop.
     let base_url = crate::app::SessionContext::get().base_url;
-    let mut policy = use_signal(|| default_invite_receive_policy(&account_did()));
+    let initial_subject_id = subject_id.clone();
+    let mut policy = use_signal(move || InviteReceivePolicy::spec_default(initial_subject_id));
     let mut loaded = use_signal(|| false);
     let mut loading = use_signal(|| true);
     let mut status = use_signal(String::new);
@@ -444,22 +467,12 @@ pub fn InvitePolicySettingsCard(token: Signal<String>, account_did: Signal<Strin
                     onclick: move |_| {
                         let base = base_url();
                         let api_token = token();
-                        let subject = account_did();
                         // Stamp the spec-required `schema` + `subject_id` before
                         // SET; the SDK type carries the server's `trusted_*`
                         // lists from the GET hydrate, so they round-trip intact.
                         let mut to_save = policy.read().clone();
                         to_save.schema = INVITE_RECEIVE_POLICY_SCHEMA.to_owned();
-                        match arkret_sdk::Did::new(subject.clone()) {
-                            Ok(did) => to_save.subject_id = did,
-                            Err(_) => {
-                                status.set(
-                                    tr("invite_policy.save_failed")
-                                        .replace("{error}", "missing or invalid account DID"),
-                                );
-                                return;
-                            }
-                        }
+                        to_save.subject_id = subject_id.clone();
                         saving.set(true);
                         status.set(tr("invite_policy.saving"));
                         spawn(async move {

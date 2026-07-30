@@ -1,9 +1,8 @@
 //! Realm lifecycle / update / organization / message-revise builders.
 
 use arkret_models_collaboration::events_payloads::{
-    RealmOrganizationAuthorization, RealmOrganizationControlScope, RealmOrganizationIssuerRole,
-    RealmOrganizationPayload, RealmOrganizationRelationship, RealmOrganizationStatus,
-    SignatureMaterial,
+    RealmOrganizationAuthorization, RealmOrganizationControlScope, RealmOrganizationPayload,
+    RealmOrganizationRelationship, RealmOrganizationStatus,
 };
 
 use super::{
@@ -91,39 +90,6 @@ pub fn realm_update_patch(
     .body(object_patch_payload_value(realm_id, patch)?))
 }
 
-/// Explicit, externally-sourced authorization for a `ak.realm.organization`
-/// statement (YGN-ORG-02).
-///
-/// The client NEVER signs an organization statement from a human login
-/// session: an organization principal is a distinct DID controller. The
-/// `proof` (and, for delegated roles, the `delegation_ref`) MUST come back
-/// from the organization-side authorization flow (coauth / DID controller /
-/// governance service / threshold quorum). This struct is the typed carrier
-/// for that result; the builder copies it verbatim into the payload's
-/// `authorization` object and does no signing of its own.
-#[derive(Clone, Debug)]
-pub struct RealmOrganizationAuthorizationInput {
-    /// Organization DID or delegated service DID that issued the statement.
-    pub issuer: String,
-    /// Which kind of principal issued the proof. Delegated roles
-    /// (`governance_service` / `account_authority`) MUST carry a
-    /// `delegation_ref`; non-delegated roles MUST NOT.
-    pub issuer_role: RealmOrganizationIssuerRole,
-    /// DID URL of the concrete verification method (bare DIDs are invalid).
-    pub verification_method: String,
-    /// REQUIRED for delegated roles; MUST resolve to a live organization DID
-    /// delegation. MUST be absent for non-delegated roles.
-    pub delegation_ref: Option<String>,
-    /// Optional human admin / service principal that initiated the decision.
-    /// Does NOT become the organization principal.
-    pub executed_by: Option<String>,
-    /// RFC3339 timestamp of when the organization side signed.
-    pub signed_at: chrono::DateTime<chrono::Utc>,
-    /// The organization-side signature / threshold transcript / governance
-    /// attestation over the canonical statement. Opaque to the client.
-    pub proof: SignatureMaterial,
-}
-
 /// Build a `ak.realm.organization` statement operation (YGN-ORG-02).
 ///
 /// Constructs the spec-canonical [`RealmOrganizationPayload`] via the SDK
@@ -133,7 +99,7 @@ pub struct RealmOrganizationAuthorizationInput {
 ///
 /// Authorization rule (acceptance criterion): the organization proof is NOT
 /// produced from the local human login session. The caller passes an
-/// [`RealmOrganizationAuthorizationInput`] obtained from the
+/// [`RealmOrganizationAuthorization`] obtained from the
 /// organization-side authorization result (coauth / DID controller). This
 /// builder only assembles + locally validates the statement; it performs no
 /// signing.
@@ -156,7 +122,7 @@ pub fn realm_organization_statement(
     status: RealmOrganizationStatus,
     control_scopes: Vec<RealmOrganizationControlScope>,
     issued_at: chrono::DateTime<chrono::Utc>,
-    authorization: RealmOrganizationAuthorizationInput,
+    authorization: RealmOrganizationAuthorization,
     revokes_statement_id: Option<String>,
 ) -> anyhow::Result<OperationBuilder> {
     if control_scopes.is_empty() {
@@ -211,20 +177,7 @@ pub fn realm_organization_statement(
         revokes_statement_id,
         realm_frontier_digest: None,
         organization_policy_ref: None,
-        authorization: RealmOrganizationAuthorization {
-            issuer: did_id(&authorization.issuer)?,
-            issuer_role: authorization.issuer_role,
-            verification_method: arkret_sdk::DidUrl::new(authorization.verification_method)
-                .map_err(anyhow::Error::msg)?,
-            delegation_ref: authorization.delegation_ref,
-            executed_by: authorization
-                .executed_by
-                .as_deref()
-                .map(did_id)
-                .transpose()?,
-            signed_at: authorization.signed_at,
-            proof: authorization.proof,
-        },
+        authorization,
     };
 
     let body = serde_json::to_value(&payload)

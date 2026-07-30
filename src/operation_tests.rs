@@ -903,6 +903,7 @@ fn invite_helpers_emit_canonical_kinds() {
         "ak:realm:01904100-0000-7000-8000-000000000010",
         "did:web:alice.example",
         invite_id,
+        "did:web:bob.example",
         "revoked",
         Some("expired"),
     )
@@ -911,17 +912,39 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(cancel.kind.as_str(), "ak.invite.cancel");
     assert_eq!(cancel.payload["invite_id"], invite_id);
     assert_eq!(cancel.payload["reason"], "expired");
+    assert_eq!(cancel.payload["invitee"], "did:web:bob.example");
     // `target_state` is the signed operand of the lifecycle `transition_to`
     // projection; without it the cancel has no derivable cell write.
     assert_eq!(cancel.payload["target_state"], "revoked");
     assert!(cancel.payload.get("state").is_none());
     assert_registered_payload_valid(&cancel);
+    let pre_state_error = crate::operation::project_registered_cell_writes(&cancel)
+        .expect_err("direct cancel must be bound to accepted frozen invite state");
+    assert_eq!(pre_state_error.reason_code(), "invite_kind_requires_revoke");
+    let lifecycle_cell = arkret_sdk::CellRef::new(format!(
+        "ak:cell:ak.component.invite.lifecycle.v1:{invite_id}"
+    ))
+    .unwrap();
+    let frozen_pre_state = arkret_sdk::schema::FrozenPreState::from([(
+        lifecycle_cell,
+        serde_json::json!({"invitee": "did:web:bob.example"}),
+    )]);
+    let cancel_writes = arkret_sdk::schema::project_registered_cell_writes_with_pre_state(
+        &cancel,
+        arkret_sdk::canonical::DigestSuite::Sha256,
+        &frozen_pre_state,
+    )
+    .expect("cancel must atomically advance invite and member FSMs");
+    assert_eq!(cancel_writes.len(), 2);
     assert_eq!(
-        crate::operation::project_registered_cell_writes(&cancel)
-            .expect("cancel must project its lifecycle write")[0]
-            .cell
-            .as_str(),
-        format!("ak:cell:ak.component.invite.lifecycle.v1:{invite_id}")
+        cancel_writes
+            .iter()
+            .map(|write| write.cell.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            format!("ak:cell:ak.component.invite.lifecycle.v1:{invite_id}").as_str(),
+            "ak:cell:ak.component.member.state.v1:did:web:bob.example",
+        ]
     );
     // `event-envelope.schema.json` restricts the enum to rejected / revoked on
     // this kind, so the builder refuses anything else rather than shipping an
@@ -931,11 +954,27 @@ fn invite_helpers_emit_canonical_kinds() {
             "ak:realm:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
             invite_id,
+            "did:web:bob.example",
             "expired",
             None,
         )
         .is_err()
     );
+
+    let revoke = ak_ops::invite_revoke(
+        "ak:realm:01904100-0000-7000-8000-000000000010",
+        "did:web:alice.example",
+        invite_id,
+        None,
+        "revoked",
+        "admin_revoke",
+    )
+    .expect("token invite revoke builds")
+    .build("node");
+    assert_eq!(revoke.kind.as_str(), "ak.invite.revoke");
+    assert_eq!(revoke.payload["target_state"], "revoked");
+    assert_eq!(revoke.payload["reason_code"], "admin_revoke");
+    assert!(revoke.payload.get("invitee").is_none());
 }
 
 #[test]
@@ -1088,13 +1127,12 @@ fn message_revise_builder_uses_content_payload_schema() {
 // produces real `ak.realm.organization` events that cotest can reuse.
 mod realm_organization_builder_tests {
     use arkret_models_collaboration::events_payloads::{
-        RealmOrganizationControlScope, RealmOrganizationIssuerRole, RealmOrganizationRelationship,
-        RealmOrganizationStatus, SignatureMaterial,
+        RealmOrganizationAuthorization, RealmOrganizationControlScope, RealmOrganizationIssuerRole,
+        RealmOrganizationRelationship, RealmOrganizationStatus, SignatureMaterial,
     };
     use chrono::TimeZone;
 
     use super::*;
-    use crate::operation::ak_ops::RealmOrganizationAuthorizationInput;
 
     const REALM_ID: &str = "ak:realm:0196419b-0000-7000-8000-000000000010";
     const ACTOR: &str = "did:web:alice.example";
@@ -1105,14 +1143,14 @@ mod realm_organization_builder_tests {
         chrono::Utc.with_ymd_and_hms(2026, 6, 25, 12, 0, 0).unwrap()
     }
 
-    fn direct_org_auth() -> RealmOrganizationAuthorizationInput {
+    fn direct_org_auth() -> RealmOrganizationAuthorization {
         // OrganizationDid is a non-delegated role: no delegation_ref.
-        RealmOrganizationAuthorizationInput {
-            issuer: ORG_DID.to_owned(),
+        RealmOrganizationAuthorization {
+            issuer: arkret_sdk::Did::new(ORG_DID).unwrap(),
             issuer_role: RealmOrganizationIssuerRole::OrganizationDid,
-            verification_method: ORG_VM.to_owned(),
+            verification_method: arkret_sdk::DidUrl::new(ORG_VM).unwrap(),
             delegation_ref: None,
-            executed_by: Some("did:web:admin.example".to_owned()),
+            executed_by: Some(arkret_sdk::Did::new("did:web:admin.example").unwrap()),
             signed_at: signed_at(),
             proof: SignatureMaterial::NonEmptyString(
                 arkret_sdk::NonEmptyString::new("c2ln").unwrap(),
@@ -1120,11 +1158,11 @@ mod realm_organization_builder_tests {
         }
     }
 
-    fn delegated_org_auth() -> RealmOrganizationAuthorizationInput {
-        RealmOrganizationAuthorizationInput {
-            issuer: "did:web:gov.example".to_owned(),
+    fn delegated_org_auth() -> RealmOrganizationAuthorization {
+        RealmOrganizationAuthorization {
+            issuer: arkret_sdk::Did::new("did:web:gov.example").unwrap(),
             issuer_role: RealmOrganizationIssuerRole::GovernanceService,
-            verification_method: "did:web:gov.example#k1".to_owned(),
+            verification_method: arkret_sdk::DidUrl::new("did:web:gov.example#k1").unwrap(),
             delegation_ref: Some("ak:grant:01904100-0000-7000-8000-000000000001".to_owned()),
             executed_by: None,
             signed_at: signed_at(),

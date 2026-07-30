@@ -25,13 +25,13 @@ fn mls_snapshot_persists_and_round_trips_through_store() {
     // record.
     use crate::mls::persistence::encrypt_state;
     let path = temp_state_path("mls-snapshot-persist");
-    let realm = "ak:realm:round28-mls";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000029";
     let envelope = encrypt_state(
         realm,
         "deadbeef",
         5,
         b"placeholder-state-bytes",
-        "round28-pass",
+        "mls-local-state-passphrase",
         b"deterministic-salt",
     );
     {

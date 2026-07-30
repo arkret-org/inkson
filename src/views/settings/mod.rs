@@ -2638,6 +2638,16 @@ pub fn SettingsPanel(
                                                             realm_remarks_snapshot.set(
                                                                 state_store.read().realm_remarks(),
                                                             );
+                                                            let Ok(realm_id) =
+                                                                arkret_sdk::RealmId::new(id.clone())
+                                                            else {
+                                                                crate::components::feedback::toast_error(
+                                                                    "feedback.invalid_realm_id",
+                                                                    vec![],
+                                                                    None,
+                                                                );
+                                                                return;
+                                                            };
                                                             crate::components::feedback::toast_success(
                                                                 "feedback.realm_remark_cleared",
                                                                 vec![("realm", short_protocol_id(&id))],
@@ -2647,8 +2657,7 @@ pub fn SettingsPanel(
                                                                 token(),
                                                                 id.clone(),
                                                                 crate::account_data::RealmRemark::new(
-                                                                    arkret_sdk::RealmId::new(id)
-                                                                        .expect("stored Realm ID is valid"),
+                                                                    realm_id,
                                                                     chrono::Utc::now(),
                                                                 ),
                                                             );
@@ -2828,6 +2837,16 @@ pub fn SettingsPanel(
                                                             contact_remarks_snapshot.set(
                                                                 state_store.read().contact_remarks(),
                                                             );
+                                                            let Ok(contact_did) =
+                                                                arkret_sdk::Did::new(did.clone())
+                                                            else {
+                                                                crate::components::feedback::toast_error(
+                                                                    "feedback.invalid_actor_identifier",
+                                                                    vec![],
+                                                                    None,
+                                                                );
+                                                                return;
+                                                            };
                                                             let did_label =
                                                                 actor_display_label(&state_store.read(), &did);
                                                             crate::components::feedback::toast_success(
@@ -2839,8 +2858,7 @@ pub fn SettingsPanel(
                                                                 token(),
                                                                 did.clone(),
                                                                 crate::account_data::ContactRemark::new(
-                                                                    arkret_sdk::Did::new(did)
-                                                                        .expect("stored contact DID is valid"),
+                                                                    contact_did,
                                                                     "",
                                                                     chrono::Utc::now(),
                                                                 ),

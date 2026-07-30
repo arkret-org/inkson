@@ -94,43 +94,6 @@ pub use arkret_models_collaboration::governance::invite_addressing::{
 };
 pub use arkret_wire::{INVITE_RECEIVE_POLICY_SCHEMA, InviteReceiveAction, UnknownInviteAction};
 
-/// Build the recommended default `invite_receive_policy` for `subject_id`,
-/// used as the form seed and the graceful-degrade fallback when the server
-/// returns 404/501/405. Mirrors soland's
-/// `default_invite_receive_policy`: accept contacts (`consent_grant`),
-/// invite links (`locator_ref`) and same-group introductions
-/// (`shared_realm`); hold everything else for review.
-#[allow(clippy::expect_used)]
-pub fn default_invite_receive_policy(subject_id: &str) -> InviteReceivePolicy {
-    InviteReceivePolicy {
-        schema: INVITE_RECEIVE_POLICY_SCHEMA.to_owned(),
-        subject_id: arkret_sdk::Did::new(subject_id).unwrap_or_else(|_| {
-            arkret_sdk::Did::new("did:web:unknown").expect("valid placeholder did")
-        }),
-        holder_allowed_introduction_kinds: vec![
-            "consent_grant".to_owned(),
-            "locator_ref".to_owned(),
-            "shared_realm".to_owned(),
-        ],
-        explicit_address_behavior: InviteReceiveAction::Quarantine,
-        handle_claim_behavior: Some(InviteReceiveAction::Quarantine),
-        unknown_invites: UnknownInviteAction::Quarantine,
-        allowed_handle_domains: Vec::new(),
-        denied_handle_domains: Vec::new(),
-        trusted_handle_issuers: Vec::new(),
-        trusted_directory_services: Vec::new(),
-        trusted_realm_ids: Vec::new(),
-        trusted_principal_services: Vec::new(),
-        denied_principal_services: Vec::new(),
-        denied_subjects: Vec::new(),
-        disclosure: Some(InviteDisclosurePolicy {
-            high_trust: Some(DisclosureLevel::Outcome),
-            discovery_trust: Some(DisclosureLevel::Opaque),
-            low_trust: Some(DisclosureLevel::Opaque),
-        }),
-    }
-}
-
 /// R15: result of `ak.realm.create`. Carries a `ak:realm:*` id under the
 /// canonical `realm_id` field (was previously squeezed into a shared
 /// `space_id` on the old shared lifecycle result). `state` replaces the old
@@ -687,13 +650,15 @@ mod tests {
 
     #[test]
     fn default_invite_receive_policy_carries_schema_and_subject() {
-        let policy = super::default_invite_receive_policy("did:web:me.example");
+        let subject_id = arkret_sdk::Did::new("did:web:me.example").unwrap();
+        let policy = super::InviteReceivePolicy::spec_default(subject_id);
         assert_eq!(policy.schema, super::INVITE_RECEIVE_POLICY_SCHEMA);
         assert_eq!(policy.subject_id.as_str(), "did:web:me.example");
         assert_eq!(
             policy.explicit_address_behavior,
             super::InviteReceiveAction::Quarantine
         );
+        assert_eq!(policy.unknown_invites, super::UnknownInviteAction::Drop);
     }
 
     #[test]
@@ -793,15 +758,6 @@ pub use arkret_models_collaboration::governance::authorization::AuthzInviteList;
 /// decodes the same authoritative wire contract instead of a weakly-typed
 /// local mirror.
 pub use arkret_models_collaboration::governance::authorization::GrantList;
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PushRegisterView {
-    pub ok: bool,
-    pub registration_id: Option<String>,
-    #[serde(default)]
-    pub expires_at: Option<String>,
-}
-
 /// `POST /_arkret/self/moderation/report` response. soland emits the SDK
 /// `ModerationReportOutcome` wire shape verbatim (`status: "submitted"`,
 /// `routed_to: Vec<Did>` — scalar DIDs only, no fragments, per
@@ -814,6 +770,7 @@ pub use arkret_models_collaboration::sync_frames::account_sync::{
 };
 pub use arkret_models_crypto::{KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome};
 pub use arkret_models_integration::OkOutcome;
+pub use arkret_models_integration::models_push::PushRegisterDeviceOutcome;
 
 // ── Directory ───────────────────────────────────────────────────
 

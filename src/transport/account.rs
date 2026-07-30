@@ -205,7 +205,7 @@ pub async fn contacts(http: &arkret_sdk::http_client::Client) -> anyhow::Result<
 /// `arkret_sdk::InviteReceivePolicy` (soland echoes the stored override or
 /// its recommended default). When the deployment does not yet wire this
 /// surface the caller treats 404/501/405 as "use defaults" rather than a
-/// hard error (see [`crate::models::default_invite_receive_policy`]).
+/// hard error; the settings surface keeps the SDK fail-closed default.
 pub async fn get_invite_receive_policy(
     http: &arkret_sdk::http_client::Client,
 ) -> anyhow::Result<crate::models::InviteReceivePolicy> {

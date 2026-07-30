@@ -797,17 +797,7 @@ fn OrganizationBindPanel(token: Signal<String>, realm_id: String, account_did: S
                                 // reconstructs an identical payload so the
                                 // canonical signing bytes — and the proof — stay
                                 // valid on the wire.
-                                let authorization =
-                                    crate::operation::ak_ops::RealmOrganizationAuthorizationInput {
-                                        issuer: org_did.clone(),
-                                        issuer_role:
-                                            arkret_models_collaboration::events_payloads::RealmOrganizationIssuerRole::OrganizationDid,
-                                        verification_method: did_key_id.clone(),
-                                        delegation_ref: None,
-                                        executed_by: None,
-                                        signed_at: issued_at,
-                                        proof: signed.authorization.proof.clone(),
-                                    };
+                                let authorization = signed.authorization.clone();
                                 let builder =
                                     match crate::operation::ak_ops::realm_organization_statement(
                                         &realm_id,

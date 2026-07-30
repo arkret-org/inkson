@@ -399,12 +399,21 @@ impl OperationBuilder {
         // authoring, so it belongs to the submit gate.
         //
         // Non-reducer-input kinds project no writes and pass trivially.
-        project_registered_cell_writes(&event).map_err(|error| {
-            anyhow::anyhow!(
-                "{} has no evaluable registered cell-write contract: {error}",
-                event.kind.as_str()
-            )
-        })?;
+        match project_registered_cell_writes(&event) {
+            Ok(_) => {}
+            // Some registered contracts deliberately compare a signed operand
+            // with accepted frozen pre-state (for example a direct invite
+            // cancel's invitee binding). The authoring layer has no accepted
+            // snapshot to supply, so leave only this requirement unresolved;
+            // admission must evaluate it atomically with the real pre-state.
+            Err(EventCellProjectionError::PreStateRequirement { .. }) => {}
+            Err(error) => {
+                return Err(anyhow::anyhow!(
+                    "{} has no evaluable registered cell-write contract: {error}",
+                    event.kind.as_str()
+                ));
+            }
+        }
         Ok(event)
     }
 }

@@ -441,11 +441,34 @@ pub async fn cancel_realm_invite(
     realm_id: &str,
     actor_id: &str,
     invite_id: &str,
+    invitee: &str,
     target_state: &str,
     reason: Option<&str>,
 ) -> anyhow::Result<SubmitEventResult> {
-    let event = ak_ops::invite_cancel(realm_id, actor_id, invite_id, target_state, reason)?
-        .build_sdk_event("inkson")?;
+    let event =
+        ak_ops::invite_cancel(realm_id, actor_id, invite_id, invitee, target_state, reason)?
+            .build_sdk_event("inkson")?;
+    submitter.submit_sdk_event(&event).await
+}
+
+pub async fn revoke_realm_invite(
+    submitter: &EventSubmitter,
+    realm_id: &str,
+    actor_id: &str,
+    invite_id: &str,
+    invitee: Option<&str>,
+    target_state: &str,
+    reason_code: &str,
+) -> anyhow::Result<SubmitEventResult> {
+    let event = ak_ops::invite_revoke(
+        realm_id,
+        actor_id,
+        invite_id,
+        invitee,
+        target_state,
+        reason_code,
+    )?
+    .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }
 

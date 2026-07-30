@@ -7,80 +7,61 @@ use super::*;
 /// this test fails and points at the renderer adapter.
 #[test]
 fn collection_projection_maps_to_kanban_columns() {
-    use crate::state::projection_views::{
-        CollectionProjectionGroupView, CollectionProjectionView, ProjectionRowView,
-        StateFrontierView,
-    };
-    let projection = CollectionProjectionView {
-        projection: "collection".to_owned(),
-        renderer: Some("board".to_owned()),
-        view_id: "ak:view:01904100-0000-7000-8000-000000000001".to_owned(),
-        realm_id: None,
-        frontier: StateFrontierView {
-            state_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-                .to_owned(),
-            event_ids: vec!["ak:event:01904100-0000-7000-8000-000000000042".to_owned()],
-            actor_frontiers: Vec::new(),
-        },
-        groups: vec![
-            CollectionProjectionGroupView {
-                key: "ak:space:01c3b617-7000-7000-8000-000000000000".to_owned(),
-                title: "Review".to_owned(),
-                rank: Some("mV".to_owned()),
-                source: None,
-                items: vec![ProjectionRowView {
-                    object: serde_json::json!({
-                        "id": "ak:strand:01d2b330-0000-7000-8000-000000000000",
-                        "type": "strand",
-                        "title": "Legal review",
-                        "summary": "ensure GDPR sign-off",
-                        "body": {
-                            "kind": "ak.content.text",
-                            "body": "Review processor wording before beta."
+    let projection: arkret_sdk::CollectionProjectionView =
+        serde_json::from_value(serde_json::json!({
+            "projection": "collection",
+            "renderer": "board",
+            "view_id": "ak:view:01904100-0000-7000-8000-000000000001",
+            "frontier": {
+                "state_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "event_ids": ["ak:event:01904100-0000-7000-8000-000000000042"]
+            },
+            "groups": [
+                {
+                    "key": "ak:space:01904100-0000-7000-8000-000000000031",
+                    "title": "Review",
+                    "rank": "mV",
+                    "items": [{
+                        "object": {
+                            "id": "ak:strand:01904100-0000-7000-8000-000000000033",
+                            "kind": "strand",
+                            "title": "Legal review",
+                            "fields": {
+                                "summary": "ensure GDPR sign-off",
+                                "body": {
+                                    "kind": "ak.content.text",
+                                    "body": "Review processor wording before beta."
+                                }
+                            }
                         },
-                    }),
-                    render: None,
-                    display: None,
-                    position: None,
-                    state: Some(serde_json::json!({
+                        "state": {
                         "discussion": {
                             "enabled": true,
                             "visibility": "locked",
-                            "lazy_link": true,
+                            "lazy_link": true
                         }
-                    })),
-                }],
-                next_cursor: None,
-                limited: false,
-                wip_state: None,
-                total_estimate: None,
-            },
-            CollectionProjectionGroupView {
-                key: "ak:space:01t0d0000000000000000000000".to_owned(),
-                title: "To do".to_owned(),
-                rank: Some("aA".to_owned()),
-                source: None,
-                items: Vec::new(),
-                next_cursor: None,
-                limited: false,
-                wip_state: None,
-                total_estimate: None,
-            },
-        ],
-        items: Vec::new(),
-        next_cursor: None,
-        total_estimate: None,
-        stale: None,
-    };
+                    }}],
+                    "limited": false
+                },
+                {
+                    "key": "ak:space:01904100-0000-7000-8000-000000000032",
+                    "title": "To do",
+                    "rank": "aA",
+                    "items": [],
+                    "limited": false
+                }
+            ]
+        }))
+        .unwrap();
 
     let cols = collection_projection_to_columns(&projection, None);
     assert_eq!(cols.len(), 2, "two groups → two columns");
-    assert_eq!(cols[0].id, "ak:space:01c3b617-7000-7000-8000-000000000000");
+    assert_eq!(cols[0].id, "ak:space:01904100-0000-7000-8000-000000000031");
     assert_eq!(cols[0].title, "Review");
     assert_eq!(cols[0].rank, "mV");
     assert_eq!(cols[0].cards.len(), 1);
     let card = &cols[0].cards[0];
-    assert_eq!(card.id, "ak:strand:01d2b330-0000-7000-8000-000000000000");
+    assert_eq!(card.id, "ak:strand:01904100-0000-7000-8000-000000000033");
     assert_eq!(card.title, "Legal review");
     assert_eq!(card.description, "ensure GDPR sign-off");
     assert_eq!(card.body, "Review processor wording before beta.");
@@ -101,44 +82,30 @@ fn collection_projection_maps_to_kanban_columns() {
 
 #[test]
 fn collection_projection_overlay_applies_remote_encrypted_strand_updates() {
-    use crate::state::projection_views::{
-        CollectionProjectionGroupView, CollectionProjectionView, ProjectionRowView,
-        StateFrontierView,
-    };
     let board_id = "ak:space:0196419b-0000-7000-8000-000000000001";
     let strand_id = "ak:strand:0196419b-0000-7000-8000-000000000003";
-    let projection = CollectionProjectionView {
-        projection: "collection".to_owned(),
-        renderer: Some("board".to_owned()),
-        view_id: "ak:view:01904100-0000-7000-8000-000000000001".to_owned(),
-        realm_id: None,
-        frontier: StateFrontierView::default(),
-        groups: vec![CollectionProjectionGroupView {
-            key: board_id.to_owned(),
-            title: "Todo".to_owned(),
-            rank: Some("U".to_owned()),
-            source: None,
-            items: vec![ProjectionRowView {
-                object: json!({
+    let projection: arkret_sdk::CollectionProjectionView = serde_json::from_value(json!({
+        "projection": "collection",
+        "renderer": "board",
+        "view_id": "ak:view:01904100-0000-7000-8000-000000000001",
+        "frontier": {
+            "state_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "groups": [{
+            "key": board_id,
+            "title": "Todo",
+            "rank": "U",
+            "items": [{
+                "object": {
                     "id": strand_id,
-                    "type": "strand",
-                    "title": "Encrypted card",
-                }),
-                render: None,
-                display: None,
-                position: None,
-                state: None,
+                    "kind": "strand",
+                    "title": "Encrypted card"
+                }
             }],
-            next_cursor: None,
-            limited: false,
-            wip_state: None,
-            total_estimate: None,
-        }],
-        items: Vec::new(),
-        next_cursor: None,
-        total_estimate: None,
-        stale: None,
-    };
+            "limited": false
+        }]
+    }))
+    .unwrap();
     let envelope = json!({
         "scheme": "mls_rfc9420",
         "ciphertext": "AAAA",
@@ -191,17 +158,14 @@ fn collection_projection_overlay_applies_remote_encrypted_strand_updates() {
 /// without a locked_strand.
 #[test]
 fn projection_item_without_discussion_renders_synthesis_only() {
-    use crate::state::projection_views::ProjectionRowView;
-    let item = ProjectionRowView {
-        object: serde_json::json!({
-            "id": "ak:strand:01doc",
-            "title": "DID method allowlist",
-        }),
-        render: None,
-        display: None,
-        position: None,
-        state: None,
-    };
+    let item: arkret_sdk::ProjectionRow = serde_json::from_value(serde_json::json!({
+        "object": {
+            "id": "ak:strand:01904100-0000-7000-8000-000000000034",
+            "kind": "strand",
+            "title": "DID method allowlist"
+        }
+    }))
+    .unwrap();
     let card = card_from_projection_item(&item, None);
     assert!(card.locked_strand.is_none());
     assert_eq!(card.history_visibility, "synthesis-only");
