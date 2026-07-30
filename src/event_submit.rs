@@ -2904,7 +2904,6 @@ mod tests {
             "sha256",
             "ak:trust_domain:did.web.example",
             None,
-            None,
         )
         .unwrap();
         let before = crate::operation::direct_registered_cell_writes(&event).unwrap();

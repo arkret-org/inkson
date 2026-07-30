@@ -290,7 +290,6 @@ fn plaintext_realm_create_does_not_claim_e2ee_floors() {
         "sha256",
         "ak:trust_domain:server.example",
         None,
-        None,
     )
     .unwrap();
 

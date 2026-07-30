@@ -157,7 +157,6 @@ pub fn build_realm_bootstrap_events(
         notary_profile,
         digest_algorithm,
         trust_domain,
-        alias,
         content_scheme,
     )?);
     // realm-and-space.md §2.5: an ordinary Realm is one genesis transaction.
@@ -202,6 +201,22 @@ pub fn build_realm_bootstrap_events(
         EventKind::RealmDiscovery,
         json!(discoverability),
     )?);
+    // object-addressing.md §3.3: `ak.realm.alias` is the ONLY wire carrier of a
+    // Realm alias, and §2.5 lists it among the seal_basis-exempt bootstrap
+    // follow-ups, so naming a Realm at creation happens here rather than on the
+    // closed Realm object. The alias domain is the deployment that issues it.
+    //
+    // Emptiness is judged AFTER stripping the `#` share sigil: the sigil is a
+    // display affordance that never reaches the wire, so a sigil-only input is
+    // "no alias" and must claim nothing, not fail preparation.
+    if let Some(alias) = alias
+        .map(|alias| alias.trim().trim_start_matches('#').trim())
+        .filter(|alias| !alias.is_empty())
+    {
+        events.push(build_realm_alias_event(
+            realm_id, actor_id, notary_did, alias,
+        )?);
+    }
 
     if let Some(event) =
         build_plaintext_visible_services_event(realm_id, actor_id, plaintext_visible_services)?
@@ -352,27 +367,8 @@ fn build_realm_genesis_object(
     notary_profile: &str,
     digest_algorithm: &str,
     trust_domain: &str,
-    alias: Option<&str>,
     content_scheme: Option<&str>,
 ) -> anyhow::Result<arkret_sdk::Realm> {
-    // Realm alias localpart (object-addressing.md §3.3) has NO registered wire
-    // carrier: `realm.schema.json` declares no `alias` property, and no
-    // `ak.realm.alias` facet Event kind exists. The pre-migration
-    // `object.alias` write therefore produced a candidate the Principal Server
-    // rejects wholesale (`Realm candidate object violates ak.schema.realm.v1`,
-    // soland `validate_realm_proposal_policy`), so alias-carrying creates have
-    // been failing for as long as that gate has existed. Fail here, naming the
-    // blocking adjudication, rather than authoring an Event that cannot be
-    // accepted. See arkret-work `review/spec-open/
-    // 2026-07-30-realm-object-closed-schema-missing-carriers.md` gap 1.
-    if alias.is_some_and(|alias| !alias.trim().trim_start_matches('#').is_empty()) {
-        return Err(anyhow::anyhow!(
-            "realm alias has no registered wire carrier (realm.schema.json declares no `alias` \
-             property and there is no ak.realm.alias Event kind); create the Realm without an \
-             alias until spec finding 2026-07-30-realm-object-closed-schema-missing-carriers \
-             gap 1 is adjudicated"
-        ));
-    }
     // Per spec realm-and-space.md §2.3: high_assurance security_class
     // MUST satisfy federation_policy ∈ {closed, restricted, quarantine}.
     let effective_federation_policy =
@@ -495,7 +491,6 @@ pub fn build_realm_create_event(
     notary_profile: &str,
     digest_algorithm: &str,
     trust_domain: &str,
-    alias: Option<&str>,
     content_scheme: Option<&str>,
 ) -> anyhow::Result<arkret_sdk::Event> {
     let object = build_realm_genesis_object(
@@ -513,7 +508,6 @@ pub fn build_realm_create_event(
         notary_profile,
         digest_algorithm,
         trust_domain,
-        alias,
         content_scheme,
     )?;
     build_realm_create_event_from_object(realm_id, actor_id, object)
@@ -545,7 +539,6 @@ pub fn build_managed_agent_pcr_create_event(
         "single_did",
         "sha256",
         trust_domain,
-        None,
         Some("mls_rfc9420"),
     )?;
 
@@ -576,7 +569,12 @@ pub fn build_managed_agent_pcr_create_event(
     // carry that policy at all. Its `history_visibility = "restricted"` is
     // pinned by the same profile's `realm_defaults`, exactly like the
     // SDK-authored self-principal PCR genesis
-    // (`arkret_bootstrap::build_self_principal_pcr_create`).
+    // (`arkret_bootstrap::build_self_principal_pcr_create`). The effective
+    // value that `restricted` still requires comes from the same profile's
+    // `history_sharing_policy_fixed_baseline` (realm-and-space.md §2.8.1,
+    // history-visibility.md §3) — read it through
+    // `arkret_policy::history_visibility::
+    // principal_control_realm_history_sharing_policy`, never as a local literal.
     object.notary = arkret_sdk::NotaryValue::single_did_with_org(
         agent_did,
         vec![controller_did.clone()],
@@ -1109,6 +1107,91 @@ pub fn build_realm_destroy_event(
     .body(payload)
     .created_at(created_at)
     .build_sdk_event("inkson")
+}
+
+/// Build a `ak.realm.alias` declaration — the ONLY wire carrier of a Realm
+/// alias (object-addressing.md §3.3). `authority_service_id` is the deployment
+/// DID that issues the alias; the alias `<domain>` MUST be its authority
+/// domain, so a bare localpart is bound to it here and a foreign-domain input
+/// is rejected instead of being silently rebound.
+pub fn build_realm_alias_event(
+    realm_id: &str,
+    actor_id: &str,
+    authority_service_id: &str,
+    alias: &str,
+) -> anyhow::Result<arkret_sdk::Event> {
+    let authority = arkret_sdk::RealmAlias::authority_domain_for_service(authority_service_id)
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "cannot derive realm alias authority from {authority_service_id}: {error}"
+            )
+        })?;
+    let canonical = arkret_sdk::RealmAlias::prepare_under_authority(alias, &authority)
+        .map_err(|error| anyhow::anyhow!("invalid realm alias {alias:?}: {error}"))?;
+    // First claim: the cell is still empty.
+    build_realm_alias_payload_event(
+        realm_id,
+        actor_id,
+        arkret_sdk::RealmAliasPayload::declaration(canonical),
+        Value::Null,
+    )
+}
+
+/// Rename an already-claimed alias. `settled_payload` is the whole current cell
+/// value; the `cas_register` head_eq precondition is what makes a concurrent
+/// rename lose instead of silently overwriting a live address.
+pub fn build_realm_alias_rename_event(
+    realm_id: &str,
+    actor_id: &str,
+    authority_service_id: &str,
+    alias: &str,
+    settled_payload: Value,
+) -> anyhow::Result<arkret_sdk::Event> {
+    let authority = arkret_sdk::RealmAlias::authority_domain_for_service(authority_service_id)
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "cannot derive realm alias authority from {authority_service_id}: {error}"
+            )
+        })?;
+    let canonical = arkret_sdk::RealmAlias::prepare_under_authority(alias, &authority)
+        .map_err(|error| anyhow::anyhow!("invalid realm alias {alias:?}: {error}"))?;
+    build_realm_alias_payload_event(
+        realm_id,
+        actor_id,
+        arkret_sdk::RealmAliasPayload::declaration(canonical),
+        settled_payload,
+    )
+}
+
+/// Build the `ak.realm.alias` value tombstone that releases the Realm's alias.
+/// After it is accepted the Realm is addressable only by `realm_id`.
+/// `settled_payload` is the whole current cell value for the head_eq guard.
+pub fn build_realm_alias_tombstone_event(
+    realm_id: &str,
+    actor_id: &str,
+    settled_payload: Value,
+) -> anyhow::Result<arkret_sdk::Event> {
+    build_realm_alias_payload_event(
+        realm_id,
+        actor_id,
+        arkret_sdk::RealmAliasPayload::tombstone(),
+        settled_payload,
+    )
+}
+
+fn build_realm_alias_payload_event(
+    realm_id: &str,
+    actor_id: &str,
+    payload: arkret_sdk::RealmAliasPayload,
+    expected_head: Value,
+) -> anyhow::Result<arkret_sdk::Event> {
+    let cell = arkret_wire::null_subject_cell("ak.component.realm.alias.v1");
+    let created_at = event_timestamp();
+    OperationBuilder::new(realm_id, actor_id, EventKind::RealmAlias)
+        .body(payload.to_value()?)
+        .preconditions(vec![head_eq_precondition(&cell, expected_head)?])
+        .created_at(created_at)
+        .build_sdk_event("inkson")
 }
 
 /// Emit `ak.realm.history_sharing_policy` from an already-typed policy value.
@@ -1644,11 +1727,21 @@ mod notary_derivation_tests {
             "ak:trust_domain:did.web.example",
             &[],
             &["did:web:media.example".to_owned()],
-            None,
+            // A non-empty alias, so the closed-schema gate actually sees the
+            // create-time alias path. Passing `None` here is what let an
+            // `object.alias` survive unnoticed in the first place.
+            Some("general"),
             None,
         )
         .unwrap();
         assert_realm_candidate_matches_closed_schema(&events[0]);
+        // The alias is its own facet Control Move too, never a Realm object
+        // member; `ak.realm.alias` is the only carrier the spec registers.
+        assert!(
+            events
+                .iter()
+                .any(|event| event.kind.as_str() == "ak.realm.alias")
+        );
         // The plaintext-visible service surface stays a dedicated facet
         // Control Move in the same genesis batch — never a Realm object member.
         assert!(

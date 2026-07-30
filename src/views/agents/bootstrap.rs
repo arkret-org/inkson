@@ -176,8 +176,7 @@ fn managed_pcr_setup_never_completed(
     recovery: &AgentPcrRecoveryState,
     error: &anyhow::Error,
 ) -> bool {
-    matches!(recovery, AgentPcrRecoveryState::Pending)
-        && managed_agent_initial_seal_required(error)
+    matches!(recovery, AgentPcrRecoveryState::Pending) && managed_agent_initial_seal_required(error)
 }
 
 fn next_mls_history_pointer(
@@ -827,9 +826,7 @@ async fn collect_current_managed_pcr_backup_items(
             // fails for any other reason, or a `Ready`/`Stale` Agent that has
             // real recovery state, still fails closed — dropping either from
             // the series would silently narrow recovery coverage.
-            Err(error)
-                if managed_pcr_setup_never_completed(&key_state.pcr_recovery, &error) =>
-            {
+            Err(error) if managed_pcr_setup_never_completed(&key_state.pcr_recovery, &error) => {
                 tracing::warn!(
                     target: "inkson::agents",
                     agent_id = key_state.agent_id.as_str(),

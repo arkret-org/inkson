@@ -226,17 +226,14 @@ fn reducer_input_plane(envelope: &Event) -> Option<&'static str> {
         .and_then(|descriptor| descriptor.plane)
 }
 
+/// Kinds a real submitter builds WITHOUT `seal_basis` because they sit in the
+/// Realm genesis batch, where no accepted Seal exists yet
+/// (realm-and-space.md §2.5). Read from the shared SDK helper rather than a
+/// local hand-list: a second copy of a closed protocol list is exactly the
+/// drift that lets a bootstrap follow-up go untested.
 fn cba_exempt_reducer_kind(kind: &EventKind) -> bool {
-    matches!(
-        kind,
-        EventKind::RealmCreate
-            | EventKind::MemberState
-            | EventKind::RealmDiscovery
-            | EventKind::RealmHistoryVisibility
-            | EventKind::RealmJoinRule
-            | EventKind::RealmPlaintextVisibleServices
-            | EventKind::RealmPolicyBundle
-    )
+    kind == &EventKind::RealmCreate
+        || arkret_policy::realm_bootstrap::is_realm_bootstrap_followup_kind(kind.as_str())
 }
 
 /// The `{did, key_id, key_epoch}` a DataEvent pins so the receiver knows which
@@ -381,7 +378,6 @@ fn build_realm_create_event_matches_event_schema() {
         "single_did",
         "sha256",
         "ak:trust_domain:server.example",
-        None,
         None,
     )
     .expect("build_realm_create_event succeeds");
@@ -637,60 +633,43 @@ fn realm_bootstrap_delivery_binding_policy_matches_payload_schema() {
     );
 }
 
-/// Realm alias has no registered wire carrier: `realm.schema.json` declares no
-/// `alias` property and `event-kind-registry.json` has no `ak.realm.alias`
-/// facet kind. The builder must therefore refuse the input outright instead of
-/// authoring `payload.object.alias`, which every closed-schema validator —
-/// including soland's `validate_realm_proposal_policy` — rejects wholesale.
-/// Remove this gate when spec finding
-/// `2026-07-30-realm-object-closed-schema-missing-carriers` gap 1 lands.
+/// The alias carrier landed with spec finding
+/// `2026-07-30-realm-object-closed-schema-missing-carriers` gap 1, so the
+/// builder no longer refuses an alias — it emits `ak.realm.alias`, and the
+/// create object still carries none. What survives from the old refusal gate is
+/// its other half: a blank or sigil-only alias is "no alias" and must produce no
+/// Event at all, rather than an empty declaration that would occupy the cell.
 #[test]
-fn realm_create_rejects_alias_until_a_wire_carrier_is_adjudicated() {
-    let error = event_builders::build_realm_create_event(
-        TEST_REALM_ID,
-        TEST_ACTOR_ID,
-        TEST_SERVICE_ID,
-        "Engineering",
-        None,
-        "listed",
-        "invite",
-        "shared",
-        "mls_rfc9420",
-        "standard",
-        "restricted",
-        "single_did",
-        "sha256",
-        "ak:trust_domain:server.example",
-        Some("#engineering"),
-        None,
-    )
-    .expect_err("an alias-carrying create has no schema-valid wire form");
-    let message = error.to_string();
-    assert!(
-        message.contains("realm alias has no registered wire carrier"),
-        "the error must name the missing carrier, not fail late on the wire: {message}"
-    );
-
-    // A blank / sigil-only alias is "no alias" and must still succeed.
-    event_builders::build_realm_create_event(
-        TEST_REALM_ID,
-        TEST_ACTOR_ID,
-        TEST_SERVICE_ID,
-        "Engineering",
-        None,
-        "listed",
-        "invite",
-        "shared",
-        "mls_rfc9420",
-        "standard",
-        "restricted",
-        "single_did",
-        "sha256",
-        "ak:trust_domain:server.example",
-        Some("  "),
-        None,
-    )
-    .expect("an empty alias is indistinguishable from absence");
+fn blank_alias_is_absence_and_emits_no_alias_event() {
+    for blank in ["  ", "#", " # "] {
+        let events = event_builders::build_realm_bootstrap_events(
+            TEST_REALM_ID,
+            TEST_ACTOR_ID,
+            TEST_SERVICE_ID,
+            "Engineering",
+            None,
+            "listed",
+            "invite",
+            "shared",
+            "mls_rfc9420",
+            "standard",
+            "restricted",
+            "single_did",
+            "sha256",
+            "ak:trust_domain:server.example",
+            &[],
+            &[],
+            Some(blank),
+            None,
+        )
+        .expect("an empty alias is indistinguishable from absence");
+        assert!(
+            !events
+                .iter()
+                .any(|event| event.kind == EventKind::RealmAlias),
+            "a blank alias {blank:?} must not claim the alias cell"
+        );
+    }
 }
 
 /// R94 regression. `realm.schema.json` is closed (46 properties,
@@ -753,4 +732,108 @@ fn realm_bootstrap_keeps_plaintext_services_off_the_closed_realm_object() {
         "the caller's plaintext service list must materialize exactly one \
          ak.realm.plaintext_visible_services Event"
     );
+}
+
+/// The sibling of the plaintext-services regression: an alias is also NOT a
+/// property of the closed `realm.schema.json`. `ak.realm.alias` is its only
+/// wire carrier (object-addressing.md §3.3), and it is a registered
+/// seal_basis-exempt bootstrap follow-up (realm-and-space.md §2.5), so a
+/// create-time alias must appear as its own Event in the same batch.
+///
+/// This is the case the old gate could not see: it only ever passed
+/// `alias: None`, so the field never reached a validated object.
+#[test]
+fn realm_bootstrap_carries_alias_as_a_facet_event_not_on_the_closed_realm_object() {
+    let events = event_builders::build_realm_bootstrap_events(
+        TEST_REALM_ID,
+        TEST_ACTOR_ID,
+        TEST_SERVICE_ID,
+        "Engineering",
+        None,
+        "listed",
+        "invite",
+        "shared",
+        "mls_rfc9420",
+        "standard",
+        "restricted",
+        "single_did",
+        "sha256",
+        "ak:trust_domain:server.example",
+        &[],
+        &[],
+        Some("#General"),
+        None,
+    )
+    .expect("build_realm_bootstrap_events succeeds");
+
+    let mut create = events
+        .iter()
+        .find(|event| event.kind == EventKind::RealmCreate)
+        .cloned()
+        .expect("bootstrap chain emits ak.realm.create");
+    assert!(
+        create.payload["object"].get("alias").is_none(),
+        "ak.realm.create object must not declare alias; realm.schema.json is \
+         closed and does not define that property"
+    );
+    stamp_wire_fields(&mut create);
+    assert_envelope_matches_schema("build_realm_bootstrap_events[create with alias]", &create);
+
+    let mut alias_events: Vec<_> = events
+        .iter()
+        .filter(|event| event.kind == EventKind::RealmAlias)
+        .cloned()
+        .collect();
+    assert_eq!(
+        alias_events.len(),
+        1,
+        "a create-time alias must materialize exactly one ak.realm.alias Event"
+    );
+    let alias_event = &mut alias_events[0];
+    // The `#` share sigil is display-only, and the bare localpart is bound to
+    // the deployment authority domain derived from the service DID.
+    assert_eq!(
+        alias_event.payload["alias"],
+        serde_json::json!("general:server.example"),
+    );
+    stamp_wire_fields(alias_event);
+    assert_envelope_matches_schema("build_realm_bootstrap_events[alias facet]", alias_event);
+}
+
+/// A managed Agent PCR genesis is a single `ak.realm.create`, and
+/// `ak.realm.history_sharing_policy` is absent from the PCR event-kind
+/// allowlist, so the effective policy comes from the profile-fixed baseline
+/// (`ak.profile.principal_control_realm.v1`). Declaring it on the object put a
+/// field on the closed `realm.schema.json` that no schema branch accepts.
+#[test]
+fn managed_agent_pcr_genesis_leaves_history_sharing_policy_to_the_profile() {
+    let events = event_builders::build_managed_agent_pcr_bootstrap_events(
+        TEST_REALM_ID,
+        "did:web:agent.example",
+        TEST_ACTOR_ID,
+        "did:web:alice.example#delegation-0",
+        "ak:trust_domain:server.example",
+    )
+    .expect("build_managed_agent_pcr_bootstrap_events succeeds");
+
+    assert_eq!(
+        events.len(),
+        1,
+        "managed Agent PCR genesis is a single Event"
+    );
+    let mut create = events[0].clone();
+    assert_eq!(create.kind, EventKind::RealmCreate);
+    assert!(
+        create.payload["object"]
+            .get("history_sharing_policy")
+            .is_none(),
+        "a managed Agent PCR create object must not declare \
+         history_sharing_policy; the PCR profile fixes the effective baseline"
+    );
+    assert!(
+        create.payload["object"].get("alias").is_none(),
+        "a PCR is addressable only by realm_id"
+    );
+    stamp_wire_fields(&mut create);
+    assert_envelope_matches_schema("build_managed_agent_pcr_bootstrap_events[create]", &create);
 }
