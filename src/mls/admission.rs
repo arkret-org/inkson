@@ -560,7 +560,7 @@ fn sign_welcome_claim_envelope(
 ) -> Result<(), String> {
     let active_device_signer = crate::event_signer::active_signer();
     if active_device_signer.is_none()
-        && let Some(publish) = load_latest_cross_signing_publish(state_store, actor_id)?
+        && let Some(publish) = latest_cross_signing_publish(state_store, actor_id)?
     {
         envelope.trust_binding =
             arkret_sdk::MlsRequesterTrustBinding::SskGeneration(publish.generation);
@@ -618,7 +618,12 @@ fn sign_welcome_claim_envelope(
     Ok(())
 }
 
-fn load_latest_cross_signing_publish(
+/// The latest accepted cross-signing publish for `actor_id`.
+///
+/// Exposed beyond this module because the key-backup delete path needs the same
+/// `(generation, principal_signing_key.kid)` pair this reads, and a second
+/// reader of the same state key is how the two drift apart.
+pub(crate) fn latest_cross_signing_publish(
     state_store: &LocalStateStore,
     actor_id: &str,
 ) -> Result<Option<arkret_sdk::CrossSigningPublish>, String> {

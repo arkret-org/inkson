@@ -207,7 +207,14 @@ mod tests {
         let cache = DidResolutionCache::new(8);
         let did = Did::new("did:web:alice.example".to_owned()).expect("valid did");
         let document = DidDocument::new(did.clone(), "owner", "z6Mksample");
-        cache.insert(did, document, now, ttl).unwrap();
+        cache
+            .insert(
+                did,
+                arkret_sdk::identity::ResolvedDid::proofless(document),
+                now,
+                ttl,
+            )
+            .unwrap();
         cache
     }
 

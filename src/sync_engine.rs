@@ -4034,7 +4034,7 @@ mod tests {
         cache
             .insert(
                 did.clone(),
-                doc,
+                arkret_sdk::identity::ResolvedDid::proofless(doc),
                 chrono::Utc::now(),
                 chrono::Duration::seconds(600),
             )

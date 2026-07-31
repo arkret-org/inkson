@@ -596,13 +596,95 @@ fn key_backup_put_request_rejects_path_body_mismatch() {
     assert!(err.contains("mismatch"));
 }
 
+/// The §7.8.1 proof covers the canonical delete-intent transcript the *service*
+/// fixed, and tampering with any transcript field after signing breaks it. The
+/// two cases below are the ones the client controls: `reason` travels beside the
+/// proof in the request body, and an absent reason MUST encode as JSON `null`
+/// rather than be omitted, so "no reason" and "reason removed in flight" cannot
+/// hash to the same bytes.
 #[test]
-fn delete_ownership_proof_binds_actor_and_backup() {
-    assert_eq!(
-        key_backup_delete_ownership_proof(
-            "did:web:alice.example",
-            "ak:backup:01964137-0000-7000-8000-00000000beef"
-        ),
-        "dev-ssk-delete:v1:did:web:alice.example:ak:backup:01964137-0000-7000-8000-00000000beef"
+fn delete_proof_binds_the_reason_it_was_signed_with() {
+    let challenge = delete_challenge();
+    let key = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+    let created_at = challenge.issued_at;
+
+    let with_reason = key_backup_delete_principal_signing_proof(
+        &challenge,
+        Some("user_requested"),
+        "did:web:alice.example#cx_principal_signing_v1",
+        &key,
+        created_at,
+    )
+    .expect("proof builds");
+    let without_reason = key_backup_delete_principal_signing_proof(
+        &challenge,
+        None,
+        "did:web:alice.example#cx_principal_signing_v1",
+        &key,
+        created_at,
+    )
+    .expect("proof builds");
+
+    let (
+        arkret_sdk::KeyBackupDeleteProof::PrincipalSigning { proof: signed },
+        arkret_sdk::KeyBackupDeleteProof::PrincipalSigning { proof: unsigned },
+    ) = (&with_reason, &without_reason)
+    else {
+        panic!("both are principal_signing proofs");
+    };
+    assert_ne!(
+        signed.payload_digest, unsigned.payload_digest,
+        "the reason is inside the signed transcript"
     );
+    assert_ne!(signed.jws, unsigned.jws);
+    assert_eq!(
+        signed.payload_digest,
+        challenge
+            .delete_intent_digest(Some("user_requested"))
+            .expect("digest"),
+        "the proof must cover the challenge's own transcript, not a locally derived one"
+    );
+}
+
+/// `created_at` outside the challenge window is rejected locally rather than
+/// sent: the receiver enforces the same window, and a clock-skewed client that
+/// discovers this server-side has already burned the challenge.
+#[test]
+fn delete_proof_refuses_to_sign_outside_the_challenge_window() {
+    let challenge = delete_challenge();
+    let key = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+    for created_at in [
+        challenge.issued_at - chrono::Duration::seconds(1),
+        challenge.expires_at + chrono::Duration::seconds(1),
+    ] {
+        let error = key_backup_delete_principal_signing_proof(
+            &challenge,
+            None,
+            "did:web:alice.example#cx_principal_signing_v1",
+            &key,
+            created_at,
+        )
+        .expect_err("outside the window must not produce a proof");
+        assert!(error.to_string().contains("challenge window"), "{error}");
+    }
+}
+
+fn delete_challenge() -> arkret_sdk::KeysBackupsDeleteChallenge {
+    let issued_at = chrono::DateTime::from_timestamp(1_800_000_000, 0).expect("timestamp");
+    arkret_sdk::KeysBackupsDeleteChallenge {
+        challenge_id: arkret_sdk::Base64UrlString::new("Y2hhbGxlbmdlLWlk").unwrap(),
+        challenge: arkret_sdk::Base64UrlString::new("Y2hhbGxlbmdl").unwrap(),
+        nonce: arkret_sdk::Base64UrlString::new("bm9uY2U").unwrap(),
+        operation: arkret_sdk::ServiceOperationId::SELF_KEYS_BACKUPS_RESOURCE_DELETE.to_owned(),
+        principal_id: arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+        backup_id: arkret_sdk::BackupId::new(
+            "ak:backup:01964137-0000-7000-8000-00000000beef".to_owned(),
+        )
+        .unwrap(),
+        audience: arkret_sdk::NonEmptyString::new("https://soland.example").unwrap(),
+        service_id: arkret_sdk::Did::new("did:web:soland.example".to_owned()).unwrap(),
+        request_id: arkret_sdk::Base64UrlString::new("cmVxdWVzdC1pZA").unwrap(),
+        issued_at,
+        expires_at: issued_at + chrono::Duration::seconds(300),
+    }
 }

@@ -58,8 +58,122 @@ pub fn key_backup_hkdf_info(class: BackupKind, subdomain: &str) -> String {
     class.hkdf_info(subdomain)
 }
 
-pub fn key_backup_delete_ownership_proof(actor_id: &str, backup_id: &str) -> String {
-    format!("dev-ssk-delete:v1:{actor_id}:{backup_id}")
+/// The current principal control key and the DID URL it is published under.
+///
+/// Both halves come from the same accepted cross-signing publish, so the `kid`
+/// handed to the receiver and the private key that signs can never be one
+/// generation apart. Returns an error rather than falling back to the device
+/// signer: §7.8.1's `principal_signing` branch is defined by resolving the
+/// method through the principal's DID document, and a device key does not
+/// appear there.
+///
+/// # Errors
+///
+/// Returns an error when no cross-signing publish has been accepted for
+/// `actor_id` yet, or when the secure store holds no principal signing key for
+/// that publish's generation.
+pub fn principal_signing_key(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    actor_id: &str,
+) -> anyhow::Result<(String, ed25519_dalek::SigningKey)> {
+    let publish = crate::mls::admission::latest_cross_signing_publish(state_store, actor_id)
+        .map_err(|error| anyhow::anyhow!("cross-signing publish unavailable: {error}"))?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no accepted cross-signing publish for {actor_id}: the principal control key a                  high-risk delete proof needs has never been published"
+            )
+        })?;
+    let generation = publish.generation.get();
+    let key = crate::cross_signing::load_signing_key(
+        secure_store,
+        actor_id,
+        generation,
+        crate::cross_signing::CrossSigningKeyRole::PrincipalSigning,
+    )?
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "principal signing key for generation {generation} is not in the secure key store"
+        )
+    })?;
+    Ok((publish.principal_signing_key.kid.as_str().to_owned(), key))
+}
+
+/// Build the `principal_signing` branch of a §7.8.1 high-risk delete proof.
+///
+/// The proof covers the **one** canonical delete-intent transcript every branch
+/// signs — the service-issued challenge plus the caller's `reason`, with an
+/// absent reason encoded as JSON `null` rather than omitted. Signing anything
+/// the caller assembled itself is exactly what §7.8.1 forbids, so the transcript
+/// comes from the challenge object and nothing here re-derives it.
+///
+/// `principal_key` MUST be the principal control key `verification_method`
+/// resolves to in the principal's DID document; a device key is rejected by the
+/// receiver, which resolves the method through that document precisely to
+/// exclude device and service keys.
+///
+/// # Errors
+///
+/// Returns an error when the transcript cannot be canonicalized, when
+/// `verification_method` is not a DID URL, or when `created_at` falls outside
+/// the challenge window — the same window the receiver enforces, checked here so
+/// a clock-skewed client fails locally instead of burning a challenge.
+pub fn key_backup_delete_principal_signing_proof(
+    challenge: &arkret_sdk::KeysBackupsDeleteChallenge,
+    reason: Option<&str>,
+    verification_method: &str,
+    principal_key: &ed25519_dalek::SigningKey,
+    created_at: chrono::DateTime<chrono::Utc>,
+) -> anyhow::Result<arkret_sdk::KeyBackupDeleteProof> {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use ed25519_dalek::Signer as _;
+
+    if created_at < challenge.issued_at || created_at > challenge.expires_at {
+        anyhow::bail!(
+            "delete proof created_at {created_at} is outside the challenge window              {}..{}",
+            challenge.issued_at,
+            challenge.expires_at
+        );
+    }
+    let transcript = challenge.delete_intent_transcript(reason);
+    let canonical = arkret_sdk::canonical::canonical_json_bytes(&transcript)
+        .map_err(|error| anyhow::anyhow!("delete-intent transcript is not canonical: {error}"))?;
+    let payload_digest = challenge
+        .delete_intent_digest(reason)
+        .map_err(|error| anyhow::anyhow!("delete-intent digest failed: {error}"))?;
+
+    // Detached JWS over the canonical transcript bytes, alg-only protected
+    // header — the shape `EventSigner::detached_jws_over` produces and the one
+    // the receiver splits on `..`.
+    let header = serde_json::to_vec(&serde_json::json!({ "alg": "EdDSA" }))
+        .map_err(|error| anyhow::anyhow!("delete proof header encode: {error}"))?;
+    let signature = principal_key.sign(&canonical).to_bytes();
+    let jws = format!(
+        "{}..{}",
+        URL_SAFE_NO_PAD.encode(&header),
+        URL_SAFE_NO_PAD.encode(signature)
+    );
+
+    Ok(arkret_sdk::KeyBackupDeleteProof::PrincipalSigning {
+        proof: arkret_sdk::PayloadProof {
+            kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+            alg: "EdDSA".to_owned(),
+            verification_method: arkret_sdk::DidUrl::new(verification_method.to_owned()).map_err(
+                |error| {
+                    anyhow::anyhow!("delete proof verification method is not a DID URL: {error}")
+                },
+            )?,
+            payload_digest,
+            created_at,
+            domain: None,
+            // The audience is already bound inside the signed transcript, so
+            // repeating it on the envelope would be a second, unchecked copy.
+            audience: None,
+            proof_purpose: None,
+            jws,
+        },
+    })
 }
 
 pub(crate) fn required_str<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {

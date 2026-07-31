@@ -833,6 +833,12 @@ mod tests {
         (did, doc)
     }
 
+    /// A cached resolution for a method that publishes nothing to prove — which
+    /// is what every fixture here is.
+    fn proofless(document: DidDocument) -> arkret_sdk::identity::ResolvedDid {
+        arkret_sdk::identity::ResolvedDid::proofless(document)
+    }
+
     #[test]
     fn resolve_with_cache_returns_fresh_cached_document_without_resolver() {
         // Preload a fresh cache entry: resolve_with_cache should hit it directly
@@ -843,7 +849,7 @@ mod tests {
         let (did, doc) = sample_document("did:web:alice.example");
         let t0 = Utc::now();
         cache
-            .insert(did.clone(), doc, t0, Duration::seconds(600))
+            .insert(did.clone(), proofless(doc), t0, Duration::seconds(600))
             .unwrap();
 
         let out = resolve_with_cache(&resolver, &cache, &did, t0 + Duration::seconds(1))
@@ -877,7 +883,7 @@ mod tests {
         let (did, doc) = sample_document("did:web:alice.example");
         let t0 = Utc::now();
         cache
-            .insert(did.clone(), doc, t0, Duration::seconds(60))
+            .insert(did.clone(), proofless(doc), t0, Duration::seconds(60))
             .unwrap();
         match resolve_with_cache(&resolver, &cache, &did, t0 + Duration::seconds(61)) {
             Err(VerifyError::Unresolved(_)) => {}
@@ -893,10 +899,10 @@ mod tests {
         let (did_b, doc_b) = sample_document("did:web:bob.example");
         let t0 = Utc::now();
         cache
-            .insert(did_a, doc_a, t0, Duration::seconds(60))
+            .insert(did_a, proofless(doc_a), t0, Duration::seconds(60))
             .unwrap();
         cache
-            .insert(did_b, doc_b, t0, Duration::seconds(60))
+            .insert(did_b, proofless(doc_b), t0, Duration::seconds(60))
             .unwrap();
         assert_eq!(cache.len(), 2);
         cache.clear();

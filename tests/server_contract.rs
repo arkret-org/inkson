@@ -1,6 +1,5 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use arkret_wire::AccountDataKey;
 use chrono::Utc;
 use inkson::account_data::{
     AccountDataKey, ContactRemark, RealmRemark, contact_remark_account_data_key,
