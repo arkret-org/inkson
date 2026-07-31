@@ -1253,13 +1253,23 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             // invites live on `authz/invites` rather than the
                             // normal account subscribe notification stream.
                             let mut notification_projection = store.notification_projection();
+                            // `server_set` is every Realm the server projected,
+                            // which includes discoverable previews and Realms
+                            // this actor was only invited or knocked into.
+                            // Hiding an invite is a membership question, so it
+                            // is answered by the typed roster and nothing else.
+                            let joined_realms =
+                                crate::state::projection::notifications::JoinedRealmIds::from_realm_entries(
+                                    &sync.realm_entries,
+                                    &canonical_actor,
+                                );
                             crate::state::projection::notifications::apply_notification_projection(
                                 &mut notification_projection,
                                 &sync.updates.notifications,
                                 &sync.updates.account_data,
                                 true,
                                 invite_notifications,
-                                &server_set,
+                                &joined_realms,
                             );
                             store.save_notification_projection(notification_projection);
                             store.ingest_to_device_messages(&sync.updates.to_device);

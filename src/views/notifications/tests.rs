@@ -1,9 +1,7 @@
-use std::collections::BTreeSet;
-
 use serde_json::json;
 
 use super::model::{
-    UiNotificationAction, actor_is_joined_member, append_invite_notifications,
+    JoinedRealmIds, UiNotificationAction, actor_is_joined_member, append_invite_notifications,
     drop_joined_invite_notifications, hydrate_notifications, hydrate_notifications_for_actor,
     notification_eval_context, notification_overrides_realm_mute, raw_notifications_from_sources,
     read_cursor_targets, realm_is_muted, realm_title_hints_from_invites,
@@ -80,8 +78,8 @@ fn pending_invites_are_hydrated_as_notifications() {
         None,
     );
     let mut raw = Vec::new();
-    append_invite_notifications(&mut raw, vec![invite.clone()], &BTreeSet::new());
-    append_invite_notifications(&mut raw, vec![duplicate_invite], &BTreeSet::new());
+    append_invite_notifications(&mut raw, vec![invite.clone()], &JoinedRealmIds::default());
+    append_invite_notifications(&mut raw, vec![duplicate_invite], &JoinedRealmIds::default());
     assert_eq!(raw.len(), 1, "same Realm invite should not duplicate");
 
     let notifications =
@@ -105,8 +103,8 @@ fn pending_invites_are_hydrated_as_notifications() {
         Some(UiNotificationAction::AcceptInvite { .. })
     ));
 
-    let joined_realms =
-        BTreeSet::from(["ak:realm:01904100-0000-7000-8000-000000000002".to_owned()]);
+    let joined_realms = JoinedRealmIds::default()
+        .joined_now("ak:realm:01904100-0000-7000-8000-000000000002".to_owned());
     append_invite_notifications(&mut raw, vec![invite], &joined_realms);
     drop_joined_invite_notifications(&mut raw, &joined_realms);
     assert!(raw.is_empty(), "joined Realm invites should be hidden");
@@ -153,7 +151,7 @@ fn hydrate_pending_invite_uses_typed_local_membership() {
         .realm_tree_projections
         .insert(realm_id.to_owned(), projection("invite"));
     let mut invited_raw = Vec::new();
-    append_invite_notifications(&mut invited_raw, vec![invite()], &BTreeSet::new());
+    append_invite_notifications(&mut invited_raw, vec![invite()], &JoinedRealmIds::default());
     assert_eq!(
         hydrate_notifications_for_actor(invited_raw, &invited_state, actor_id).len(),
         1,
@@ -165,7 +163,7 @@ fn hydrate_pending_invite_uses_typed_local_membership() {
         .realm_tree_projections
         .insert(realm_id.to_owned(), projection("join"));
     let mut joined_raw = Vec::new();
-    append_invite_notifications(&mut joined_raw, vec![invite()], &BTreeSet::new());
+    append_invite_notifications(&mut joined_raw, vec![invite()], &JoinedRealmIds::default());
     assert!(
         hydrate_notifications_for_actor(joined_raw, &joined_state, actor_id).is_empty(),
         "an authoritative joined membership must suppress stale invites"
@@ -316,7 +314,7 @@ fn fresh_invite_to_same_realm_survives_stale_archive_and_realm_mute() {
     // A brand-new invitation (distinct invite id) to the same realm.
     let invite = test_invite(0xbb, realm_id, None, None);
     let mut raw = Vec::new();
-    append_invite_notifications(&mut raw, vec![invite], &BTreeSet::new());
+    append_invite_notifications(&mut raw, vec![invite], &JoinedRealmIds::default());
 
     let hydrated = hydrate_notifications(raw, &local_state, None, None);
     assert_eq!(hydrated.len(), 1, "fresh invite must hydrate");
@@ -415,7 +413,7 @@ fn invite_title_is_preserved_for_accept_projection_hint() {
     );
     let hints = realm_title_hints_from_invites(std::slice::from_ref(&invite));
     let mut raw = Vec::new();
-    append_invite_notifications(&mut raw, vec![invite], &BTreeSet::new());
+    append_invite_notifications(&mut raw, vec![invite], &JoinedRealmIds::default());
 
     let notifications = hydrate_notifications(raw, &ClientLocalState::default(), None, None);
 

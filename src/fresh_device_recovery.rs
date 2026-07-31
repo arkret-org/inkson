@@ -17,7 +17,7 @@ use arkret_models_crypto::{
     RecoverySessionState, RecoveryWelcomeRealmSummary, TypedClientStepAttestation,
     TypedSecurityTransactionContinueRequest,
 };
-#[cfg(debug_assertions)]
+#[cfg(feature = "joint-test-api")]
 use arkret_wire::RecoveryAuthorityTicket;
 use arkret_wire::security_transaction::PreparedEventSubmissionBatch;
 use arkret_wire::{
@@ -27,8 +27,8 @@ use arkret_wire::{
     ControlProposalReceipt, DeviceId, Did, EnrollmentAuthorityRecoveryPlan, Event, EventId,
     EventInitialSubmission, EventsSubmitBatchRequestBody, GrantId, Hash, NonEmptyString,
     PayloadProof, PolicyId, PreparedEventUnit, PromoteRecoverySessionGrantOutcome,
-    PromoteRecoverySessionGrantRequest, ProposalMemberReceipt, ReceiptId,
-    RecoveryAuthorityHolderProof, RecoveryAuthorityTicketId, RecoveryBinding, RecoveryPreparedPlan,
+    PromoteRecoverySessionGrantRequest, ReceiptId, RecoveryAuthorityHolderProof,
+    RecoveryAuthorityTicketId, RecoveryBinding, RecoveryPreparedPlan,
     RecoveryTransactionCreateRequest, RiskTier, SecurityRotationTransactionCreateRequest,
     SecurityTransaction, SecurityTransactionBinding, SecurityTransactionCreateRequest,
     SecurityTransactionPreparedPlan, SecurityTransactionState, SecurityTransactionStep,
@@ -666,26 +666,20 @@ pub fn author_recovery_publication_submission(
     Ok(submission)
 }
 
+/// Recovery publishes into the principal's own Control Realm, so it resolves
+/// the same local authority route as every other Control Move and only supplies
+/// the recovery-session signer.
 fn author_recovery_control_proposal_receipt(
     session: &RecoverySessionState,
     event: &Event,
     authority_signer: &crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<ControlProposalReceipt> {
     let policy = ControlProposalDecisionPolicy::default();
-    let proposal_digest = Hash::new(event.event_digest()?)?;
-    let authority_set_ref = Hash::new(arkret_sdk::canonical::canonical_sha256(
-        &arkret_wire::notary::NotaryValue::single_did(session.principal_id.clone()),
-    )?)?;
-    let adapter = authority_signer.payload_signer_adapter_for_principal(&session.principal_id)?;
-    let member = ProposalMemberReceipt::issue_with_signer(
-        event.realm_id.clone(),
-        proposal_digest,
-        authority_set_ref,
-        crate::clock::now_utc(),
-        policy,
-        &adapter,
-    );
-    ControlProposalReceipt::from_member_receipts(vec![member?], policy).map_err(Into::into)
+    let member = crate::authorization_lease::LocalPrincipalAuthority::self_principal_control_realm(
+        &session.principal_id,
+    )?
+    .issue_member_receipt(event, authority_signer)?;
+    ControlProposalReceipt::from_member_receipts(vec![member], policy).map_err(Into::into)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -812,7 +806,7 @@ pub fn prepare_enrollment_authority_recovery_transaction(
 ///
 /// The recovery-key-derived HPKE private key deliberately stays inside the
 /// normal Inkson preparation path and is dropped before this value returns.
-#[cfg(debug_assertions)]
+#[cfg(feature = "joint-test-api")]
 #[doc(hidden)]
 pub struct JointEnrollmentAuthorityRecoveryPreparation {
     pub create_request: RecoveryTransactionCreateRequest,
@@ -824,13 +818,13 @@ pub struct JointEnrollmentAuthorityRecoveryPreparation {
 /// Opaque public-only principal inception checkpoint used by cotest to put a
 /// real B-model principal on the joint stack. The recovery words and derived
 /// private material are not retained.
-#[cfg(debug_assertions)]
+#[cfg(feature = "joint-test-api")]
 #[doc(hidden)]
 pub struct JointPrincipalBootstrapPreparation {
     checkpoint: crate::state::PendingPrincipalRegistration,
 }
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "joint-test-api")]
 impl JointPrincipalBootstrapPreparation {
     pub fn principal_id(&self) -> &str {
         &self.checkpoint.did
@@ -868,7 +862,7 @@ impl JointPrincipalBootstrapPreparation {
 
 /// Prepare the same external-authority DID inception and public checkpoint as
 /// onboarding, without retaining the caller's 24 words.
-#[cfg(debug_assertions)]
+#[cfg(feature = "joint-test-api")]
 #[doc(hidden)]
 pub fn prepare_joint_principal_bootstrap(
     principal_server_url: &str,
@@ -910,7 +904,7 @@ pub fn prepare_joint_principal_bootstrap(
 
 /// Finish the exact founding PCR bootstrap after cotest has submitted the DID
 /// inception and installed the Account Authority binding.
-#[cfg(debug_assertions)]
+#[cfg(feature = "joint-test-api")]
 #[doc(hidden)]
 pub async fn execute_joint_principal_bootstrap(
     prepared: &JointPrincipalBootstrapPreparation,
@@ -935,7 +929,7 @@ pub async fn execute_joint_principal_bootstrap(
 
 /// Establish the same signed recovery policy and encrypted DID-recovery
 /// backup as the product setup flow on an already bootstrapped joint fixture.
-#[cfg(debug_assertions)]
+#[cfg(feature = "joint-test-api")]
 #[doc(hidden)]
 pub async fn establish_joint_recovery_policy_and_backup(
     principal_http: arkret_sdk::http_client::Client,
@@ -985,7 +979,7 @@ pub async fn establish_joint_recovery_policy_and_backup(
 /// Prepare the exact enrollment-authority recovery transaction used by the
 /// product client while allowing cotest to drive each durable participant
 /// boundary independently.
-#[cfg(debug_assertions)]
+#[cfg(feature = "joint-test-api")]
 #[doc(hidden)]
 pub async fn prepare_joint_enrollment_authority_recovery(
     principal_http: arkret_sdk::http_client::Client,
@@ -1018,7 +1012,7 @@ pub async fn prepare_joint_enrollment_authority_recovery(
 
 /// Open and verify a real recovery session from the 24 words, then prepare the
 /// enrollment-authority transaction through the product orchestration path.
-#[cfg(debug_assertions)]
+#[cfg(feature = "joint-test-api")]
 #[doc(hidden)]
 pub async fn prepare_joint_enrollment_authority_recovery_from_words(
     principal_http: arkret_sdk::http_client::Client,
@@ -1071,7 +1065,7 @@ pub async fn prepare_joint_enrollment_authority_recovery_from_words(
 
 /// Build the holder-bound Account Authority participant request through the
 /// same Inkson implementation used by the product recovery workflow.
-#[cfg(debug_assertions)]
+#[cfg(feature = "joint-test-api")]
 #[doc(hidden)]
 pub fn joint_recovery_device_authorization_request(
     transaction: &SecurityTransaction,

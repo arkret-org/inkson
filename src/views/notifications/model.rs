@@ -23,10 +23,10 @@ pub(crate) use crate::state::projection::notifications::actor_is_joined_member;
 // are re-exported here so the notification view's other call sites and the
 // crate-level `views::notifications::*` re-export keep resolving unchanged.
 pub(crate) use crate::state::projection::notifications::{
-    append_invite_notifications, default_notification_title, drop_joined_invite_notifications,
-    invite_notification_target_for_dedupe, joined_realm_ids, merge_invite_notifications,
-    notification_id_for_dedupe, notification_kind_wire, raw_notifications_from_sources,
-    realm_title_hints_from_invites,
+    JoinedRealmIds, append_invite_notifications, default_notification_title,
+    drop_joined_invite_notifications, invite_notification_target_for_dedupe,
+    merge_invite_notifications, notification_id_for_dedupe, notification_kind_wire,
+    raw_notifications_from_sources, realm_title_hints_from_invites,
 };
 use crate::state::{ClientLocalState, LocalStateStore, StoredNotification};
 
@@ -182,10 +182,7 @@ pub(crate) fn hydrate_notifications_with_privacy_gate(
     sidecar_privacy_gate: &crate::sidecar::SidecarPrivacyGate,
 ) -> Vec<UiNotification> {
     let joined_realms =
-        crate::state::projection::notifications::joined_realm_ids_from_local_projections(
-            &local_state.realm_tree_projections,
-            actor_id,
-        );
+        JoinedRealmIds::from_local_projections(&local_state.realm_tree_projections, actor_id);
     let mut seen_invite_targets = BTreeSet::new();
     let mut notifications = raw_notifications
         .into_iter()

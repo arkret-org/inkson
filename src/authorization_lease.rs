@@ -304,29 +304,34 @@ pub fn initial_submission(
 
 /// Build the publication wrapper required by a normal events.submit call.
 ///
-/// A non-genesis Control Move first asks the authenticated Principal Server
-/// for its independently signed member receipt, then assembles the canonical
-/// receipt set. DataEvents do not enter the proposal protocol and therefore
-/// keep the receipt field absent.
+/// A non-genesis Control Move resolves its [`ProposalAuthorityRoute`] first,
+/// then either signs the member receipt locally or asks the authenticated
+/// Principal Server for its independently signed one, and finally assembles the
+/// canonical receipt set. DataEvents do not enter the proposal protocol and
+/// therefore keep the receipt field absent.
 pub async fn standard_initial_submission(
     http: &arkret_sdk::http_client::Client,
     event: &arkret_sdk::Event,
 ) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
     let mut submission = initial_submission(event)?;
     if event.seal_basis.is_some() {
-        let member_receipt = if let Some(authority_set_ref) =
-            local_pcr_proposal_authority_set_ref(http, event).await?
-        {
-            local_pcr_member_receipt(event, authority_set_ref)?
-        } else {
-            http.issue_control_proposal_receipt(&arkret_wire::ProposalReceiptIssueRequest {
-                event: event.clone(),
-                authorization_lease: submission.authorization_lease.clone(),
-                cba_proof_bundles: submission.cba_proof_bundles.clone(),
-            })
-            .await
-            .map_err(anyhow::Error::from)?
-            .member_receipt
+        let member_receipt = match resolve_proposal_authority_route(http, event).await? {
+            ProposalAuthorityRoute::LocalPrincipal(local) => {
+                let signer = crate::event_signer::active_signer().ok_or_else(|| {
+                    anyhow::anyhow!("PCR proposal receipt requires an active device signer")
+                })?;
+                local.issue_member_receipt(event, &signer)?
+            }
+            ProposalAuthorityRoute::RemoteCurrentAuthority => {
+                http.issue_control_proposal_receipt(&arkret_wire::ProposalReceiptIssueRequest {
+                    event: event.clone(),
+                    authorization_lease: submission.authorization_lease.clone(),
+                    cba_proof_bundles: submission.cba_proof_bundles.clone(),
+                })
+                .await
+                .map_err(anyhow::Error::from)?
+                .member_receipt
+            }
         };
         submission.control_proposal_receipt = Some(
             arkret_wire::ControlProposalReceipt::from_member_receipts_protocol_bounds(vec![
@@ -340,6 +345,82 @@ pub async fn standard_initial_submission(
     Ok(submission)
 }
 
+/// Who signs a Control Move's proposal receipt.
+///
+/// This is the single place in Inkson that answers the question. Every caller —
+/// standard publication, managed Agent PCR writes, and fresh-device recovery —
+/// resolves a route here instead of re-deriving an authority digest or picking a
+/// signer from a Realm id, a `#fragment`, or an Event kind. A route can only be
+/// built from accepted authority evidence, so a future policy or signer-binding
+/// change has exactly one site to update.
+pub(crate) enum ProposalAuthorityRoute {
+    /// The authenticated Principal Server holds the current authority.
+    RemoteCurrentAuthority,
+    /// This device holds the whole proposal authority for the Realm.
+    LocalPrincipal(LocalPrincipalAuthority),
+}
+
+/// A resolved local proposal authority: the immutable authority-set digest and
+/// the principal whose device key must sign under it.
+pub(crate) struct LocalPrincipalAuthority {
+    authority_set_ref: arkret_sdk::Hash,
+    signer_principal: arkret_sdk::Did,
+}
+
+impl LocalPrincipalAuthority {
+    /// A principal's own Control Realm: the notary is the principal alone, and
+    /// its own device key signs.
+    pub(crate) fn self_principal_control_realm(
+        principal_id: &arkret_sdk::Did,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            authority_set_ref: arkret_sdk::Hash::new(arkret_sdk::canonical::canonical_sha256(
+                &arkret_wire::notary::NotaryValue::single_did(principal_id.clone()),
+            )?)?,
+            signer_principal: principal_id.clone(),
+        })
+    }
+
+    /// Sign, or reuse an already signed, member receipt for this proposal.
+    pub(crate) fn issue_member_receipt(
+        &self,
+        event: &arkret_sdk::Event,
+        signer: &crate::event_signer::InksonEventSigner,
+    ) -> anyhow::Result<ProposalMemberReceipt> {
+        let verification_method =
+            signer.verification_method_for_principal(&self.signer_principal)?;
+        let proposal_digest = arkret_sdk::Hash::new(event.event_digest()?)?;
+        let cache_key = (
+            proposal_digest.to_string(),
+            self.authority_set_ref.to_string(),
+            verification_method.as_str().to_owned(),
+        );
+        if let Some(receipt) = local_proposal_receipts()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&cache_key)
+            .cloned()
+        {
+            return Ok(receipt);
+        }
+
+        let adapter = signer.payload_signer_adapter_for_principal(&self.signer_principal)?;
+        let member = ProposalMemberReceipt::issue_with_signer(
+            event.realm_id.clone(),
+            proposal_digest,
+            self.authority_set_ref.clone(),
+            crate::clock::now_utc(),
+            arkret_wire::ControlProposalDecisionPolicy::default(),
+            &adapter,
+        )?;
+        local_proposal_receipts()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(cache_key, member.clone());
+        Ok(member)
+    }
+}
+
 fn is_managed_agent_pcr_control(event: &arkret_sdk::Event) -> bool {
     let managed_authorization_ref = format!("{}#managed-controller", event.actor_id);
     event
@@ -349,28 +430,72 @@ fn is_managed_agent_pcr_control(event: &arkret_sdk::Event) -> bool {
         && event.authorization_ref.as_deref() == Some(managed_authorization_ref.as_str())
 }
 
-async fn local_pcr_proposal_authority_set_ref(
+/// The three authority routes a Control Move can take, decided from the Event
+/// alone. Resolving the route's material is a separate step because only the
+/// managed branch needs accepted Realm history.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProposalAuthorityRouteKind {
+    /// An ordinary Realm: the Principal Server is the current authority.
+    RemoteCurrentAuthority,
+    /// The actor's own Control Realm.
+    SelfPrincipalControlRealm,
+    /// A managed Agent's Control Realm, written by its delegated controller.
+    ManagedAgentPcr,
+}
+
+fn classify_proposal_authority_route(
+    event: &arkret_sdk::Event,
+) -> anyhow::Result<ProposalAuthorityRouteKind> {
+    // The managed-delegation shape is checked first: it names both a different
+    // executor and the Agent's `#managed-controller` delegation, so it can only
+    // ever be satisfied by a managed Agent PCR write. Deciding it before the
+    // Realm-id comparison keeps the authority digest and the signer choice from
+    // ever coming from two different answers.
+    if is_managed_agent_pcr_control(event) {
+        return Ok(ProposalAuthorityRouteKind::ManagedAgentPcr);
+    }
+    if event.realm_id
+        == arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&event.actor_id))?
+    {
+        return Ok(ProposalAuthorityRouteKind::SelfPrincipalControlRealm);
+    }
+    Ok(ProposalAuthorityRouteKind::RemoteCurrentAuthority)
+}
+
+async fn resolve_proposal_authority_route(
     http: &arkret_sdk::http_client::Client,
     event: &arkret_sdk::Event,
-) -> anyhow::Result<Option<arkret_sdk::Hash>> {
-    let self_pcr = event.realm_id
-        == arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&event.actor_id))?;
-    if self_pcr {
-        return Ok(Some(arkret_sdk::Hash::new(
-            arkret_sdk::canonical::canonical_sha256(
-                &arkret_wire::notary::NotaryValue::single_did(event.actor_id.clone()),
-            )?,
-        )?));
+) -> anyhow::Result<ProposalAuthorityRoute> {
+    match classify_proposal_authority_route(event)? {
+        ProposalAuthorityRouteKind::RemoteCurrentAuthority => {
+            Ok(ProposalAuthorityRoute::RemoteCurrentAuthority)
+        }
+        ProposalAuthorityRouteKind::SelfPrincipalControlRealm => {
+            Ok(ProposalAuthorityRoute::LocalPrincipal(
+                LocalPrincipalAuthority::self_principal_control_realm(&event.actor_id)?,
+            ))
+        }
+        ProposalAuthorityRouteKind::ManagedAgentPcr => {
+            let accepted = http
+                .events_query_all_pages(event.realm_id.as_str())
+                .await
+                .map_err(anyhow::Error::from)?;
+            let authority_set_ref =
+                managed_agent_pcr_authority_set_ref_from_events(event, &accepted.events)?;
+            // A managed Agent PCR write is executed by the delegated
+            // controller, so the controller's device key — not the Agent's —
+            // signs under the founding notary profile.
+            let signer_principal = event.executed_by.clone().ok_or_else(|| {
+                anyhow::anyhow!("managed Agent PCR controls always carry executed_by")
+            })?;
+            Ok(ProposalAuthorityRoute::LocalPrincipal(
+                LocalPrincipalAuthority {
+                    authority_set_ref,
+                    signer_principal,
+                },
+            ))
+        }
     }
-    if !is_managed_agent_pcr_control(event) {
-        return Ok(None);
-    }
-
-    let accepted = http
-        .events_query_all_pages(event.realm_id.as_str())
-        .await
-        .map_err(anyhow::Error::from)?;
-    managed_agent_pcr_authority_set_ref_from_events(event, &accepted.events).map(Some)
 }
 
 fn managed_agent_pcr_authority_set_ref_from_events(
@@ -390,86 +515,16 @@ fn managed_agent_pcr_authority_set_ref_from_events(
     if creates.next().is_some() {
         anyhow::bail!("managed Agent PCR has multiple matching create Events");
     }
-    // The proposal authority is immutable genesis material. Replaying the
-    // complete accepted log here is both unnecessary and incorrect once a
-    // later transition (for example `ak.agent.key.revoke`) requires frozen
-    // pre-state. Validate the delegated create and its full genesis leaf set,
-    // then derive the authority digest from that accepted create only.
-    arkret_bootstrap::materialize_managed_agent_pcr_control(
-        std::slice::from_ref(create),
+    // The proposal authority is immutable genesis material. The SDK's genesis
+    // type accepts only the accepted create, so a later transition that needs
+    // frozen pre-state (for example `ak.agent.key.revoke`) can never be dragged
+    // into an authoring query.
+    arkret_bootstrap::ManagedAgentPcrGenesisAuthority::from_accepted_create(
+        create,
         &crate::operation::cell_write_projector,
     )
-    .map_err(|error| {
-        anyhow::anyhow!("managed Agent PCR authority materialization failed: {error}")
-    })?;
-    let notary = create
-        .payload
-        .get("object")
-        .and_then(|object| object.get("notary"))
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("managed Agent PCR create Event omits notary"))?;
-    let notary = serde_json::from_value::<arkret_wire::notary::NotaryValue>(notary)?;
-    notary.validate()?;
-    if !notary.includes_signer_as_primary(&event.actor_id) {
-        anyhow::bail!("managed Agent PCR notary does not name the Agent as primary");
-    }
-    Ok(arkret_sdk::Hash::new(
-        arkret_sdk::canonical::canonical_sha256(&notary)?,
-    )?)
-}
-
-fn local_pcr_member_receipt(
-    event: &arkret_sdk::Event,
-    authority_set_ref: arkret_sdk::Hash,
-) -> anyhow::Result<ProposalMemberReceipt> {
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("PCR proposal receipt requires an active device signer"))?;
-    let signer_principal = local_pcr_receipt_signer_principal(event);
-    let verification_method = signer.verification_method_for_principal(signer_principal)?;
-    let proposal_digest = arkret_sdk::Hash::new(event.event_digest()?)?;
-    let cache_key = (
-        proposal_digest.to_string(),
-        authority_set_ref.to_string(),
-        verification_method.as_str().to_owned(),
-    );
-    if let Some(receipt) = local_proposal_receipts()
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(&cache_key)
-        .cloned()
-    {
-        return Ok(receipt);
-    }
-
-    let adapter = signer.payload_signer_adapter_for_principal(signer_principal)?;
-    let member = ProposalMemberReceipt::issue_with_signer(
-        event.realm_id.clone(),
-        proposal_digest,
-        authority_set_ref,
-        crate::clock::now_utc(),
-        arkret_wire::ControlProposalDecisionPolicy::default(),
-        &adapter,
-    )?;
-    local_proposal_receipts()
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .insert(cache_key, member.clone());
-    Ok(member)
-}
-
-// Invariant assertions: each `expect` message names the check that
-// establishes it a few lines earlier. Rewriting them as `?` would add
-// error paths no caller can reach.
-#[allow(clippy::expect_used)]
-fn local_pcr_receipt_signer_principal(event: &arkret_sdk::Event) -> &arkret_sdk::Did {
-    if is_managed_agent_pcr_control(event) {
-        event
-            .executed_by
-            .as_ref()
-            .expect("managed Agent PCR controls always carry executed_by")
-    } else {
-        &event.actor_id
-    }
+    .map(|authority| authority.authority_set_ref().clone())
+    .map_err(|error| anyhow::anyhow!("managed Agent PCR genesis authority is unavailable: {error}"))
 }
 
 /// Lease / receipt fixtures for tests in other modules.
@@ -652,6 +707,9 @@ mod tests {
         assert!(error.contains("re-authorized"), "{error}");
     }
 
+    /// Only the strict managed-delegation shape routes to the controller's
+    /// signer. Every near miss stays on the Agent's own authority, so a stray
+    /// `#fragment` can never redirect who signs a receipt.
     #[test]
     fn managed_agent_pcr_control_uses_the_delegated_local_authority() {
         let mut managed = event();
@@ -660,18 +718,82 @@ mod tests {
         managed.executed_by = Some(controller.clone());
         managed.authorization_ref = Some("did:web:agent.example#managed-controller".to_owned());
         assert!(is_managed_agent_pcr_control(&managed));
-        assert_eq!(local_pcr_receipt_signer_principal(&managed), &controller);
 
         managed.authorization_ref = Some("did:web:agent.example#other-delegation".to_owned());
         assert!(!is_managed_agent_pcr_control(&managed));
-        assert_eq!(
-            local_pcr_receipt_signer_principal(&managed),
-            &managed.actor_id
-        );
 
         managed.authorization_ref = Some("did:web:agent.example#managed-controller".to_owned());
         managed.executed_by = Some(managed.actor_id.clone());
         assert!(!is_managed_agent_pcr_control(&managed));
+    }
+
+    /// Each of the three authority routes is selected by the Event alone, and
+    /// none of them can be reached by a near miss of another's shape.
+    #[test]
+    fn every_authority_route_is_decided_from_accepted_event_authority() {
+        let ordinary = event();
+        assert_eq!(
+            classify_proposal_authority_route(&ordinary).unwrap(),
+            ProposalAuthorityRouteKind::RemoteCurrentAuthority,
+            "an ordinary Realm write must not degrade to a local self-signature"
+        );
+
+        let mut self_pcr = event();
+        self_pcr.realm_id =
+            arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&self_pcr.actor_id))
+                .unwrap();
+        self_pcr.scope_ref = arkret_sdk::ScopeRef::Realm {
+            realm_id: self_pcr.realm_id.clone(),
+        };
+        assert_eq!(
+            classify_proposal_authority_route(&self_pcr).unwrap(),
+            ProposalAuthorityRouteKind::SelfPrincipalControlRealm
+        );
+
+        let mut managed = event();
+        managed.actor_id = arkret_sdk::Did::new("did:web:agent.example").unwrap();
+        managed.executed_by = Some(arkret_sdk::Did::new("did:web:alice.example").unwrap());
+        managed.authorization_ref = Some("did:web:agent.example#managed-controller".to_owned());
+        assert_eq!(
+            classify_proposal_authority_route(&managed).unwrap(),
+            ProposalAuthorityRouteKind::ManagedAgentPcr
+        );
+
+        // A delegation fragment that is not the managed-controller binding is
+        // an ordinary Realm write, not a locally signable one.
+        let mut foreign_delegation = managed.clone();
+        foreign_delegation.authorization_ref =
+            Some("did:web:agent.example#other-delegation".to_owned());
+        assert_eq!(
+            classify_proposal_authority_route(&foreign_delegation).unwrap(),
+            ProposalAuthorityRouteKind::RemoteCurrentAuthority
+        );
+
+        // Self-executed writes are never managed delegations, whatever the
+        // authorization_ref claims.
+        let mut self_executed = managed;
+        self_executed.executed_by = Some(self_executed.actor_id.clone());
+        assert_eq!(
+            classify_proposal_authority_route(&self_executed).unwrap(),
+            ProposalAuthorityRouteKind::RemoteCurrentAuthority
+        );
+    }
+
+    /// A principal's own Control Realm authority is the single-DID notary
+    /// digest, derived in one place for both publication and recovery.
+    #[test]
+    fn self_principal_control_realm_authority_is_the_single_did_notary_digest() {
+        let principal = arkret_sdk::Did::new("did:web:alice.example").unwrap();
+        let authority = LocalPrincipalAuthority::self_principal_control_realm(&principal).unwrap();
+        let expected = arkret_sdk::Hash::new(
+            arkret_sdk::canonical::canonical_sha256(&arkret_wire::notary::NotaryValue::single_did(
+                principal.clone(),
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(authority.authority_set_ref, expected);
+        assert_eq!(authority.signer_principal, principal);
     }
 
     #[test]

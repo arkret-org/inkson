@@ -16,48 +16,87 @@ use serde_json::Value;
 
 use crate::state::{StoredInviteNotification, StoredNotification};
 
+/// Realms whose typed roster records this actor's membership as exactly
+/// `join`.
+///
+/// The set a projection map's keys describe is "Realms the server told us
+/// about" — it includes discoverable previews and Realms this actor was only
+/// invited or knocked into. Treating that set as membership is what once
+/// deleted a pending invite notification before it could be folded. So the
+/// distinction is carried by a type: the only ways to obtain this value are the
+/// two constructors below, both of which read a typed `MemberRosterEntry`, and
+/// neither of which will infer authorization from a projection merely existing.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct JoinedRealmIds(BTreeSet<String>);
+
+impl JoinedRealmIds {
+    /// From the sync response's typed Realm roster.
+    pub(crate) fn from_realm_entries(
+        entries: &BTreeMap<RealmId, RealmSyncEntry>,
+        actor_id: &str,
+    ) -> Self {
+        Self(
+            entries
+                .iter()
+                .filter(|(_, entry)| actor_is_joined_member(entry, actor_id))
+                .map(|(realm_id, _)| realm_id.as_str().to_owned())
+                .collect(),
+        )
+    }
+
+    /// From locally stored Realm projections.
+    ///
+    /// Each roster member is deserialized into the SDK's `MemberRosterEntry`
+    /// before it is judged; an entry that fails to parse leaves the Realm out of
+    /// the joined set, so an unreadable roster keeps an invite visible rather
+    /// than silently claiming an authorization it cannot prove.
+    pub(crate) fn from_local_projections(
+        projections: &BTreeMap<String, Value>,
+        actor_id: &str,
+    ) -> Self {
+        Self(
+            projections
+                .iter()
+                .filter(|(_, projection)| {
+                    projection
+                        .get("members")
+                        .and_then(Value::as_array)
+                        .is_some_and(|members| {
+                            members.iter().any(|member| {
+                                serde_json::from_value::<MemberRosterEntry>(member.clone())
+                                    .is_ok_and(|member| {
+                                        member.actor_id.as_str() == actor_id
+                                            && member.membership == MembershipState::Join
+                                    })
+                            })
+                        })
+                })
+                .map(|(realm_id, _)| realm_id.clone())
+                .collect(),
+        )
+    }
+
+    /// Record a Realm this actor has just joined.
+    ///
+    /// The accepted join transition is itself membership evidence, so an invite
+    /// for that Realm must disappear immediately rather than waiting for the
+    /// next roster snapshot to catch up.
+    pub(crate) fn joined_now(mut self, realm_id: String) -> Self {
+        self.0.insert(realm_id);
+        self
+    }
+
+    pub(crate) fn contains(&self, realm_id: &str) -> bool {
+        self.0.contains(realm_id)
+    }
+}
+
 pub(crate) fn actor_is_joined_member(entry: &RealmSyncEntry, actor_id: &str) -> bool {
     entry.members.as_ref().is_some_and(|members| {
         members.iter().any(|member| {
             member.actor_id.as_str() == actor_id && member.membership == MembershipState::Join
         })
     })
-}
-
-pub(crate) fn joined_realm_ids(
-    entries: &BTreeMap<RealmId, RealmSyncEntry>,
-    actor_id: &str,
-) -> BTreeSet<String> {
-    entries
-        .iter()
-        .filter(|(_, entry)| actor_is_joined_member(entry, actor_id))
-        .map(|(realm_id, _)| realm_id.as_str().to_owned())
-        .collect()
-}
-
-pub(crate) fn joined_realm_ids_from_local_projections(
-    projections: &BTreeMap<String, Value>,
-    actor_id: &str,
-) -> BTreeSet<String> {
-    projections
-        .iter()
-        .filter(|(_, projection)| {
-            projection
-                .get("members")
-                .and_then(Value::as_array)
-                .is_some_and(|members| {
-                    members.iter().any(|member| {
-                        serde_json::from_value::<MemberRosterEntry>(member.clone()).is_ok_and(
-                            |member| {
-                                member.actor_id.as_str() == actor_id
-                                    && member.membership == MembershipState::Join
-                            },
-                        )
-                    })
-                })
-        })
-        .map(|(realm_id, _)| realm_id.clone())
-        .collect()
 }
 
 pub(crate) fn notification_kind_wire(kind: &NotificationKind) -> &'static str {
@@ -127,7 +166,7 @@ pub(crate) fn apply_notification_projection(
     account_data: &[arkret_sdk::Event],
     is_full_sync: bool,
     invites: Option<Vec<Invite>>,
-    joined_realms: &BTreeSet<String>,
+    joined_realms: &JoinedRealmIds,
 ) {
     let event_notifications = account_data
         .iter()
@@ -203,7 +242,7 @@ pub(crate) fn raw_notifications_from_sources(
         account_data,
         true,
         None,
-        &BTreeSet::new(),
+        &JoinedRealmIds::default(),
     );
     projection
 }
@@ -211,7 +250,7 @@ pub(crate) fn raw_notifications_from_sources(
 pub(crate) fn append_invite_notifications(
     notifications: &mut Vec<StoredNotification>,
     invites: Vec<Invite>,
-    hidden_realms: &BTreeSet<String>,
+    hidden_realms: &JoinedRealmIds,
 ) {
     apply_notification_projection(notifications, &[], &[], false, Some(invites), hidden_realms);
 }
@@ -219,14 +258,14 @@ pub(crate) fn append_invite_notifications(
 pub(crate) fn merge_invite_notifications(
     notifications: &mut Vec<StoredNotification>,
     invites: Vec<Invite>,
-    hidden_realms: &BTreeSet<String>,
+    hidden_realms: &JoinedRealmIds,
 ) {
     append_invite_notifications(notifications, invites, hidden_realms);
 }
 
 pub(crate) fn drop_joined_invite_notifications(
     notifications: &mut Vec<StoredNotification>,
-    joined_realms: &BTreeSet<String>,
+    joined_realms: &JoinedRealmIds,
 ) {
     notifications.retain(|notification| {
         notification

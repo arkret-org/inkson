@@ -8,9 +8,9 @@ use std::collections::BTreeMap;
 use dioxus::prelude::*;
 
 use super::model::{
-    UiNotification, UiNotificationAction, append_invite_notifications,
+    JoinedRealmIds, UiNotification, UiNotificationAction, append_invite_notifications,
     apply_sync_projection_to_store, drop_joined_invite_notifications,
-    hydrate_notifications_with_privacy_gate, joined_realm_ids, merge_invite_notifications,
+    hydrate_notifications_with_privacy_gate, merge_invite_notifications,
     notification_id_for_dedupe, raw_notifications_from_sources, read_cursor_targets,
     realm_title_hints_from_invites,
 };
@@ -64,7 +64,8 @@ pub(crate) fn refresh_notifications(
                     Some(&response.updates.notifications),
                     &response.updates.account_data,
                 );
-                let joined_realms = joined_realm_ids(&response.realm_entries, &account_did);
+                let joined_realms =
+                    JoinedRealmIds::from_realm_entries(&response.realm_entries, &account_did);
                 merge_invite_notifications(
                     &mut raw_notifications,
                     invite_notifications,
@@ -370,8 +371,9 @@ fn accept_invite_notification(
                     push_rules_from_account_data(&account_did, &sync.updates.account_data);
                 let account_dnd =
                     dnd_settings_from_account_data(&account_did, &sync.updates.account_data);
-                let mut hidden_realms = joined_realm_ids(&sync.realm_entries, &account_did);
-                hidden_realms.insert(accepted_realm.clone());
+                let hidden_realms =
+                    JoinedRealmIds::from_realm_entries(&sync.realm_entries, &account_did)
+                        .joined_now(accepted_realm.clone());
                 let mut realm_title_hints = BTreeMap::new();
                 if let Some(label) = realm_label
                     .as_deref()

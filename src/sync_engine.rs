@@ -2800,7 +2800,7 @@ fn apply_notification_projection(
         || !response.updates.account_data.is_empty()
         || invite_notifications.is_some();
     let mut notification_projection = store.notification_projection();
-    let joined_realms = crate::state::projection::notifications::joined_realm_ids(
+    let joined_realms = crate::state::projection::notifications::JoinedRealmIds::from_realm_entries(
         &response.realm_entries,
         account_did,
     );

@@ -43,9 +43,9 @@ pub use backup_body::{
     is_recovery_public_key_account_secret_backup,
     open_mls_account_secret_recovery_public_key_backup,
 };
-#[cfg(debug_assertions)]
+#[cfg(feature = "joint-test-api")]
 pub use recovery_transaction::unlock_joint_recovery_backups;
-#[cfg(debug_assertions)]
+#[cfg(feature = "joint-test-api")]
 pub(crate) use recovery_transaction::{
     authorize_recovery_device_request, prepare_enrollment_authority_recovery,
 };

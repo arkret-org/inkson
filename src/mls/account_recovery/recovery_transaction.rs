@@ -891,7 +891,7 @@ fn recovery_backup_classes_unlocked(
 
 /// Exercise the product restore path for the joint recovery harness without
 /// exposing the recovery-derived private key or plaintext account secret.
-#[cfg(debug_assertions)]
+#[cfg(feature = "joint-test-api")]
 #[doc(hidden)]
 pub async fn unlock_joint_recovery_backups(
     principal_http: arkret_sdk::http_client::Client,
