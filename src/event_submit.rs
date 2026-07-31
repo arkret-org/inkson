@@ -1874,6 +1874,10 @@ impl EventSubmitter {
         let Some(plane) = cba_effect_plane_for_event(event)? else {
             return Ok(());
         };
+        // The authority-root claim is a signed envelope member, so it must be
+        // in place before the proof is attached; admission resolves it the
+        // same way on both planes.
+        self.stamp_realm_authority_root_claim(event).await;
         match plane {
             CbaEffectPlane::Control => {
                 let seal_view = self
@@ -1897,6 +1901,76 @@ impl EventSubmitter {
             }
         }
         Ok(())
+    }
+
+    /// Stamp the registered authority-root claim on an Event the Realm's root
+    /// controller authors directly.
+    ///
+    /// Best-effort by design: a resolution failure leaves the Event unstamped,
+    /// so a member's ordinary grant path is never blocked by a transient
+    /// lookup error, and a wrongly-claimed root can only fail closed at
+    /// admission (`realm_authority_controller_mismatch`), never widen.
+    async fn stamp_realm_authority_root_claim(&self, event: &mut arkret_sdk::Event) {
+        if event.authorization_ref.is_some()
+            || event.executed_by.is_some()
+            || event.applet_id.is_some()
+            || !realm_owner_covers_event_kind(event.kind.as_str())
+        {
+            return;
+        }
+        let authority = match self.realm_create_authority(event.realm_id.as_str()).await {
+            Ok(authority) => authority,
+            Err(error) => {
+                tracing::debug!(
+                    realm = %event.realm_id,
+                    kind = %event.kind.as_str(),
+                    error = %error,
+                    "realm authority-root lookup failed; submitting without a root claim",
+                );
+                None
+            }
+        };
+        if let Some(reference) = realm_authority_root_claim(event, authority.as_ref()) {
+            event.authorization_ref = Some(reference);
+        }
+    }
+
+    /// The Realm's create-locked authority facts, resolved from the head of
+    /// the ascending accepted log and cached for the process lifetime.
+    async fn realm_create_authority(
+        &self,
+        realm_id: &str,
+    ) -> anyhow::Result<Option<RealmCreateAuthority>> {
+        if let Some(cached) = realm_create_authority_cache()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(realm_id)
+        {
+            return Ok(Some(cached.clone()));
+        }
+        let outcome = self
+            .http
+            .events_query(
+                realm_id,
+                None,
+                None,
+                None,
+                Some(REALM_CREATE_AUTHORITY_QUERY_LIMIT),
+            )
+            .await
+            .map_err(anyhow::Error::from)?;
+        let resolved = realm_create_authority_from_events(&outcome.events, realm_id);
+        if let Some(authority) = &resolved {
+            realm_create_authority_cache()
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(realm_id.to_owned(), authority.clone());
+        }
+        // Absence is not cached: the Realm may simply not be queryable yet
+        // (sealed moments ago), and a compacted log may start past genesis
+        // (`snapshot_bootstrap`) — the claim is skipped rather than guessed
+        // until snapshot state is wired as a second source.
+        Ok(resolved)
     }
 
     async fn refresh_unsigned_sdk_event_actor_frontier(
@@ -2300,6 +2374,107 @@ fn cba_exempt_reducer_kind(kind: &arkret_sdk::events::kinds::EventKind) -> bool 
     matches!(kind, arkret_sdk::events::kinds::EventKind::RealmCreate)
 }
 
+/// Authority facts pinned by a Realm's accepted `ak.realm.create`.
+///
+/// `ak.realm.create` is the only registered writer of
+/// `ak.component.realm.authority_root.v1` in v1, and its registered
+/// `value_projection` derives `controller_id` from `payload.object.created_by`.
+/// Both members are create-locked, so a resolved value never changes and is
+/// cached per process. (`ak.realm.owner.transfer` will move the controller in
+/// a later protocol phase; admission re-validates the claim against the
+/// Event's own Seal basis either way, so a stale cache can only fail closed,
+/// never over-claim.)
+#[derive(Clone, Debug, PartialEq)]
+enum RealmCreateAuthority {
+    /// The create carries the create-locked
+    /// `capability_action_registry_digest`, so the registered reducer
+    /// contract materialized the authority-root cell.
+    Root { controller_id: String },
+    /// The accepted create predates the authority-root contract: the Realm
+    /// has no root cell, and claiming root authority there can only fail
+    /// closed at admission (`realm_authority_root_missing`).
+    NoAuthorityRoot,
+}
+
+fn realm_create_authority_cache() -> &'static Mutex<BTreeMap<String, RealmCreateAuthority>> {
+    static CACHE: SyncOnceLock<Mutex<BTreeMap<String, RealmCreateAuthority>>> = SyncOnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+/// The first page of the ascending Realm log is the genesis unit, whose head
+/// is the `ak.realm.create` itself; the margin only covers interleaved
+/// bootstrap follow-ups so the lookup never paginates.
+const REALM_CREATE_AUTHORITY_QUERY_LIMIT: u32 = 16;
+
+fn realm_create_authority_from_events(
+    events: &[arkret_sdk::Event],
+    realm_id: &str,
+) -> Option<RealmCreateAuthority> {
+    events.iter().find_map(|event| {
+        if event.realm_id.as_str() != realm_id
+            || event.kind.as_str() != arkret_sdk::events::EventKind::REALM_CREATE
+        {
+            return None;
+        }
+        let object = event.payload.get("object")?;
+        let controller_id = object.get("created_by")?.as_str()?.trim();
+        if controller_id.is_empty() {
+            return None;
+        }
+        let has_authority_root_contract = object
+            .get("capability_action_registry_digest")
+            .and_then(Value::as_str)
+            .is_some_and(|digest| !digest.trim().is_empty());
+        Some(if has_authority_root_contract {
+            RealmCreateAuthority::Root {
+                controller_id: controller_id.to_owned(),
+            }
+        } else {
+            RealmCreateAuthority::NoAuthorityRoot
+        })
+    })
+}
+
+/// Whether `ak.realm.owner` may author `kind` directly (its registry-derived
+/// operational coverage). A root claim on a kind outside this set would turn
+/// the ordinary grant search into a hard `capability_denied` at admission.
+fn realm_owner_covers_event_kind(kind: &str) -> bool {
+    arkret_schema::capability_action("ak.realm.owner")
+        .is_some_and(|descriptor| descriptor.target_event_kinds.contains(&kind))
+}
+
+/// The `authorization_ref` a directly-authoring Realm root controller must
+/// carry, or `None` when this Event must keep the ordinary grant path.
+///
+/// `capabilities.md` §3.2: owner operational authorization exists only as the
+/// registered authority-root claim — the receiver MUST NOT infer it from
+/// `created_by` / membership — and Realm bootstrap issues no grants at all,
+/// so an unclaimed owner Event fails
+/// `no capability at seal_ref covers action …` even for the creator.
+/// Producer-chosen authorization stays untouched: an Event that already names
+/// an `authorization_ref` (applet delegation, literal grant) or that a
+/// service executes on someone's behalf keeps its own authorization story.
+fn realm_authority_root_claim(
+    event: &arkret_sdk::Event,
+    authority: Option<&RealmCreateAuthority>,
+) -> Option<String> {
+    if event.authorization_ref.is_some()
+        || event.executed_by.is_some()
+        || event.applet_id.is_some()
+        || !realm_owner_covers_event_kind(event.kind.as_str())
+    {
+        return None;
+    }
+    match authority? {
+        RealmCreateAuthority::Root { controller_id }
+            if controller_id == event.actor_id.as_str() =>
+        {
+            Some(arkret_wire::REALM_AUTHORITY_ROOT_CELL.to_owned())
+        }
+        _ => None,
+    }
+}
+
 /// CBA plane this Event's registered contract routes it through.
 ///
 /// v1 reads the plane from the event-kind registry instead of scanning a
@@ -2666,6 +2841,213 @@ mod tests {
             "proofs": []
         }))
         .unwrap()
+    }
+
+    fn realm_create_sdk_event(
+        realm_id: &str,
+        created_by: &str,
+        registry_digest: Option<&str>,
+    ) -> arkret_sdk::Event {
+        let mut event = sdk_event_with_kind(
+            "ak:event:01904100-0000-7000-8000-00000000000c",
+            realm_id,
+            "ak.realm.create",
+            created_by,
+        );
+        let mut object = json!({
+            "id": realm_id,
+            "created_by": created_by,
+        });
+        if let Some(digest) = registry_digest {
+            object["capability_action_registry_digest"] = json!(digest);
+        }
+        event.payload.insert("object".to_owned(), object);
+        event
+    }
+
+    const AUTHORITY_REALM: &str = "ak:realm:01904100-0000-7000-8000-00000000000a";
+    const AUTHORITY_CONTROLLER: &str = "did:web:alice.example";
+    const AUTHORITY_DIGEST: &str =
+        "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+    #[test]
+    fn realm_create_authority_resolves_the_root_controller() {
+        let events = [realm_create_sdk_event(
+            AUTHORITY_REALM,
+            AUTHORITY_CONTROLLER,
+            Some(AUTHORITY_DIGEST),
+        )];
+        assert_eq!(
+            realm_create_authority_from_events(&events, AUTHORITY_REALM),
+            Some(RealmCreateAuthority::Root {
+                controller_id: AUTHORITY_CONTROLLER.to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn realm_create_without_registry_digest_has_no_authority_root() {
+        // Pre-authority-root creates never carried the create-locked digest;
+        // such a Realm has no root cell and must not be claimed.
+        let events = [realm_create_sdk_event(
+            AUTHORITY_REALM,
+            AUTHORITY_CONTROLLER,
+            None,
+        )];
+        assert_eq!(
+            realm_create_authority_from_events(&events, AUTHORITY_REALM),
+            Some(RealmCreateAuthority::NoAuthorityRoot)
+        );
+    }
+
+    #[test]
+    fn realm_create_authority_ignores_other_realms_and_kinds() {
+        let other_realm = realm_create_sdk_event(
+            "ak:realm:01904100-0000-7000-8000-00000000000b",
+            "did:web:mallory.example",
+            Some(AUTHORITY_DIGEST),
+        );
+        let other_kind = sdk_event_with_kind(
+            "ak:event:01904100-0000-7000-8000-00000000000d",
+            AUTHORITY_REALM,
+            "ak.strand.create",
+            AUTHORITY_CONTROLLER,
+        );
+        assert_eq!(
+            realm_create_authority_from_events(&[other_realm, other_kind], AUTHORITY_REALM),
+            None
+        );
+    }
+
+    #[test]
+    fn realm_owner_coverage_gates_the_root_claim() {
+        // `ak.strand.create` is in the owner aggregate's registry-derived
+        // operational coverage; `ak.realm.create` is deliberately excluded
+        // (creating another Realm is not a capability inside this one).
+        assert!(realm_owner_covers_event_kind("ak.strand.create"));
+        assert!(realm_owner_covers_event_kind("ak.space.create"));
+        assert!(realm_owner_covers_event_kind("ak.mls.genesis"));
+        assert!(!realm_owner_covers_event_kind("ak.realm.create"));
+        assert!(!realm_owner_covers_event_kind("ak.not.a.kind"));
+    }
+
+    #[test]
+    fn realm_authority_root_claim_stamps_only_the_matching_controller() {
+        let root = RealmCreateAuthority::Root {
+            controller_id: AUTHORITY_CONTROLLER.to_owned(),
+        };
+        let event = |actor: &str| {
+            sdk_event_with_kind(
+                "ak:event:01904100-0000-7000-8000-00000000000e",
+                AUTHORITY_REALM,
+                "ak.strand.create",
+                actor,
+            )
+        };
+
+        assert_eq!(
+            realm_authority_root_claim(&event(AUTHORITY_CONTROLLER), Some(&root)),
+            Some(arkret_wire::REALM_AUTHORITY_ROOT_CELL.to_owned())
+        );
+        assert_eq!(
+            realm_authority_root_claim(&event("did:web:bob.example"), Some(&root)),
+            None
+        );
+        assert_eq!(
+            realm_authority_root_claim(
+                &event(AUTHORITY_CONTROLLER),
+                Some(&RealmCreateAuthority::NoAuthorityRoot)
+            ),
+            None
+        );
+        assert_eq!(
+            realm_authority_root_claim(&event(AUTHORITY_CONTROLLER), None),
+            None
+        );
+    }
+
+    #[test]
+    fn realm_authority_root_claim_defers_to_producer_chosen_authorization() {
+        let root = RealmCreateAuthority::Root {
+            controller_id: AUTHORITY_CONTROLLER.to_owned(),
+        };
+        let mut with_grant = sdk_event_with_kind(
+            "ak:event:01904100-0000-7000-8000-00000000000f",
+            AUTHORITY_REALM,
+            "ak.strand.create",
+            AUTHORITY_CONTROLLER,
+        );
+        with_grant.authorization_ref =
+            Some("ak:grant:01904100-0000-7000-8000-000000000001".to_owned());
+        assert_eq!(realm_authority_root_claim(&with_grant, Some(&root)), None);
+
+        let mut executed_by_service = sdk_event_with_kind(
+            "ak:event:01904100-0000-7000-8000-000000000010",
+            AUTHORITY_REALM,
+            "ak.strand.create",
+            AUTHORITY_CONTROLLER,
+        );
+        executed_by_service.executed_by =
+            Some(arkret_sdk::Did::new("did:web:service.example".to_owned()).unwrap());
+        assert_eq!(
+            realm_authority_root_claim(&executed_by_service, Some(&root)),
+            None
+        );
+    }
+
+    fn dead_endpoint_submitter() -> EventSubmitter {
+        EventSubmitter::new(
+            arkret_sdk::http_client::Client::builder("http://127.0.0.1:9/".parse().unwrap())
+                .allow_insecure_localhost()
+                .build()
+                .unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn stamp_realm_authority_root_claim_stamps_from_cached_create_facts() {
+        // Unique Realm id: the create-facts cache is process-global and tests
+        // run in parallel.
+        let realm = "ak:realm:01904100-0000-7000-8000-0000000000aa";
+        realm_create_authority_cache()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(
+                realm.to_owned(),
+                RealmCreateAuthority::Root {
+                    controller_id: AUTHORITY_CONTROLLER.to_owned(),
+                },
+            );
+        let mut event = sdk_event_with_kind(
+            "ak:event:01904100-0000-7000-8000-000000000011",
+            realm,
+            "ak.strand.create",
+            AUTHORITY_CONTROLLER,
+        );
+        dead_endpoint_submitter()
+            .stamp_realm_authority_root_claim(&mut event)
+            .await;
+        assert_eq!(
+            event.authorization_ref.as_deref(),
+            Some(arkret_wire::REALM_AUTHORITY_ROOT_CELL)
+        );
+    }
+
+    #[tokio::test]
+    async fn stamp_realm_authority_root_claim_swallows_lookup_failures() {
+        // Unknown Realm + unreachable endpoint: the claim must be skipped, not
+        // fail the submit — a member's ordinary grant path stays usable when
+        // the create lookup is unavailable.
+        let mut event = sdk_event_with_kind(
+            "ak:event:01904100-0000-7000-8000-000000000012",
+            "ak:realm:01904100-0000-7000-8000-0000000000ab",
+            "ak.strand.create",
+            AUTHORITY_CONTROLLER,
+        );
+        dead_endpoint_submitter()
+            .stamp_realm_authority_root_claim(&mut event)
+            .await;
+        assert!(event.authorization_ref.is_none());
     }
 
     #[cfg(not(target_arch = "wasm32"))]
