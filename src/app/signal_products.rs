@@ -33,6 +33,7 @@ struct CachedVerdict {
 pub(super) struct AppSignalProductSink {
     call_hub: crate::views::call_signals::CallSignalHub,
     message_hub: crate::views::message_streams::MessageStreamHub,
+    read_receipt_hub: crate::views::read_receipts::ReadReceiptHub,
     base_url: Signal<String>,
     token: Signal<String>,
     account_did: Signal<String>,
@@ -44,6 +45,7 @@ impl AppSignalProductSink {
     pub(super) fn new(
         call_hub: crate::views::call_signals::CallSignalHub,
         message_hub: crate::views::message_streams::MessageStreamHub,
+        read_receipt_hub: crate::views::read_receipts::ReadReceiptHub,
         base_url: Signal<String>,
         token: Signal<String>,
         account_did: Signal<String>,
@@ -52,6 +54,7 @@ impl AppSignalProductSink {
         Self {
             call_hub,
             message_hub,
+            read_receipt_hub,
             base_url,
             token,
             account_did,
@@ -224,6 +227,16 @@ impl SignalProductSink for AppSignalProductSink {
                 tracing::debug!(%error, "message stream preview frame was not applied");
             }
         })
+    }
+
+    fn read_receipt(&self, plaintext: &garth::SignalPlaintext) {
+        // No further authorization probe: unlike a message-stream preview, a
+        // read receipt discloses no Message body, and `read-receipts.md` §2.4
+        // makes display a local preference rather than a protocol gate. The
+        // envelope admission already proved the sending device and bound the
+        // plaintext `actor_id` to the authenticated `sender_actor_id`.
+        let mut hub = self.read_receipt_hub;
+        hub.apply_authorized(plaintext);
     }
 
     fn advance_clock(&self, now: chrono::DateTime<chrono::Utc>) {

@@ -12,7 +12,7 @@ use crate::operation::{
     trim_realm_id,
 };
 use crate::realm_defaults::{
-    RECOMMENDED_REALM_ENCRYPTION_FLOOR, RECOMMENDED_REALM_ENCRYPTION_PROFILE,
+    RECOMMENDED_REALM_ENCRYPTION_FLOOR_TYPED, RECOMMENDED_REALM_ENCRYPTION_PROFILE,
 };
 
 /// Event authoring instant normalized to the protocol's millisecond profile.
@@ -172,7 +172,7 @@ pub fn build_realm_bootstrap_events(
             realm_id,
             actor_id,
             EventKind::RealmPolicyBundle,
-            policy_bundle,
+            policy_bundle.to_value()?,
         )?);
     }
     events.push(build_realm_state_event(
@@ -684,31 +684,27 @@ fn build_realm_delivery_binding_policy(
     })
 }
 
-/// Genesis `ak.realm.policy_bundle` value.
-///
-/// This one stays a hand-built `Value` on purpose: `ak.realm.policy_bundle` is
-/// the only Realm policy Event kind with **no** `payload_schema_ref` in
-/// `contract-registry.json` and no `#/$defs/realm_policy_bundle_payload` in
-/// `event-payload.schema.json`, so there is no spec shape for an SDK strong
-/// type to mirror. Inventing one here would pin a wire shape the spec does not
-/// define. Tracked by arkret-work `review/spec-open/
-/// 2026-07-30-realm-policy-payload-shape-gaps.md` gap 1.
-pub fn recommended_realm_policy_bundle_value(content_scheme: Option<&str>) -> Value {
-    json!({
-        "policy_revision": 1,
-        "content_encryption_floor": RECOMMENDED_REALM_ENCRYPTION_FLOOR,
-        "metadata_encryption_floor": RECOMMENDED_REALM_ENCRYPTION_FLOOR,
+/// Genesis `ak.realm.policy_bundle` payload.
+pub fn recommended_realm_policy_bundle_value(
+    content_scheme: Option<&str>,
+) -> arkret_sdk::RealmPolicyBundlePayload {
+    arkret_sdk::RealmPolicyBundlePayload {
+        policy_revision: 1,
         // §2.10 content scheme — soland projects the effective scheme from THIS
         // policy_bundle cell (`policy_floor_field(components, "content_scheme")`),
         // not from the realm.create object, and applies a one-way ratchet.
-        "content_scheme": resolve_realm_content_scheme(content_scheme),
-    })
+        content_scheme: Some(resolve_realm_content_scheme(content_scheme).to_owned()),
+        content_encryption_floor: Some(RECOMMENDED_REALM_ENCRYPTION_FLOOR_TYPED),
+        metadata_encryption_floor: Some(RECOMMENDED_REALM_ENCRYPTION_FLOOR_TYPED),
+        durability_policy: None,
+        mls_send_pause: None,
+    }
 }
 
 pub fn recommended_realm_policy_bundle_for_profile(
     profile: &str,
     content_scheme: Option<&str>,
-) -> Option<Value> {
+) -> Option<arkret_sdk::RealmPolicyBundlePayload> {
     encryption_profile_uses_recommended_floor(profile)
         .then(|| recommended_realm_policy_bundle_value(content_scheme))
 }
@@ -1044,6 +1040,18 @@ pub fn build_realm_state_event(
                 })?;
             arkret_sdk::HistorySharingPolicyPayload::new(typed).to_value()?
         }
+        // The policy-bundle payload IS the flat closed object, not a
+        // `state_payload` wrapper (`realm_policy_bundle_payload`'s `$comment`;
+        // `event-envelope.schema.json` dispatches the kind straight to that
+        // def). Deliberately NOT re-parsed through
+        // `arkret_sdk::RealmPolicyBundlePayload`: that type mirrors the closed
+        // def exactly, while `realm-and-space.md` §2.3 and `join-policy.md` §3
+        // require the bundle to also carry `join_policy`, `agent_participation`,
+        // `availability_policy` and friends, which the def does not declare.
+        // Enforcing the narrow shape here would reject writes the normative
+        // prose mandates. See arkret-work `review/spec-open/
+        // 2026-08-01-realm-policy-bundle-closed-def-omits-mandated-components.md`.
+        EventKind::RealmPolicyBundle => value.clone(),
         EventKind::RealmDeliveryBindingPolicy => {
             let typed: arkret_sdk::DeliveryBindingPolicyPayload =
                 serde_json::from_value(value.clone()).map_err(|err| {

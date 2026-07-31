@@ -16,13 +16,14 @@
 //!   authorize for `sender_device_id`" from the accepted device directory. It is an authorization
 //!   lookup — a revoked or absent device is a negative verdict, never a fallback to the
 //!   `verification_method` fragment (`signal.md` §1).
-//! * [`MlsSignalDecryptor`] restores the scope's persisted MLS group and opens the AEAD through the
-//!   SDK, which enforces `aead_profile` equality with the group's negotiated ciphersuite, epoch
-//!   equality, the sender nonce prefix domain, the recomputed AAD and the per-sender nonce-counter
-//!   replay window.
+//! * [`MlsSignalDecryptor`] restores the scope's persisted MLS group through the same
+//!   [`crate::signal::restore_signal_mls_session`] helper the send path uses, then opens the AEAD
+//!   through the SDK, which enforces `aead_profile` equality with the group's negotiated
+//!   ciphersuite, epoch equality, the sender nonce prefix domain, the recomputed AAD and the
+//!   per-sender nonce-counter replay window.
 //!
-//! Product routing then splits three ways: call signalling and message-stream
-//! previews go to the app-mounted hubs through
+//! Product routing then splits four ways: call signalling, message-stream
+//! previews and read receipts go to the app-mounted hubs through
 //! [`crate::runtime::projection::SignalProductSink`], while presence and typing
 //! bodies land in the bounded live projection the chat views read.
 
@@ -76,17 +77,12 @@ pub struct SignalReceiveEngineContext {
 /// owned by the account sync path.
 ///
 /// Device authorization is resolved against the **current** accepted directory,
-/// not against `envelope.seal_ref`. `signal.md` §1 still reads as if the
-/// lookup were Seal-relative, but no verifier can do that: device authorization
-/// is principal-control state that a target-Realm Seal does not locate, and
-/// `keys_query_request_body` deliberately has no as-of basis. soland's
-/// `verify_signal_device_proof` resolves the same way, so ingress does **not**
-/// enforce a Seal-relative form either.
-///
-/// `seal_ref` selects the Realm/scope basis only. The split is adjudicated in
-/// `arkret-work/review/spec-open/2026-07-31-signal-receiver-seal-basis-device-authorization.md`;
-/// the spec text has not been rewritten yet, so do not describe this as
-/// satisfying §1 as currently written.
+/// not against `envelope.seal_ref`, which is what `signal.md` §1 requires: the
+/// two are separate state domains, and `seal_ref` selects only the Realm/scope
+/// one. Device authorization is principal-control state that a target-Realm
+/// Seal does not locate, and `keys_query_request_body` deliberately has no
+/// as-of basis. soland's `verify_signal_device_proof` resolves the same way, so
+/// every verifying role applies one rule.
 pub struct DirectorySenderKeyResolver;
 
 impl garth::SignalSenderKeyResolver for DirectorySenderKeyResolver {
@@ -140,47 +136,24 @@ impl MlsSignalDecryptor {
 
 impl garth::SignalDecryptor for MlsSignalDecryptor {
     fn open(&self, envelope: &arkret_wire::SignalEnvelope) -> garth::Result<Vec<u8>> {
-        let realm_id = envelope.scope_ref.realm_id().as_str().to_owned();
-        let circle_id = envelope
-            .scope_ref
-            .circle_id()
-            .map(|circle_id| circle_id.as_str().to_owned());
-        let epoch = envelope.encrypted_payload.epoch;
-        let snapshot = self
-            .state_store
-            .read(|store| store.mls_snapshot_for_effective_scope(&realm_id, circle_id.as_deref()))
-            .ok_or_else(|| {
-                garth::Error::Protocol(
-                    "no accepted MLS group state for the signal scope".to_owned(),
-                )
-            })?;
         // The MLS exporter only evaluates the group's current epoch
-        // (`crates/mls/src/signal.rs::signal_suite_for`), so a Signal naming
-        // any other epoch is dropped here rather than routed around. Restoring
-        // a retained historical snapshot to open it would resurrect a key the
-        // scope has already rotated away from; a Signal lives at most 120
-        // seconds and the rail tolerates loss by design (`signal.md` §4.5), so
-        // the straddling window is not worth spending forward secrecy on.
-        // No decryption queue, no downgrade, no backfill.
-        if snapshot.epoch != epoch {
-            return Err(garth::Error::Protocol(format!(
-                "signal names MLS epoch {epoch}, but the scope is at epoch {}",
-                snapshot.epoch
-            )));
-        }
-        let snapshot_secret = crate::mls::runtime::load_device_snapshot_secret(
-            self.secure_store.as_ref(),
-            &self.account_did,
-            &self.device_id,
-        )
-        .map_err(|error| {
-            garth::Error::Protocol(format!("load signal MLS snapshot secret: {error}"))
-        })?;
-        let group =
-            crate::mls::persistence::restore_envelope(&snapshot, &snapshot_secret, snapshot.epoch)
-                .map_err(|error| {
-                    garth::Error::Protocol(format!("restore signal MLS snapshot: {error}"))
-                })?;
+        // (`crates/mls/src/signal.rs::signal_suite_for`), so the shared restore
+        // helper's epoch gate drops a Signal naming any other epoch rather than
+        // routing around it. No decryption queue, no downgrade, no backfill.
+        let session = self
+            .state_store
+            .read(|store| {
+                crate::signal::restore_signal_mls_session(
+                    store,
+                    self.secure_store.as_ref(),
+                    &envelope.scope_ref,
+                    &self.account_did,
+                    &self.device_id,
+                    envelope.encrypted_payload.epoch,
+                )
+            })
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let group = session.group;
         let mut replay = self.replay.lock().map_err(|error| {
             garth::Error::Protocol(format!("signal replay tracker poisoned: {error}"))
         })?;
@@ -305,11 +278,17 @@ impl SignalSink for InksonSignalSink {
                 garth::SIGNAL_PLAINTEXT_KIND_PRESENCE | SIGNAL_PLAINTEXT_KIND_TYPING => {
                     self.apply_live_body(&plaintext);
                 }
+                SIGNAL_PLAINTEXT_KIND_READ_RECEIPT => {
+                    // Not a live body: presence and typing are TTL projections
+                    // that must disappear, whereas a read position stays true
+                    // after the receipt that carried it expires
+                    // (`read-receipts.md` §1.1).
+                    self.products.read_receipt(&plaintext);
+                }
                 other => {
-                    // Admitted and authenticated, but no local consumer yet
-                    // (`ak.receipt.read` today). Dropping it is correct on a
-                    // rail with no delivery guarantee; tracing it keeps the
-                    // gap visible instead of silent.
+                    // Admitted and authenticated, but no local consumer.
+                    // Dropping it is correct on a rail with no delivery
+                    // guarantee; tracing it keeps the gap visible.
                     tracing::debug!(kind = other, "admitted Signal has no local product route");
                 }
             }
@@ -341,6 +320,7 @@ impl SignalSink for InksonSignalSink {
 }
 
 const SIGNAL_PLAINTEXT_KIND_TYPING: &str = "ak.typing";
+const SIGNAL_PLAINTEXT_KIND_READ_RECEIPT: &str = "ak.receipt.read";
 
 impl InksonSignalSink {
     /// Drop presence/typing bodies whose effective TTL has passed.

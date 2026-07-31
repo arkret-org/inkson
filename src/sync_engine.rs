@@ -1866,6 +1866,25 @@ pub fn apply_response(
         });
     }
 
+    // The device-signing-key cache is a *separate* cache from the DID bindings
+    // above, and its 5-minute positive TTL is not sufficient on its own:
+    // `signal.md` §1 forbids reusing an older positive entry once a device-list
+    // or generation frontier change has been observed. Dropping the actor's
+    // entries here only forces a re-query; the synchronous receive path fails
+    // closed on the resulting miss.
+    for body in response.realm_projections.values() {
+        for actor in collect_device_frontier_actors(body) {
+            let dropped = crate::identity::device_directory::invalidate_actor(&actor);
+            if dropped > 0 {
+                tracing::debug!(
+                    %actor,
+                    dropped,
+                    "dropped cached device signing keys after a device frontier change"
+                );
+            }
+        }
+    }
+
     if response_revokes_local_device(response, &account_did, &ctx.device_id) {
         state_store.write(|store| store.clear_device_scoped());
         rotate_live_device_id_after_revocation(&ctx.live_device_id);
@@ -2658,24 +2677,6 @@ fn collect_binding_invalidations(
     arkret_sdk::Did,
     Vec<arkret_sdk::identity::BindingInvalidation>,
 )> {
-    fn event_kind(event: &Value) -> &str {
-        event
-            .get("kind")
-            .and_then(Value::as_str)
-            .or_else(|| event.get("type").and_then(Value::as_str))
-            .unwrap_or("")
-    }
-
-    /// Read the actor DID string from the event, falling back to the roster entry.
-    fn actor_id_str<'a>(event: &'a Value, fallback: Option<&'a Value>) -> Option<&'a str> {
-        let from = |v: &'a Value| {
-            v.get("actor_id")
-                .or_else(|| v.get("did"))
-                .and_then(Value::as_str)
-        };
-        from(event).or_else(|| fallback.and_then(from))
-    }
-
     /// The concrete rotated key, when the event names one. Absent → the whole
     /// DID is invalidated rather than one key, which is the conservative side.
     fn verification_method(event: &Value) -> Option<arkret_sdk::DidUrl> {
@@ -2690,41 +2691,58 @@ fn collect_binding_invalidations(
         arkret_sdk::DidUrl::new(raw.to_owned()).ok()
     }
 
-    fn collect_from_events(
-        out: &mut Vec<(
-            arkret_sdk::Did,
-            Vec<arkret_sdk::identity::BindingInvalidation>,
-        )>,
-        events: &[Value],
-        fallback: Option<&Value>,
-    ) {
-        for event in events {
-            let kind = event_kind(event);
-            if !crate::state::is_binding_invalidating_kind(kind) {
-                continue;
-            }
-            // Invalid DID syntax is skipped: this hook must not panic, and a
-            // malformed identity event is not authority to evict anything.
-            let Some(did) = actor_id_str(event, fallback)
-                .and_then(|value| arkret_sdk::Did::new(value.to_owned()).ok())
-            else {
-                continue;
-            };
-            let selectors = crate::state::binding_invalidations_for_event(
-                kind,
-                &did,
-                verification_method(event).as_ref(),
-            );
-            out.push((did, selectors));
-        }
-    }
-
     let mut out = Vec::new();
-    // Scan the canonical top-level `state[]` event log.
-    let state_events = sync_realm_state_events(body);
-    collect_from_events(&mut out, &state_events, None);
+    for_each_projection_identity_event(body, |event, fallback| {
+        let kind = projection_event_kind(event);
+        if !crate::state::is_binding_invalidating_kind(kind) {
+            return;
+        }
+        // Invalid DID syntax is skipped: this hook must not panic, and a
+        // malformed identity event is not authority to evict anything.
+        let Some(did) = projection_event_actor_id(event, fallback)
+            .and_then(|value| arkret_sdk::Did::new(value.to_owned()).ok())
+        else {
+            return;
+        };
+        let selectors = crate::state::binding_invalidations_for_event(
+            kind,
+            &did,
+            verification_method(event).as_ref(),
+        );
+        out.push((did, selectors));
+    });
+    out
+}
 
-    // Inline `identity_events[]` on each member roster entry.
+fn projection_event_kind(event: &Value) -> &str {
+    event
+        .get("kind")
+        .and_then(Value::as_str)
+        .or_else(|| event.get("type").and_then(Value::as_str))
+        .unwrap_or("")
+}
+
+/// Read the actor DID string from the event, falling back to the roster entry.
+fn projection_event_actor_id<'a>(event: &'a Value, fallback: Option<&'a Value>) -> Option<&'a str> {
+    let from = |value: &'a Value| {
+        value
+            .get("actor_id")
+            .or_else(|| value.get("did"))
+            .and_then(Value::as_str)
+    };
+    from(event).or_else(|| fallback.and_then(from))
+}
+
+/// Visit every identity-carrying event in one Realm projection `body`, in the
+/// two shapes inkson receives them:
+///
+/// - the canonical top-level `state[]` event log;
+/// - inline `identity_events[]` on each member roster entry, where the entry is passed as the actor
+///   fallback.
+fn for_each_projection_identity_event(body: &Value, mut visit: impl FnMut(&Value, Option<&Value>)) {
+    for event in &sync_realm_state_events(body) {
+        visit(event, None);
+    }
     for source in [
         body.get("members"),
         body.get("summary").and_then(|s| s.get("members")),
@@ -2737,11 +2755,35 @@ fn collect_binding_invalidations(
         };
         for entry in items {
             if let Some(events) = entry.get("identity_events").and_then(Value::as_array) {
-                collect_from_events(&mut out, events, Some(entry));
+                for event in events {
+                    visit(event, Some(entry));
+                }
             }
         }
     }
-    out
+}
+
+/// Principals whose device-list / generation frontier moved in this projection.
+///
+/// The subject of a device event is the principal named by the payload, not
+/// necessarily the authoring actor, so `principal_id` wins when present.
+fn collect_device_frontier_actors(body: &Value) -> BTreeSet<String> {
+    let mut actors = BTreeSet::new();
+    for_each_projection_identity_event(body, |event, fallback| {
+        if !crate::identity::device_directory::is_device_frontier_event_kind(projection_event_kind(
+            event,
+        )) {
+            return;
+        }
+        let subject = event
+            .pointer("/payload/principal_id")
+            .and_then(Value::as_str)
+            .or_else(|| projection_event_actor_id(event, fallback));
+        if let Some(subject) = subject.map(str::trim).filter(|value| !value.is_empty()) {
+            actors.insert(subject.to_owned());
+        }
+    });
+    actors
 }
 
 fn apply_notification_projection(
@@ -4030,6 +4072,40 @@ mod tests {
         });
         invalidate_cache_for_revocation_events(&mut cache, &body);
         assert!(cache.get(&did, chrono::Utc::now()).is_none());
+    }
+
+    /// `signal.md` §1: the device-signing-key cache must not outlive an
+    /// observed frontier change, so the subject is taken from the payload's
+    /// `principal_id` — the authoring actor may be another device of the same
+    /// principal, or the server-side reducer.
+    #[test]
+    fn device_frontier_actors_prefer_the_payload_principal() {
+        let body = json!({
+            "state": { "events": [
+                {
+                    "event_id": "e1",
+                    "kind": "ak.device.revoke",
+                    "actor_id": "did:web:author.example",
+                    "payload": { "principal_id": "did:web:subject.example" }
+                },
+                { "event_id": "e2", "kind": "ak.device.list_update", "actor_id": "did:web:bob.example" },
+                { "event_id": "e3", "kind": "ak.message.create", "actor_id": "did:web:carol.example" }
+            ] },
+            "members": [{
+                "actor_id": "did:web:dave.example",
+                "identity_events": [{ "event_id": "e4", "kind": "ak.cross_signing.publish" }]
+            }]
+        });
+
+        let actors = collect_device_frontier_actors(&body);
+        assert_eq!(
+            actors.into_iter().collect::<Vec<_>>(),
+            vec![
+                "did:web:bob.example".to_owned(),
+                "did:web:dave.example".to_owned(),
+                "did:web:subject.example".to_owned(),
+            ]
+        );
     }
 
     #[test]

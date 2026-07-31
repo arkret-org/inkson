@@ -199,18 +199,15 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     // history_visibility, history_sharing_policy, discovery,
     // plaintext_visible, delivery binding policy, creator member join.
     assert_eq!(
-        events[1].payload["value"]["content_encryption_floor"],
+        events[1].payload["content_encryption_floor"],
         RECOMMENDED_REALM_ENCRYPTION_FLOOR
     );
     assert_eq!(
-        events[1].payload["value"]["metadata_encryption_floor"],
+        events[1].payload["metadata_encryption_floor"],
         RECOMMENDED_REALM_ENCRYPTION_FLOOR
     );
-    assert_eq!(events[1].payload["value"]["policy_revision"], 1);
-    assert_eq!(
-        events[1].payload["value"]["content_scheme"],
-        "mls_exporter_aead_v1"
-    );
+    assert_eq!(events[1].payload["policy_revision"], 1);
+    assert_eq!(events[1].payload["content_scheme"], "mls_exporter_aead_v1");
     assert_eq!(events[2].payload["value"], "invite");
     assert_eq!(events[3].payload["value"], "shared");
     assert_eq!(
@@ -350,7 +347,7 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
     // Index 1 is the Realm policy bundle, the only bootstrap Event that carries
     // `content_scheme`. Index 2 is the join rule, whose payload value is a bare
     // string — reading `content_scheme` off it silently yields Null.
-    assert_eq!(events[1].payload["value"]["content_scheme"], "mls_rfc9420");
+    assert_eq!(events[1].payload["content_scheme"], "mls_rfc9420");
 }
 
 #[test]

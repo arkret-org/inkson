@@ -45,7 +45,6 @@ pub(super) async fn relay_local_signals(
             base,
             api_token,
             realm_id,
-            None,
             call_id,
             actor,
             device,
@@ -351,7 +350,6 @@ pub(super) fn emit_async(
     base: &str,
     api_token: &str,
     realm_id: &str,
-    material: Option<&crate::signal::SignalKeyMaterial>,
     call_id: &str,
     actor: &str,
     device: &str,
@@ -374,13 +372,11 @@ pub(super) fn emit_async(
         device.to_owned(),
         signal_kind.to_owned(),
     );
-    let material = material.cloned();
     spawn(async move {
-        let _ = emit_signal(
+        if let Err(error) = emit_signal(
             &base,
             &api_token,
             &realm_id,
-            material.as_ref(),
             &call_id,
             &actor,
             &device,
@@ -389,22 +385,30 @@ pub(super) fn emit_async(
             data,
             &state_store,
         )
-        .await;
+        .await
+        {
+            // Fire-and-forget by design (candidate / hangup / moderator
+            // controls): the rail tolerates loss. A withdrawn scope capability
+            // is still worth a trace so it is not mistaken for packet loss.
+            tracing::warn!(%error, signal_kind, "call signal was not sent");
+        }
     });
 }
 
 /// Send a single `ak.call.signal` on the encrypted Signal rail.
 ///
-/// `material` is the scope's accepted MLS key material: a scope without it has
-/// its Signal capability withdrawn, and v1 has no plaintext fallback. The
-/// accepted Seal the receiver resolves the sender's live-send eligibility under
-/// is fetched by the submitter.
+/// The scope's accepted MLS key material is resolved here rather than passed
+/// in: every caller would otherwise have to remember to fetch it, and a caller
+/// that forgets produces a call that silently never signals. A scope with no
+/// accepted group state has its Signal capability withdrawn (`signal.md` §3)
+/// and v1 has no plaintext fallback, so this returns an error the call flow
+/// surfaces instead of degrading. The accepted Seal the receiver resolves the
+/// sender's live-send eligibility under is fetched by the submitter.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn emit_signal(
     base: &str,
     api_token: &str,
     realm_id: &str,
-    material: Option<&crate::signal::SignalKeyMaterial>,
     call_id: &str,
     actor: &str,
     device: &str,
@@ -413,11 +417,10 @@ pub(super) async fn emit_signal(
     data: serde_json::Value,
     state_store: &crate::runtime::input::StateStoreHandle,
 ) -> Result<(), String> {
-    // No accepted MLS key material for the scope means the Signal capability is
-    // withdrawn there (`signal.md` §3). v1 has no plaintext branch.
-    let material = material.ok_or_else(|| {
-        format!("signal rail unavailable for {realm_id}: no accepted MLS key material")
-    })?;
+    // Call signalling is Realm-scoped, so the effective scope has no Circle.
+    let material = state_store
+        .read(|store| crate::signal::key_material_for_scope(store, realm_id, None))
+        .map_err(|error| error.to_string())?;
     let scope_ref = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm_id.trim().to_owned())
             .map_err(|error| format!("invalid call signal realm_id: {error}"))?,
@@ -466,7 +469,6 @@ pub(super) fn spawn_reject(
             &base,
             &api_token,
             &realm_id,
-            None,
             &call_id,
             &actor,
             &device,
@@ -499,7 +501,6 @@ pub(super) fn end_call(
         base,
         api_token,
         realm_id,
-        None,
         call_id,
         actor,
         device,

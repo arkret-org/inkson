@@ -361,7 +361,7 @@ pub async fn set_realm_policy_events(
             // applies a one-way content_scheme ratchet, so a policy_bundle
             // write MUST re-assert a scheme of rank ≥ the projected one;
             // omitting it would be rejected for exporter-aead realms.
-            recommended_realm_policy_bundle_value(None)
+            recommended_realm_policy_bundle_value(None).to_value()?
         } else {
             json!({
                 "policy_revision": 1,

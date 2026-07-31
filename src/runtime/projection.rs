@@ -104,6 +104,12 @@ pub trait SignalProductSink {
     /// any body may be shown.
     fn message_stream<'a>(&'a self, plaintext: &'a garth::SignalPlaintext) -> LocalBoxFuture<'a>;
 
+    /// One decrypted `ak.receipt.read` plaintext. Synchronous: the receipt is a
+    /// UI hint whose only gate is the envelope admission that already ran, and
+    /// `read-receipts.md` §2.4 makes rendering it depend on a local display
+    /// preference rather than on any further authorization round trip.
+    fn read_receipt(&self, plaintext: &garth::SignalPlaintext);
+
     /// Advance the TTL state of Signal-backed projections: `signal.md` §7.4
     /// marks a preview stalled after 30 seconds without a valid frame and
     /// discards it after ten minutes. A producer that goes quiet emits nothing
@@ -133,6 +139,8 @@ impl SignalProductSink for NoopSignalProductSink {
     fn message_stream<'a>(&'a self, _plaintext: &'a garth::SignalPlaintext) -> LocalBoxFuture<'a> {
         Box::pin(async {})
     }
+
+    fn read_receipt(&self, _plaintext: &garth::SignalPlaintext) {}
 
     fn advance_clock(&self, _now: chrono::DateTime<chrono::Utc>) {}
 }
@@ -179,6 +187,10 @@ impl SignalProductSink for SignalProductRouter {
     fn message_stream<'a>(&'a self, plaintext: &'a garth::SignalPlaintext) -> LocalBoxFuture<'a> {
         let sink = Rc::clone(&self.sink.borrow());
         Box::pin(async move { sink.message_stream(plaintext).await })
+    }
+
+    fn read_receipt(&self, plaintext: &garth::SignalPlaintext) {
+        self.sink.borrow().read_receipt(plaintext);
     }
 
     fn advance_clock(&self, now: chrono::DateTime<chrono::Utc>) {

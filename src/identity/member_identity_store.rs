@@ -402,7 +402,7 @@ mod tests {
         assert_eq!(identity.subject_id.as_str(), actor);
         assert_eq!(identity.display_profile.display_name, "Alice v1");
         assert!(!store.is_decryption_pending(TEST_REALM, actor));
-        crate::identity::device_directory::invalidate(actor, TEST_DEVICE);
+        crate::identity::device_directory::invalidate_actor(actor);
     }
 
     #[test]
@@ -427,7 +427,7 @@ mod tests {
             store.current_identity(TEST_REALM, actor).is_none(),
             "forged identity must not be surfaced"
         );
-        crate::identity::device_directory::invalidate(actor, TEST_DEVICE);
+        crate::identity::device_directory::invalidate_actor(actor);
     }
 
     #[test]

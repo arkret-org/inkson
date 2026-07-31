@@ -520,7 +520,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     &state_store.read(),
                                     &realm,
                                     None,
-                                    crate::signal::next_signal_sequence().0,
                                 ) else {
                                     return;
                                 };

@@ -863,19 +863,30 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                         }
                                     }
                                 }
-                                // G3.Y2 — per-message read-receipt
-                                // indicator. Surfaces the set of actors
-                                // who have published a `ak.read_cursor.advance`
-                                // covering this message.
-                                //
-                                // TODO(G3.Y2-followup): populate from the
-                                // soland sync projection once it carries
-                                // per-message `ak.read_cursor.advance`
-                                // coverage. For now the list is empty — the
-                                // testid still mounts when there is data so
-                                // cotest can assert against it.
+                                // Per-message read-receipt indicator: the actors
+                                // whose latest `ak.receipt.read` Signal lands on
+                                // this message (`read-receipts.md` §2.4 — the
+                                // shared hint, not this actor's own private
+                                // `ak.read_cursor.advance`). The projection is
+                                // memory-only and fed by the encrypted Signal
+                                // receive path, so a reader appears only after
+                                // their device proof and the MLS AEAD verified.
                                 {
-                                    let readers: Vec<String> = Vec::new();
+                                    let readers: Vec<String> = msg
+                                        .protocol_message_id
+                                        .as_deref()
+                                        .map(str::trim)
+                                        .filter(|value| !value.is_empty())
+                                        .and_then(|message_id| {
+                                            let hub =
+                                                crate::views::read_receipts::ReadReceiptHub::try_use()?;
+                                            Some(hub.readers_of(
+                                                &selected_realm_id,
+                                                &selected_channel_value,
+                                                message_id,
+                                            ))
+                                        })
+                                        .unwrap_or_default();
                                     let should_display = {
                                         let store = state_store.read();
                                         chat_visible_read_receipt_should_display(
