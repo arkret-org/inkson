@@ -271,6 +271,37 @@ where
     Option::<T>::deserialize(deserializer)
 }
 
+/// Classification of a persisted outbound queue record.
+///
+/// A record's content is immutable, so a decode/validation failure can never
+/// heal on retry ("poisoned" — e.g. persisted by an older build with different
+/// intent semantics). The single policy for poisoned records lives here: they
+/// are cancelled through the consumer's own channel and MUST NOT wedge the
+/// per-actor queue or fail an unrelated submission. Consumers map this to
+/// their mechanism — the outbound submitter returns a `Terminal` outcome, the
+/// generation fence quarantines the record in preflight, and the same-
+/// transaction retry path compacts terminal history before re-enqueueing.
+enum QueuedRecordState {
+    Valid(Box<QueuedSdkEvent>),
+    Poisoned { reason: String },
+}
+
+fn classify_queued_record(transaction_id: &str, content: Value) -> QueuedRecordState {
+    match decode_queued_sdk_event(content) {
+        Ok(queued) => QueuedRecordState::Valid(Box::new(queued)),
+        Err(error) => {
+            tracing::warn!(
+                event_id = %transaction_id,
+                error = %error,
+                "queued outbound record failed decode; poisoned record will be cancelled, not retried"
+            );
+            QueuedRecordState::Poisoned {
+                reason: format!("poisoned queued item cancelled: {error}"),
+            }
+        }
+    }
+}
+
 fn decode_queued_sdk_event(content: Value) -> arkret_sdk::Result<QueuedSdkEvent> {
     let queued: QueuedSdkEvent = serde_json::from_value(content).map_err(|error| {
         arkret_sdk::Error::Protocol(format!("decode queued Inkson SDK event: {error}"))
@@ -426,8 +457,12 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
         item: garth::SendQueueItem,
     ) -> BoxOutboundFuture<'a, OutboundSubmitOutcome> {
         Box::pin(async move {
-            let mut queued = decode_queued_sdk_event(item.content)
-                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+            let mut queued = match classify_queued_record(&item.transaction_id, item.content) {
+                QueuedRecordState::Valid(queued) => *queued,
+                QueuedRecordState::Poisoned { reason } => {
+                    return Ok(OutboundSubmitOutcome::Terminal { reason });
+                }
+            };
             if queued.authored_attempt.is_none() {
                 let mut event = queued.intent.to_unauthored_event();
                 event.unsigned.insert(
@@ -604,6 +639,11 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                         );
                         return Ok(OutboundSubmitOutcome::RetryAfter { delay, reason });
                     }
+                    tracing::warn!(
+                        event_id = %item.transaction_id,
+                        %reason,
+                        "durable Event submit rejected terminally (no retry); queue item cancelled"
+                    );
                     self.results
                         .rejected
                         .lock()
@@ -826,7 +866,16 @@ impl EventSubmitter {
             ) {
                 continue;
             }
-            let queued = decode_queued_sdk_event(item.content.clone())?;
+            let queued = match classify_queued_record(&item.transaction_id, item.content.clone()) {
+                QueuedRecordState::Valid(queued) => *queued,
+                QueuedRecordState::Poisoned { reason } => {
+                    decisions.insert(
+                        item.transaction_id,
+                        OutboundGenerationFenceDecision::Quarantine { reason },
+                    );
+                    continue;
+                }
+            };
             if matches!(
                 queued.post_accept.as_ref(),
                 Some(PostAcceptAction::MlsAdmission { .. })
@@ -1391,7 +1440,22 @@ impl EventSubmitter {
                     .idempotency_key(idempotency_key),
             )
             .await
-            .map_err(anyhow::Error::from)?;
+            .map_err(|error| {
+                tracing::warn!(
+                    event_id = %signed.event_id,
+                    error = %error,
+                    "events.submit POST rejected by server"
+                );
+                anyhow::Error::from(error)
+            })?;
+        tracing::warn!(
+            event_id = %signed.event_id,
+            status = ?response.status,
+            accepted = response.accepted.len(),
+            rejected = response.rejected.len(),
+            quarantine = response.quarantine.len(),
+            "events.submit response received"
+        );
         ensure_events_submit_accepted(&response)?;
         Ok(SubmitEventResult::from(response))
     }
@@ -1455,6 +1519,20 @@ impl EventSubmitter {
             intent.seal_basis = None;
         }
         intent.auth_context = None;
+        // `authorization_ref` is a member of the bound semantic intent
+        // (`EventIntent::from_event`), so the authority-root claim must be
+        // decided before the intent freezes. The authoring-time stamp in
+        // `stamp_cba_basis_for_sdk_event` then finds the claim already
+        // present and leaves it untouched, keeping every attempt's authored
+        // envelope equal to its intent.
+        self.stamp_realm_authority_root_claim(&mut intent).await;
+        tracing::warn!(
+            event_id = %intent.event_id,
+            kind = %intent.kind.as_str(),
+            realm = %intent.realm_id,
+            authorization_ref = ?intent.authorization_ref,
+            "submit intent frozen; enqueueing durable Event"
+        );
         let local_operation_id = intent
             .unsigned
             .get("local_operation_idempotency_alias")
@@ -1595,27 +1673,53 @@ impl EventSubmitter {
             .into_iter()
             .find(|item| item.transaction_id == transaction_id);
         if let Some(existing) = existing {
-            let previous = decode_queued_sdk_event(existing.content.clone())?;
-            let same_event_identity = previous.local_operation_id == queued.local_operation_id
-                && previous.intent.event_id == queued.intent.event_id
-                && previous.intent.realm_id == queued.intent.realm_id
-                && previous.intent.actor_id == queued.intent.actor_id
-                && previous.intent.kind == queued.intent.kind;
-            if !same_event_identity {
-                anyhow::bail!(
-                    "outbound transaction {} is already bound to a different immutable Event intent",
-                    transaction_id
-                );
+            if matches!(existing.status, garth::SendQueueStatus::Sent) {
+                return Ok(completed_outbound_result(&existing));
             }
-            let same_semantic_intent = previous.intent_digest == queued.intent_digest;
+            let previous =
+                match classify_queued_record(&existing.transaction_id, existing.content.clone()) {
+                    QueuedRecordState::Valid(previous) => Some(*previous),
+                    QueuedRecordState::Poisoned { reason } => {
+                        if !matches!(
+                            existing.status,
+                            garth::SendQueueStatus::Cancelled | garth::SendQueueStatus::Superseded
+                        ) {
+                            // The generation fence quarantine-cancels it on the
+                            // next queue drive; the retry after that lands in
+                            // the terminal repair branch below.
+                            anyhow::bail!(
+                                "outbound transaction {transaction_id} is blocked by a {reason}"
+                            );
+                        }
+                        None
+                    }
+                };
+            if let Some(previous) = &previous {
+                let same_event_identity = previous.local_operation_id == queued.local_operation_id
+                    && previous.intent.event_id == queued.intent.event_id
+                    && previous.intent.realm_id == queued.intent.realm_id
+                    && previous.intent.actor_id == queued.intent.actor_id
+                    && previous.intent.kind == queued.intent.kind;
+                if !same_event_identity {
+                    anyhow::bail!(
+                        "outbound transaction {} is already bound to a different immutable Event intent",
+                        transaction_id
+                    );
+                }
+            }
+            let same_semantic_intent = previous
+                .as_ref()
+                .is_some_and(|previous| previous.intent_digest == queued.intent_digest);
             match existing.status {
                 garth::SendQueueStatus::Sent => {
                     return Ok(completed_outbound_result(&existing));
                 }
                 garth::SendQueueStatus::Cancelled | garth::SendQueueStatus::Superseded
                     if same_semantic_intent
-                        && previous.authored_attempt.as_ref().is_some_and(|attempt| {
-                            attempt.transport_idempotency_key != previous.local_operation_id
+                        && previous.as_ref().is_some_and(|previous| {
+                            previous.authored_attempt.as_ref().is_some_and(|attempt| {
+                                attempt.transport_idempotency_key != previous.local_operation_id
+                            })
                         }) =>
                 {
                     // A deterministic response can cancel an item after its
@@ -1624,11 +1728,16 @@ impl EventSubmitter {
                     // bytes instead of signing a different transcript under
                     // the same Event id (which the queue correctly rejects as
                     // an idempotency conflict).
-                    let attempt = previous.authored_attempt.as_ref().ok_or_else(|| {
-                        anyhow::anyhow!("terminal outbound Event retry lost its authored attempt")
-                    })?;
+                    let attempt = previous
+                        .as_ref()
+                        .and_then(|previous| previous.authored_attempt.as_ref())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "terminal outbound Event retry lost its authored attempt"
+                            )
+                        })?;
                     tracing::warn!(
-                        event_id = %previous.intent.event_id,
+                        event_id = %event.event_id,
                         status = ?existing.status,
                         "replaying terminal outbound Event bytes for an immutable retry"
                     );
@@ -1900,6 +2009,14 @@ impl EventSubmitter {
                 event.auth_context = Some(data_event_auth_context(event)?);
             }
         }
+        tracing::warn!(
+            event_id = %event.event_id,
+            kind = %event.kind.as_str(),
+            seal_ref = ?event.seal_ref.as_ref().map(|seal| seal.as_str()),
+            has_seal_basis = event.seal_basis.is_some(),
+            authorization_ref = ?event.authorization_ref,
+            "authored CBA basis for submit attempt"
+        );
         Ok(())
     }
 
@@ -1921,7 +2038,7 @@ impl EventSubmitter {
         let authority = match self.realm_create_authority(event.realm_id.as_str()).await {
             Ok(authority) => authority,
             Err(error) => {
-                tracing::debug!(
+                tracing::warn!(
                     realm = %event.realm_id,
                     kind = %event.kind.as_str(),
                     error = %error,
@@ -1930,8 +2047,24 @@ impl EventSubmitter {
                 None
             }
         };
+        // WARN so the wasm console shows it: the browser tracing layer caps at
+        // WARN (`main.rs` `set_max_level`), and this decision is the first
+        // thing to check whenever an owner write is rejected. The negative is
+        // debug-only — it fires on every member-authored event.
         if let Some(reference) = realm_authority_root_claim(event, authority.as_ref()) {
+            tracing::warn!(
+                realm = %event.realm_id,
+                kind = %event.kind.as_str(),
+                "stamped realm authority-root claim on owner-authored event",
+            );
             event.authorization_ref = Some(reference);
+        } else {
+            tracing::debug!(
+                realm = %event.realm_id,
+                kind = %event.kind.as_str(),
+                resolved = authority.is_some(),
+                "no realm authority-root claim for this event; ordinary grant path",
+            );
         }
     }
 
@@ -3048,6 +3181,321 @@ mod tests {
             .stamp_realm_authority_root_claim(&mut event)
             .await;
         assert!(event.authorization_ref.is_none());
+    }
+
+    #[test]
+    fn stamped_intent_round_trips_through_authoring_without_semantic_drift() {
+        // Reproduce the queued-submit lifecycle for a kanban card create:
+        // freeze a stamped intent, author the envelope from it the way the
+        // outbound drive does, and require `EventIntent` equality — the exact
+        // check `decode_queued_sdk_event` enforces on the persisted attempt.
+        let realm = "ak:realm:01904100-0000-7000-8000-0000000000ac";
+        realm_create_authority_cache()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(
+                realm.to_owned(),
+                RealmCreateAuthority::Root {
+                    controller_id: AUTHORITY_CONTROLLER.to_owned(),
+                },
+            );
+        let event = crate::operation::ak_ops::kanban_card_strand_create(
+            realm,
+            AUTHORITY_CONTROLLER,
+            "ak:strand:01904100-0000-7000-8000-000000000031",
+            "ak:space:01904100-0000-7000-8000-000000000032",
+            "ak:space:01904100-0000-7000-8000-000000000033",
+            "probe card",
+            "a0",
+        )
+        .unwrap()
+        .build_sdk_event("inkson")
+        .unwrap();
+
+        // Mirror `submit_sdk_event_queued`'s intent normalization + stamp.
+        let mut intent = event.clone();
+        intent.actor_seq = 0;
+        intent.prev_refs.clear();
+        intent.proofs.clear();
+        intent.seal_ref = None;
+        intent.seal_basis = None;
+        intent.auth_context = None;
+        intent.authorization_ref = realm_authority_root_claim(
+            &intent,
+            Some(&RealmCreateAuthority::Root {
+                controller_id: AUTHORITY_CONTROLLER.to_owned(),
+            }),
+        );
+        assert!(intent.authorization_ref.is_some(), "claim must stamp");
+        let queued = QueuedSdkEvent::unauthored(
+            intent,
+            "local-op".to_owned(),
+            "authoring-key".to_owned(),
+            None,
+            test_authoring_generation(),
+            None,
+        )
+        .unwrap();
+
+        // Mirror the outbound drive's authoring mutations (transport-level
+        // members only; `EventIntent::from_event` must discard all of them).
+        let mut authored = queued.intent.to_unauthored_event();
+        authored.unsigned.insert(
+            "local_operation_idempotency_alias".to_owned(),
+            Value::String("authoring-key".to_owned()),
+        );
+        authored.actor_seq = 7;
+        authored.prev_refs = vec![
+            arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000034".to_owned())
+                .unwrap(),
+        ];
+        authored.hlc = Some(arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap());
+        authored.seal_ref = Some(
+            arkret_sdk::SealId::new(
+                "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                    .to_owned(),
+            )
+            .unwrap(),
+        );
+        authored.auth_context = Some(arkret_sdk::AuthContext {
+            did: authored.actor_id.clone(),
+            key_id: "device".to_owned(),
+            key_epoch: 0,
+            credential_epoch: None,
+        });
+
+        let reconstructed = EventIntent::from_event(authored);
+        if reconstructed != queued.intent {
+            let left = serde_json::to_value(&reconstructed).unwrap();
+            let right = serde_json::to_value(&queued.intent).unwrap();
+            panic!(
+                "authored envelope drifted from bound intent:\nauthored: {left:#}\nintent:   {right:#}"
+            );
+        }
+    }
+
+    /// Live probe against the local dev stack; ignored by default. Run with:
+    /// `cargo test --lib live_owner_kanban_writes_against_dev_soland -- --ignored --nocapture`
+    ///
+    /// Exercises the real client pipeline — `create_realm` genesis batch →
+    /// Seal wait → board/list `ak.space.create` → card `ak.strand.create`,
+    /// with the authority-root claim stamped by `prepare_sdk_event_for_submit`
+    /// — against `http://127.0.0.1:8698` using dev-login and the SDK's
+    /// deterministic development signer.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    #[ignore = "requires the local dev soland (SOLAND_DEVELOPMENT_MODE=true) on 127.0.0.1:8698"]
+    async fn live_owner_kanban_writes_against_dev_soland() {
+        const BASE: &str = "http://127.0.0.1:8698/";
+        let unique = uuid_v7();
+        let suffix = unique
+            .rsplit('-')
+            .next()
+            .expect("uuid has segments")
+            .to_owned();
+        let actor = format!("did:web:probe-{suffix}.local.host");
+        let device = format!("ak:device:{}", uuid_v7());
+
+        let login: Value = reqwest::Client::new()
+            .post(format!("{BASE}_soland/gate/auth/dev-login"))
+            .json(&serde_json::json!({ "actor": actor, "device_id": device }))
+            .send()
+            .await
+            .expect("dev-login request")
+            .error_for_status()
+            .expect("dev-login status")
+            .json()
+            .await
+            .expect("dev-login body");
+        let token = login["session_credential"]
+            .as_str()
+            .expect("session_credential")
+            .to_owned();
+
+        // The signer must be device-bound for the submit pipeline (HLC
+        // stamping), but the proof fragment must NOT parse as an
+        // `ak:device:*` id: that routes verification to the device signing
+        // directory (`device-lifecycle.md` §5.4), which this un-enrolled
+        // probe device cannot satisfy. A literal `device` fragment keeps the
+        // dev-mode deterministic-key fallback reachable, and dev-mode soland
+        // derives the expected key from the exact emitted string
+        // `{actor}#device`.
+        let verification_method = format!("{actor}#device");
+        let _signer = crate::event_signer::ActiveSignerTestGuard::replace(Some(
+            std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
+                arkret_signatures::development_signing_key_seed(&verification_method),
+                actor.clone(),
+                "device",
+            )),
+        ));
+        let previous_proof_mode = crate::operation::current_proof_mode();
+        crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
+
+        let sdk = arkret_sdk::http_client::ClientBuilder::new(BASE.parse().unwrap())
+            .allow_insecure_localhost()
+            .auth(arkret_sdk::http_client::Auth::Bearer(token.clone()))
+            .build()
+            .expect("sdk client");
+        let submitter = EventSubmitter::new(sdk.clone());
+
+        let outcome = async {
+            // Manual genesis batch: the probe principal has no principal
+            // control realm, so the queued submit paths' client-side recovery
+            // gate cannot be satisfied. The real browser flow satisfies it at
+            // onboarding; it is not what this probe tests, so use the same
+            // prepare + lease + submit primitives without the durable queue.
+            let notary_did = submitter
+                .service_id()
+                .await
+                .map_err(|error| format!("service describe failed: {error:#}"))?;
+            let realm_id = format!("ak:realm:{}", uuid_v7());
+            let bootstrap = crate::event_builders::build_realm_bootstrap_events(
+                &realm_id,
+                &actor,
+                &notary_did,
+                "root-claim live probe",
+                Some("authority-root claim end-to-end probe"),
+                "listed",
+                "invite",
+                "shared",
+                "mls_rfc9420",
+                "standard",
+                "restricted",
+                "single_did",
+                "sha256",
+                "ak:trust_domain:local.host",
+                &[],
+                &[notary_did.clone()],
+                None,
+                None,
+            )
+            .map_err(|error| format!("bootstrap build failed: {error:#}"))?;
+            let prepared = submitter
+                .prepare_sdk_events_batch(bootstrap)
+                .await
+                .map_err(|error| format!("bootstrap prepare failed: {error:#}"))?;
+            for event in &prepared {
+                for proof in &event.proofs {
+                    println!(
+                        "prepared {} proof vm={:?} kind={:?} alg={:?}",
+                        event.kind.as_str(),
+                        proof.verification_method,
+                        proof.kind,
+                        proof.alg,
+                    );
+                    // Local replica of the server's dev-mode verification
+                    // (`verify_eddsa_detached_jws_proof` + deterministic key)
+                    // to split "bad signature" from "server key selection".
+                    let digest_payload = event
+                        .digest_payload()
+                        .map_err(|error| format!("digest payload: {error:#}"))?;
+                    let envelope_bytes =
+                        arkret_sdk::canonical::canonical_json_bytes(&digest_payload)
+                            .map_err(|error| format!("canonical bytes: {error:#}"))?;
+                    let vm = proof.verification_method.as_str();
+                    let material = arkret_signatures::PublicKeyMaterial::Ed25519Raw {
+                        bytes: arkret_signatures::development_verifying_key(vm)
+                            .to_bytes()
+                            .to_vec(),
+                    };
+                    let local = arkret_signatures::verify_eddsa_detached_jws_proof(
+                        proof,
+                        &envelope_bytes,
+                        &event.actor_id,
+                        &material,
+                    );
+                    println!("  local dev-key verify: {local:?}");
+                }
+            }
+            let submissions = sdk
+                .prepare_initial_submissions(&prepared)
+                .await
+                .map_err(|error| format!("bootstrap lease issuance rejected: {error:#}"))?;
+            sdk.events_submit_batch(&submissions)
+                .await
+                .map_err(|error| format!("bootstrap events.submit rejected: {error:#}"))?;
+            crate::mls::creator_bootstrap::wait_for_realm_seal_view(&submitter, &realm_id)
+                .await
+                .map_err(|error| format!("realm never sealed: {error:#}"))?;
+
+            let mut accepted = Vec::new();
+            let board_space_id = format!("ak:space:{}", uuid_v7());
+            let list_space_id = format!("ak:space:{}", uuid_v7());
+            let strand_id = format!("ak:strand:{}", uuid_v7());
+            let board = crate::operation::ak_ops::space_create(
+                &realm_id,
+                &actor,
+                &board_space_id,
+                "board",
+                "probe board",
+                None,
+                None,
+            )
+            .and_then(|builder| builder.build_sdk_event("inkson"))
+            .map_err(|error| format!("board event build failed: {error:#}"))?;
+            let list = crate::operation::ak_ops::space_create(
+                &realm_id,
+                &actor,
+                &list_space_id,
+                "list",
+                "probe list",
+                None,
+                Some("a0"),
+            )
+            .and_then(|builder| builder.build_sdk_event("inkson"))
+            .map_err(|error| format!("list event build failed: {error:#}"))?;
+            let card = crate::operation::ak_ops::kanban_card_strand_create(
+                &realm_id,
+                &actor,
+                &strand_id,
+                &board_space_id,
+                &list_space_id,
+                "probe card",
+                "a0",
+            )
+            .and_then(|builder| builder.build_sdk_event("inkson"))
+            .map_err(|error| format!("card event build failed: {error:#}"))?;
+
+            for (label, event) in [("board", board), ("list", list), ("card", card)] {
+                let (signed, _idempotency) =
+                    submitter
+                        .prepare_sdk_event_for_submit(&event)
+                        .await
+                        .map_err(|error| format!("{label} prepare failed: {error:#}"))?;
+                if signed.authorization_ref.as_deref()
+                    != Some(arkret_wire::REALM_AUTHORITY_ROOT_CELL)
+                {
+                    return Err(format!(
+                        "{label} was not stamped with the authority-root claim: {:?}",
+                        signed.authorization_ref
+                    ));
+                }
+                let submissions = sdk
+                    .prepare_initial_submissions(std::slice::from_ref(&signed))
+                    .await
+                    .map_err(|error| format!("{label} lease issuance rejected: {error:#}"))?;
+                let submission = submissions
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| format!("{label} lease outcome is empty"))?;
+                let result = sdk
+                    .events_submit(&submission)
+                    .await
+                    .map_err(|error| format!("{label} events.submit rejected: {error:#}"))?;
+                accepted.push(format!("{label} accepted: {:?}", result));
+            }
+            Ok::<Vec<String>, String>(accepted)
+        }
+        .await;
+        crate::operation::set_proof_mode(previous_proof_mode);
+        match outcome {
+            Ok(accepted) => {
+                for line in accepted {
+                    println!("{line}");
+                }
+            }
+            Err(message) => panic!("live probe failed: {message}"),
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]

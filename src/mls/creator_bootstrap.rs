@@ -56,7 +56,12 @@ pub(crate) fn creator_mls_bootstrap_pending(
         return false;
     };
     if !crate::security_state::realm_projection_is_encrypted(projection)
-        || !crate::mls::group_events::projection_creator_matches_actor(projection, actor_id)
+        || !crate::mls::group_events::projected_realm_creator_matches_actor(
+            &state.realm_tree_projections,
+            projection,
+            realm_id,
+            actor_id,
+        )
     {
         return false;
     }
@@ -279,6 +284,33 @@ mod tests {
         let mut store = temp_store("pending");
         store.save_realm_tree_projection(REALM, realm_projection(ACTOR, "mls_rfc9420"));
         assert!(creator_mls_bootstrap_pending(&store, REALM, ACTOR));
+    }
+
+    #[test]
+    fn creator_is_recognized_from_the_projected_realm_create_when_no_owner_field_exists() {
+        // Post-P1 realm projections carry no owner/created_by mirror; the
+        // creator fact lives in the projected `ak.realm.create` event.
+        let mut store = temp_store("create-event-source");
+        store.save_realm_tree_projection(
+            REALM,
+            json!({
+                "__kind": "realm",
+                "content_scheme": "mls_rfc9420",
+                "summary": { "title": "Realm", "encryption_profile": "mls_rfc9420" },
+                "state": {
+                    "events": [{
+                        "kind": "ak.realm.create",
+                        "payload": { "object": { "id": REALM, "created_by": ACTOR } }
+                    }]
+                }
+            }),
+        );
+        assert!(creator_mls_bootstrap_pending(&store, REALM, ACTOR));
+        assert!(!creator_mls_bootstrap_pending(
+            &store,
+            REALM,
+            "did:web:bob.example"
+        ));
     }
 
     #[test]

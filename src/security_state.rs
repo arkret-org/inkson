@@ -149,6 +149,49 @@ pub fn security_projection_for_scope_id<'a>(
         .or(Some(direct))
 }
 
+/// Current controller of the Realm authority-root cell, read from the locally
+/// projected event log.
+///
+/// `ak.realm.create` is the only registered writer of
+/// `ak.component.realm.authority_root.v1` in v1 (contract-registry.json), and
+/// its registered `value_projection` sets `controller_id =
+/// payload.object.created_by`. This reads that one cell input; it is not the
+/// forbidden `realm_state.owner` / membership fallback — those are projection
+/// mirrors of a different fact, and post-P1 realm projections no longer carry
+/// them at all.
+pub fn realm_authority_root_controller_from_events(events: &[Value]) -> Option<String> {
+    events.iter().rev().find_map(|event| {
+        let kind = event
+            .get("kind")
+            .or_else(|| event.get("event_kind"))
+            .and_then(Value::as_str)?;
+        if kind != arkret_sdk::events::EventKind::REALM_CREATE {
+            return None;
+        }
+        event
+            .get("payload")
+            .unwrap_or(event)
+            .get("object")?
+            .get("created_by")
+            .and_then(Value::as_str)
+            .map(|created_by| created_by.trim().to_owned())
+    })
+}
+
+/// [`realm_authority_root_controller_from_events`] over the Realm's full
+/// projection entry (`realm_tree_projections[realm_id]`).
+pub fn realm_authority_root_controller_for_realm(
+    projections: &BTreeMap<String, Value>,
+    realm_id: &str,
+) -> Option<String> {
+    let events = projections
+        .get(realm_id.trim())?
+        .get("state")?
+        .get("events")?
+        .as_array()?;
+    realm_authority_root_controller_from_events(events)
+}
+
 pub fn realm_projection_security_state(body: &Value) -> Option<bool> {
     let summary = body.get("summary").unwrap_or(&Value::Null);
     for container in [

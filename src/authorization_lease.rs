@@ -181,6 +181,15 @@ pub async fn acquire_for_events(
         intents: Vec::new(),
     };
     let idempotency_key = crate::operation::uuid_v7();
+    for event in events {
+        tracing::warn!(
+            event_id = %event.event_id,
+            kind = %event.kind.as_str(),
+            seal_ref = ?event.seal_ref.as_ref().map(|seal| seal.as_str()),
+            authorization_ref = ?event.authorization_ref,
+            "requesting publication lease for signed Event"
+        );
+    }
     let outcome = http
         .issue_authorization_leases(
             &request,
@@ -189,7 +198,14 @@ pub async fn acquire_for_events(
                 .idempotency_key(idempotency_key),
         )
         .await
-        .map_err(anyhow::Error::from)?;
+        .map_err(|error| {
+            tracing::warn!(error = %error, "publication lease issuance rejected by server");
+            anyhow::Error::from(error)
+        })?;
+    tracing::warn!(
+        leases = outcome.authorization_leases.len(),
+        "publication leases issued"
+    );
     for (event, lease) in events.iter().zip(&outcome.authorization_leases) {
         if lease.actor_id != event.actor_id
             || lease.scope_ref != event.scope_ref

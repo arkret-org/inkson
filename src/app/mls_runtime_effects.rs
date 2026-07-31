@@ -1009,25 +1009,50 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     &creator_bootstrap_realm_id,
                     &detect_actor,
                 ) {
-                    match crate::transport::auth::authed_api(&detect_base, detect_session.clone()) {
-                        Ok(api) => {
-                            if let Err(error) =
-                                crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis(
-                                    &api,
-                                    state_store_task,
-                                    &creator_bootstrap_realm_id,
-                                    &detect_actor,
-                                    &detect_device,
-                                )
-                                .await
-                            {
-                                last_error_task
-                                    .set(Some(format!("creator MLS bootstrap: {error}")));
-                            }
+                    tracing::warn!(
+                        realm = %creator_bootstrap_realm_id,
+                        "creator MLS bootstrap pending; replaying epoch-0 setup + ak.mls.genesis",
+                    );
+                    let creator_bootstrap_error = match crate::transport::auth::authed_api(
+                        &detect_base,
+                        detect_session.clone(),
+                    ) {
+                        Ok(api) => crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis(
+                            &api,
+                            state_store_task,
+                            &creator_bootstrap_realm_id,
+                            &detect_actor,
+                            &detect_device,
+                        )
+                        .await
+                        .err()
+                        .map(|error| error.to_string()),
+                        Err(error) => Some(error.to_string()),
+                    };
+                    if let Some(error) = creator_bootstrap_error {
+                        tracing::warn!(
+                            realm = %creator_bootstrap_realm_id,
+                            %error,
+                            "creator MLS bootstrap failed; clearing the dedup key for a retry",
+                        );
+                        last_error_task.set(Some(format!("creator MLS bootstrap: {error}")));
+                        // Mirror the KeyPackage / Sidecar bootstrap pattern:
+                        // without this reset one failure pinned the dedup key
+                        // and the creator bootstrap never ran again in the
+                        // session, leaving every encrypted write stuck on
+                        // "MLS state is not ready".
+                        crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(5)).await;
+                        let mut seen_bootstrap_key_reset = seen_bootstrap_key_for_probe;
+                        if seen_bootstrap_key_reset.peek().as_deref()
+                            == Some(bootstrap_key.as_str())
+                        {
+                            seen_bootstrap_key_reset.set(None);
                         }
-                        Err(error) => {
-                            last_error_task.set(Some(format!("creator MLS bootstrap: {error}")));
-                        }
+                    } else {
+                        tracing::warn!(
+                            realm = %creator_bootstrap_realm_id,
+                            "creator MLS bootstrap completed",
+                        );
                     }
                 }
 

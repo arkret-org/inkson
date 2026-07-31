@@ -77,6 +77,29 @@ pub(crate) fn mls_policy_root_from_seal_view(
     arkret_sdk::Hash::new(hash).map_err(|err| format!("invalid MLS policy root hash: {err:?}"))
 }
 
+/// Whether `actor_id` is the creator (authority-root controller) of
+/// `realm_id` according to local state. Single predicate for every creator
+/// MLS bootstrap gate. Two projected sources are accepted, in order: explicit
+/// creator fields on the security projection (legacy shapes), and the
+/// `created_by` of the locally projected accepted `ak.realm.create` — the
+/// same create-locked fact the authority-root authorization claim uses;
+/// post-P1 realm projections carry no `owner` mirror, so the event-log source
+/// is the authoritative one.
+pub(crate) fn projected_realm_creator_matches_actor(
+    realm_tree_projections: &std::collections::BTreeMap<String, Value>,
+    projection: &Value,
+    realm_id: &str,
+    actor_id: &str,
+) -> bool {
+    projection_creator_matches_actor(projection, actor_id)
+        || crate::security_state::realm_authority_root_controller_for_realm(
+            realm_tree_projections,
+            realm_id,
+        )
+        .as_deref()
+            == Some(actor_id.trim())
+}
+
 pub(crate) fn projection_creator_matches_actor(projection: &Value, actor_id: &str) -> bool {
     let actor = actor_id.trim();
     if actor.is_empty() {
@@ -131,13 +154,46 @@ pub(crate) fn ensure_creator_mls_snapshot_for_encrypted_scope(
         &state.realm_tree_projections,
         realm_id,
     ) else {
+        // WARN so the wasm console shows it: each of these silent declines
+        // leaves the caller on the Welcome-waiting path, which is the wrong
+        // answer for a Realm creator and otherwise undiagnosable in the field.
+        tracing::warn!(
+            realm = %realm_id,
+            "creator MLS bootstrap declined: no local realm tree projection for this Realm",
+        );
         return Ok(None);
     };
-    if !crate::security_state::realm_projection_is_encrypted(projection)
-        || !projection_creator_matches_actor(projection, actor_id)
-    {
+    if !crate::security_state::realm_projection_is_encrypted(projection) {
+        tracing::warn!(
+            realm = %realm_id,
+            "creator MLS bootstrap declined: local projection does not mark the Realm encrypted",
+        );
         return Ok(None);
     }
+    if !projected_realm_creator_matches_actor(
+        &state.realm_tree_projections,
+        projection,
+        realm_id,
+        actor_id,
+    ) {
+        tracing::warn!(
+            realm = %realm_id,
+            actor = %actor_id,
+            projection_owner = ?projection.get("owner"),
+            summary_owner = ?projection.pointer("/summary/owner"),
+            created_by = ?projection.get("created_by"),
+            projected_create_controller = ?crate::security_state::realm_authority_root_controller_for_realm(
+                &state.realm_tree_projections,
+                realm_id,
+            ),
+            "creator MLS bootstrap declined: neither projection fields nor the projected ak.realm.create name the actor as creator",
+        );
+        return Ok(None);
+    }
+    tracing::warn!(
+        realm = %realm_id,
+        "creator MLS bootstrap engaged: creating the epoch-0 group on this device",
+    );
     crate::mls::runtime::ensure_creator_mls_snapshot(
         state_store,
         secure_store,

@@ -384,6 +384,15 @@ pub(super) fn submit_kanban_move(
                 ));
             }
             Err(err) => {
+                // The status bar is transient and the write record lives in
+                // local state only; without this line the browser console has
+                // no trace of why a card went to quarantine.
+                tracing::warn!(
+                    operation_id = %short_protocol_id(&op_for_track),
+                    kind = %kind_for_record,
+                    error = %err.display(),
+                    "kanban submit failed; card quarantined",
+                );
                 state_store.write().update_raw_operation_write_state(
                     &op_for_track,
                     "quarantined",

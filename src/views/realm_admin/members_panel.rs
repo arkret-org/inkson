@@ -1913,32 +1913,11 @@ fn realm_key_share_capability_ref_from_events(events: &[Value], actor_id: &str) 
     })
 }
 
-/// Current controller of the Realm authority-root cell, read from the projected
-/// event log.
-///
-/// `ak.realm.create` is the only registered writer of
-/// `ak.component.realm.authority_root.v1` in v1 (contract-registry.json), and its
-/// registered `value_projection` sets `controller_id = payload.object.created_by`.
-/// This reads that one cell input, so it is not the forbidden `realm_state.owner`
-/// / membership / bare `created_by` fallback — those are projection mirrors of a
-/// different fact.
+/// Current controller of the Realm authority-root cell, read from the
+/// projected event log. Single implementation:
+/// [`crate::security_state::realm_authority_root_controller_from_events`].
 fn realm_authority_root_controller(events: &[Value]) -> Option<String> {
-    events.iter().rev().find_map(|event| {
-        let kind = event
-            .get("kind")
-            .or_else(|| event.get("event_kind"))
-            .and_then(Value::as_str)?;
-        if kind != arkret_sdk::events::EventKind::REALM_CREATE {
-            return None;
-        }
-        event
-            .get("payload")
-            .unwrap_or(event)
-            .get("object")?
-            .get("created_by")
-            .and_then(Value::as_str)
-            .map(|created_by| created_by.trim().to_owned())
-    })
+    crate::security_state::realm_authority_root_controller_from_events(events)
 }
 
 fn realm_key_share_capability_ref(
