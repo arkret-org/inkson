@@ -111,7 +111,7 @@ fn approved_actions_from_plan(
     plan: &AppletInstallPlan,
     package: &AppletPackage,
 ) -> anyhow::Result<Vec<String>> {
-    if plan.schema != AppletInstallPlan::SCHEMA {
+    if plan.schema != arkret_wire::APPLET_INSTALL_PLAN_SCHEMA {
         anyhow::bail!("preview returned unsupported schema {}", plan.schema);
     }
     if plan.compute_plan_digest()? != plan.plan_digest {
