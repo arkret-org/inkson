@@ -216,7 +216,7 @@ fn build_formal_applet_install_events(
     let actions = approved_actions_from_plan(&snapshot.plan, &snapshot.package)?;
     let applet_id = arkret_sdk::AppletId::new(snapshot.package.applet_id.clone())
         .map_err(|error| anyhow::anyhow!("Applet grant requires a typed applet_id: {error}"))?;
-    let constraint = arkret_sdk::GrantConstraint::applet_delegation(
+    let constraint = arkret_sdk::GrantConstraint::applet_authority(
         applet_id,
         snapshot.package.service_id.clone(),
         snapshot.package.registration_epoch.clone(),
@@ -242,7 +242,14 @@ fn build_formal_applet_install_events(
             resources: vec![resource.clone()],
             capability_action_registry_digest: Some(registry_digest.clone()),
             constraints: vec![constraint.clone()],
-            parent_grant_id: None,
+            // The installing owner issues these under the Realm authority
+            // root, which is what `issuer_authority_refs` now records.
+            issuer_authority_refs: vec![arkret_sdk::IssuerAuthorityRef::RealmRoot {
+                realm_id: realm_id.clone(),
+                cell_ref: "ak:cell:ak.component.realm.authority_root.v1:null".to_owned(),
+                controller_epoch_at_issuance: 0,
+                authority_generation: 0,
+            }],
             issued_at,
             not_before: None,
             expires_at: None,
