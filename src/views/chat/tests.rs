@@ -814,13 +814,46 @@ fn mention_sidecar_digestes_are_applied_to_replayed_events() {
     )
     .expect("builds");
 
-    apply_mention_sidecar_digestes(&mut event, realm, &mentions, Some(&[0x42; 32]));
+    apply_mention_sidecar_digestes(&mut event, &mentions, Some(&[0x42; 32]));
 
-    let hashes = event.payload["content"]["mention_sidecar_digest"]
+    // `message_create_payload` is a closed object that declares
+    // `mention_sidecar_digest` at its root, not inside `content`.
+    let digests = event.payload["mention_sidecar_digest"]
         .as_array()
-        .expect("mention sidecar hashes");
-    assert_eq!(hashes.len(), 1);
-    assert_eq!(hashes[0].as_str().map(str::len), Some(64));
+        .expect("mention sidecar digests");
+    assert_eq!(digests.len(), 1);
+    assert_eq!(digests[0].as_str().map(str::len), Some(64));
+    assert!(
+        event.payload["content"]
+            .get("mention_sidecar_digest")
+            .is_none()
+    );
+}
+
+#[test]
+fn mention_sidecar_is_omitted_without_an_epoch_routing_key() {
+    // Realm policy that never opted in — and a device that cannot reach its
+    // MLS group — both arrive here as `None`, and both must send no sidecar
+    // rather than a tag derived from anything else.
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000010";
+    let mentions = vec![MentionNode::mention(arkret_sdk::Mention::new(
+        arkret_sdk::Did::new("did:web:agent.example".to_owned()).unwrap(),
+    ))];
+    let mut event = chat_message_create_operation(
+        realm,
+        "did:web:alice.example",
+        "ak:strand:01904100-0000-7000-8000-000000000001",
+        "discussion",
+        "ak:message:01904100-0000-7000-8000-000000000004",
+        "hello agent",
+        &mentions,
+        None,
+    )
+    .expect("builds");
+
+    apply_mention_sidecar_digestes(&mut event, &mentions, None);
+
+    assert!(event.payload.get("mention_sidecar_digest").is_none());
 }
 
 #[test]

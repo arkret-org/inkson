@@ -231,31 +231,49 @@ fn realm_tree_projection_value_durability_policy(
 /// containers ([summary]/[object]/[realm]/[metadata]) the encryption-state
 /// reader walks, since the local projection nests the realm body. The profile
 /// id is the SDK constant so the client and server agree on the exact string.
-fn realm_tree_projection_value_is_minimal_metadata(body: &Value) -> bool {
-    fn declares_in(container: &Value) -> bool {
-        ["profiles", "active_profiles"].iter().any(|field| {
-            container
-                .get(*field)
-                .and_then(Value::as_array)
-                .is_some_and(|profiles| {
-                    profiles.iter().any(|profile| {
-                        profile.as_str() == Some(arkret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE)
-                    })
-                })
-        })
-    }
-
-    let null = Value::Null;
-    let summary = body.get("summary").unwrap_or(&null);
-    [
+/// The containers a realm-tree projection may nest its Realm object under.
+/// Callers scan all of them because the projection shape differs by source.
+fn realm_tree_projection_containers(body: &Value) -> Vec<&Value> {
+    const NULL: &Value = &Value::Null;
+    vec![
         body,
-        summary,
-        body.get("object").unwrap_or(&null),
-        body.get("realm").unwrap_or(&null),
-        body.get("metadata").unwrap_or(&null),
+        body.get("summary").unwrap_or(NULL),
+        body.get("object").unwrap_or(NULL),
+        body.get("realm").unwrap_or(NULL),
+        body.get("metadata").unwrap_or(NULL),
     ]
-    .into_iter()
-    .any(declares_in)
+}
+
+/// Every profile the projection declares, from whichever container carries them.
+fn realm_tree_projection_profiles(body: &Value) -> Vec<String> {
+    let mut profiles = Vec::new();
+    for container in realm_tree_projection_containers(body) {
+        for field in ["profiles", "active_profiles"] {
+            let Some(declared) = container.get(field).and_then(Value::as_array) else {
+                continue;
+            };
+            for profile in declared.iter().filter_map(Value::as_str) {
+                if !profiles.iter().any(|seen: &String| seen == profile) {
+                    profiles.push(profile.to_owned());
+                }
+            }
+        }
+    }
+    profiles
+}
+
+/// First string value the projection declares for `field`.
+fn realm_tree_projection_field(body: &Value, field: &str) -> Option<String> {
+    realm_tree_projection_containers(body)
+        .into_iter()
+        .find_map(|container| container.get(field).and_then(Value::as_str))
+        .map(ToOwned::to_owned)
+}
+
+fn realm_tree_projection_value_is_minimal_metadata(body: &Value) -> bool {
+    realm_tree_projection_profiles(body)
+        .iter()
+        .any(|profile| profile == arkret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE)
 }
 
 impl Default for LocalStateStore {

@@ -1502,11 +1502,18 @@ fn composer_mention_nodes(
     mentions
 }
 
+/// Attach the §4.5 E2EE mention-routing sidecar to an outgoing
+/// `ak.message.create`.
+///
+/// `routing_key` is the Realm's current-epoch mention routing key. It is
+/// `None` whenever the sidecar must not be produced — a plaintext Realm, a
+/// Realm whose effective `mention_routing_hint` is `disabled`, or a device
+/// that cannot reach its MLS group — and the event then goes out with no
+/// sidecar rather than with a tag derived from anything else.
 fn apply_mention_sidecar_digestes(
     event: &mut arkret_sdk::Event,
-    realm_id: &str,
     mentions: &[MentionNode],
-    exporter_secret: Option<&[u8]>,
+    routing_key: Option<&[u8]>,
 ) {
     let mention_dids = mentions
         .iter()
@@ -1518,26 +1525,21 @@ fn apply_mention_sidecar_digestes(
     if mention_dids.is_empty() {
         return;
     }
-    let Some(exporter_secret) = exporter_secret else {
+    let Some(routing_key) = routing_key else {
         return;
     };
-    let Ok(hashes) = crate::messaging::mentions::mention_sidecar_digestes(
-        exporter_secret,
-        realm_id,
-        &mention_dids,
-    ) else {
+    let Ok(digests) =
+        crate::messaging::mentions::mention_sidecar_digestes(routing_key, &mention_dids)
+    else {
         return;
     };
-    if let Some(content) = event
-        .payload
-        .get_mut("content")
-        .and_then(Value::as_object_mut)
-    {
-        content.insert(
-            "mention_sidecar_digest".to_owned(),
-            Value::Array(hashes.into_iter().map(Value::String).collect()),
-        );
-    }
+    // `event-payload.schema.json#/$defs/message_create_payload` puts
+    // `mention_sidecar_digest` at the payload root and closes the object, so
+    // nesting it under `content` would be a schema violation, not a variant.
+    event.payload.insert(
+        "mention_sidecar_digest".to_owned(),
+        Value::Array(digests.into_iter().map(Value::String).collect()),
+    );
 }
 
 fn chat_visible_read_receipt_should_send(

@@ -151,7 +151,7 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
         arkret_sdk::RealmId::new(realm).unwrap(),
         "ak.message.create",
     );
-    let (_, _, content_payload, metadata_payload, commit, snapshot, _) =
+    let (_, _, content_payload, metadata_payload, commit, snapshot, _, mention_routing_key) =
         encrypt_message_with_device_snapshot(
             &mut state,
             &secure,
@@ -174,6 +174,9 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
     );
     assert!(commit.is_none());
     assert!(snapshot.is_none());
+    // This Realm's projection declares no `mention_routing_hint`, so §4.5
+    // fails closed and the encrypt surfaces no routing key to attach.
+    assert!(mention_routing_key.is_none());
     // Both application messages advanced the §5.6 observed counter.
     assert_eq!(
         state.mls_snapshot_for(realm).unwrap().app_messages_observed,

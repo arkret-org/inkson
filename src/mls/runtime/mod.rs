@@ -10,6 +10,7 @@
 //!   - [`backup`]: MLS-history backup encode / decode / restore;
 //!   - [`genesis`]: creator initial-group setup and `ak.mls.genesis` payload;
 //!   - [`commit`]: §5.6 self-preservation / forced-epoch-advance commits;
+//!   - [`mention`]: §4.5 E2EE mention routing-key derivation;
 //!   - [`message`]: welcome apply, application-payload encrypt / decrypt, AAD;
 //!   - [`reaction`]: §2.9 E2EE reaction sealing and routing-tag derivation.
 //!
@@ -20,6 +21,7 @@ mod backup;
 mod commit;
 mod errors;
 mod genesis;
+mod mention;
 mod message;
 mod reaction;
 mod secret;
@@ -31,6 +33,7 @@ pub use backup::*;
 pub use commit::*;
 pub use errors::*;
 pub use genesis::*;
+pub use mention::*;
 pub use message::*;
 pub use reaction::*;
 pub use secret::*;

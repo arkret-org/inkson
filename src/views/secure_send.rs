@@ -50,6 +50,7 @@ pub(crate) type LocalMlsEncryptResult = (
     Option<arkret_sdk::MlsCommitEnvelope>,
     Option<crate::mls::persistence::MlsSnapshotEnvelope>,
     Option<crate::state::PendingHistorySecrets>,
+    Option<Vec<u8>>,
 );
 
 /// Encrypt `plaintext_bytes` under the Realm MLS group and return the
@@ -116,6 +117,7 @@ fn run_local_mls_encrypt_for_event(
         commit_envelope,
         new_snapshot,
         pending_history_secrets,
+        mention_routing_key,
     ) = crate::mls::runtime::encrypt_message_with_device_snapshot(
         &mut state_store.write(),
         secure_store.as_ref(),
@@ -137,6 +139,7 @@ fn run_local_mls_encrypt_for_event(
         commit_envelope,
         new_snapshot,
         pending_history_secrets,
+        mention_routing_key,
     ))
 }
 
@@ -170,6 +173,10 @@ pub(crate) struct SecureSendBuild {
     pub seal_ref: String,
     /// History-secret update that must commit before either MLS event is sent.
     pub pending_history_secrets: Option<crate::state::PendingHistorySecrets>,
+    /// `push-notifications.md` §4.5 mention routing key for the epoch the
+    /// message was encrypted under. `None` whenever Realm policy forbids the
+    /// sidecar, in which case the caller emits no `mention_sidecar_digest`.
+    pub mention_routing_key: Option<Vec<u8>>,
 }
 
 /// Build the full encrypted send (MLS encrypt → forced commit event →
@@ -213,6 +220,7 @@ pub(crate) fn build_secure_send(
         real_commit_envelope,
         new_mls_snapshot,
         pending_history_secrets,
+        mention_routing_key,
     ): LocalMlsEncryptResult = run_local_mls_encrypt(
         state_store,
         realm_id,
@@ -368,6 +376,7 @@ pub(crate) fn build_secure_send(
         member_dids: local_member_dids,
         seal_ref,
         pending_history_secrets,
+        mention_routing_key,
     })
 }
 
@@ -402,6 +411,7 @@ pub(crate) fn build_sidecar_exchange_control_send(
         real_commit_envelope,
         new_mls_snapshot,
         pending_history_secrets,
+        _mention_routing_key,
     ) = run_local_mls_encrypt_for_event(
         state_store,
         realm_id,
@@ -520,6 +530,7 @@ pub(crate) fn build_sidecar_exchange_control_send(
         member_dids: local_member_dids,
         seal_ref,
         pending_history_secrets,
+        mention_routing_key: None,
     })
 }
 
@@ -563,6 +574,7 @@ pub(crate) async fn submit_secure_send(
         seal_ref,
         member_dids: _,
         pending_history_secrets,
+        mention_routing_key: _,
     } = build;
     if let Some(pending) = pending_history_secrets {
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");

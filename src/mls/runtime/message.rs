@@ -1773,6 +1773,7 @@ type DeviceSnapshotEncryption = (
     Option<arkret_sdk::MlsCommitEnvelope>,
     Option<crate::mls::persistence::MlsSnapshotEnvelope>,
     Option<crate::state::PendingHistorySecrets>,
+    Option<Vec<u8>>,
 );
 
 /// Encrypt one message content plaintext — and optionally a second
@@ -1883,6 +1884,10 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     } else {
         None
     };
+    // `push-notifications.md` §4.5 — the mention routing key MUST come from the
+    // same epoch the ciphertext above was produced under, so it is read here
+    // (after any forced commit) rather than from the caller's stale snapshot.
+    let mention_routing_key = super::mention_routing_key_from_group(state_store, realm_id, &group)?;
     let schedule_hash = group.schedule_hash();
     let member_dids = group.member_principal_ids();
     let post_state = group
@@ -1913,6 +1918,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
             commit_envelope,
             Some(new_envelope.with_app_messages_observed(sent)),
             pending_history_secrets,
+            mention_routing_key,
         ));
     }
     new_envelope = new_envelope
@@ -1927,6 +1933,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
         None,
         None,
         pending_history_secrets,
+        mention_routing_key,
     ))
 }
 

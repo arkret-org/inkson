@@ -327,4 +327,17 @@ impl LocalStateStore {
             .get(realm_id)
             .is_some_and(realm_tree_projection_value_is_minimal_metadata)
     }
+
+    /// `push-notifications.md` §4.5 — the Realm's effective mention-routing
+    /// policy, resolved through the SDK so hardened profiles keep overriding a
+    /// declared `recipient_registered_token` and an absent, unknown or
+    /// unprojected policy fails closed to `Disabled`.
+    pub fn realm_mention_routing_hint(&self, realm_id: &str) -> arkret_sdk::MentionRoutingHint {
+        let Some(body) = self.load().realm_tree_projections.get(realm_id).cloned() else {
+            return arkret_sdk::MentionRoutingHint::Disabled;
+        };
+        let profiles = realm_tree_projection_profiles(&body);
+        let declared = realm_tree_projection_field(&body, "mention_routing_hint");
+        arkret_sdk::effective_mention_routing_hint(&profiles, declared.as_deref())
+    }
 }

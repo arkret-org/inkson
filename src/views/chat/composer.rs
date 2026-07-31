@@ -1393,7 +1393,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             return;
                                         }
                                     };
-                                    let mut op = match chat_message_create_operation_with_content(
+                                    let op = match chat_message_create_operation_with_content(
                                         &realm,
                                         &actor,
                                         &strand_id,
@@ -1421,15 +1421,11 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             return;
                                         }
                                     };
-                                    // G3.Y2 — keep online sends and offline
-                                    // replay on the same E2EE-safe notification
-                                    // routing path.
-                                    apply_mention_sidecar_digestes(
-                                        &mut op,
-                                        &realm,
-                                        &mentions,
-                                        None,
-                                    );
+                                    // The §4.5 mention-routing sidecar exists so an
+                                    // encrypted Realm can route a notification
+                                    // without revealing the mentioned DID. A
+                                    // plaintext send already carries `mentions`
+                                    // in the clear, so it gets no sidecar.
                                     let mention_values_for_store = mention_nodes_to_values(&mentions);
                                     match submit_chat_operation_with_auth_refresh(
                                         &base,
@@ -2017,6 +2013,17 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         return;
                                     }
                                 };
+                                let mut secure_build = secure_build;
+                                // §4.5 — the sidecar rides the epoch the message
+                                // was encrypted under, which `build_secure_send`
+                                // already resolved (including any forced commit).
+                                // A `None` key means Realm policy forbids the
+                                // sidecar and the event goes out without one.
+                                apply_mention_sidecar_digestes(
+                                    &mut secure_build.message_event,
+                                    &mentions,
+                                    secure_build.mention_routing_key.clone().as_deref(),
+                                );
                                 let base = base.clone();
                                 let realm_for_record = realm.clone();
                                 let actor_for_audit = actor.clone();
