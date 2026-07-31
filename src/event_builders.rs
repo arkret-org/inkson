@@ -1678,8 +1678,9 @@ mod notary_derivation_tests {
         );
         // v1 carries no producer `effects[]`. The genesis leaf set is what the
         // receiver derives from the registered `ak.realm.create` contract, so
-        // assert the projection itself: the canonical four genesis cells, with
-        // the create-log entry appending this Realm id at issuer_seq 0.
+        // assert the projection itself: the canonical five genesis cells, in the
+        // order `arkret_bootstrap` derives them, with the create-log entry
+        // appending this Realm id at issuer_seq 0.
         let writes = crate::operation::direct_registered_cell_writes(&event).unwrap();
         assert_eq!(
             writes
@@ -1694,6 +1695,7 @@ mod notary_derivation_tests {
                 ),
                 arkret_bootstrap::REALM_CREATE_CELL,
                 arkret_bootstrap::REALM_NOTARY_CELL,
+                arkret_bootstrap::REALM_AUTHORITY_ROOT_CELL,
             ]
         );
         assert_eq!(writes[2].op.op_type, arkret_sdk::LatticeOpType::Append);

@@ -347,7 +347,10 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
     )
     .expect("joined history is valid with the strict MLS content scheme");
 
-    assert_eq!(events[2].payload["value"]["content_scheme"], "mls_rfc9420");
+    // Index 1 is the Realm policy bundle, the only bootstrap Event that carries
+    // `content_scheme`. Index 2 is the join rule, whose payload value is a bare
+    // string — reading `content_scheme` off it silently yields Null.
+    assert_eq!(events[1].payload["value"]["content_scheme"], "mls_rfc9420");
 }
 
 #[test]
