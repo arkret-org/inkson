@@ -1642,7 +1642,7 @@ mod tests {
     fn challenge_proof() -> arkret_sdk::DevicePairingChallengeProof {
         serde_json::from_value(json!({
             "transcript": "ak.device-pairing.challenge.v1",
-            "verification_method": "ak:device:01964137-0000-7000-8000-0000000000c1",
+            "kid": "ak:device:01964137-0000-7000-8000-0000000000c1",
             "alg": "EdDSA",
             "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
@@ -1779,7 +1779,7 @@ mod tests {
             },
             "challenge_proof": {
                 "transcript": "ak.device-pairing.challenge.v1",
-                "verification_method": "ak:device:01964137-0000-7000-8000-0000000000c1",
+                "kid": "ak:device:01964137-0000-7000-8000-0000000000c1",
                 "alg": "EdDSA",
                 "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"

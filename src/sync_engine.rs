@@ -4034,7 +4034,8 @@ mod tests {
         cache
             .insert(
                 did.clone(),
-                doc,
+                // `did:web` publishes no method proof.
+                arkret_sdk::identity::ResolvedDid::proofless(doc),
                 chrono::Utc::now(),
                 chrono::Duration::seconds(600),
             )

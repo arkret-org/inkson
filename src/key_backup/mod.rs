@@ -58,10 +58,6 @@ pub fn key_backup_hkdf_info(class: BackupKind, subdomain: &str) -> String {
     class.hkdf_info(subdomain)
 }
 
-pub fn key_backup_delete_ownership_proof(actor_id: &str, backup_id: &str) -> String {
-    format!("dev-ssk-delete:v1:{actor_id}:{backup_id}")
-}
-
 pub(crate) fn required_str<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
     value
         .get(key)

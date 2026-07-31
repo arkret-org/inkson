@@ -220,7 +220,7 @@ mod tests {
                 },
                 "challenge_proof": {
                     "transcript": "ak.device-pairing.challenge.v1",
-                    "verification_method": "ak:device:01904100-0000-7000-8000-000000000001",
+                    "kid": "ak:device:01904100-0000-7000-8000-000000000001",
                     "alg": "EdDSA",
                     "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
@@ -310,7 +310,7 @@ mod tests {
             "pairing_code": "7H2K9M4Q",
             "challenge_proof": {
                 "transcript": "ak.device-pairing.challenge.v1",
-                "verification_method": "ak:device:01904100-0000-7000-8000-000000000001",
+                "kid": "ak:device:01904100-0000-7000-8000-000000000001",
                 "alg": "EdDSA",
                 "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
@@ -334,7 +334,7 @@ mod tests {
             "pairing_code": "7H2K9M4Q",
             "challenge_proof": {
                 "transcript": "ak.device-pairing.challenge.v1",
-                "verification_method": "ak:device:01904100-0000-7000-8000-000000000001",
+                "kid": "ak:device:01904100-0000-7000-8000-000000000001",
                 "alg": "EdDSA",
                 "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
@@ -356,7 +356,7 @@ mod tests {
             "pairing_code": "7H2K9M4Q",
             "challenge_proof": {
                 "transcript": "ak.device-pairing.challenge.v1",
-                "verification_method": "ak:device:01904100-0000-7000-8000-000000000001",
+                "kid": "ak:device:01904100-0000-7000-8000-000000000001",
                 "alg": "EdDSA",
                 "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"

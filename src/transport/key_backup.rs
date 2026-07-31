@@ -391,26 +391,19 @@ impl crate::transport::TransportClient {
             .map_err(anyhow::Error::from)
     }
 
-    pub async fn delete_key_backup(
-        &self,
-        backup_id: &str,
-        actor_id: &str,
-    ) -> anyhow::Result<arkret_sdk::KeysBackupsDeleteOutcome> {
-        let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
-            .map_err(|err| anyhow::anyhow!("invalid key backup id: {err}"))?;
-        let proof =
-            crate::key_backup::key_backup_delete_ownership_proof(actor_id, backup_id.as_str());
-        let body = arkret_sdk::KeysBackupsDeleteRequestBody {
-            proof: arkret_sdk::KeyBackupDeleteProof::Development(
-                arkret_sdk::KeyBackupDeleteDevelopmentProof::new(proof),
-            ),
-            reason: Some("user_requested".to_owned()),
-        };
-        self.sdk_http_client()?
-            .delete_key_backup(&backup_id, &body)
-            .await
-            .map_err(anyhow::Error::from)
-    }
+    // Key-backup delete is deliberately absent.
+    //
+    // `key-management.md` §7.8 made it a high-risk authority: the caller must
+    // consume a server-issued single-use delete challenge and present one of
+    // `principal_signing`, `device_quorum`, or `trusted_recovery_service` over
+    // the canonical delete-intent transcript. The client shortcut that used to
+    // live here signed nothing — it sent a `dev-ssk-delete:v1:<actor>:<backup>`
+    // string — and the SDK has since deleted the variant that carried it.
+    //
+    // Nothing in the product called it, so it is removed rather than stubbed:
+    // a placeholder here would turn a high-risk authority into an unguarded
+    // one the moment a delete surface was wired up. Reintroduce it together
+    // with the real §7.8 flow (see the spec-open batch downstream task).
 }
 
 fn key_backup_idempotency_key(

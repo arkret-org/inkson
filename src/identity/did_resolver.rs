@@ -827,10 +827,13 @@ mod tests {
         }
     }
 
-    fn sample_document(did_str: &str) -> (Did, DidDocument) {
+    /// A `did:web` sample resolution. `did:web` publishes no method proof, so
+    /// the cached value is deliberately `proofless` — synthesizing evidence
+    /// here would let a test assert a trust level the method cannot give.
+    fn sample_document(did_str: &str) -> (Did, arkret_sdk::identity::ResolvedDid) {
         let did = parse(did_str);
         let doc = DidDocument::new(did.clone(), "key-1", "z6Mksample");
-        (did, doc)
+        (did, arkret_sdk::identity::ResolvedDid::proofless(doc))
     }
 
     #[test]

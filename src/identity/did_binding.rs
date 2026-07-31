@@ -374,7 +374,10 @@ impl VerifiedDidBindingStore for InksonDidBindingStore {
 /// (`did-usage-and-verification.md` §4) may not ride on a `Stale` acceptance.
 #[cfg(test)]
 pub(crate) fn authority_freshness() -> FreshnessRequirement {
-    FreshnessRequirement::fresh_within(Duration::minutes(BINDING_REFRESH_MINUTES))
+    FreshnessRequirement {
+        max_age: Some(Duration::minutes(BINDING_REFRESH_MINUTES)),
+        require_fresh: true,
+    }
 }
 
 #[cfg(test)]
@@ -446,10 +449,11 @@ mod tests {
     /// and no `Debug` output anywhere in the digested object.
     #[test]
     fn policy_digest_encodes_the_fail_mode_as_a_closed_token() {
-        use arkret_sdk::identity::PolicyDigestInput;
-
         let policy = crate::identity::did_resolver::policy_for(DeploymentProfile::PersonalNode);
-        let canonical = PolicyDigestInput::new(&policy).canonical_value();
+        let canonical = policy
+            .policy_snapshot()
+            .expect("the personal-node policy declares a closed method list")
+            .canonical_value();
         assert_eq!(canonical["fail_mode"], serde_json::json!("fail_closed"));
         let rendered = canonical.to_string();
         assert!(

@@ -595,14 +595,3 @@ fn key_backup_put_request_rejects_path_body_mismatch() {
             .expect_err("path/body backup id mismatch must be rejected");
     assert!(err.contains("mismatch"));
 }
-
-#[test]
-fn delete_ownership_proof_binds_actor_and_backup() {
-    assert_eq!(
-        key_backup_delete_ownership_proof(
-            "did:web:alice.example",
-            "ak:backup:01964137-0000-7000-8000-00000000beef"
-        ),
-        "dev-ssk-delete:v1:did:web:alice.example:ak:backup:01964137-0000-7000-8000-00000000beef"
-    );
-}

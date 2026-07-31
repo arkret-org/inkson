@@ -79,6 +79,7 @@ mod connect;
 mod connection_effects;
 mod context_bar;
 mod feature_gate;
+mod fold_evidence_effects;
 mod global_effects;
 mod handles;
 mod manage_pages;
@@ -106,6 +107,7 @@ use connect::*;
 use connection_effects::{ConnectionEffectState, ConnectionEffects};
 pub(crate) use context_bar::*;
 pub(crate) use feature_gate::*;
+use fold_evidence_effects::{SidecarFoldEvidenceEffectState, SidecarFoldEvidenceEffects};
 use global_effects::GlobalEffects;
 pub(crate) use handles::*;
 pub(crate) use manage_pages::*;
@@ -1345,6 +1347,9 @@ fn AppBootstrap() -> Element {
                     secure_store_bootstrap_ready,
                     token,
                 }
+            }
+            SidecarFoldEvidenceEffects {
+                state: SidecarFoldEvidenceEffectState { account_did }
             }
             SyncEffects {
                 sync_generation,

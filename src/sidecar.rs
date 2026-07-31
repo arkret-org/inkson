@@ -237,6 +237,114 @@ pub fn cached_sidecar_exchange_projections(
     projections
 }
 
+// ---------------------------------------------------------------------------
+// Fold-cache evidence surface (`wasm-localstorage-secrets-test` only).
+//
+// A joint test that rebuilds a "frontier" from DOM messages is measuring the
+// set of Events that happened to render, not
+// `AgentSidecarExchangeFoldedFrontier`. That cannot show two controller devices
+// hold a byte-identical fold cache, which is the actual §7.2.4 claim.
+//
+// So the evidence is read straight out of the validated cache instead. It is
+// read-only, same-origin, and controller-only: every entry comes from
+// `cached_sidecar_exchange_projections`, which already requires
+// `projection.validate()` and `controller_id == account_did`. The whole surface
+// is compiled out of production builds, and it is reachable only by an explicit
+// call — never through a URL, a log line, a trace label, telemetry, or ordinary
+// shared DOM — so it cannot widen the disclosure boundary
+// `SidecarPrivacyGate` defends.
+// ---------------------------------------------------------------------------
+
+/// The evidence surface exists only in a build that opted into the test
+/// feature, and within that build only where something can call it: the wasm
+/// bundle installs the JS handle, and the native test target exercises the
+/// serializer directly. A native production build compiles none of it.
+macro_rules! fold_evidence_surface {
+    ($($item:item)*) => {
+        $(
+            #[cfg(all(
+                feature = "wasm-localstorage-secrets-test",
+                any(target_arch = "wasm32", test)
+            ))]
+            $item
+        )*
+    };
+}
+
+fold_evidence_surface! {
+/// Schema marker so a test can prove it read this surface and not a
+/// same-shaped object some other layer happened to produce.
+pub(crate) const SIDECAR_FOLD_EVIDENCE_SCHEMA: &str = "inkson.test.sidecar_fold_evidence.v1";
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub(crate) struct SidecarFoldEvidenceEntry {
+    pub exchange_id: arkret_sdk::AgentSidecarExchangeId,
+    pub private_strand_id: arkret_sdk::StrandId,
+    pub status: arkret_sdk::AgentSidecarExchangeStatus,
+    pub terminal_event_id: Option<arkret_sdk::EventId>,
+    pub folded_frontier: arkret_sdk::AgentSidecarExchangeFoldedFrontier,
+    /// Canonical digest of `projection`, so two devices can be compared with
+    /// one equality check before anything is diffed field by field.
+    pub projection_digest: arkret_sdk::Hash,
+    /// The validated projection itself — the "projection bytes" a
+    /// byte-identity assertion needs.
+    pub projection: arkret_sdk::AgentSidecarExchangeProjection,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub(crate) struct SidecarFoldEvidence {
+    pub schema: &'static str,
+    pub controller_id: String,
+    pub source_realm_id: String,
+    pub exchanges: Vec<SidecarFoldEvidenceEntry>,
+}
+
+/// Structured fold-cache evidence for one controller and one source Realm.
+///
+/// Ordering follows `cached_sidecar_exchange_projections` (source HLC, then
+/// exchange id), so two devices that folded the same history serialize in the
+/// same order and can be compared as bytes.
+pub(crate) fn sidecar_fold_evidence(
+    store: &crate::state::LocalStateStore,
+    controller_id: &str,
+    source_realm_id: &str,
+) -> anyhow::Result<SidecarFoldEvidence> {
+    let exchanges = cached_sidecar_exchange_projections(store, controller_id, source_realm_id)
+        .into_iter()
+        .map(|projection| {
+            Ok(SidecarFoldEvidenceEntry {
+                exchange_id: projection.exchange_id.clone(),
+                private_strand_id: projection.private_strand_id.clone(),
+                status: projection.status,
+                terminal_event_id: projection.terminal_event_id.clone(),
+                folded_frontier: projection.folded_frontier.clone(),
+                projection_digest: arkret_sdk::Hash::new(
+                    arkret_sdk::canonical::canonical_sha256(&projection)?,
+                )?,
+                projection,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(SidecarFoldEvidence {
+        schema: SIDECAR_FOLD_EVIDENCE_SCHEMA,
+        controller_id: controller_id.to_owned(),
+        source_realm_id: source_realm_id.to_owned(),
+        exchanges,
+    })
+}
+
+/// Canonical JSON of [`sidecar_fold_evidence`]. Canonical rather than plain
+/// `to_string` so the comparison the test performs is over stable bytes.
+pub(crate) fn sidecar_fold_evidence_canonical_json(
+    store: &crate::state::LocalStateStore,
+    controller_id: &str,
+    source_realm_id: &str,
+) -> anyhow::Result<String> {
+    let evidence = sidecar_fold_evidence(store, controller_id, source_realm_id)?;
+    Ok(arkret_sdk::canonical::canonical_json_string(&evidence)?)
+}
+}
+
 /// Ordinary product surfaces that must never disclose Sidecar-private
 /// identifiers or content. The hosted private overlay is deliberately absent:
 /// callers rendering that controller-only surface do not pass through this
@@ -1612,30 +1720,20 @@ pub fn HostedSidecarContextBar(base_url: String, api_token: String, device_id: S
     let sidecar_base = base_url;
     let sidecar_token = api_token;
     let sidecar_device = device_id;
-    #[cfg(feature = "wasm-localstorage-secrets-test")]
-    let cotest_fold_evidence = {
-        let store = state_store.read();
-        let projections = cached_sidecar_exchange_projections(
-            &store,
-            &session.controller_id,
-            &session.source_realm_id,
-        )
-        .into_iter()
-        .filter(|projection| {
-            projection.private_strand_id.as_str() == session.private_strand_id
-                && projection.source_track_ref.strand_id.as_str() == session.source_strand_id
-        })
-        .collect::<Vec<_>>();
-        serde_json::to_string(&projections).ok()
-    };
-    #[cfg(not(feature = "wasm-localstorage-secrets-test"))]
-    let cotest_fold_evidence: Option<String> = None;
-
+    // Fold-cache evidence deliberately does NOT ride on this strip.
+    //
+    // A `data-*` attribute here is ordinary shared DOM: it is serialized into
+    // the document, readable by anything else running on the page, captured by
+    // DOM snapshots and screenshots, and present only while this strand's strip
+    // happens to be rendered. The evidence surface is
+    // `__inkson_sidecar_fold_evidence_v1` instead — read-only, controller-only,
+    // reachable only by an explicit call, covering the whole Realm rather than
+    // the visible strand, and compiled out of production builds. See
+    // `sidecar_fold_evidence`.
     rsx! {
         div {
             class: "sidecar-context-strip",
             "data-testid": "sidecar-context-strip",
-            "data-cotest-fold-evidence": cotest_fold_evidence,
             div { class: "sidecar-context-main",
                 strong { "Private Sidecar active" }
                 span { class: "muted", "Only you and your eligible AI Agents · E2EE" }
@@ -1954,6 +2052,116 @@ mod tests {
         assert_eq!(
             cached_sidecar_display_mode(&store, account, &session),
             Some(arkret_sdk::AgentSidecarDisplayMode::SidecarOnly)
+        );
+    }
+
+    /// The evidence surface must answer for exactly one controller and one
+    /// source Realm, must carry a digest that is stable across two independently
+    /// built stores holding the same projection, and must not leak a projection
+    /// belonging to a different Realm.
+    #[cfg(feature = "wasm-localstorage-secrets-test")]
+    #[test]
+    fn fold_evidence_is_controller_and_realm_scoped_with_a_stable_digest() {
+        let account = "did:web:alice.example";
+        let realm = "ak:realm:01964137-0000-7000-8000-0000000000f1";
+        let other_realm = "ak:realm:01964137-0000-7000-8000-0000000000f2";
+        let projection = |realm_id: &str, exchange: &str| {
+            let coordinator = arkret_sdk::Did::new("did:web:agents.example:assistant").unwrap();
+            let request_event =
+                arkret_sdk::EventId::new("ak:event:019f0000-0000-7000-8000-000000000009").unwrap();
+            arkret_sdk::AgentSidecarExchangeProjection {
+                schema: arkret_sdk::AgentSidecarExchangeProjectionSchema::V1,
+                controller_id: arkret_sdk::Did::new(account).unwrap(),
+                sidecar_id: arkret_sdk::SidecarId::new(
+                    "ak:sidecar:01964137-0000-7000-8000-000000000007",
+                )
+                .unwrap(),
+                private_strand_id: arkret_sdk::StrandId::new(
+                    "ak:strand:019f0000-0000-7000-8000-000000000005",
+                )
+                .unwrap(),
+                exchange_id: arkret_sdk::AgentSidecarExchangeId::new(exchange).unwrap(),
+                origin: arkret_sdk::AgentSidecarExchangeOrigin::SourceTrackRouted,
+                source_track_ref: arkret_sdk::AgentSidecarSourceTrackRef {
+                    realm_id: arkret_sdk::RealmId::new(realm_id).unwrap(),
+                    strand_id: arkret_sdk::StrandId::new(
+                        "ak:strand:019f0000-0000-7000-8000-000000000003",
+                    )
+                    .unwrap(),
+                    track_name: "discussion".to_owned(),
+                },
+                source_frontier_anchor: None,
+                source_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
+                client_order_key: arkret_sdk::NonEmptyString::new("device-1-1").unwrap(),
+                addressed_agent_ids: vec![coordinator.clone()],
+                completion_policy: arkret_sdk::AgentSidecarExchangeCompletionPolicy::Coordinator,
+                coordinator_agent_id: coordinator,
+                coordinator_assignment_event_id: request_event.clone(),
+                participating_agent_ids: Vec::new(),
+                private_request_event_id: request_event.clone(),
+                user_facing_response_event_ids: Vec::new(),
+                status: arkret_sdk::AgentSidecarExchangeStatus::Delivered,
+                failure_reason_code: None,
+                terminal_event_id: None,
+                folded_frontier: arkret_sdk::AgentSidecarExchangeFoldedFrontier {
+                    event_ids: vec![request_event.clone()],
+                    event_set_digest: arkret_sdk::agent_sidecar_exchange_event_set_digest(&[
+                        request_event,
+                    ])
+                    .unwrap(),
+                    max_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
+                },
+            }
+        };
+
+        let mut device_one = exchange_test_store("fold-evidence-one");
+        cache_sidecar_exchange_projection(
+            &mut device_one,
+            account,
+            &projection(realm, "exchange-01964137000000000008"),
+        )
+        .unwrap();
+        // A second Realm's exchange lives in the same cache and must not appear
+        // in this Realm's evidence.
+        cache_sidecar_exchange_projection(
+            &mut device_one,
+            account,
+            &projection(other_realm, "exchange-01964137000000000009"),
+        )
+        .unwrap();
+
+        let evidence = sidecar_fold_evidence(&device_one, account, realm).unwrap();
+        assert_eq!(evidence.schema, SIDECAR_FOLD_EVIDENCE_SCHEMA);
+        assert_eq!(evidence.controller_id, account);
+        assert_eq!(evidence.source_realm_id, realm);
+        assert_eq!(evidence.exchanges.len(), 1);
+        assert_eq!(
+            evidence.exchanges[0].exchange_id.as_str(),
+            "exchange-01964137000000000008"
+        );
+        assert!(
+            evidence.exchanges[0]
+                .projection_digest
+                .as_str()
+                .starts_with("sha256:")
+        );
+
+        // A different account's evidence request must not read this
+        // controller's cache.
+        let foreign = sidecar_fold_evidence(&device_one, "did:web:mallory.example", realm).unwrap();
+        assert!(foreign.exchanges.is_empty());
+
+        // Two devices that folded the same history serialize to the same bytes.
+        let mut device_two = exchange_test_store("fold-evidence-two");
+        cache_sidecar_exchange_projection(
+            &mut device_two,
+            account,
+            &projection(realm, "exchange-01964137000000000008"),
+        )
+        .unwrap();
+        assert_eq!(
+            sidecar_fold_evidence_canonical_json(&device_two, account, realm).unwrap(),
+            sidecar_fold_evidence_canonical_json(&device_one, account, realm).unwrap(),
         );
     }
 
