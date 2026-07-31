@@ -213,11 +213,13 @@
 - Prevention dimension: immutable genesis authority and current materialized state are different
   queries. Callers that only need the former must not replay pre-state-dependent transitions.
 
-## 2026-07-31 — inkson main does not compile against arkret-rust-sdk HEAD (Realm authority root)
+## 2026-07-31 — inkson main did not compile against arkret-rust-sdk HEAD (Realm authority root)
 
-- Severity: P0 build blocker; also blocks `cotest`, which takes `inkson` as a path dependency.
-- Status: open. Not caused by the mention-sidecar work landed in the same session; confirmed by
-  `git stash` on a clean tree.
+- Severity: P0 build blocker; also blocked `cotest`, which takes `inkson` as a path dependency.
+- Status: resolved upstream by `inkson@0467778e` "Author Realm genesis against the authority
+  root"; recorded because the workspace sat un-buildable on a published main in the interval.
+  Not caused by the mention-sidecar work landed in the same session; confirmed by `git stash`
+  on a clean tree.
 - Evidence: `cargo check --all-targets` at `inkson@a054fec3` against `arkret-rust-sdk@19a32f8f`
   ("Own the Realm authority root and split the two aggregate questions") reports 7 errors:
   `arkret_policy::realm_bootstrap::REALM_FOUNDING_GRANT_ACTIONS` is gone
@@ -227,7 +229,7 @@
   longer carries `founding_grant_event` / `main_strand_grant_event`
   (`src/transport/account.rs:567,585,664,677`); `Realm::new` now takes the registry basis as a
   seventh parameter (`src/event_builders.rs:390`).
-- Why it is not mechanical: `src/transport/account.rs` bootstraps a direct conversation by
+- Why it was not mechanical: `src/transport/account.rs` bootstrapped a direct conversation by
   submitting a founding capability grant and then a main-Strand grant chained through
   `authorization_ref`. The authority-root model removes that chain, so the client-side
   materialization sequence has to be re-derived from what `soland@2bf010fa` now materializes rather
@@ -235,3 +237,14 @@
 - Prevention dimension: `arkret-rust-sdk` breaking changes land as compile errors in every
   consumer by design, but `inkson` and `cotest` were not carried in the same sweep as `soland` and
   `garth`, so the workspace sat un-buildable on main.
+
+## 2026-07-31 — MLS runtime backup/secret tests fail under parallel execution
+
+- Severity: P2 test-suite reliability; a green run is not reproducible.
+- Status: open.
+- Evidence: `cargo test --lib mls::runtime` fails 4-6 of `genesis_backup::*` and
+  `secret::account_secret_rotation_rewraps_backups_old_secret_cannot_decrypt`, and the failing set
+  differs between runs. The same selection passes 59/59 with `--test-threads=1`.
+- Prevention dimension: these cases share durable state (snapshot store / secure key store) across
+  the default parallel test threads, so an unrelated change appears to break MLS backup at random.
+  Each case needs its own isolated store rather than a shared default path.
