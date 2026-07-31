@@ -256,7 +256,6 @@ pub fn CallPanel(
                         &base,
                         &api_token,
                         &realm_id,
-                        None,
                         &call,
                         &actor,
                         &device,
@@ -334,7 +333,6 @@ pub fn CallPanel(
                                     &base,
                                     &api_token,
                                     &realm_id,
-                                    None,
                                     &call,
                                     &actor,
                                     &device,
@@ -742,7 +740,6 @@ pub fn CallPanel(
                                                         &base,
                                                         &api_token,
                                                         &realm_id,
-                                                        None,
                                                         &call,
                                                         &actor,
                                                         &device,
@@ -928,7 +925,7 @@ pub fn CallPanel(
                                         }
                                         set_local_state(&mut participants, &actor, next, screen_sharing());
                                         emit_async(
-                                            &base, &token(), &active_realm(), None, &active_call_id(),
+                                            &base, &token(), &active_realm(), &active_call_id(),
                                             &actor, &device, "mute_state",
                                             json!({ "audio_muted": next, "video_muted": !camera_on(), "by": "self" }),
                                             call_seq,
@@ -968,7 +965,7 @@ pub fn CallPanel(
                                         }
                                         set_local_state(&mut participants, &actor, mic_muted(), next);
                                         emit_async(
-                                            &base, &token(), &active_realm(), None, &active_call_id(),
+                                            &base, &token(), &active_realm(), &active_call_id(),
                                             &actor, &device, "media_state",
                                             json!({ "screen": { "enabled": next } }),
                                             call_seq,

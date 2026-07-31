@@ -71,6 +71,10 @@ pub mod notifications;
 pub mod onboarding;
 /// Actor-private invite-quarantine status surface.
 pub mod quarantine;
+/// Receiver-side projection of other members' `ak.receipt.read` Signals
+/// (`read-receipts.md` §2). Shared read hints only; this actor's own private
+/// multi-device cursor is `ak.read_cursor.advance` and lives elsewhere.
+pub mod read_receipts;
 pub mod realm_admin;
 pub mod recovery;
 pub mod register;

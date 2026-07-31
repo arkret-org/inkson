@@ -569,6 +569,7 @@ fn AppBootstrap() -> Element {
     let call_signal_hub = use_context_provider(crate::views::call_signals::CallSignalHub::new);
     let message_stream_hub =
         use_context_provider(crate::views::message_streams::MessageStreamHub::new);
+    let read_receipt_hub = use_context_provider(crate::views::read_receipts::ReadReceiptHub::new);
     {
         let signal_product_router = runtime_services.signal_product_sink.clone();
         use_hook(move || {
@@ -576,6 +577,7 @@ fn AppBootstrap() -> Element {
                 signal_products::AppSignalProductSink::new(
                     call_signal_hub,
                     message_stream_hub,
+                    read_receipt_hub,
                     base_url,
                     token,
                     account_did,

@@ -42,11 +42,10 @@
 use arkret_sdk::identity::{AcceptedDidBinding, BindingInvalidation};
 use arkret_sdk::{Did, TypedTrustDomainId};
 
+use super::*;
 #[cfg(test)]
 use crate::identity::did_binding::InksonDidBindingStore;
 use crate::identity::did_binding::MAX_PERSISTED_DID_BINDINGS;
-
-use super::*;
 
 impl LocalStateStore {
     /// Persisted accepted bindings for the **active account only**.
@@ -239,17 +238,26 @@ impl LocalStateStore {
 /// selector constrains at least the DID, so no event ever produces a
 /// catch-all wipe.
 ///
+/// Every kind below is a **registered** `event_kind_registry` entry. A kind that
+/// is not in that registry can never appear on the wire, so matching one would
+/// be dead code that also hides the registered kind it was standing in for.
+///
 /// | event class | wire kinds | selector |
 /// | --- | --- | --- |
-/// | key rotation | `ak.cross_signing.reset`, `ak.identity.key.rotate`, `ak.did.key.rotate` | DID (+ `verification_method` when the event names one) |
-/// | deactivation | `ak.did.deactivate`, `ak.identity.deactivate`, `ak.account.deactivate` | DID |
-/// | device / agent epoch | `ak.device.revoke`, `ak.device.authorize`, `ak.device.generation.advance`, `ak.agent.signer.epoch`, `ak.agent.signer.revoke` | DID + `device_signer` / `agent_signer` purpose |
-/// | service / controller delegation | `ak.did.service.update`, `ak.service.delegation.update`, `ak.did.controller.update` | DID + `service` / `controller` purpose |
-/// | policy change | `ak.realm.policy.update`, `ak.identity.policy.update`, `ak.did.policy.update` | DID |
+/// | key rotation | `ak.cross_signing.reset`, `ak.cross_signing.publish` | DID (+ `verification_method` when the event names one) |
+/// | deactivation | `ak.account.status` | DID |
+/// | device epoch / list | `ak.device.revoke`, `ak.device.authorize`, `ak.device.reanchor`, `ak.device.list_update` | DID + `device_signer` purpose |
+/// | agent signer epoch | `ak.agent.key.authorize`, `ak.agent.key.revoke` | DID + `agent_signer` purpose |
+/// | DID policy change | `ak.sovereign.did_policy` | DID |
 ///
 /// Purpose narrowing matters: a device revoke must not evict the `Principal`
-/// acceptance that the member list renders from, and a service delegation
-/// change must not evict a device-signer acceptance.
+/// acceptance that the member list renders from, and an agent signer epoch must
+/// not evict a device-signer acceptance.
+///
+/// Service endpoint / controller delegation changes have **no** wire event kind:
+/// they are `did:webvh` history changes and reach a client through document
+/// resolution, not through a Realm projection, so this table has no row for
+/// them.
 pub(crate) fn binding_invalidations_for_event(
     kind: &str,
     did: &Did,
@@ -263,69 +271,60 @@ pub(crate) fn binding_invalidations_for_event(
         // A rotation invalidates every acceptance of this DID: the document
         // digest the bindings pin is now superseded. When the event names the
         // rotated key, narrow to it so unrelated keys of the same DID survive.
-        "ak.cross_signing.reset" | "ak.identity.key.rotate" | "ak.did.key.rotate" => {
-            match verification_method {
-                Some(method) => vec![base.with_verification_method(method.clone())],
-                None => vec![base],
-            }
-        }
+        "ak.cross_signing.reset" | "ak.cross_signing.publish" => match verification_method {
+            Some(method) => vec![base.with_verification_method(method.clone())],
+            None => vec![base],
+        },
         // --- deactivation -------------------------------------------------
-        // Terminal: nothing about this DID stays accepted, for any purpose.
-        "ak.did.deactivate" | "ak.identity.deactivate" | "ak.account.deactivate" => vec![base],
-        // --- device / agent signer epoch ----------------------------------
-        "ak.device.revoke" | "ak.device.authorize" | "ak.device.generation.advance" => {
+        // `deactivated` is terminal and cascades to every device, KeyPackage and
+        // session of the account (`account-lifecycle.md` §7.1), so no acceptance
+        // of this DID survives, for any purpose. The selector is taken for every
+        // status transition rather than only for `deactivated`: the payload is
+        // not in scope here and re-accepting is the cheap side.
+        "ak.account.status" => vec![base],
+        // --- device epoch / list ------------------------------------------
+        "ak.device.revoke"
+        | "ak.device.authorize"
+        | "ak.device.reanchor"
+        | "ak.device.list_update" => {
             vec![base.with_purpose(Purpose::DeviceSigner)]
         }
-        "ak.agent.signer.epoch" | "ak.agent.signer.revoke" => {
+        // --- agent signer epoch -------------------------------------------
+        "ak.agent.key.authorize" | "ak.agent.key.revoke" => {
             vec![base.with_purpose(Purpose::AgentSigner)]
         }
-        // --- service / controller delegation ------------------------------
-        "ak.did.service.update" | "ak.service.delegation.update" => vec![
-            base.clone().with_purpose(Purpose::Service),
-            base.with_purpose(Purpose::PrincipalServiceEndpoint),
-        ],
-        "ak.did.controller.update" => vec![base.with_purpose(Purpose::Controller)],
-        // --- policy change ------------------------------------------------
+        // --- DID policy change --------------------------------------------
         // The policy digest is part of the store key, so a *local* policy
         // revision already orphans old entries. A remotely announced policy
         // change still has to drop this DID's acceptances explicitly.
-        "ak.realm.policy.update" | "ak.identity.policy.update" | "ak.did.policy.update" => {
-            vec![base]
-        }
+        "ak.sovereign.did_policy" => vec![base],
         _ => Vec::new(),
     }
 }
 
-/// Whether `kind` is one of the five invalidating event classes.
+/// Whether `kind` is one of the invalidating event classes above.
 pub(crate) fn is_binding_invalidating_kind(kind: &str) -> bool {
     matches!(
         kind,
         "ak.cross_signing.reset"
-            | "ak.identity.key.rotate"
-            | "ak.did.key.rotate"
-            | "ak.did.deactivate"
-            | "ak.identity.deactivate"
-            | "ak.account.deactivate"
+            | "ak.cross_signing.publish"
+            | "ak.account.status"
             | "ak.device.revoke"
             | "ak.device.authorize"
-            | "ak.device.generation.advance"
-            | "ak.agent.signer.epoch"
-            | "ak.agent.signer.revoke"
-            | "ak.did.service.update"
-            | "ak.service.delegation.update"
-            | "ak.did.controller.update"
-            | "ak.realm.policy.update"
-            | "ak.identity.policy.update"
-            | "ak.did.policy.update"
+            | "ak.device.reanchor"
+            | "ak.device.list_update"
+            | "ak.agent.key.authorize"
+            | "ak.agent.key.revoke"
+            | "ak.sovereign.did_policy"
     )
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use super::*;
     use arkret_sdk::identity::DidBindingPurpose;
     use chrono::Utc;
 
+    use super::*;
     use crate::identity::did_binding::{DidBindingScope, accept_verified_document};
     use crate::identity::did_resolver::DeploymentProfile;
 
@@ -468,7 +467,7 @@ mod tests {
             record(&scope, alice.as_str(), DidBindingPurpose::DeviceSigner),
             record(&scope, "did:web:bob.example", DidBindingPurpose::Principal),
         ]);
-        let selectors = binding_invalidations_for_event("ak.did.deactivate", &alice, None);
+        let selectors = binding_invalidations_for_event("ak.account.status", &alice, None);
         assert_eq!(store.invalidate_accepted_did_bindings_batch(&selectors), 2);
         let remaining = store.accepted_did_bindings();
         assert_eq!(remaining.len(), 1);
@@ -591,8 +590,9 @@ mod tests {
     /// touches it.
     #[test]
     fn restart_serves_the_accepted_binding_with_zero_resolver_calls() {
-        use arkret_sdk::identity::DidResolver;
         use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use arkret_sdk::identity::DidResolver;
 
         /// Any call to this resolver is a protocol violation for an ordinary
         /// read; it counts the attempt and then fails closed.

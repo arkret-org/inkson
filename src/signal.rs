@@ -27,12 +27,13 @@ static SIGNAL_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomic
 
 /// Next per-process Signal sequence.
 ///
-/// This covers the in-ciphertext `payload_sequence` a receiver dedupes on.
-/// The AEAD `device_nonce_counter` has a stricter contract — `encoding.md`
+/// This covers the in-ciphertext `payload_sequence` a receiver dedupes on, and
+/// nothing else. The AEAD nonce counter has a stricter contract — `encoding.md`
 /// §10.1 requires it to be persisted per `(key_ref, epoch, device_id, purpose,
 /// aead_profile)` and, when the local counter for an epoch cannot be recovered,
-/// requires an MLS Commit to a fresh epoch before sending again. The SDK owns
-/// that counter inside the persisted MLS group snapshot.
+/// requires an MLS Commit to a fresh epoch before sending again — so the SDK
+/// owns it inside the persisted MLS group snapshot and it is never a value this
+/// layer supplies.
 pub fn next_signal_sequence() -> SignalSequence {
     SignalSequence(SIGNAL_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
 }
@@ -295,9 +296,6 @@ pub struct SignalKeyMaterial {
     /// `canonical_id` of the ACTIVE MLS ciphersuite the group at
     /// `group_state_ref` actually negotiated.
     pub aead_profile: String,
-    /// Monotonic per-`(key_ref, epoch, device_id, purpose, aead_profile)`
-    /// counter, the low 8 bytes of the canonical AEAD nonce.
-    pub device_nonce_counter: u64,
 }
 
 /// The single `status=active` MLS ciphersuite of the registry.
@@ -324,7 +322,6 @@ pub fn key_material_for_scope(
     state_store: &crate::state::LocalStateStore,
     realm_id: &str,
     circle_id: Option<&str>,
-    device_nonce_counter: u64,
 ) -> Result<SignalKeyMaterial, SignalRailUnavailable> {
     let unavailable = || SignalRailUnavailable {
         scope: match circle_id {
@@ -349,7 +346,6 @@ pub fn key_material_for_scope(
         aead_profile: sole_active_mls_ciphersuite()
             .ok_or_else(unavailable)?
             .to_owned(),
-        device_nonce_counter,
     })
 }
 
@@ -367,6 +363,59 @@ pub struct SignalRailUnavailable {
     pub scope: String,
 }
 
+/// The scope's persisted MLS group, restored at exactly one epoch.
+///
+/// Both Signal directions need this and neither may improvise it: the AEAD
+/// content key is exported from the group at a single epoch, so opening or
+/// sealing under any other epoch would use a key the scope has already rotated
+/// away from.
+pub struct SignalMlsSession {
+    pub group: arkret_sdk::ArkretMlsGroup,
+    pub snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
+    pub snapshot_secret: String,
+}
+
+/// Restore the scope's persisted MLS group and require it to sit at
+/// `expected_epoch`.
+///
+/// Shared by the send path ([`encrypt_signal_payload_with_store`]) and the
+/// receive path (`signal_receive_engine::MlsSignalDecryptor`) so the epoch gate
+/// and the snapshot-secret lookup exist once. An epoch mismatch is fail-closed
+/// on both sides: a Signal lives at most 120 seconds and the rail tolerates
+/// loss by design (`signal.md` §4.5), so the straddling window is not worth
+/// spending forward secrecy on.
+pub fn restore_signal_mls_session(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    scope_ref: &arkret_sdk::ScopeRef,
+    actor_id: &str,
+    device_id: &str,
+    expected_epoch: u64,
+) -> anyhow::Result<SignalMlsSession> {
+    let realm_id = scope_ref.realm_id().as_str();
+    let circle_id = scope_ref.circle_id().map(arkret_sdk::CircleId::as_str);
+    let snapshot = state_store
+        .mls_snapshot_for_effective_scope(realm_id, circle_id)
+        .ok_or_else(|| anyhow::anyhow!("no accepted MLS group state for the signal scope"))?;
+    if snapshot.epoch != expected_epoch {
+        anyhow::bail!(
+            "signal names MLS epoch {expected_epoch}, but the scope is at epoch {}",
+            snapshot.epoch
+        );
+    }
+    let snapshot_secret =
+        crate::mls::runtime::load_device_snapshot_secret(secure_store, actor_id, device_id)
+            .map_err(|error| anyhow::anyhow!("load Signal MLS snapshot secret: {error}"))?;
+    let group =
+        crate::mls::persistence::restore_envelope(&snapshot, &snapshot_secret, snapshot.epoch)
+            .map_err(|error| anyhow::anyhow!("restore Signal MLS snapshot: {error}"))?;
+    Ok(SignalMlsSession {
+        group,
+        snapshot,
+        snapshot_secret,
+    })
+}
+
 /// Seal a Signal and durably burn the SDK-owned nonce counter before submit.
 pub fn encrypt_signal_payload_with_store(
     state_store: &mut crate::state::LocalStateStore,
@@ -380,25 +429,18 @@ pub fn encrypt_signal_payload_with_store(
         .scope_ref
         .circle_id()
         .map(arkret_sdk::CircleId::as_str);
-    let snapshot = state_store
-        .mls_snapshot_for_effective_scope(realm_id, circle_id)
-        .ok_or_else(|| anyhow::anyhow!("no MLS snapshot for Signal scope"))?;
-    if snapshot.epoch != material.epoch {
-        anyhow::bail!(
-            "Signal material epoch {} disagrees with persisted MLS epoch {}",
-            material.epoch,
-            snapshot.epoch
-        );
-    }
-    let snapshot_secret = crate::mls::runtime::load_device_snapshot_secret(
+    let SignalMlsSession {
+        mut group,
+        snapshot,
+        snapshot_secret,
+    } = restore_signal_mls_session(
+        state_store,
         secure_store,
+        &header.scope_ref,
         header.sender_actor_id.as_str(),
         header.sender_device_id.as_str(),
-    )
-    .map_err(|error| anyhow::anyhow!("load Signal MLS snapshot secret: {error}"))?;
-    let mut group =
-        crate::mls::persistence::restore_envelope(&snapshot, &snapshot_secret, snapshot.epoch)
-            .map_err(|error| anyhow::anyhow!("restore Signal MLS snapshot: {error}"))?;
+        material.epoch,
+    )?;
     let key_ref = arkret_wire::SignalKeyRef {
         algorithm: "MLS-EXPORTER-AEAD".to_owned(),
         group_state_ref: material.group_state_ref.clone(),

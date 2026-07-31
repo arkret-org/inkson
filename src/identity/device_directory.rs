@@ -741,15 +741,46 @@ pub fn verify_persistent_envelope_proofs(
         .any(|proof| verify_proof_value(&without_proofs, proof, &actor_id, public_key))
 }
 
-/// Drop the cached entry for one `(actor, device)` (e.g. after observing a
-/// `ak.device.revoke` locally) so the next lookup re-queries.
-#[cfg(test)]
-pub fn invalidate(actor: &str, device: &str) {
+/// Event kinds whose acceptance moves an actor's device-list or generation
+/// frontier.
+///
+/// `signal.md` §1 forbids continuing to use an older positive cache entry once
+/// such a change has been observed, which the 5-minute
+/// [`POSITIVE_TTL_MS`] alone cannot honour. The set is exactly the registered
+/// `device` category of `contract-registry.json`, minus `ak.device.push_route`
+/// (delivery routing, no signing material) and `ak.key_backup.active_series`
+/// (backup series, no device authorization).
+pub fn is_device_frontier_event_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "ak.device.authorize"
+            | "ak.device.revoke"
+            | "ak.device.reanchor"
+            | "ak.device.list_update"
+            | "ak.cross_signing.publish"
+            | "ak.cross_signing.reset"
+    )
+}
+
+/// Drop every cached entry for one actor after its device frontier moved.
+///
+/// Actor-wide rather than per `(actor, device)`: `ak.device.list_update`,
+/// `ak.device.reanchor` and the cross-signing kinds restate the whole set, and
+/// a generation advance re-scopes every device of that actor at once. Dropping
+/// negative entries too only costs a re-query — a [`CacheLookup::Miss`] still
+/// fails the receive path closed. Returns the number of entries dropped.
+pub fn invalidate_actor(actor: &str) -> usize {
+    let actor = actor.trim();
+    if actor.is_empty() {
+        return 0;
+    }
     let mut guard = match CACHE.write() {
         Ok(g) => g,
         Err(poison) => poison.into_inner(),
     };
-    guard.remove(&cache_key(actor, device));
+    let before = guard.len();
+    guard.retain(|(cached_actor, _), _| cached_actor != actor);
+    before - guard.len()
 }
 
 /// Test-only: seed a positive cache entry so synchronous receiver paths
@@ -804,11 +835,58 @@ mod tests {
             }
             _ => panic!("expected Hit"),
         }
-        invalidate(actor, device);
+        assert_eq!(invalidate_actor(actor), 1);
         assert!(matches!(
             cached_device_signing_key(actor, device),
             CacheLookup::Miss
         ));
+    }
+
+    /// A device-list / generation frontier change restates the whole set, so
+    /// the invalidation is actor-wide and covers negative entries as well
+    /// (`signal.md` §1).
+    #[test]
+    fn a_frontier_change_drops_every_entry_of_that_actor_only() {
+        let actor = "did:web:cache-test-frontier";
+        let other = "did:web:cache-test-untouched";
+        let key = public_key_from_directory_value(&test_did_key(24)).unwrap();
+        store_entry(actor, "ak:device:frontier-1", Some(key.clone()));
+        store_entry(actor, "ak:device:frontier-2", None);
+        store_entry(other, "ak:device:frontier-3", Some(key));
+
+        assert_eq!(invalidate_actor(actor), 2);
+        for device in ["ak:device:frontier-1", "ak:device:frontier-2"] {
+            assert!(matches!(
+                cached_device_signing_key(actor, device),
+                CacheLookup::Miss
+            ));
+        }
+        assert!(matches!(
+            cached_device_signing_key(other, "ak:device:frontier-3"),
+            CacheLookup::Hit(_)
+        ));
+    }
+
+    #[test]
+    fn only_registered_device_frontier_kinds_invalidate() {
+        for kind in [
+            "ak.device.authorize",
+            "ak.device.revoke",
+            "ak.device.reanchor",
+            "ak.device.list_update",
+            "ak.cross_signing.publish",
+            "ak.cross_signing.reset",
+        ] {
+            assert!(is_device_frontier_event_kind(kind), "{kind}");
+        }
+        for kind in [
+            "ak.device.push_route",
+            "ak.key_backup.active_series",
+            "ak.message.create",
+            "",
+        ] {
+            assert!(!is_device_frontier_event_kind(kind), "{kind}");
+        }
     }
 
     #[test]
@@ -820,7 +898,7 @@ mod tests {
             cached_device_signing_key(actor, device),
             CacheLookup::NegativeHit
         ));
-        invalidate(actor, device);
+        invalidate_actor(actor);
     }
 
     const TEST_DEVICE_ID: &str = "ak:device:01904100-0000-7000-8000-000000000001";

@@ -206,12 +206,9 @@ pub(super) fn ChatEffects(
             let device = device.clone();
             // No accepted MLS state for the scope means the Signal capability
             // is withdrawn there. v1 has no plaintext read-receipt branch.
-            let Ok(material) = crate::signal::key_material_for_scope(
-                &state_store.read(),
-                &realm,
-                None,
-                crate::signal::next_signal_sequence().0,
-            ) else {
+            let Ok(material) =
+                crate::signal::key_material_for_scope(&state_store.read(), &realm, None)
+            else {
                 return;
             };
             // The seal burns the SDK-owned nonce counter into the persisted
@@ -320,7 +317,6 @@ pub(super) fn ChatEffects(
                 &state_store_for_presence.read(),
                 &realm,
                 None,
-                crate::signal::next_signal_sequence().0,
             ) else {
                 return;
             };

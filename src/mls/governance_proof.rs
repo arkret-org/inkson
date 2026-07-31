@@ -1337,7 +1337,7 @@ mod tests {
             hlc: arkret_sdk::Hlc::new("01980b44cc01-0000-aabbccdd").unwrap(),
             kind: arkret_sdk::SealKind::Compaction,
         };
-        crate::identity::device_directory::invalidate(controller.as_str(), device);
+        crate::identity::device_directory::invalidate_actor(controller.as_str());
         let key = arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
             bytes: SigningKey::from_bytes(&[91; 32])
                 .verifying_key()
@@ -1375,9 +1375,8 @@ mod tests {
             ),
             crate::identity::device_directory::CacheLookup::Hit(_)
         ));
-        crate::identity::device_directory::invalidate(
+        crate::identity::device_directory::invalidate_actor(
             "did:webvh:zfixture:cold-cache-controller.example",
-            device,
         );
     }
 
