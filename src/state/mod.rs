@@ -66,6 +66,8 @@ mod mls_sidecar;
 pub(crate) use mls_sidecar::PendingHistorySecrets;
 
 mod agent_evidence;
+mod did_bindings;
+pub(crate) use did_bindings::{binding_invalidations_for_event, is_binding_invalidating_kind};
 mod mls_governance;
 
 mod e2ee_secure_cache;

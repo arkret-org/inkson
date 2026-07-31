@@ -479,7 +479,8 @@ async fn drive_security_rotation(
         attestation_digest,
         artifact,
         auth_data: ClientStepAttestationAuthData {
-            verification_method: signer.verification_method().to_owned(),
+            verification_method: arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
+                .map_err(anyhow::Error::msg)?,
             alg: "EdDSA".to_owned(),
             signature: "pending".to_owned(),
             signed_fields: CLIENT_STEP_ATTESTATION_SIGNED_FIELDS

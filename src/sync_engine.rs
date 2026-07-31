@@ -673,6 +673,7 @@ impl AccountPostCommitHook<crate::client_core::InksonAccountTransport> for Inkso
             &api,
             &response,
             self.ctx.did_cache.clone(),
+            self.ctx.state_store.clone(),
             |realm_id| {
                 state_store_for_profiles
                     .read(|store| store.realm_projection_is_minimal_metadata(realm_id))
@@ -682,7 +683,13 @@ impl AccountPostCommitHook<crate::client_core::InksonAccountTransport> for Inkso
         if agent_evidence_changed || device_keys_changed {
             refresh_projection_events_from_sync_response(&response, step.initial, &self.ctx);
         }
-        prefetch_member_identity_proof_keys(&api, &response, self.ctx.did_cache.clone()).await;
+        prefetch_member_identity_proof_keys(
+            &api,
+            &response,
+            self.ctx.did_cache.clone(),
+            self.ctx.state_store.clone(),
+        )
+        .await;
         if let Err(error) = process_to_device_delivery(&api, &response, &self.ctx).await {
             return Ok(self.classify_error(error));
         }
@@ -1490,14 +1497,17 @@ async fn run_idle_self_update_pass(
 /// `is_minimal_metadata_realm(realm_id)` returns true are excluded — content
 /// authorship there is anchored to the active MLS LeafNode and MUST NOT form
 /// a principal-scoped `(actor, device)` `keys/query` pair.
-pub(crate) async fn prefetch_persistent_event_sender_keys(
+pub(crate) async fn prefetch_persistent_event_sender_keys<
+    S: crate::mls::governance_proof::GovernanceProofStateStore,
+>(
     api: &TransportClient,
     response: &AccountSyncStep,
     did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
+    state_store: S,
     is_minimal_metadata_realm: impl Fn(&str) -> bool,
 ) -> bool {
     let pairs = collect_persistent_proof_sender_devices(response, &is_minimal_metadata_realm);
-    prefetch_persistent_event_sender_key_pairs(api, pairs, did_cache).await
+    prefetch_persistent_event_sender_key_pairs(api, pairs, did_cache, state_store).await
 }
 
 /// MID-5: resolve the authoritative device signing key for every
@@ -1506,16 +1516,25 @@ pub(crate) async fn prefetch_persistent_event_sender_keys(
 /// verifier (which is cache-only and fail-closed) can validate the proofs. The
 /// `(actor, device)` pair is derived from each proof's `verification_method`
 /// (`did:method:identifier#device`); the controller MUST be the asserting actor.
-async fn prefetch_member_identity_proof_keys(
+async fn prefetch_member_identity_proof_keys<
+    S: crate::mls::governance_proof::GovernanceProofStateStore,
+>(
     api: &TransportClient,
     response: &AccountSyncStep,
     did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
+    state_store: S,
 ) -> bool {
     let mut pairs = BTreeSet::<(String, String)>::new();
     for body in response.realm_projections.values() {
         collect_member_identity_proof_devices_from_value(body, 0, &mut pairs);
     }
-    prefetch_persistent_event_sender_key_pairs(api, pairs.into_iter().collect(), did_cache).await
+    prefetch_persistent_event_sender_key_pairs(
+        api,
+        pairs.into_iter().collect(),
+        did_cache,
+        state_store,
+    )
+    .await
 }
 
 /// Recursively scan a projection `Value` for `ak.member.identity.update`
@@ -1573,34 +1592,56 @@ fn split_verification_method(verification_method: &str) -> Option<(String, Strin
     Some((controller.to_owned(), device.to_owned()))
 }
 
-pub(crate) async fn prefetch_persistent_event_sender_keys_from_values(
+pub(crate) async fn prefetch_persistent_event_sender_keys_from_values<
+    S: crate::mls::governance_proof::GovernanceProofStateStore,
+>(
     api: &TransportClient,
     values: &[Value],
     did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
+    state_store: S,
 ) -> bool {
     let mut pairs = BTreeSet::<(String, String)>::new();
     for value in values {
         collect_proof_sender_devices_from_value(value, 0, &mut pairs);
     }
-    prefetch_persistent_event_sender_key_pairs(api, pairs.into_iter().collect(), did_cache).await
+    prefetch_persistent_event_sender_key_pairs(
+        api,
+        pairs.into_iter().collect(),
+        did_cache,
+        state_store,
+    )
+    .await
 }
 
 /// Public alias of [`prefetch_persistent_event_sender_key_pairs`] for callers
 /// outside the persistent-event projection path (e.g. the history-share install
 /// loop priming `ak.realm_key.share` sender device keys before SEC-02
 /// fail-closed verification).
-pub(crate) async fn prefetch_device_key_pairs(
+pub(crate) async fn prefetch_device_key_pairs<
+    S: crate::mls::governance_proof::GovernanceProofStateStore,
+>(
     api: &TransportClient,
     pairs: Vec<(String, String)>,
     did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
+    state_store: S,
 ) -> bool {
-    prefetch_persistent_event_sender_key_pairs(api, pairs, did_cache).await
+    prefetch_persistent_event_sender_key_pairs(api, pairs, did_cache, state_store).await
 }
 
-async fn prefetch_persistent_event_sender_key_pairs(
+/// DID-P2-B: `state_store` is the durable accepted-binding handle.
+///
+/// This is the ordinary sync/render device-key path, so it is exactly the path
+/// the "restart ⇒ resolver network delta 0" criterion is about. The anchor is
+/// hydrated from the persisted bindings before it resolves anything and its
+/// acceptances are written back afterwards; a DID that was accepted before the
+/// restart is served from local state and never reaches the network.
+async fn prefetch_persistent_event_sender_key_pairs<
+    S: crate::mls::governance_proof::GovernanceProofStateStore,
+>(
     api: &TransportClient,
     pairs: Vec<(String, String)>,
     did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
+    state_store: S,
 ) -> bool {
     if pairs.is_empty() {
         return false;
@@ -1619,12 +1660,32 @@ async fn prefetch_persistent_event_sender_key_pairs(
     }
 
     let did_cache = did_cache;
-    let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
+    // Fail closed: without a canonical policy digest there is no store key to
+    // scope acceptances to, and inventing one would collide two policies onto
+    // one key. Skipping the prefetch only costs a later authority resolution.
+    let binding_scope = match crate::identity::did_binding::DidBindingScope::for_server(
+        crate::identity::did_resolver::DeploymentProfile::PersonalNode,
+        api.base_url().as_str(),
+    ) {
+        Ok(scope) => scope,
+        Err(error) => {
+            tracing::warn!(%error, "skipping device-key prefetch: resolver policy digest failed");
+            return false;
+        }
+    };
+    let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_persisted_bindings(
         crate::identity::did_resolver::DeploymentProfile::PersonalNode,
         did_cache.get(),
+        binding_scope,
+        arkret_sdk::identity::DidBindingPurpose::DeviceSigner,
+        state_store.with_read(crate::state::LocalStateStore::accepted_did_bindings),
     );
     crate::identity::device_directory::refresh_device_keys(api, &anchor, &missing).await;
-    did_cache.set(anchor.into_cache());
+    let (cache, records) = anchor.into_cache_and_bindings();
+    did_cache.set(cache);
+    if let Some(records) = records {
+        state_store.with_write(|store| store.store_accepted_did_bindings(records));
+    }
     true
 }
 
@@ -1794,11 +1855,26 @@ pub fn apply_response(
     // the related actor DID so the next authority resolution (`resolve_with_cache`)
     // walks the resolver chain instead of trusting a stale cache entry (old key
     // set). Keep this separate from the state-store write callback.
+    //
+    // DID-P2-B extends this from two coarse event kinds to the five classes
+    // §4 lists (rotation / deactivation / device-agent epoch / service-
+    // controller delegation / policy change), and routes them at two
+    // granularities: the DID-keyed session cache gets the DID, the durable
+    // binding store gets the precise six-dimension selectors.
+    let mut binding_selectors: Vec<arkret_sdk::identity::BindingInvalidation> = Vec::new();
     did_cache.update(|cache| {
         for body in response.realm_projections.values() {
-            invalidate_cache_for_revocation_events(cache, body);
+            for (did, selectors) in collect_binding_invalidations(body) {
+                cache.invalidate(&did);
+                binding_selectors.extend(selectors);
+            }
         }
     });
+    if !binding_selectors.is_empty() {
+        state_store.write(|store| {
+            store.invalidate_accepted_did_bindings_batch(&binding_selectors);
+        });
+    }
 
     if response_revokes_local_device(response, &account_did, &ctx.device_id) {
         state_store.write(|store| store.clear_device_scoped());
@@ -2562,18 +2638,42 @@ fn ingest_member_identity_events_from_projection(
 ///
 /// TRUST-CACHE boundary: this only clears cache entries so the next resolution
 /// walks the authority chain again; it does not replace authority validation.
+#[cfg(test)]
 fn invalidate_cache_for_revocation_events(
     cache: &mut arkret_sdk::identity::DidResolutionCache,
     body: &Value,
 ) {
-    /// Return whether the event kind is reset / revoke.
-    fn is_revocation_kind(event: &Value) -> bool {
-        let kind = event
+    for (did, _) in collect_binding_invalidations(body) {
+        cache.invalidate(&did);
+    }
+}
+
+/// DID-P2-B step 4: derive the precise binding invalidations implied by one
+/// Realm projection `body`.
+///
+/// Returns `(actor DID, selectors)` pairs. The DID drives the coarse
+/// session-cache eviction (`DidResolutionCache` is keyed by DID and can express
+/// nothing finer); the selectors drive the persisted binding store, where the
+/// SDK's six-dimension conjunctive [`arkret_sdk::identity::BindingInvalidation`]
+/// keeps a device revoke from evicting a `Principal` acceptance and keeps one
+/// trust domain's rotation from touching another's.
+///
+/// The event-kind → selector mapping lives in
+/// [`crate::state::binding_invalidations_for_event`] so the table and its tests
+/// sit next to the store they act on. This function only handles *finding* the
+/// events in the two projection shapes inkson receives.
+fn collect_binding_invalidations(
+    body: &Value,
+) -> Vec<(
+    arkret_sdk::Did,
+    Vec<arkret_sdk::identity::BindingInvalidation>,
+)> {
+    fn event_kind(event: &Value) -> &str {
+        event
             .get("kind")
             .and_then(Value::as_str)
             .or_else(|| event.get("type").and_then(Value::as_str))
-            .unwrap_or("");
-        kind == "ak.cross_signing.reset" || kind == "ak.device.revoke"
+            .unwrap_or("")
     }
 
     /// Read the actor DID string from the event, falling back to the roster entry.
@@ -2586,27 +2686,53 @@ fn invalidate_cache_for_revocation_events(
         from(event).or_else(|| fallback.and_then(from))
     }
 
-    /// Invalidate for a batch of events when kind matches and DID syntax is valid.
-    fn invalidate_from_events(
-        cache: &mut arkret_sdk::identity::DidResolutionCache,
+    /// The concrete rotated key, when the event names one. Absent → the whole
+    /// DID is invalidated rather than one key, which is the conservative side.
+    fn verification_method(event: &Value) -> Option<arkret_sdk::DidUrl> {
+        let raw = event
+            .get("verification_method")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                event
+                    .pointer("/content/verification_method")
+                    .and_then(Value::as_str)
+            })?;
+        arkret_sdk::DidUrl::new(raw.to_owned()).ok()
+    }
+
+    fn collect_from_events(
+        out: &mut Vec<(
+            arkret_sdk::Did,
+            Vec<arkret_sdk::identity::BindingInvalidation>,
+        )>,
         events: &[Value],
         fallback: Option<&Value>,
     ) {
         for event in events {
-            if !is_revocation_kind(event) {
+            let kind = event_kind(event);
+            if !crate::state::is_binding_invalidating_kind(kind) {
                 continue;
             }
-            if let Some(did_str) = actor_id_str(event, fallback)
-                && let Ok(did) = arkret_sdk::Did::new(did_str.to_owned())
-            {
-                cache.invalidate(&did);
-            }
+            // Invalid DID syntax is skipped: this hook must not panic, and a
+            // malformed identity event is not authority to evict anything.
+            let Some(did) = actor_id_str(event, fallback)
+                .and_then(|value| arkret_sdk::Did::new(value.to_owned()).ok())
+            else {
+                continue;
+            };
+            let selectors = crate::state::binding_invalidations_for_event(
+                kind,
+                &did,
+                verification_method(event).as_ref(),
+            );
+            out.push((did, selectors));
         }
     }
 
+    let mut out = Vec::new();
     // Scan the canonical top-level `state[]` event log.
     let state_events = sync_realm_state_events(body);
-    invalidate_from_events(cache, &state_events, None);
+    collect_from_events(&mut out, &state_events, None);
 
     // Inline `identity_events[]` on each member roster entry.
     for source in [
@@ -2621,10 +2747,11 @@ fn invalidate_cache_for_revocation_events(
         };
         for entry in items {
             if let Some(events) = entry.get("identity_events").and_then(Value::as_array) {
-                invalidate_from_events(cache, events, Some(entry));
+                collect_from_events(&mut out, events, Some(entry));
             }
         }
     }
+    out
 }
 
 fn apply_notification_projection(

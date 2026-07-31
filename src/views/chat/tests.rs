@@ -312,7 +312,10 @@ fn sign_chat_fixture(value: &mut Value) {
             let mut proof = arkret_sdk::Proof {
                 kind: "detached_jws".to_owned(),
                 alg: signer.algorithm().to_owned(),
-                verification_method: signer.verification_method().to_owned(),
+                verification_method: arkret_sdk::DidUrl::new(
+                    signer.verification_method().to_owned(),
+                )
+                .unwrap(),
                 event_digest: arkret_sdk::Hash::new(event_digest).unwrap(),
                 created_at: chrono::DateTime::parse_from_rfc3339("2026-07-10T00:00:00.000Z")
                     .unwrap()

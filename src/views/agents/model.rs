@@ -470,10 +470,13 @@ pub fn build_requested_scope_disclosure_for_pairing(
     )?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("no active device signer is available"))?;
-    let verification_method = signer
-        .device_id()
-        .map(|device_id| format!("{}#{device_id}", controller_id.as_str()))
-        .unwrap_or_else(|| signer.verification_method().to_owned());
+    let verification_method = arkret_sdk::DidUrl::new(
+        signer
+            .device_id()
+            .map(|device_id| format!("{}#{device_id}", controller_id.as_str()))
+            .unwrap_or_else(|| signer.verification_method().to_owned()),
+    )
+    .map_err(|error| anyhow::anyhow!("agent disclosure verification method is invalid: {error}"))?;
     let issued_at = Utc::now();
     let mut disclosure = AgentRequestedScopeDisclosure {
         schema: arkret_sdk::AGENT_REQUESTED_SCOPE_DISCLOSURE_SCHEMA.to_owned(),

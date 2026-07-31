@@ -620,6 +620,7 @@ pub(super) fn ChatEffects(
                         &api,
                         &sync,
                         crate::app::runtime_adapter::value_cell(did_cache),
+                        state_store,
                         |realm_id| {
                             state_store
                                 .read()
@@ -683,6 +684,7 @@ pub(super) fn ChatEffects(
                             &api,
                             &backfill_events,
                             crate::app::runtime_adapter::value_cell(did_cache),
+                            state_store,
                         )
                         .await;
                     }

@@ -350,7 +350,8 @@ mod tests {
                 .with_timezone(&chrono::Utc),
             expires_at: None,
             proof: MemberIdentityProof {
-                verification_method: format!("{actor_id}#{device_id}"),
+                verification_method: arkret_sdk::DidUrl::new(format!("{actor_id}#{device_id}"))
+                    .unwrap(),
                 signature_algorithm: MemberIdentitySignatureAlgorithm::Ed25519,
                 payload_digest: arkret_sdk::Hash::new(
                     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
@@ -508,7 +509,8 @@ mod tests {
             asserted_at: chrono::Utc::now(),
             expires_at: None,
             proof: MemberIdentityProof {
-                verification_method: "did:web:alice.example#key-1".to_owned(),
+                verification_method: arkret_sdk::DidUrl::new("did:web:alice.example#key-1")
+                    .unwrap(),
                 signature_algorithm: MemberIdentitySignatureAlgorithm::Ed25519,
                 payload_digest: arkret_sdk::Hash::new(
                     "sha256:0000000000000000000000000000000000000000000000000000000000000000",

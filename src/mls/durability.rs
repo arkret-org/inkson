@@ -166,10 +166,7 @@ pub fn seal_history_secrets(
         share_kind: arkret_sdk::RealmKeyShareClass::RealmRecoveryKey,
         recipient_principal_id: recovery_key.principal_id.clone(),
         target: arkret_sdk::RealmKeyShareTarget::RealmRecoveryKey {
-            recipient_verification_method: arkret_sdk::DidUrl::new(
-                recovery_key.verification_method.clone(),
-            )
-            .map_err(|reason| format!("invalid RRK verification method: {reason}"))?,
+            recipient_verification_method: recovery_key.verification_method.clone(),
             recovery_recipient_id: arkret_sdk::NonEmptyString::new(
                 recovery_key.recipient_id.clone(),
             )
@@ -458,7 +455,10 @@ mod tests {
         RealmRecoveryRecipient {
             recipient_id: "acme-org-rrk-1".to_owned(),
             principal_id: Did::new("did:web:acme.example").unwrap(),
-            verification_method: "did:web:acme.example#realm-history-recovery-1".to_owned(),
+            verification_method: arkret_sdk::DidUrl::new(
+                "did:web:acme.example#realm-history-recovery-1",
+            )
+            .unwrap(),
             controller_organization: None,
         }
     }

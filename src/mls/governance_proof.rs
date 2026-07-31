@@ -294,9 +294,27 @@ pub(crate) async fn fetch_verify_and_cache_proof_bundle<S: GovernanceProofStateS
     }
     let trusted_anchor = request.trusted_anchor_seal_id.clone();
 
-    let authority = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
+    // DID-P2-B: reuse the account-level accepted-binding set instead of a
+    // throw-away `DidResolutionCache::default()`.
+    //
+    // The previous code built an empty cache here and never called
+    // `into_cache()`, so every DID this function resolved was discarded when
+    // `authority` dropped — a governance-proof verification could not benefit
+    // from, or contribute to, any other resolution in the app. The state store
+    // is already threaded in as `S: GovernanceProofStateStore` (it owns the
+    // trusted-anchor pin below), so the binding handle comes from there and no
+    // call-site signature changes.
+    let binding_scope = crate::identity::did_binding::DidBindingScope::for_server(
+        crate::identity::did_resolver::DeploymentProfile::PersonalNode,
+        api.base_url().as_str(),
+    )
+    .map_err(|error| format!("resolver policy digest: {error}"))?;
+    let authority = crate::identity::did_resolver::ResolverDidAnchor::from_persisted_bindings(
         crate::identity::did_resolver::DeploymentProfile::PersonalNode,
         arkret_sdk::identity::DidResolutionCache::default(),
+        binding_scope,
+        arkret_sdk::identity::DidBindingPurpose::DeviceSigner,
+        state_store.with_read(crate::state::LocalStateStore::accepted_did_bindings),
     );
     let mut resolver = StaticProofDidResolver::default();
     for did in authority_proof_signer_dids(&bundle)? {
@@ -339,6 +357,11 @@ pub(crate) async fn fetch_verify_and_cache_proof_bundle<S: GovernanceProofStateS
         }
     }
     verify_proof_bundle(request, &bundle, &trusted_anchor, &resolver)?;
+    // Persist whatever this verification accepted so the next boot (and every
+    // other authority call site) reuses it instead of resolving again.
+    if let (_, Some(records)) = authority.into_cache_and_bindings() {
+        state_store.with_write(|store| store.store_accepted_did_bindings(records));
+    }
     state_store.with_write(|store| {
         if existing_pin.is_none() {
             store.pin_mls_governance_anchor(
@@ -578,26 +601,55 @@ where
 /// Agent PCR frontier receipt. Frontier reads are valid outside the sync loop,
 /// so they must not depend on an unrelated sync pass having warmed the global
 /// device-directory cache first.
-pub(crate) async fn prefetch_managed_agent_pcr_seal_head_device_key(
+/// DID-P2-B: `state_store` is the app-level accepted-binding handle.
+///
+/// It replaces the throw-away `DidResolutionCache::default()` this function
+/// used to build. Frontier reads happen outside the sync loop, so without a
+/// durable handle every call re-resolved the controller DID from scratch and
+/// then discarded the result when the local `authority` dropped. The parameter
+/// is threaded down from the UI call sites rather than read from a global, so
+/// the account whose bindings are consulted is always the one the caller means.
+pub(crate) async fn prefetch_managed_agent_pcr_seal_head_device_key<
+    S: GovernanceProofStateStore,
+>(
     http: &arkret_sdk::http_client::Client,
     seal: &Seal,
     controller: &arkret_sdk::Did,
+    state_store: S,
 ) -> anyhow::Result<()> {
-    let authority = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
+    let binding_scope = crate::identity::did_binding::DidBindingScope::for_server(
+        crate::identity::did_resolver::DeploymentProfile::PersonalNode,
+        http.base_url().as_str(),
+    )
+    .map_err(|error| anyhow::anyhow!("resolver policy digest: {error}"))?;
+    let authority = crate::identity::did_resolver::ResolverDidAnchor::from_persisted_bindings(
         crate::identity::did_resolver::DeploymentProfile::PersonalNode,
         arkret_sdk::identity::DidResolutionCache::default(),
+        binding_scope,
+        arkret_sdk::identity::DidBindingPurpose::DeviceSigner,
+        state_store.with_read(crate::state::LocalStateStore::accepted_did_bindings),
     );
-    ensure_managed_agent_pcr_seal_head_device_key_with(
-        seal,
-        controller,
-        |actor, device| async move {
-            crate::identity::device_directory::resolve_device_signing_key_with_http(
-                http, &authority, &actor, &device,
-            )
-            .await
-        },
-    )
-    .await
+    let result = {
+        let authority = &authority;
+        ensure_managed_agent_pcr_seal_head_device_key_with(
+            seal,
+            controller,
+            |actor, device| async move {
+                crate::identity::device_directory::resolve_device_signing_key_with_http(
+                    http, authority, &actor, &device,
+                )
+                .await
+            },
+        )
+        .await
+    };
+    // Persist whatever was accepted even when the verdict below fails: an
+    // acceptance is a completed authority verification and re-doing it on the
+    // next attempt would be a gratuitous extra network call.
+    if let (_, Some(records)) = authority.into_cache_and_bindings() {
+        state_store.with_write(|store| store.store_accepted_did_bindings(records));
+    }
+    result
 }
 
 fn delegated_device_verification_method_pair(
@@ -890,7 +942,7 @@ mod tests {
         arkret_sdk::Proof {
             kind: "detached_jws".to_owned(),
             alg: "EdDSA".to_owned(),
-            verification_method: verification_method.to_owned(),
+            verification_method: arkret_sdk::DidUrl::new(verification_method.to_owned()).unwrap(),
             event_digest: arkret_sdk::Hash::new(
                 "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                     .to_owned(),
@@ -1019,10 +1071,12 @@ mod tests {
             previous_digest_algorithm: None,
             notary_signature: arkret_sdk::NotarySig::Single(arkret_wire::PayloadSignature {
                 alg: "EdDSA".to_owned(),
-                verification_method: format!("{controller}#{device}"),
+                verification_method: arkret_sdk::DidUrl::new(format!("{controller}#{device}"))
+                    .unwrap(),
                 payload_digest: root,
                 created_at: chrono::Utc::now(),
                 jws: "AAAA..BBBB".to_owned(),
+                extra: Default::default(),
             }),
             sealed_at: chrono::Utc::now(),
             hlc: arkret_sdk::Hlc::new("01980b44cc01-0000-aabbccdd").unwrap(),
@@ -1134,10 +1188,12 @@ mod tests {
                 previous_digest_algorithm: None,
                 notary_signature: arkret_sdk::NotarySig::Single(arkret_wire::PayloadSignature {
                     alg: "EdDSA".to_owned(),
-                    verification_method: "did:web:notary.example#key-1".to_owned(),
+                    verification_method: arkret_sdk::DidUrl::new("did:web:notary.example#key-1")
+                        .unwrap(),
                     payload_digest: root,
                     created_at: chrono::Utc::now(),
                     jws: "AAAA.BBBB.CCCC".to_owned(),
+                    extra: Default::default(),
                 }),
                 sealed_at: chrono::Utc::now(),
                 hlc: arkret_sdk::Hlc::new("01980b44cc01-0000-aabbccdd").unwrap(),
@@ -1341,12 +1397,22 @@ where
                 ))
             });
     }
-    arkret_identity::jws::verify_jws_ed25519(
+    // DID-P2-B / spec §3+§6: this is ordinary per-signature verification, not an
+    // authority trigger. `resolver` here is the in-memory
+    // [`StaticProofDidResolver`] the caller pre-populated with already
+    // authority-resolved documents, so the correct API is the pinned-document
+    // verifier, which holds no network resolver at all and additionally
+    // compares `document.id == issuer` (the deprecated `verify_jws_ed25519`
+    // accepted an `issuer` argument and never compared it).
+    let document = resolver.resolve_did(&signer).map_err(|error| {
+        arkret_sdk::Error::Protocol(format!("Seal signer document unavailable: {error}"))
+    })?;
+    arkret_identity::verify_jws_with_document(
         &canonical_bytes,
         &signature.jws,
         &signature.verification_method,
-        signer.as_str(),
-        resolver,
+        &signer,
+        &document,
     )
     .map_err(|error| arkret_sdk::Error::Protocol(format!("Seal signature invalid: {error}")))
 }

@@ -1525,10 +1525,21 @@ pub fn build_signed_device_verification_proof(
         .map_err(|error| anyhow::anyhow!("serialize device verification proof: {error}"))?;
     let canonical = arkret_sdk::canonical::canonical_json_bytes(&transcript)
         .map_err(|error| anyhow::anyhow!("canonicalize device verification proof: {error}"))?;
-    let verification_method = format!("{}#inkson-device", from_device);
+    // §2.2: a verification method is a DID URL rooted at the *signer's DID*.
+    //
+    // This used to emit `{from_device}#inkson-device`, i.e. an `ak:device:…`
+    // typed id in the DID position — structurally not a DID URL, and something
+    // no receiver could ever resolve. The `DidUrl` migration turned that into a
+    // hard error, which is the correct outcome: the fixture/producer is fixed
+    // rather than the type loosened. The replacement is the actor-scoped device
+    // reference every other inkson proof already uses (`<actor DID>#<device
+    // id>`); the `ak:device:` colons are inside the fragment, which the
+    // `[A-Za-z0-9._:-]` fragment charset permits.
+    let verification_method = arkret_sdk::DidUrl::new(format!("{from_actor}#{from_device}"))
+        .map_err(|error| anyhow::anyhow!("device verification method is invalid: {error}"))?;
     let signer = arkret_sdk::signatures::proof::Ed25519DetachedJwsSigner::new(
         signing_key.clone(),
-        verification_method.clone(),
+        verification_method.as_str().to_owned(),
     );
     let payload_digest = arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&canonical))
         .map_err(|error| anyhow::anyhow!("hash device verification proof: {error}"))?;

@@ -297,7 +297,7 @@ fn publish_content_from_directory(
 /// (the v1 core signature algorithm) when the directory omits it.
 fn trust_binding_from_directory(binding: &QueryDeviceCrossSigningBinding) -> DeviceTrustBinding {
     DeviceTrustBinding {
-        verification_method: binding.verification_method.as_str().to_owned(),
+        verification_method: binding.verification_method.clone(),
         alg: binding
             .alg
             .as_ref()
@@ -1073,7 +1073,7 @@ mod tests {
                 public_key: NonEmptyString::new(ssk_multibase.clone()).unwrap(),
                 key_format: KeyFormat::Multibase,
                 binding: SubordinateSignedKeyBinding {
-                    verification_method: NonEmptyString::new(psk_kid.clone()).unwrap(),
+                    verification_method: arkret_sdk::DidUrl::new(psk_kid.clone()).unwrap(),
                     alg: NonEmptyString::new("EdDSA").unwrap(),
                     signature: NonEmptyString::new("pending").unwrap(),
                 },
@@ -1085,7 +1085,7 @@ mod tests {
                 public_key: NonEmptyString::new(format!("{ssk_multibase}USK")).unwrap(),
                 key_format: KeyFormat::Multibase,
                 binding: SubordinateSignedKeyBinding {
-                    verification_method: NonEmptyString::new(psk_kid.clone()).unwrap(),
+                    verification_method: arkret_sdk::DidUrl::new(psk_kid.clone()).unwrap(),
                     alg: NonEmptyString::new("EdDSA").unwrap(),
                     signature: NonEmptyString::new("unused").unwrap(),
                 },

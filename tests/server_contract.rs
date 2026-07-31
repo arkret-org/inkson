@@ -80,7 +80,7 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
             witness_attestations: Vec::new(),
         },
         signature: arkret_sdk::DetachedJwsProof::eddsa(
-            "did:web:server.local#snapshot".to_owned(),
+            arkret_sdk::DidUrl::new("did:web:server.local#snapshot").unwrap(),
             snapshot_contract_hash(2),
             created_at,
             "header..signature".to_owned(),

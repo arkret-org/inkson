@@ -142,7 +142,8 @@ pub fn build_invite_claim_body(
     let proof_bytes = proof_body.canonical_bytes()?;
     let sig = subject_signing_key.sign(&proof_bytes);
     let subject_proof = arkret_sdk::InviteSubjectProof::new(
-        subject_verification_method,
+        arkret_sdk::DidUrl::new(subject_verification_method.to_owned())
+            .map_err(|error| anyhow::anyhow!("invite subject verification method: {error}"))?,
         proof_body.transcript_digest()?,
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sig.to_bytes()),
     );

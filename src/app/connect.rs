@@ -788,6 +788,16 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         // the freshly-wiped state.
                         let mut sync_generation = ctx.sync_generation;
                         sync_generation.set(sync_generation() + 1);
+                        // DID-P2-B step 5: the persisted accepted bindings are
+                        // scoped structurally (they live in the incoming
+                        // account's own entry, which `switch_active_account`
+                        // just loaded), but the *in-memory* session cache is
+                        // not — it is one signal shared by whoever is signed
+                        // in. Clearing it here is what stops the previous
+                        // principal's resolved documents from being reused for
+                        // the new one.
+                        let mut session_did_cache = ctx.did_cache;
+                        session_did_cache.write().clear();
                     } else {
                         // No previous identity to displace — just record
                         // who the scope now belongs to (don't wipe: a
@@ -800,6 +810,31 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     // login for a different identity is recognised and the
                     // stale scope is reset.
                     state_store.write().switch_active_account(&canonical_actor);
+                }
+                // DID-P2-B step 5, trust-domain half: an account entry can be
+                // re-pointed at a different Principal Server. A binding accepted
+                // against the previous deployment must not authorize anything
+                // under the new one, so anything outside the *current* trust
+                // domain is dropped now rather than left to expire. Same-domain
+                // reconnects are a no-op (nothing to remove ⇒ no flush).
+                {
+                    // Only the trust-domain half is needed here, and it is
+                    // infallible: a resolver-policy digest failure must not be
+                    // able to skip this cross-deployment cleanup.
+                    let trust_domain =
+                        crate::identity::did_binding::DidBindingScope::trust_domain_for(&base);
+                    let dropped = state_store
+                        .write()
+                        .clear_accepted_did_bindings_outside_trust_domain(&trust_domain);
+                    if dropped > 0 {
+                        tracing::info!(
+                            dropped,
+                            trust_domain = %trust_domain,
+                            "dropped accepted DID bindings from a previous trust domain"
+                        );
+                        let mut session_did_cache = ctx.did_cache;
+                        session_did_cache.write().clear();
+                    }
                 }
                 if let Some(personal_handle) = account_personal_handle {
                     account_primary_handle.set(personal_handle.clone());
@@ -1493,6 +1528,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             &authed,
                             &sync,
                             super::runtime_adapter::value_cell(ctx.did_cache),
+                            state_store,
                             |realm_id| {
                                 state_store
                                     .read()

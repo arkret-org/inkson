@@ -437,7 +437,11 @@ pub fn sign_recovery_session_lease(
     let mut proof = PayloadProof {
         kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
         alg: "EdDSA".to_owned(),
-        verification_method: issuer_verification_method.to_owned(),
+        // §2.2: validate the caller-supplied issuer method into a typed DID URL.
+        verification_method: arkret_sdk::DidUrl::new(issuer_verification_method.to_owned())
+            .map_err(|error| {
+                anyhow::anyhow!("recovery lease issuer verification method is invalid: {error}")
+            })?,
         payload_digest: lease.lease_digest()?,
         created_at: issued_at,
         domain: None,
@@ -628,7 +632,9 @@ pub fn author_recovery_publication_submission(
     let mut proof = PayloadProof {
         kind: proof_kind::DETACHED_JWS.to_owned(),
         alg: "EdDSA".to_owned(),
-        verification_method: verification_method.to_owned(),
+        verification_method: arkret_sdk::DidUrl::new(verification_method.to_owned()).map_err(
+            |error| anyhow::anyhow!("recovery authority verification method is invalid: {error}"),
+        )?,
         payload_digest: lease.lease_digest()?,
         created_at: issued_at,
         domain: None,

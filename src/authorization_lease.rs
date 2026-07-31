@@ -414,7 +414,7 @@ fn local_pcr_member_receipt(
     let cache_key = (
         proposal_digest.to_string(),
         authority_set_ref.to_string(),
-        verification_method.clone(),
+        verification_method.as_str().to_owned(),
     );
     if let Some(receipt) = local_proposal_receipts()
         .lock()
@@ -575,7 +575,8 @@ pub(crate) mod test_support {
         arkret_sdk::PayloadProof {
             kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
             alg: "EdDSA".to_owned(),
-            verification_method: verification_method.to_owned(),
+            verification_method: arkret_sdk::DidUrl::new(verification_method.to_owned())
+                .expect("test verification method is a DID URL"),
             payload_digest,
             created_at,
             domain: None,

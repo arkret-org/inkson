@@ -87,6 +87,23 @@ pub fn trust_cache_state(entry: Option<&CachedResolution>, now: DateTime<Utc>) -
     }
 }
 
+/// DID-P2-B: map a durable accepted-binding status onto the same three display
+/// states. `Deactivated` / `Quarantined` are terminal and deliberately render
+/// as `Degraded` — the client holds evidence, but evidence that says "do not
+/// trust", which for a display badge is the same instruction as "no evidence".
+pub fn trust_cache_state_from_binding(
+    status: Option<arkret_sdk::identity::DidBindingStatus>,
+) -> TrustCacheState {
+    use arkret_sdk::identity::DidBindingStatus;
+    match status {
+        Some(DidBindingStatus::Active) => TrustCacheState::Cached,
+        Some(DidBindingStatus::Stale) => TrustCacheState::Stale,
+        Some(DidBindingStatus::Deactivated | DidBindingStatus::Quarantined) | None => {
+            TrustCacheState::Degraded
+        }
+    }
+}
+
 /// Y3 display component: render a `cached` / `stale` / `degraded` badge based
 /// on the `peer` DID's state in the session-scoped DID resolution cache.
 ///
@@ -98,12 +115,29 @@ pub fn trust_cache_state(entry: Option<&CachedResolution>, now: DateTime<Utc>) -
 #[component]
 pub fn TrustCacheBadge(peer: String) -> Element {
     let cache = use_context::<Signal<DidResolutionCache>>();
+    let state_store = crate::app::SessionContext::get().state_store;
     let now = Utc::now();
     let state = match arkret_sdk::Did::new(peer.clone()) {
         Ok(did) => {
-            let guard = cache.read();
-            let entry = guard.peek(&did);
-            trust_cache_state(entry.as_ref(), now)
+            let session_state = {
+                let guard = cache.read();
+                let entry = guard.peek(&did);
+                trust_cache_state(entry.as_ref(), now)
+            };
+            // DID-P2-B step 3: on a session-cache miss, fall back to the
+            // **durable** accepted binding before degrading. A restart empties
+            // the session cache but not the binding store, and the badge must
+            // not claim "no local evidence" while the client is in fact still
+            // verifying signatures against a pinned document. Both reads are
+            // local and read-only (`peek` does not evict, the binding probe
+            // does not clone documents); neither can reach a resolver.
+            if session_state == TrustCacheState::Degraded {
+                trust_cache_state_from_binding(
+                    state_store.read().accepted_did_binding_status(&did, now),
+                )
+            } else {
+                session_state
+            }
         }
         Err(_) => TrustCacheState::Degraded,
     };

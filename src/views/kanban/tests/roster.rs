@@ -148,7 +148,7 @@ fn member_display_label_uses_identity_name_when_no_verified_handle_exists() {
         asserted_at: chrono::Utc::now(),
         expires_at: None,
         proof: MemberIdentityProof {
-            verification_method: "did:web:acme.example#key-1".to_owned(),
+            verification_method: arkret_sdk::DidUrl::new("did:web:acme.example#key-1").unwrap(),
             signature_algorithm: MemberIdentitySignatureAlgorithm::Ed25519,
             payload_digest: arkret_sdk::Hash::new(
                 "sha256:0000000000000000000000000000000000000000000000000000000000000000",

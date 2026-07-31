@@ -374,7 +374,10 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         not_before: None,
         expires_at: None,
         auth_data: RecoveryPolicyAuthData {
-            verification_method: verification_method.to_owned(),
+            // §2.2: the policy auth_data verification method is a DID URL.
+            verification_method: arkret_sdk::DidUrl::new(verification_method.to_owned()).map_err(
+                |error| anyhow::anyhow!("recovery policy verification method is invalid: {error}"),
+            )?,
             signature_algorithm: "Ed25519".to_owned(),
             signature: String::new(),
             signed_fields: RECOVERY_POLICY_SIGNED_FIELDS

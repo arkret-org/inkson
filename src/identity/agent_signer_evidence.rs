@@ -303,12 +303,11 @@ async fn verify_for_cache(
     let mut seal_signer_public_keys = BTreeMap::new();
     for seal in &evidence.seal_lineage {
         for method in seal_signature_methods(seal)? {
-            if seal_signer_public_keys.contains_key(&method) {
+            if seal_signer_public_keys.contains_key(method.as_str()) {
                 continue;
             }
-            let method_typed = DidUrl::new(method.clone()).ok()?;
-            let key = resolve_method_key(http, anchor, &method_typed).await?;
-            seal_signer_public_keys.insert(method, key);
+            let key = resolve_method_key(http, anchor, &method).await?;
+            seal_signer_public_keys.insert(method.as_str().to_owned(), key);
         }
     }
     let entry = CachedAgentSignerEvidence {
@@ -411,7 +410,7 @@ fn verify_seal_lineage_signatures(entry: &CachedAgentSignerEvidence) -> bool {
                 && allowed.contains(&controller)
                 && entry
                     .seal_signer_public_keys
-                    .get(&signature.verification_method)
+                    .get(signature.verification_method.as_str())
                     .is_some_and(|key| {
                         Ed25519DetachedJwsVerifier::new()
                             .verify_detached_jws(&signature.jws, &canonical, key)
@@ -421,7 +420,10 @@ fn verify_seal_lineage_signatures(entry: &CachedAgentSignerEvidence) -> bool {
     })
 }
 
-fn seal_signature_methods(seal: &arkret_sdk::Seal) -> Option<Vec<String>> {
+/// The Seal's notary verification methods, typed. `PayloadSignature`'s
+/// `verification_method` is a `DidUrl` since the P0-A migration, so no
+/// re-parsing is needed here.
+fn seal_signature_methods(seal: &arkret_sdk::Seal) -> Option<Vec<DidUrl>> {
     match &seal.notary_signature {
         NotarySig::Single(signature) => Some(vec![signature.verification_method.clone()]),
         NotarySig::Multi(multi) if !multi.signatures.is_empty() => Some(

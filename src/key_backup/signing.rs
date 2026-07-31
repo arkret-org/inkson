@@ -127,7 +127,11 @@ pub fn sign_key_backup_with_active_device_and_trust_anchor(
         .map(|principal| signer.verification_method_for_principal(&principal))
         .transpose()
         .map_err(|error| anyhow::anyhow!("key backup principal binding: {error}"))?
-        .unwrap_or_else(|| signer.verification_method().to_owned());
+        .map(Ok)
+        .unwrap_or_else(|| {
+            arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
+                .map_err(|error| anyhow::anyhow!("key backup verification method: {error}"))
+        })?;
     let mut auth = json!({
         "device_id": device_id,
         "verification_method": verification_method,

@@ -98,7 +98,8 @@ fn range_completeness(input: Value) -> Result<Value> {
             .map_err(|error| anyhow::anyhow!("derive fixture completeness root: {error}"))?;
 
     let issuer = arkret_sdk::Did::new("did:web:server.local")?;
-    let verification_method = format!("{issuer}#notary-key");
+    let verification_method = arkret_sdk::DidUrl::new(format!("{issuer}#notary-key"))
+        .map_err(|error| anyhow::anyhow!("fixture verification method: {error}"))?;
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&[0x5a_u8; 32]);
     let signer = Ed25519PayloadSigner::new(
         signing_key.clone(),
@@ -376,11 +377,15 @@ fn proposal_receipt(input: Value) -> Result<Value> {
         authority_set_ref,
         signature: arkret_wire::PayloadSignature {
             alg: "EdDSA".to_owned(),
-            verification_method: signer.verification_method().to_owned(),
+            verification_method: arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
+                .map_err(|error| {
+                anyhow::anyhow!("proposal verification method: {error}")
+            })?,
             payload_digest: arkret_sdk::Hash::new(format!("sha256:{}", "00".repeat(32)))
                 .context("construct proposal placeholder digest")?,
             created_at: received_at,
             jws: String::new(),
+            extra: Default::default(),
         },
     };
     let signing_bytes = member
@@ -433,7 +438,10 @@ fn ingress_receipts(input: Value) -> Result<Value> {
         let mut proof = arkret_wire::PayloadProof {
             kind: "detached_jws".to_owned(),
             alg: "EdDSA".to_owned(),
-            verification_method: signer.verification_method().to_owned(),
+            verification_method: arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
+                .map_err(|error| {
+                anyhow::anyhow!("ingress receipt verification method: {error}")
+            })?,
             payload_digest: receipt.receipt_digest().context("digest ingress receipt")?,
             created_at: received_at,
             domain: None,

@@ -505,7 +505,11 @@ impl CrossSigningExecutor {
                 public_key: non_empty(encode_ed25519_did_key_multibase(&ssk.verifying_key()))?,
                 key_format: KeyFormat::Multibase,
                 binding: SubordinateSignedKeyBinding {
-                    verification_method: non_empty(psk_kid.clone())?,
+                    // §2.2 / P0-A: this is a full DID URL (the PSK kid resolves
+                    // to a `verificationMethod` on the principal DID head), so
+                    // it is typed `DidUrl`, not a bare non-empty string.
+                    verification_method: arkret_sdk::DidUrl::new(psk_kid.clone())
+                        .map_err(anyhow::Error::msg)?,
                     alg: non_empty("EdDSA")?,
                     signature: non_empty("pending")?,
                 },
@@ -516,7 +520,8 @@ impl CrossSigningExecutor {
                 public_key: non_empty(encode_ed25519_did_key_multibase(&usk.verifying_key()))?,
                 key_format: KeyFormat::Multibase,
                 binding: SubordinateSignedKeyBinding {
-                    verification_method: non_empty(psk_kid)?,
+                    verification_method: arkret_sdk::DidUrl::new(psk_kid)
+                        .map_err(anyhow::Error::msg)?,
                     alg: non_empty("EdDSA")?,
                     signature: non_empty("pending")?,
                 },

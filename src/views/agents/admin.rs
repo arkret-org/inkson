@@ -666,6 +666,12 @@ fn spawn_set_agent_enabled(
     mut agents: Signal<Vec<AgentView>>,
     mut last_op_status: Signal<String>,
     owned_agents_rev: Signal<u64>,
+    // DID-P2-B: the account-level accepted-binding handle, captured during
+    // render and moved into the spawned future. Passed explicitly (not read
+    // from a context/global inside the future) because hooks must not run
+    // there and because the acceptance must be filed under the account the
+    // caller meant.
+    state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
 ) {
     spawn(async move {
         if id.is_empty() {
@@ -744,6 +750,7 @@ fn spawn_set_agent_enabled(
                 &controller_did,
                 &device_id,
                 key_state.principal_control_realm_id.as_str(),
+                state_store,
             )
             .await
             {
@@ -792,6 +799,7 @@ fn spawn_set_agent_enabled(
                 &controller_did,
                 &device_id,
                 key_state.principal_control_realm_id.as_str(),
+                state_store,
             )
             .await
             .err()
@@ -838,6 +846,8 @@ fn spawn_deactivate_agent(
     mut deactivate_dialog_open: Signal<bool>,
     mut deactivate_confirm: Signal<String>,
     owned_agents_rev: Signal<u64>,
+    // DID-P2-B: see `spawn_set_agent_enabled`.
+    state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
 ) {
     spawn(async move {
         if id.is_empty() {
@@ -985,6 +995,7 @@ fn spawn_deactivate_agent(
                 &controller_did,
                 &device_id,
                 key_state.principal_control_realm_id.as_str(),
+                state_store,
             )
             .await
             .err()
@@ -2299,6 +2310,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                         agents,
                                                         last_op_status,
                                                         owned_agents_rev,
+                                                        state_store,
                                                     );
                                                 }
                                             },
@@ -2417,6 +2429,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                                     agents,
                                                                     last_op_status,
                                                                     owned_agents_rev,
+                                                                    state_store,
                                                                 );
                                                             }
                                                         },
@@ -2513,6 +2526,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                         deactivate_dialog_open,
                                                         deactivate_confirm,
                                                         owned_agents_rev,
+                                                        state_store,
                                                     );
                                                 }
                                             },

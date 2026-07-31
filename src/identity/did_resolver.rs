@@ -157,11 +157,29 @@ pub fn verify_principal(
 /// [`crate::identity::device_directory::DidAnchor`] trait can still back-fill resolved
 /// documents across the native `Send` transport boundary; callers reclaim the (possibly grown)
 /// cache via [`ResolverDidAnchor::into_cache`] to persist it back into their signal.
+/// DID-P2-B: the durable half of the anchor's trust state.
+///
+/// `bindings` is the persisted, purpose- and trust-domain-scoped
+/// [`crate::identity::did_binding::InksonDidBindingStore`]; `scope` records
+/// which trust domain / policy digest this anchor's acceptances belong to and
+/// `purpose` which single purpose they authorize. Together they turn the
+/// anchor's DID resolutions into reusable bindings that survive a restart,
+/// instead of dying with the login-session `DidResolutionCache`.
+struct AnchorBindingState {
+    scope: crate::identity::did_binding::DidBindingScope,
+    purpose: arkret_sdk::identity::DidBindingPurpose,
+    store: crate::identity::did_binding::InksonDidBindingStore,
+}
+
 pub struct ResolverDidAnchor {
     profile: DeploymentProfile,
     web: std::sync::Mutex<DidWebResolver>,
     webvh: std::sync::Mutex<DidWebvhResolver>,
     cache: std::sync::Mutex<DidResolutionCache>,
+    /// `None` for legacy / test anchors that have no durable binding scope.
+    /// Production call sites build the anchor with
+    /// [`Self::from_persisted_bindings`] so every acceptance is recorded.
+    bindings: Option<AnchorBindingState>,
 }
 
 impl ResolverDidAnchor {
@@ -169,12 +187,47 @@ impl ResolverDidAnchor {
     /// `did:webvh` resolvers and a snapshot of `cache`. Document / key-log
     /// evidence is ingested lazily via [`Self::ensure_actor_document`]; absent
     /// evidence, resolution fails closed and the device key is rejected.
+    ///
+    /// This constructor carries **no durable binding scope**: resolutions are
+    /// reusable only for the lifetime of the returned anchor. Prefer
+    /// [`Self::from_persisted_bindings`] on any path that has access to the
+    /// account's local state.
     pub fn from_profile(profile: DeploymentProfile, cache: DidResolutionCache) -> Self {
         Self {
             profile,
             web: std::sync::Mutex::new(DidWebResolver::new()),
             webvh: std::sync::Mutex::new(DidWebvhResolver::new()),
             cache: std::sync::Mutex::new(cache),
+            bindings: None,
+        }
+    }
+
+    /// DID-P2-B: build an anchor whose resolutions are recorded as durable
+    /// accepted bindings under `scope` / `purpose`.
+    ///
+    /// `records` come from the active account's persisted state; the caller
+    /// writes the (possibly grown) set back with
+    /// [`Self::into_cache_and_bindings`]. A binding hit short-circuits
+    /// [`crate::identity::device_directory::DidAnchor::resolve_did_document`]
+    /// with **zero network work** — including across restarts, which is the
+    /// P2-B acceptance criterion.
+    pub fn from_persisted_bindings(
+        profile: DeploymentProfile,
+        cache: DidResolutionCache,
+        scope: crate::identity::did_binding::DidBindingScope,
+        purpose: arkret_sdk::identity::DidBindingPurpose,
+        records: Vec<arkret_sdk::identity::AcceptedDidBinding>,
+    ) -> Self {
+        Self {
+            profile,
+            web: std::sync::Mutex::new(DidWebResolver::new()),
+            webvh: std::sync::Mutex::new(DidWebvhResolver::new()),
+            cache: std::sync::Mutex::new(cache),
+            bindings: Some(AnchorBindingState {
+                scope,
+                purpose,
+                store: crate::identity::did_binding::InksonDidBindingStore::hydrate(records),
+            }),
         }
     }
 
@@ -184,6 +237,62 @@ impl ResolverDidAnchor {
         self.cache
             .into_inner()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Reclaim both the session cache and the durable binding records.
+    ///
+    /// Returns `None` for the binding half when the anchor was built without a
+    /// scope ([`Self::from_profile`]).
+    pub fn into_cache_and_bindings(
+        self,
+    ) -> (
+        DidResolutionCache,
+        Option<Vec<arkret_sdk::identity::AcceptedDidBinding>>,
+    ) {
+        let records = self
+            .bindings
+            .as_ref()
+            .map(|state| state.store.persisted_records());
+        let cache = self
+            .cache
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (cache, records)
+    }
+
+    /// Zero-network lookup of an already-accepted binding for `actor`.
+    ///
+    /// Ordinary paths (sync ingest, render, member list) call this and stop
+    /// here on a hit. `did-usage-and-verification.md` §5: a `Stale` binding is
+    /// still a hit — TTL expiry alone MUST NOT escalate an ordinary read into
+    /// an online resolution.
+    fn accepted_document(&self, actor: &Did, now: DateTime<Utc>) -> Option<DidDocument> {
+        let state = self.bindings.as_ref()?;
+        let key = state.scope.key(actor, state.purpose, None, None);
+        state
+            .store
+            .ordinary_lookup(&key, now)
+            .map(|accepted| accepted.document().clone())
+    }
+
+    /// Record a freshly chain-verified `document` as an accepted binding.
+    fn record_accepted_document(&self, document: &DidDocument, now: DateTime<Utc>) {
+        let Some(state) = self.bindings.as_ref() else {
+            return;
+        };
+        match crate::identity::did_binding::accept_verified_document(
+            &state.scope,
+            state.purpose,
+            None,
+            document,
+            now,
+        ) {
+            // Not recording is the fail-safe outcome: the next authority caller
+            // simply resolves again. Recording a binding under a fallback digest
+            // would be the unsafe one.
+            Err(error) => tracing::warn!(%error, did = %document.id, "not recording a DID binding"),
+            Ok(accepted) => state.store.accept(accepted),
+        }
     }
 
     /// Rebuild the composite resolver chain from the policy for this profile
@@ -351,12 +460,25 @@ impl ResolverDidAnchor {
 
 impl crate::identity::device_directory::DidAnchor for ResolverDidAnchor {
     fn resolve_did_document(&self, actor: &Did) -> Option<DidDocument> {
+        let now = Utc::now();
+        // DID-P2-B step 1: a durable accepted binding is a zero-network hit and
+        // is checked before the session cache, because it is the layer that
+        // survives a restart.
+        if let Some(document) = self.accepted_document(actor, now) {
+            return Some(document);
+        }
         let resolver = self.current_resolver();
-        let cache = self
-            .cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        resolve_with_cache(&resolver, &cache, actor, Utc::now()).ok()
+        let document = {
+            let cache = self
+                .cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            resolve_with_cache(&resolver, &cache, actor, now).ok()?
+        };
+        // Step 2: the chain verified policy + document id, so this resolution is
+        // an acceptance — record it so the next boot does not repeat it.
+        self.record_accepted_document(&document, now);
+        Some(document)
     }
 
     fn ensure_actor_document<'a>(

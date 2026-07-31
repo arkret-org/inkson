@@ -51,7 +51,7 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use arkret_sdk::signatures::proof::{EventSigner as SdkEventSigner, ProofType};
-use arkret_sdk::{Did, Hash, PayloadSigner, WireError};
+use arkret_sdk::{Did, DidUrl, Hash, PayloadSigner, WireError};
 use arkret_wire::PayloadSignature;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -141,7 +141,10 @@ pub struct InksonEventSigner {
 struct InksonPayloadSignerAdapter<'a> {
     owner: &'a InksonEventSigner,
     did: Did,
-    verification_method: String,
+    /// Typed DID URL: `arkret_wire::PayloadSigner::verification_method_id`
+    /// returns `&DidUrl`, so the adapter owns the validated form rather than
+    /// re-parsing a `String` on every call.
+    verification_method: DidUrl,
 }
 
 impl PayloadSigner for InksonPayloadSignerAdapter<'_> {
@@ -149,7 +152,7 @@ impl PayloadSigner for InksonPayloadSignerAdapter<'_> {
         &self.did
     }
 
-    fn verification_method_id(&self) -> &str {
+    fn verification_method_id(&self) -> &DidUrl {
         &self.verification_method
     }
 
@@ -172,6 +175,9 @@ impl PayloadSigner for InksonPayloadSignerAdapter<'_> {
                 URL_SAFE_NO_PAD.encode(header),
                 URL_SAFE_NO_PAD.encode(signature)
             ),
+            // `seal.schema.json#/$defs/signature` is `additionalProperties:
+            // true`; inkson emits no extension members.
+            extra: Default::default(),
         })
     }
 }
@@ -282,15 +288,7 @@ impl InksonEventSigner {
         &self,
         principal_id: &Did,
     ) -> Result<impl PayloadSigner + '_, EventSignerError> {
-        let verification_method = match self.device_id.as_deref() {
-            Some(device_id) => format!("{principal_id}#{device_id}"),
-            None if self.signer_did == principal_id.as_str() => self.verification_method.clone(),
-            None => {
-                return Err(EventSignerError::Encoding(format!(
-                    "principal-bound signing for {principal_id} requires a bound device_id"
-                )));
-            }
-        };
+        let verification_method = self.verification_method_for_principal(principal_id)?;
         Ok(InksonPayloadSignerAdapter {
             owner: self,
             did: principal_id.clone(),
@@ -298,19 +296,26 @@ impl InksonEventSigner {
         })
     }
 
+    /// The principal-scoped verification method, as a validated
+    /// [`DidUrl`]. Both shapes it can produce carry a `#fragment`, so the
+    /// conversion only fails on genuinely malformed identifiers — which is a
+    /// real error, not a case to paper over with a `String`.
     pub(crate) fn verification_method_for_principal(
         &self,
         principal_id: &Did,
-    ) -> Result<String, EventSignerError> {
-        Ok(match self.device_id.as_deref() {
+    ) -> Result<DidUrl, EventSignerError> {
+        let raw = match self.device_id.as_deref() {
             Some(device_id) => format!("{principal_id}#{device_id}"),
-            None if self.signer_did == principal_id.as_str() => self.verification_method.clone(),
+            None if self.signer_did == principal_id.as_str() => {
+                self.verification_method.as_str().to_owned()
+            }
             None => {
                 return Err(EventSignerError::Encoding(format!(
                     "principal-bound signing for {principal_id} requires a bound device_id"
                 )));
             }
-        })
+        };
+        DidUrl::new(raw).map_err(|error| EventSignerError::Encoding(error.to_string()))
     }
 
     /// `"ed25519"` for the in-process seed signer, `"external"` for
@@ -353,7 +358,7 @@ impl InksonEventSigner {
         event: &mut arkret_sdk::Event,
         context: EventProofContext,
     ) -> Result<(), EventSignerError> {
-        let verification_method = self.verification_method_for_sdk_event(event);
+        let verification_method = self.verification_method_for_sdk_event(event)?;
         let proof_audience = context
             .audience
             .as_ref()
@@ -407,7 +412,8 @@ impl InksonEventSigner {
         let signer = InksonPayloadSignerAdapter {
             owner: self,
             did: create.actor_id.clone(),
-            verification_method: format!("{}#{device_id}", create.actor_id),
+            verification_method: DidUrl::new(format!("{}#{device_id}", create.actor_id))
+                .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
         };
         arkret_bootstrap::build_self_principal_bootstrap_seal(
             create,
@@ -438,7 +444,8 @@ impl InksonEventSigner {
         let signer = InksonPayloadSignerAdapter {
             owner: self,
             did: create.actor_id.clone(),
-            verification_method: format!("{}#{device_id}", create.actor_id),
+            verification_method: DidUrl::new(format!("{}#{device_id}", create.actor_id))
+                .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
         };
         arkret_bootstrap::build_self_principal_first_successor_seal(
             create,
@@ -471,7 +478,8 @@ impl InksonEventSigner {
         let signer = InksonPayloadSignerAdapter {
             owner: self,
             did: principal.actor_id.clone(),
-            verification_method: format!("{}#{device_id}", principal.actor_id),
+            verification_method: DidUrl::new(format!("{}#{device_id}", principal.actor_id))
+                .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
         };
         arkret_bootstrap::build_self_principal_linear_successor_seal(
             events,
@@ -501,7 +509,8 @@ impl InksonEventSigner {
         let signer = InksonPayloadSignerAdapter {
             owner: self,
             did: controller_id.clone(),
-            verification_method: format!("{controller_id}#{device_id}"),
+            verification_method: DidUrl::new(format!("{controller_id}#{device_id}"))
+                .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
         };
         arkret_bootstrap::build_managed_agent_pcr_event_seal(
             events,
@@ -580,21 +589,26 @@ impl InksonEventSigner {
         Ok(format!("{header_b64}..{sig_b64}"))
     }
 
-    pub(crate) fn verification_method_for_sdk_event(&self, event: &arkret_sdk::Event) -> String {
+    pub(crate) fn verification_method_for_sdk_event(
+        &self,
+        event: &arkret_sdk::Event,
+    ) -> Result<DidUrl, EventSignerError> {
         let controller = event
             .executed_by
             .as_ref()
             .map(|did| did.as_str())
             .unwrap_or_else(|| event.actor_id.as_str());
-        if let Some(device_id) = self.device_id.as_deref() {
-            return format!("{controller}#{device_id}");
-        }
-        let stored_controller = verification_method_controller(&self.verification_method);
-        if stored_controller == controller {
-            self.verification_method.clone()
+        let raw = if let Some(device_id) = self.device_id.as_deref() {
+            format!("{controller}#{device_id}")
         } else {
-            format!("{controller}#device")
-        }
+            let stored_controller = verification_method_controller(&self.verification_method);
+            if stored_controller == controller {
+                self.verification_method.as_str().to_owned()
+            } else {
+                format!("{controller}#device")
+            }
+        };
+        DidUrl::new(raw).map_err(|error| EventSignerError::Encoding(error.to_string()))
     }
 
     /// The [`ProofType`] tag every proof emitted by this signer carries.
@@ -1129,7 +1143,7 @@ mod tests {
 
         assert_eq!(adapter.signer_did(), &controller);
         assert_eq!(
-            adapter.verification_method_id(),
+            adapter.verification_method_id().as_str(),
             format!("{controller}#{TEST_DEVICE_ID}")
         );
     }

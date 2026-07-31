@@ -632,6 +632,35 @@ async fn verify_active_series_range_completeness(
     ))
 }
 
+/// The DID URL shapes that may authorize an `ak.key_backup.active_series`
+/// record for one `(actor_id, device_id, device_signing_key)` triple.
+///
+/// `did-usage-and-verification.md` §2.2: a verification method is a **DID URL**
+/// and MUST carry a `#fragment`; a bare DID is never one. Exactly three shapes
+/// are accepted:
+///
+/// - `<actor_id>#<device_id>` — the actor-scoped device reference;
+/// - `<device_signing_key>#<multikey>` — the self-describing `did:key` form;
+/// - `<device_signing_key>#device` — the same key with the conventional fragment.
+///
+/// A fourth arm that accepted the **bare** `device_signing_key`
+/// (`did:key:z6Mk…`, no fragment) was removed with the `DidUrl` migration.
+/// `KeyBackupActiveSeriesAuthData.verification_method` is now typed `DidUrl`,
+/// which rejects a bare DID at construction, so the arm was unreachable — but
+/// it was also the one arm that contradicted §2.2, and leaving it would have
+/// silently re-widened acceptance if the field were ever loosened again.
+fn active_series_verification_method_matches(
+    verification_method: &str,
+    actor_id: &str,
+    device_id: &str,
+    device_signing_key: &str,
+    multikey: &str,
+) -> bool {
+    verification_method == format!("{actor_id}#{device_id}")
+        || verification_method == format!("{device_signing_key}#{multikey}")
+        || verification_method == format!("{device_signing_key}#device")
+}
+
 fn verify_active_series_record_signature(
     record: &arkret_sdk::KeyBackupActiveSeries,
     keys: &arkret_models_crypto::KeysQueryOutcome,
@@ -676,12 +705,13 @@ fn verify_active_series_record_signature(
         let Some(multikey) = did_key.strip_prefix("did:key:") else {
             continue;
         };
-        let verification_method = record.auth_data.verification_method.as_str();
-        if verification_method != format!("{}#{}", record.actor_id, device_id)
-            && verification_method != did_key
-            && verification_method != format!("{did_key}#{multikey}")
-            && verification_method != format!("{did_key}#device")
-        {
+        if !active_series_verification_method_matches(
+            record.auth_data.verification_method.as_str(),
+            record.actor_id.as_str(),
+            device_id.as_str(),
+            did_key,
+            multikey,
+        ) {
             continue;
         }
         let anchored = match (
@@ -1204,4 +1234,65 @@ pub fn mls_backup_prompt_required(
         crate::mls::runtime::load_account_mls_secret(secure_store, actor_id),
         Ok(Some(_))
     )
+}
+
+#[cfg(test)]
+mod verification_method_shape_tests {
+    use super::active_series_verification_method_matches;
+
+    const ACTOR: &str = "did:webvh:z6mkfixture:alice.example";
+    const DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000001";
+    const DID_KEY: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
+    const MULTIKEY: &str = "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
+
+    #[test]
+    fn accepts_the_three_fragment_bearing_shapes() {
+        for candidate in [
+            format!("{ACTOR}#{DEVICE}"),
+            format!("{DID_KEY}#{MULTIKEY}"),
+            format!("{DID_KEY}#device"),
+        ] {
+            assert!(
+                active_series_verification_method_matches(
+                    &candidate, ACTOR, DEVICE, DID_KEY, MULTIKEY
+                ),
+                "{candidate} must be accepted"
+            );
+        }
+    }
+
+    /// Negative coverage for the removed bare-DID arm
+    /// (`did-usage-and-verification.md` §2.2: a verification method always
+    /// carries a `#fragment`).
+    #[test]
+    fn rejects_the_bare_device_signing_key() {
+        assert!(!active_series_verification_method_matches(
+            DID_KEY, ACTOR, DEVICE, DID_KEY, MULTIKEY
+        ));
+    }
+
+    #[test]
+    fn rejects_the_bare_actor_did_and_empty_fragments() {
+        for candidate in [
+            ACTOR.to_owned(),
+            format!("{ACTOR}#"),
+            format!("{DID_KEY}#"),
+            format!("{ACTOR}#{MULTIKEY}"),
+        ] {
+            assert!(
+                !active_series_verification_method_matches(
+                    &candidate, ACTOR, DEVICE, DID_KEY, MULTIKEY
+                ),
+                "{candidate} must be rejected"
+            );
+        }
+    }
+
+    /// The `DidUrl` type is the first line of defence: a bare DID cannot even
+    /// be constructed as a verification method any more.
+    #[test]
+    fn did_url_itself_rejects_a_bare_did() {
+        assert!(arkret_sdk::DidUrl::new(DID_KEY.to_owned()).is_err());
+        assert!(arkret_sdk::DidUrl::new(format!("{DID_KEY}#device")).is_ok());
+    }
 }

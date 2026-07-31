@@ -92,7 +92,13 @@ fn parse_recipients(raw: &str) -> Result<Vec<RealmRecoveryRecipient>, FormError>
         out.push(RealmRecoveryRecipient {
             recipient_id: fields[0].to_owned(),
             principal_id,
-            verification_method: fields[2].to_owned(),
+            verification_method: arkret_sdk::DidUrl::new(fields[2].to_owned()).map_err(
+                |error| {
+                    FormError::new("realm_admin.durability_err_recipient_verification_method")
+                        .arg("line", (index + 1).to_string())
+                        .arg("error", error.to_owned())
+                },
+            )?,
             controller_organization,
         });
     }

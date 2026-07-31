@@ -987,7 +987,8 @@ mod tests {
         let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
         let seed = 71u8;
         let (mut envelope, _) = sealed_call_signal(seed, actor, device, "invite", 1, json!({}));
-        envelope.proof.verification_method = "did:web:someone-else.example#device".to_owned();
+        envelope.proof.verification_method =
+            arkret_sdk::DidUrl::new("did:web:someone-else.example#device").unwrap();
         let key = pubkey_material(seed);
         assert!(!crate::identity::device_directory::verify_signal_envelope_proof(&envelope, &key));
     }

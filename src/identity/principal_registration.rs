@@ -294,15 +294,21 @@ pub async fn bootstrap_principal(
     )?;
     let root_did =
         arkret_sdk::Did::new(format!("did:key:{}", checkpoint.root_public_key_multibase))?;
+    // §2.2: the signer takes a typed DID URL. The checkpoint stores the
+    // inception draft's value verbatim, so it is validated here rather than
+    // being passed through as an unchecked `String`.
+    let root_verification_method =
+        arkret_sdk::DidUrl::new(checkpoint.root_verification_method.clone())
+            .map_err(anyhow::Error::msg)?;
     let root_signer = arkret_sdk::Ed25519PayloadSigner::from_did_key_seed(
         key_material.root_seed,
         root_did,
-        checkpoint.root_verification_method.clone(),
+        root_verification_method.clone(),
     );
     arkret_sdk::signatures::sign_event(
         &mut create,
         &root_signer,
-        &checkpoint.root_verification_method,
+        &root_verification_method,
         arkret_sdk::signatures::SignEventOptions::new().with_created_at(created_at),
     )?;
 

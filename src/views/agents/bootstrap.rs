@@ -965,16 +965,19 @@ async fn submit_managed_agent_pcr_seal(
 /// Close all currently accepted managed Agent PCR Events into a Seal signed by
 /// the active controller device. The accepted head returned by frontier can
 /// lag the Event log and is the predecessor for the successor authored here.
-pub(crate) async fn ensure_managed_agent_pcr_seal_current(
+pub(crate) async fn ensure_managed_agent_pcr_seal_current<
+    S: crate::mls::governance_proof::GovernanceProofStateStore,
+>(
     submitter: &crate::event_submit::EventSubmitter,
     http: &arkret_sdk::http_client::Client,
     signer: &crate::event_signer::InksonEventSigner,
     controller_id: &arkret_sdk::Did,
     device_id: &str,
     realm_id: &str,
+    state_store: S,
 ) -> anyhow::Result<(arkret_sdk::RealmSealFrontierView, arkret_sdk::Seal)> {
     let current = submitter
-        .events_frontier_managed_agent_seal_head(realm_id, controller_id)
+        .events_frontier_managed_agent_seal_head(realm_id, controller_id, state_store.clone())
         .await;
     if current
         .as_ref()
@@ -1029,7 +1032,7 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current(
 
     let expected = submitted.expect("managed PCR Seal submission branch always returns a Seal");
     let (view, head) = submitter
-        .events_frontier_managed_agent_seal_head(realm_id, controller_id)
+        .events_frontier_managed_agent_seal_head(realm_id, controller_id, state_store)
         .await?;
     if head.id != expected.id
         || head.state_root != expected.state_root
@@ -1116,6 +1119,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
         &controller_did,
         &device_id,
         realm_id,
+        state_store,
     )
     .await?;
     state_store.write().set_realm_seal_view(
@@ -1163,6 +1167,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
             &controller_did,
             &device_id,
             realm_id,
+            state_store,
         )
         .await?
         .0
@@ -1234,6 +1239,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
             &controller_did,
             &device_id,
             realm_id,
+            state_store,
         )
         .await?;
         frontier

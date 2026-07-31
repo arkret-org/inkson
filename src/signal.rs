@@ -458,7 +458,11 @@ pub fn seal_signal_envelope(
     let signer = crate::event_signer::active_signer().ok_or_else(|| {
         anyhow::anyhow!("no active signer configured — cannot send a Signal without a device proof")
     })?;
-    let verification_method = format!("{}#{}", header.sender_actor_id, header.sender_device_id);
+    let verification_method = arkret_sdk::DidUrl::new(format!(
+        "{}#{}",
+        header.sender_actor_id, header.sender_device_id
+    ))
+    .map_err(|error| anyhow::anyhow!("signal proof verification method is invalid: {error}"))?;
     let mut envelope = arkret_wire::SignalEnvelope {
         realm_id: header.scope_ref.realm_id().clone(),
         scope_ref: header.scope_ref,
@@ -544,10 +548,11 @@ pub(crate) mod test_support {
             encrypted_payload: encrypted.clone(),
             proof: arkret_wire::SignalProof {
                 kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
-                verification_method: format!(
+                verification_method: arkret_sdk::DidUrl::new(format!(
                     "{}#{}",
                     header.sender_actor_id, header.sender_device_id
-                ),
+                ))
+                .unwrap(),
                 alg: "EdDSA".to_owned(),
                 envelope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))
                     .unwrap(),
@@ -852,7 +857,8 @@ mod tests {
             encrypted_payload: encrypted.clone(),
             proof: arkret_wire::SignalProof {
                 kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
-                verification_method: format!("{actor_id}#{device_id}"),
+                verification_method: arkret_sdk::DidUrl::new(format!("{actor_id}#{device_id}"))
+                    .unwrap(),
                 alg: "EdDSA".to_owned(),
                 envelope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))
                     .unwrap(),

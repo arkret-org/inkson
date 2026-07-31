@@ -38,7 +38,8 @@ mod device_identity_proof_tests {
         }
         let canonical_bytes = crate::canonical::canonical_json_bytes(&envelope).unwrap();
         let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
-        let verification_method = signer.verification_method().to_owned();
+        let verification_method =
+            arkret_sdk::DidUrl::new(signer.verification_method().to_owned()).unwrap();
         // Build the proof binding via the SDK's authoritative
         // `Proof::canonical_binding_bytes` (which folds in the
         // `context = "ak.event-proof-v1"` domain tag) — the SAME transcript both

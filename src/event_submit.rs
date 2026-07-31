@@ -1250,10 +1250,17 @@ impl EventSubmitter {
 
     /// Return the accepted controller-signed head needed to author the next
     /// managed Agent PCR Seal. The head can intentionally lag accepted Events.
-    pub async fn events_frontier_managed_agent_seal_head(
+    /// DID-P2-B: `state_store` carries the account-level accepted-binding set
+    /// down to the controller-device-key prefetch, so a frontier read outside
+    /// the sync loop reuses (and contributes to) durable bindings instead of
+    /// resolving into a scratch cache that is dropped immediately.
+    pub(crate) async fn events_frontier_managed_agent_seal_head<
+        S: crate::mls::governance_proof::GovernanceProofStateStore,
+    >(
         &self,
         realm_id: &str,
         controller_id: &arkret_sdk::Did,
+        state_store: S,
     ) -> anyhow::Result<(arkret_sdk::RealmSealFrontierView, arkret_sdk::Seal)> {
         let (view, receipts) = self.events_frontier_realm_state(realm_id).await?;
         let receipt = receipts.first().ok_or_else(|| {
@@ -1264,6 +1271,7 @@ impl EventSubmitter {
             &self.http,
             &seal,
             controller_id,
+            state_store,
         )
         .await
         .map_err(|error| {
@@ -2209,7 +2217,7 @@ pub(crate) fn attach_capability_grant_payload_proof_with_signer(
     let mut proof = arkret_sdk::PayloadProof {
         kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
         alg: signer.algorithm().to_owned(),
-        verification_method: signer.verification_method_for_sdk_event(event),
+        verification_method: signer.verification_method_for_sdk_event(event)?,
         payload_digest: grant.payload_digest()?,
         created_at: chrono::DateTime::from_timestamp(event.created_at.timestamp(), 0)
             .ok_or_else(|| anyhow::anyhow!("capability grant proof timestamp is invalid"))?,

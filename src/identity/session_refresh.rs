@@ -662,7 +662,9 @@ fn mint_session_grant_refresh_proof(
     let principal_id = required_trimmed(&grant.principal_id, "principal_id")?;
     let device_id = required_trimmed(&grant.device_id, "device_id")?;
     let audience = required_trimmed(&grant.audience, "audience")?;
-    let verification_method = format!("{principal_id}#{device_id}");
+    // §2.2: the refresh proof's verification method is a DID URL.
+    let verification_method = arkret_sdk::DidUrl::new(format!("{principal_id}#{device_id}"))
+        .map_err(|error| anyhow::anyhow!("soft logout restore verification method: {error}"))?;
     let request_canonical_digest = soft_logout_restore_request_canonical_digest(
         &grant.grant_jwt,
         principal_id,

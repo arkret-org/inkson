@@ -615,15 +615,20 @@ pub(crate) async fn prepare_enrollment_authority_recovery(
             )
             .to_owned(),
     )?;
+    // §2.2: validate the stored root verification method into a typed DID URL
+    // before it crosses into the signer / proof builder.
+    let root_verification_method =
+        arkret_sdk::DidUrl::new(rotation.current_root_verification_method.clone())
+            .map_err(anyhow::Error::msg)?;
     let root_signer = arkret_signatures::Ed25519PayloadSigner::from_did_key_seed(
         root_material.root_seed,
         root_did,
-        rotation.current_root_verification_method.clone(),
+        root_verification_method.clone(),
     );
     arkret_signatures::sign_event(
         &mut reanchor_event,
         &root_signer,
-        &rotation.current_root_verification_method,
+        &root_verification_method,
         arkret_signatures::SignEventOptions::new().with_created_at(not_before),
     )?;
     let reanchor_lease = crate::fresh_device_recovery::sign_recovery_session_lease(

@@ -1024,9 +1024,12 @@ async fn sign_peer_keypackage_claim_authorization(
         .device_authorize_event_id
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("active signing device omits device authorization proof"))?;
-    let verification_method =
-        arkret_sdk::NonEmptyString::new(format!("{}#{}", requester, device_id))
-            .map_err(anyhow::Error::msg)?;
+    // §2.2: the authorization's `verification_method` is a DID URL; the
+    // signature `kid` is a separate non-empty-string field on the wire.
+    let verification_method = arkret_sdk::DidUrl::new(format!("{}#{}", requester, device_id))
+        .map_err(anyhow::Error::msg)?;
+    let signature_kid = arkret_sdk::NonEmptyString::new(verification_method.as_str())
+        .map_err(anyhow::Error::msg)?;
     let signed_at = chrono::Utc::now();
     let mut authorization = arkret_sdk::PeerKeyPackageRequesterAuthorization {
         verification_method: verification_method.clone(),
@@ -1038,7 +1041,7 @@ async fn sign_peer_keypackage_claim_authorization(
         ),
         signed_at,
         signature: arkret_sdk::KeyOperationSignature {
-            kid: verification_method,
+            kid: signature_kid,
             alg: Some(arkret_sdk::NonEmptyString::new("EdDSA").map_err(anyhow::Error::msg)?),
             sig: arkret_sdk::Base64UrlString::new("AA").map_err(anyhow::Error::msg)?,
         },

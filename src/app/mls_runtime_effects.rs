@@ -625,6 +625,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                                     &api,
                                     sender_pairs,
                                     runtime_adapter::value_cell(share_did_cache),
+                                    share_state_store,
                                 )
                                 .await;
                                 Ok::<(), anyhow::Error>(())
@@ -728,6 +729,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                                     request.recipient_device_id.as_str().to_owned(),
                                 )],
                                 runtime_adapter::value_cell(share_did_cache),
+                                share_state_store,
                             )
                             .await;
                             crate::views::realm_admin::share_history_to_requester(
