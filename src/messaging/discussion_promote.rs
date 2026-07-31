@@ -181,7 +181,7 @@ mod tests {
         // Circle-scoped Strand (ops[1]).
         assert_eq!(relation["scope_circle_id"], ids.circle_id);
         assert!(
-            ops[2].payload.get("scope_circle_id").is_none(),
+            !ops[2].payload.contains_key("scope_circle_id"),
             "the flat branch member must not appear beside the object branch"
         );
         assert_eq!(relation["from_ref"], ids.discussion_strand_id);

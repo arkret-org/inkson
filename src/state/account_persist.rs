@@ -1,7 +1,7 @@
 //! Durable account-main-state persistence engine (E2EE-local-state phase 2).
 //!
-//! On wasm the per-account `ClientLocalState` blob is stored in the IndexedDB
-//! + non-extractable SubtleCrypto encrypted entries store
+//! On wasm the per-account `ClientLocalState` blob is stored in the
+//! IndexedDB + non-extractable SubtleCrypto encrypted entries store
 //! (the same `inkson.secret.inkson`/`entries` store the seed-grade secrets
 //! use). The semantic key is unchanged (`inkson.local_state.v1.account.<did>`),
 //! but the physical backend is now the hardened secure store, so the account

@@ -11,6 +11,7 @@
 //! - **Backup history**: summarizes the server-side `ak.schema.key_backup.v1` ciphertext envelopes
 //!   by creation time, emphasizing the latest encrypted backup without exposing per-backup
 //!   controls.
+//!
 //! The Recovery view never persists the Recovery Key itself in plaintext,
 //! encrypted form, or via the private-data path.
 //!

@@ -103,6 +103,10 @@ use model::*;
 use timeline::*;
 use timeline_surface::{ChatTimeline, ChatTimelineContext};
 
+// Invariant assertions: each `expect` message names the check that
+// establishes it a few lines earlier. Rewriting them as `?` would add
+// error paths no caller can reach.
+#[allow(clippy::expect_used)]
 pub(crate) fn capture_chat_feed_scroll_position(realm_id: &str, strand_id: &str) {
     let key = serde_json::to_string(&format!("{realm_id}\u{1f}{strand_id}"))
         .expect("chat scroll key must serialize");
@@ -123,6 +127,10 @@ if (feed && feed.clientHeight > 0) {{
     let _ = document::eval(&script);
 }
 
+// Invariant assertions: each `expect` message names the check that
+// establishes it a few lines earlier. Rewriting them as `?` would add
+// error paths no caller can reach.
+#[allow(clippy::expect_used)]
 pub(crate) fn restore_chat_feed_scroll_position(realm_id: &str, strand_id: &str) {
     let offset_key = format!("{realm_id}\u{1f}{strand_id}");
     let scroll_top = timeline_surface::chat_feed_scroll_offset(&offset_key);
@@ -574,6 +582,10 @@ async fn ensure_owned_agent_sidecar(
     Ok(Some((outcome, view)))
 }
 
+// Invariant assertions: each `expect` message names the check that
+// establishes it a few lines earlier. Rewriting them as `?` would add
+// error paths no caller can reach.
+#[allow(clippy::expect_used)]
 async fn reconcile_sidecar_mls_access(
     base_url: &str,
     api_token: String,
@@ -1176,6 +1188,10 @@ async fn submit_source_routed_sidecar_message(
     Ok(SourceRoutedSidecarMessageOutcome { event_id })
 }
 
+// Invariant assertions: each `expect` message names the check that
+// establishes it a few lines earlier. Rewriting them as `?` would add
+// error paths no caller can reach.
+#[allow(clippy::expect_used)]
 async fn ensure_sidecar_mls_bootstrap(
     base_url: &str,
     api_token: String,
@@ -1310,20 +1326,20 @@ async fn ensure_sidecar_mls_bootstrap(
         state_store
             .write()
             .clear_pending_mls_genesis_event_for_effective_scope(&realm_id, Some(&circle_id));
-        let event = crate::mls::group_events::build_creator_mls_genesis_event_for_effective_scope_with_binding(
-                &mut state_store.write(),
-                &realm_id,
-                Some(&circle_id),
-                controller_id,
-                device_id,
-                Some(&summary),
-                Some(binding),
-            )
-            .map_err(anyhow::Error::msg)?
-            .ok_or_else(|| {
-                anyhow::anyhow!("Sidecar MLS genesis is not accepted but local state marks it emitted")
-            })?;
-        event
+
+        crate::mls::group_events::build_creator_mls_genesis_event_for_effective_scope_with_binding(
+            &mut state_store.write(),
+            &realm_id,
+            Some(&circle_id),
+            controller_id,
+            device_id,
+            Some(&summary),
+            Some(binding),
+        )
+        .map_err(anyhow::Error::msg)?
+        .ok_or_else(|| {
+            anyhow::anyhow!("Sidecar MLS genesis is not accepted but local state marks it emitted")
+        })?
     };
     let genesis = if unsigned_or_pending.proofs.is_empty() {
         let event = crate::transport::auth::with_authed_api(

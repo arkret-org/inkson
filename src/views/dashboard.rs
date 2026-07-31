@@ -597,8 +597,7 @@ fn dashboard_notification_summaries(
     let mut notifications = snapshot
         .notification_projection
         .iter()
-        .enumerate()
-        .filter_map(|(_index, value)| {
+        .filter_map(|value| {
             let id = value.notification_id();
             let client_state = snapshot
                 .notification_client_state

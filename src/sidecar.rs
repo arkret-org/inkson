@@ -1120,6 +1120,10 @@ fn refold_sidecar_exchanges_with_decrypt(
     .cache_entries_changed
 }
 
+// Invariant assertions: each `expect` message names the check that
+// establishes it a few lines earlier. Rewriting them as `?` would add
+// error paths no caller can reach.
+#[allow(clippy::expect_used)]
 fn refold_sidecar_exchanges_with_decrypt_report(
     store: &mut crate::state::LocalStateStore,
     controller_id: &str,

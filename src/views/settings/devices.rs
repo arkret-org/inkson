@@ -156,6 +156,10 @@ fn build_pair_payload(
     payload.to_string()
 }
 
+// Invariant assertions: each `expect` message names the check that
+// establishes it a few lines earlier. Rewriting them as `?` would add
+// error paths no caller can reach.
+#[allow(clippy::expect_used)]
 /// Compact base64url handoff token embedded in the pairing QR deep-link.
 /// Mirrors the agent-pairing token (`{"r":request_id,"c":code}`); the resolving
 /// device decodes it and calls `ak.open.device_pairing.query.resolve`.
@@ -171,6 +175,10 @@ fn build_device_pairing_handoff_token(
     arkret_sdk::base64url_encode(canonical)
 }
 
+// Invariant assertions: each `expect` message names the check that
+// establishes it a few lines earlier. Rewriting them as `?` would add
+// error paths no caller can reach.
+#[allow(clippy::expect_used)]
 /// The short HTTPS deep-link the new device renders as its QR. The fragment
 /// carries only the handoff token — never in the query string — so it stays out
 /// of server/proxy logs. Mirrors `build_agent_pairing_deep_link`.

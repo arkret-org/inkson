@@ -3,7 +3,7 @@ use super::*;
 thread_local! {
     static CHAT_FEED_SCROLL_OFFSETS: std::cell::RefCell<
         std::collections::BTreeMap<String, f64>,
-    > = std::cell::RefCell::new(std::collections::BTreeMap::new());
+    > = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
 }
 
 pub(super) fn chat_feed_scroll_offset(key: &str) -> f64 {

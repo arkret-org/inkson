@@ -1015,7 +1015,7 @@ pub(crate) async fn execute_enrollment_authority_recovery(
     let prepared = prepare_enrollment_authority_recovery(
         api,
         principal_server_url,
-        &session,
+        session,
         proof_outcome,
         recovery_words,
         holder.jkt(),
@@ -1161,14 +1161,13 @@ pub(crate) async fn execute_enrollment_authority_recovery(
     }
 
     reject_terminal_recovery_transaction(&transaction, secure_store.as_ref())?;
-    if transaction.state != SecurityTransactionState::Completed {
-        if let Some(retried) = workflow
+    if transaction.state != SecurityTransactionState::Completed
+        && let Some(retried) = workflow
             .retry_byte_identical_pending(&transaction_id)
             .await
             .map_err(anyhow::Error::from)?
-        {
-            transaction = retried;
-        }
+    {
+        transaction = retried;
     }
     if transaction.state != SecurityTransactionState::Completed {
         let signer = crate::event_signer::active_signer()
@@ -1460,14 +1459,13 @@ pub(crate) async fn resume_pending_fresh_device_recovery(
         barrier.wait().await?;
     }
 
-    if transaction.state != SecurityTransactionState::Completed {
-        if let Some(retried) = workflow
+    if transaction.state != SecurityTransactionState::Completed
+        && let Some(retried) = workflow
             .retry_byte_identical_pending(&transaction_id)
             .await
             .map_err(anyhow::Error::from)?
-        {
-            transaction = retried;
-        }
+    {
+        transaction = retried;
     }
     if transaction.state != SecurityTransactionState::Completed {
         let signer = crate::event_signer::active_signer()
@@ -1712,14 +1710,13 @@ pub(crate) async fn execute_cross_signing_recovery(
         barrier.wait().await?;
     }
 
-    if transaction.state != SecurityTransactionState::Completed {
-        if let Some(retried) = workflow
+    if transaction.state != SecurityTransactionState::Completed
+        && let Some(retried) = workflow
             .retry_byte_identical_pending(&transaction_id)
             .await
             .map_err(anyhow::Error::from)?
-        {
-            transaction = retried;
-        }
+    {
+        transaction = retried;
     }
     if transaction.state != SecurityTransactionState::Completed {
         let signer = crate::event_signer::active_signer()

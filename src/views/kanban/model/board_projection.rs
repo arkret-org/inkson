@@ -775,7 +775,7 @@ mod tests {
     #[test]
     fn local_optimistic_card_create_op_projects_into_its_list() {
         let strand = "ak:strand:019f1072-1001-73b2-9c7e-1bb33a924b5c";
-        let ops = vec![
+        let ops = [
             kanban_operations_from_events(&[
                 space_create_event(BOARD, "board", "Board1", None),
                 space_create_event(LIST_A, "list", "Todos", Some(BOARD)),

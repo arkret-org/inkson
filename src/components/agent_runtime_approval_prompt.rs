@@ -552,7 +552,6 @@ fn pending_runtime_approval_from_view(
     let request_key = key_state
         .approval_request_id
         .clone()
-        .map(|value| value)
         .unwrap_or_else(|| summary.pairing_request_id.clone());
     Some(PendingAgentRuntimeApproval {
         notification_id: None,

@@ -283,6 +283,10 @@ pub const DEFAULT_BLOCKLIST_APPLIES_TO: &[&str] = &[
     "directory",
 ];
 
+// Invariant assertions: each `expect` message names the check that
+// establishes it a few lines earlier. Rewriting them as `?` would add
+// error paths no caller can reach.
+#[allow(clippy::expect_used)]
 /// Canonical wire body for the `ak.account.blocklist` account-data entry.
 /// The settings UI calls this just before PUTting via
 /// [`crate::transport::TransportClient::set_account_data`]; keep the shape aligned with

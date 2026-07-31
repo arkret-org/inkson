@@ -364,7 +364,7 @@ mod tests {
         let digest = identity.canonical_payload_sha256().unwrap();
         identity.proof.payload_digest = arkret_sdk::Hash::new(digest).unwrap();
         let signature = signer.sign(&canonical_bytes);
-        identity.proof.signature = arkret_sdk::base64url_encode(&signature.to_bytes());
+        identity.proof.signature = arkret_sdk::base64url_encode(signature.to_bytes());
         json!({
             "realm_id": TEST_REALM,
             "actor_id": actor_id,

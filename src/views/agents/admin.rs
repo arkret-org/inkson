@@ -832,6 +832,10 @@ fn spawn_set_agent_enabled(
     });
 }
 
+// Invariant assertions: each `expect` message names the check that
+// establishes it a few lines earlier. Rewriting them as `?` would add
+// error paths no caller can reach.
+#[allow(clippy::expect_used)]
 #[allow(clippy::too_many_arguments)]
 fn spawn_deactivate_agent(
     base: String,
@@ -1030,6 +1034,10 @@ fn spawn_deactivate_agent(
     });
 }
 
+// Invariant assertions: each `expect` message names the check that
+// establishes it a few lines earlier. Rewriting them as `?` would add
+// error paths no caller can reach.
+#[allow(clippy::expect_used)]
 #[component]
 pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> Element {
     // A4 — base_url from session context instead of a prop.

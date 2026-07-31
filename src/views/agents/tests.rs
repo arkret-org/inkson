@@ -605,7 +605,7 @@ mod personal_agent_tests {
         // Longevity-safe default: the authorize payload declares no
         // expires_at; the authorization is revocation-governed
         // (key-management.md §3.6.1).
-        assert!(event.payload.get("expires_at").is_none());
+        assert!(!event.payload.contains_key("expires_at"));
         assert_eq!(
             event.payload["approval_evidence"]["request_canonical_digest"],
             expected_pairing_digest.as_str()

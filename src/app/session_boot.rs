@@ -155,6 +155,25 @@ pub(super) fn account_projections_visible(
         && (has_session || !matches!(route, Route::Onboarding))
 }
 
+pub(super) fn should_redirect_to_dashboard_after_login(route: &Route) -> bool {
+    matches!(route, Route::Login | Route::Register | Route::AuthCallback)
+}
+
+pub(super) fn initial_session_credential_from_state(
+    local_state: &ClientLocalState,
+    config: &ClientConfig,
+    now_unix: i64,
+) -> String {
+    if let Some(grant) = local_state.session_grant.as_ref() {
+        return if session_grant_boot_usable(grant, &config.server_url, now_unix) {
+            grant.grant_jwt.clone()
+        } else {
+            String::new()
+        };
+    }
+    String::new()
+}
+
 #[cfg(test)]
 mod account_projection_tests {
     use super::*;
@@ -190,25 +209,6 @@ mod account_projection_tests {
             "did:webvh:znew:principal.example",
         ));
     }
-}
-
-pub(super) fn should_redirect_to_dashboard_after_login(route: &Route) -> bool {
-    matches!(route, Route::Login | Route::Register | Route::AuthCallback)
-}
-
-pub(super) fn initial_session_credential_from_state(
-    local_state: &ClientLocalState,
-    config: &ClientConfig,
-    now_unix: i64,
-) -> String {
-    if let Some(grant) = local_state.session_grant.as_ref() {
-        return if session_grant_boot_usable(grant, &config.server_url, now_unix) {
-            grant.grant_jwt.clone()
-        } else {
-            String::new()
-        };
-    }
-    String::new()
 }
 
 /// localStorage key the cotest joint-e2e harness uses to hand inkson a real

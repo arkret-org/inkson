@@ -269,15 +269,14 @@ fn notification_from_stored(
     let body = notification_body(&value);
     let realm_id = value.realm_id().unwrap_or_default().to_owned();
     let realm_label = notification_realm_label(&value);
-    let action = match value.invite() {
-        Some(invite) => Some(UiNotificationAction::AcceptInvite {
+    let action = value
+        .invite()
+        .map(|invite| UiNotificationAction::AcceptInvite {
             realm_id: invite.realm_id.as_str().to_owned(),
             invite_id: invite.invite_id.as_str().to_owned(),
             invite_token: invite.invite_token.clone(),
             realm_label: invite.realm_label.clone(),
-        }),
-        None => None,
-    };
+        });
     let timestamp = arkret_sdk::canonical::format_timestamp_canonical(value.created_at());
     let (projection_read, projection_archived) = notification_wire_state(&value);
 

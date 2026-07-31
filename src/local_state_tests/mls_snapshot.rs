@@ -138,7 +138,7 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
         "logout must preserve local MLS snapshot for returning account"
     );
     assert!(
-        reader.load().realm_tree_projections.get(realm).is_some(),
+        reader.load().realm_tree_projections.contains_key(realm),
         "logout must preserve the account's own projection cache"
     );
 }

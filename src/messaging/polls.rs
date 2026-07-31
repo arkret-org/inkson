@@ -501,7 +501,7 @@ mod tests {
         )
         .expect("builds");
         assert_eq!(op.kind.as_str(), "ak.message.create");
-        assert!(op.payload.get("encrypted").is_none());
+        assert!(!op.payload.contains_key("encrypted"));
         // Canonical poll_block: nested `poll` object, no flat legacy fields.
         let block = op.payload.get("content").unwrap();
         assert_eq!(block["kind"], "ak.content.poll");

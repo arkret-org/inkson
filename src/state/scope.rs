@@ -452,7 +452,6 @@ impl LocalStateStore {
         {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             self.clear_device_scoped_with_secure_store(secure_store.as_ref());
-            return;
         }
         #[cfg(test)]
         self.clear_device_scoped_state();

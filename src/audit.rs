@@ -220,8 +220,8 @@ mod tests {
         );
         assert!(op.payload["accessed_at"].is_string());
         // No illegal top-level fields under the strict audit_payload schema.
-        assert!(op.payload.get("reader_device").is_none());
-        assert!(op.payload.get("target_event_id").is_none());
+        assert!(!op.payload.contains_key("reader_device"));
+        assert!(!op.payload.contains_key("target_event_id"));
     }
 
     #[test]
@@ -243,8 +243,8 @@ mod tests {
         );
         assert!(op.payload["accessed_at"].is_string());
         // No illegal top-level fields under the strict audit_payload schema.
-        assert!(op.payload.get("delivered_to_devices").is_none());
-        assert!(op.payload.get("source_event_id").is_none());
+        assert!(!op.payload.contains_key("delivered_to_devices"));
+        assert!(!op.payload.contains_key("source_event_id"));
     }
 
     /// The closed `identity_presentation_request_state_payload` keeps only

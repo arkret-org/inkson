@@ -142,6 +142,62 @@ pub(crate) const CARD_DETAIL_DOCK_WIDTH_DEFAULT: f64 = 720.0;
 pub(crate) const CARD_DETAIL_DOCK_WIDTH_MIN: f64 = 380.0;
 pub(crate) const CARD_DETAIL_DOCK_WIDTH_MAX: f64 = 1100.0;
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn local_storage_get(key: &str) -> Option<String> {
+    web_sys::window()?
+        .local_storage()
+        .ok()
+        .flatten()?
+        .get_item(key)
+        .ok()
+        .flatten()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn local_storage_set(key: &str, value: &str) {
+    if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        let _ = storage.set_item(key, value);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn local_storage_get(_key: &str) -> Option<String> {
+    None
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn local_storage_set(_key: &str, _value: &str) {}
+
+/// Hydrate the docked-vs-dialog choice from `localStorage`. Defaults to
+/// the centered dialog when unset or on desktop.
+pub(crate) fn read_card_detail_docked() -> bool {
+    local_storage_get(CARD_DETAIL_DOCKED_STORAGE_KEY)
+        .map(|value| value == "true")
+        .unwrap_or(false)
+}
+
+/// Hydrate the docked-panel width from `localStorage`, clamped to the
+/// same bounds the drag handle enforces. Falls back to the default when
+/// unset, unparseable, or on desktop.
+pub(crate) fn read_card_detail_dock_width() -> f64 {
+    local_storage_get(CARD_DETAIL_DOCK_WIDTH_STORAGE_KEY)
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|width| width.is_finite())
+        .map(|width| width.clamp(CARD_DETAIL_DOCK_WIDTH_MIN, CARD_DETAIL_DOCK_WIDTH_MAX))
+        .unwrap_or(CARD_DETAIL_DOCK_WIDTH_DEFAULT)
+}
+
+pub(crate) fn persist_card_detail_docked(docked: bool) {
+    local_storage_set(
+        CARD_DETAIL_DOCKED_STORAGE_KEY,
+        if docked { "true" } else { "false" },
+    );
+}
+
+pub(crate) fn persist_card_detail_dock_width(width: f64) {
+    local_storage_set(CARD_DETAIL_DOCK_WIDTH_STORAGE_KEY, &format!("{width:.0}"));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,60 +340,4 @@ mod tests {
         assert!(MLS_LOCKED_FIELD_PLACEHOLDER.contains("MLS Welcome"));
         assert!(MLS_LOCKED_FIELD_PLACEHOLDER.contains("history key"));
     }
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn local_storage_get(key: &str) -> Option<String> {
-    web_sys::window()?
-        .local_storage()
-        .ok()
-        .flatten()?
-        .get_item(key)
-        .ok()
-        .flatten()
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn local_storage_set(key: &str, value: &str) {
-    if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
-        let _ = storage.set_item(key, value);
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn local_storage_get(_key: &str) -> Option<String> {
-    None
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn local_storage_set(_key: &str, _value: &str) {}
-
-/// Hydrate the docked-vs-dialog choice from `localStorage`. Defaults to
-/// the centered dialog when unset or on desktop.
-pub(crate) fn read_card_detail_docked() -> bool {
-    local_storage_get(CARD_DETAIL_DOCKED_STORAGE_KEY)
-        .map(|value| value == "true")
-        .unwrap_or(false)
-}
-
-/// Hydrate the docked-panel width from `localStorage`, clamped to the
-/// same bounds the drag handle enforces. Falls back to the default when
-/// unset, unparseable, or on desktop.
-pub(crate) fn read_card_detail_dock_width() -> f64 {
-    local_storage_get(CARD_DETAIL_DOCK_WIDTH_STORAGE_KEY)
-        .and_then(|value| value.parse::<f64>().ok())
-        .filter(|width| width.is_finite())
-        .map(|width| width.clamp(CARD_DETAIL_DOCK_WIDTH_MIN, CARD_DETAIL_DOCK_WIDTH_MAX))
-        .unwrap_or(CARD_DETAIL_DOCK_WIDTH_DEFAULT)
-}
-
-pub(crate) fn persist_card_detail_docked(docked: bool) {
-    local_storage_set(
-        CARD_DETAIL_DOCKED_STORAGE_KEY,
-        if docked { "true" } else { "false" },
-    );
-}
-
-pub(crate) fn persist_card_detail_dock_width(width: f64) {
-    local_storage_set(CARD_DETAIL_DOCK_WIDTH_STORAGE_KEY, &format!("{width:.0}"));
 }

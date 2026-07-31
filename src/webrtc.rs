@@ -176,6 +176,10 @@ impl Default for CallSignalReceiver {
     }
 }
 
+// Invariant assertions: each `expect` message names the check that
+// establishes it a few lines earlier. Rewriting them as `?` would add
+// error paths no caller can reach.
+#[allow(clippy::expect_used)]
 /// Build a `ak.call.recording.start` event — durable opt-in recording marker.
 /// The spec REQUIRES this be written before any recording stream begins so
 /// participants have an auditable signal.
@@ -282,7 +286,7 @@ mod tests {
             op.event_id.as_str()
         );
         assert_eq!(op.payload["result"]["retention"]["consent_confirmed"], true);
-        assert!(op.payload.get("consent_actors").is_none());
+        assert!(!op.payload.contains_key("consent_actors"));
     }
 
     #[test]
@@ -348,7 +352,7 @@ mod tests {
                 serde_json::from_value(call_signal_body(1, kind))
                     .expect("canonical signal_kind must parse");
             assert_eq!(
-                serde_json::to_value(&body.signal_kind).unwrap(),
+                serde_json::to_value(body.signal_kind).unwrap(),
                 serde_json::json!(kind)
             );
             assert_eq!(body.call_id.as_str(), TEST_CALL);

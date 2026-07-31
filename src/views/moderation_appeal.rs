@@ -317,7 +317,7 @@ mod tests {
             "ak:realm:01904100-0000-7000-8000-000000000001"
         );
         assert!(op.payload["appeal_id"].is_string());
-        assert!(op.payload.get("schema").is_none());
+        assert!(!op.payload.contains_key("schema"));
         let registry = arkret_sdk::schema::schema_registry_from_default_spec_artifacts()
             .unwrap()
             .unwrap();

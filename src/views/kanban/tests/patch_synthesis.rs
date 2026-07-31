@@ -413,7 +413,7 @@ fn engine_ingest_dedupes_resent_strand_update_by_operation_id() {
     crate::sync_engine::ingest_kanban_projection_events(
         &mut store,
         "ak:realm:r1",
-        &[event.clone()],
+        std::slice::from_ref(&event),
     );
     crate::sync_engine::ingest_kanban_projection_events(&mut store, "ak:realm:r1", &[event]);
 

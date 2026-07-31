@@ -709,7 +709,7 @@ fn AppBootstrap() -> Element {
             state_store
                 .read()
                 .load_private_data(&account_did(), "avatar_blob_ref")
-                .unwrap_or_else(|| current_account_avatar_blob_ref())
+                .unwrap_or_else(&*current_account_avatar_blob_ref)
         }
     })();
     let minimal_ready = profile_ready(active_server_description.as_ref(), PROFILE_MINIMAL_CLIENT);

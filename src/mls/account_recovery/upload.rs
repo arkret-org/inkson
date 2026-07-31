@@ -21,6 +21,10 @@ fn passphrase_is_blank(passphrase: &[u8]) -> bool {
             .unwrap_or(false)
 }
 
+// Invariant assertions: each `expect` message names the check that
+// establishes it a few lines earlier. Rewriting them as `?` would add
+// error paths no caller can reach.
+#[allow(clippy::expect_used)]
 async fn ensure_initial_active_series(
     api: &crate::transport::TransportClient,
     actor_id: &str,

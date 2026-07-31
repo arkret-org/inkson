@@ -167,7 +167,7 @@ fn operation_builder_can_emit_signed_authorization_binding() {
         op.authorization_ref.as_deref(),
         Some("ak:grant:0196419b-0000-7000-8000-000000000001")
     );
-    assert!(op.unsigned.get("local_authz_ref").is_none());
+    assert!(!op.unsigned.contains_key("local_authz_ref"));
 
     let mut canonical = serde_json::to_value(&op).unwrap();
     if let serde_json::Value::Object(object) = &mut canonical {
@@ -309,8 +309,8 @@ fn kanban_card_strand_create_carries_position_in_metadata_fields() {
     assert!(op.payload["object"].get("fields").is_none());
     assert!(op.payload["object"].get("title").is_none());
     assert!(op.payload["object"].get("space_id").is_none());
-    assert!(op.payload.get("components").is_none());
-    assert!(op.payload.get("patch").is_none());
+    assert!(!op.payload.contains_key("components"));
+    assert!(!op.payload.contains_key("patch"));
     assert_registered_payload_valid(&op);
     assert_payload_field_names_are_spec_canonical(&op.payload);
 }
@@ -363,9 +363,9 @@ fn mls_commit_builder_matches_registered_payload_schema() {
         .build("node");
 
     assert_eq!(op.kind.as_str(), "ak.mls.commit");
-    assert!(op.payload.get("group_id").is_none());
-    assert!(op.payload.get("preconditions").is_none());
-    assert!(op.payload.get("effects").is_none());
+    assert!(!op.payload.contains_key("group_id"));
+    assert!(!op.payload.contains_key("preconditions"));
+    assert!(!op.payload.contains_key("effects"));
     assert_registered_payload_valid(&op);
     assert_payload_field_names_are_spec_canonical(&op.payload);
 }
@@ -385,7 +385,7 @@ fn discussion_strand_create_emits_discussion_track() {
         op.payload["object"]["id"],
         "ak:strand:0196419b-0000-7000-8000-000000000001"
     );
-    assert!(op.payload.get("strand_id").is_none());
+    assert!(!op.payload.contains_key("strand_id"));
     assert_eq!(
         op.payload["object"]["tracks"]["discussion"]["profile"],
         "discussion"
@@ -440,9 +440,9 @@ fn strand_update_patch_uses_canonical_payload_patch() {
     assert_eq!(op.kind.as_str(), "ak.strand.update");
     assert_eq!(op.local_target_ref(), Some(strand_id));
     assert_eq!(op.payload["target_ref"], strand_id);
-    assert!(op.payload.get("strand_id").is_none());
+    assert!(!op.payload.contains_key("strand_id"));
     assert_eq!(op.payload["patch"]["title"]["value"], "Launch checklist");
-    assert!(op.payload.get("fields").is_none());
+    assert!(!op.payload.contains_key("fields"));
 }
 
 #[test]
@@ -482,13 +482,13 @@ fn strand_update_builders_match_registered_object_patch_schema() {
 
     for event in &events {
         assert_eq!(event.kind.as_str(), "ak.strand.update");
-        assert!(event.payload.get("patch").is_some());
+        assert!(event.payload.contains_key("patch"));
         assert_eq!(event.payload["target_ref"], strand_id);
-        assert!(event.payload.get("strand_id").is_none());
-        assert!(event.payload.get("fields").is_none());
-        assert!(event.payload.get("position").is_none());
-        assert!(event.payload.get("board_space_id").is_none());
-        assert!(event.payload.get("expected_position").is_none());
+        assert!(!event.payload.contains_key("strand_id"));
+        assert!(!event.payload.contains_key("fields"));
+        assert!(!event.payload.contains_key("position"));
+        assert!(!event.payload.contains_key("board_space_id"));
+        assert!(!event.payload.contains_key("expected_position"));
         assert_registered_payload_valid(event);
     }
 }
@@ -556,15 +556,15 @@ fn object_patch_family_builders_match_registered_payload_schema() {
     ];
 
     for event in &events {
-        assert!(event.payload.get("patch").is_some(), "{}", event.kind);
+        assert!(event.payload.contains_key("patch"), "{}", event.kind);
         if event.kind == "ak.space.update" {
             assert_eq!(event.payload["space_id"], space_id);
-            assert!(event.payload.get("target_ref").is_none(), "{}", event.kind);
+            assert!(!event.payload.contains_key("target_ref"), "{}", event.kind);
         } else {
             // Everything else — including `ak.strand.tracks.update`, whose
             // registered contract derives its cell subject from
             // `payload.target_ref` — single-sources the target there.
-            assert!(event.payload.get("target_ref").is_some(), "{}", event.kind);
+            assert!(event.payload.contains_key("target_ref"), "{}", event.kind);
         }
         assert_registered_payload_valid(event);
         // Every one of these is a reducer-input kind, so the registry must be
@@ -609,7 +609,7 @@ fn strand_position_cas_update_emits_canonical_move_payload() {
         "ak:space:0196419b-0000-7000-8000-000000000030"
     );
     assert_eq!(op.payload["expected_position"]["rank"], "a1");
-    assert!(op.payload.get("position").is_none());
+    assert!(!op.payload.contains_key("position"));
 }
 
 #[test]
@@ -644,8 +644,8 @@ fn strand_position_cas_update_emits_canonical_reorder_payload() {
     assert_eq!(op.payload["rank"], "a2");
     assert_eq!(op.payload["expected_position"]["rank"], "a1");
     assert!(op.payload["expected_position"].get("space_id").is_none());
-    assert!(op.payload.get("target_space_id").is_none());
-    assert!(op.payload.get("position").is_none());
+    assert!(!op.payload.contains_key("target_space_id"));
+    assert!(!op.payload.contains_key("position"));
 }
 
 #[test]
@@ -862,10 +862,10 @@ fn invite_helpers_emit_canonical_kinds() {
             .and_then(|value| value.as_str())
             .is_some()
     );
-    assert!(create.payload.get("target").is_none());
-    assert!(create.payload.get("role").is_none());
-    assert!(create.payload.get("state").is_none());
-    assert!(create.payload.get("x_member_delivery_binding").is_none());
+    assert!(!create.payload.contains_key("target"));
+    assert!(!create.payload.contains_key("role"));
+    assert!(!create.payload.contains_key("state"));
+    assert!(!create.payload.contains_key("x_member_delivery_binding"));
     assert_registered_payload_valid(&create);
     // `validate_registered_cell_writes` also runs the CBA plane check, and
     // `ak.invite.create` is control-plane: its `seal_basis` is attached by the
@@ -893,7 +893,7 @@ fn invite_helpers_emit_canonical_kinds() {
     .build("node");
     assert_eq!(accept.kind.as_str(), "ak.invite.accept");
     assert_eq!(accept.payload["invite_id"], invite_id);
-    assert!(accept.payload.get("state").is_none());
+    assert!(!accept.payload.contains_key("state"));
     assert_registered_payload_valid(&accept);
     let accept_writes = crate::operation::project_registered_cell_writes(&accept)
         .expect("invite accept must atomically advance invite and member FSMs");
@@ -916,7 +916,7 @@ fn invite_helpers_emit_canonical_kinds() {
     // `target_state` is the signed operand of the lifecycle `transition_to`
     // projection; without it the cancel has no derivable cell write.
     assert_eq!(cancel.payload["target_state"], "revoked");
-    assert!(cancel.payload.get("state").is_none());
+    assert!(!cancel.payload.contains_key("state"));
     assert_registered_payload_valid(&cancel);
     let pre_state_error = crate::operation::project_registered_cell_writes(&cancel)
         .expect_err("direct cancel must be bound to accepted frozen invite state");
@@ -974,7 +974,7 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(revoke.kind.as_str(), "ak.invite.revoke");
     assert_eq!(revoke.payload["target_state"], "revoked");
     assert_eq!(revoke.payload["reason_code"], "admin_revoke");
-    assert!(revoke.payload.get("invitee").is_none());
+    assert!(!revoke.payload.contains_key("invitee"));
 }
 
 #[test]
@@ -1015,7 +1015,7 @@ fn strand_lifecycle_helpers_emit_canonical_kinds() {
     .build("node");
     assert_eq!(archive.kind.as_str(), "ak.strand.archive");
     assert_eq!(archive.payload["target_ref"], strand_id);
-    assert!(archive.payload.get("strand_id").is_none());
+    assert!(!archive.payload.contains_key("strand_id"));
     assert_eq!(archive.local_target_ref(), Some(strand_id));
     assert_registered_payload_valid(&archive);
 
@@ -1028,7 +1028,7 @@ fn strand_lifecycle_helpers_emit_canonical_kinds() {
     .build("node");
     assert_eq!(restore.kind.as_str(), "ak.strand.restore");
     assert_eq!(restore.payload["target_ref"], strand_id);
-    assert!(restore.payload.get("strand_id").is_none());
+    assert!(!restore.payload.contains_key("strand_id"));
     assert_eq!(restore.local_target_ref(), Some(strand_id));
     assert_registered_payload_valid(&restore);
 }
@@ -1079,7 +1079,7 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
     );
     assert_eq!(err.payload["error_class"], "external_network");
     assert_eq!(err.payload["error_code"], "applet_unavailable");
-    assert!(err.payload.get("session_id").is_none());
+    assert!(!err.payload.contains_key("session_id"));
     assert_registered_payload_valid(&err);
 
     assert!(
@@ -1114,7 +1114,7 @@ fn message_revise_builder_uses_content_payload_schema() {
     assert_eq!(event.payload["message_id"], message_id);
     assert_eq!(event.payload["content"]["kind"], "ak.content.text");
     assert_eq!(event.payload["content"]["body"], "updated body");
-    assert!(event.payload.get("patch").is_none());
+    assert!(!event.payload.contains_key("patch"));
     assert_registered_payload_valid(&event);
 }
 
@@ -1198,7 +1198,7 @@ mod realm_organization_builder_tests {
         assert_eq!(event.payload["organization_id"], ORG_DID);
         assert_eq!(event.payload["relationship"], "owner");
         assert_eq!(event.payload["status"], "active");
-        assert!(event.payload.get("revokes_statement_id").is_none());
+        assert!(!event.payload.contains_key("revokes_statement_id"));
         // The organization proof is carried verbatim, not synthesized from the
         // local login session.
         assert_eq!(

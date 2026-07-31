@@ -2885,7 +2885,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
         // projected Add obligation is represented in the epoch. This only
         // resolves the locally tracked transition after an accepted Commit;
         // the hint itself is never membership or send authorization.
-        if {
+        let res = {
             let store = state_store.read();
             realm_mls_roster_matches_complete_membership_hint(
                 &store,
@@ -2894,7 +2894,8 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
                 &actor_id,
                 &device_id,
             )
-        } {
+        };
+        if res {
             state_store
                 .write()
                 .resolve_member_add_mls_bindings(&realm_id);

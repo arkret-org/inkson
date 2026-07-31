@@ -1220,7 +1220,7 @@ async fn ingest_realm_key_share_installs_history_secrets() {
     );
 
     // Routing filter accepts the share for this realm.
-    let matched = collect_realm_key_share_messages_for_realm(&[share.clone()], realm);
+    let matched = collect_realm_key_share_messages_for_realm(std::slice::from_ref(&share), realm);
     assert_eq!(matched.len(), 1);
 
     let pending =
@@ -1284,7 +1284,7 @@ async fn ingest_realm_key_share_accepts_projected_payload_envelope() {
         Some(realm.to_owned())
     );
     assert_eq!(
-        collect_realm_key_share_messages_for_realm(&[projected.clone()], realm).len(),
+        collect_realm_key_share_messages_for_realm(std::slice::from_ref(&projected), realm).len(),
         1
     );
     assert_eq!(
@@ -1363,7 +1363,7 @@ async fn ingest_realm_key_share_accepts_soland_content_payload_envelope() {
         Some(realm.to_owned())
     );
     assert_eq!(
-        collect_realm_key_share_messages_for_realm(&[projected.clone()], realm).len(),
+        collect_realm_key_share_messages_for_realm(std::slice::from_ref(&projected), realm).len(),
         1
     );
     assert_eq!(

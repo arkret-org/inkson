@@ -909,6 +909,261 @@ fn verify_request_binding(
     Ok(())
 }
 
+fn target_notary_value(
+    bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
+) -> Result<arkret_sdk::NotaryValue, String> {
+    let expected = arkret_wire::null_subject_cell("ak.component.notary.v1");
+    let leaf = bundle
+        .control_state
+        .iter()
+        .find(|leaf| leaf.cell.as_str() == expected)
+        .ok_or_else(|| "MLS governance proof omits the Realm notary cell".to_owned())?;
+    let notary: arkret_sdk::NotaryValue = serde_json::from_value(leaf.state.value.clone())
+        .map_err(|error| format!("decode MLS governance proof notary cell: {error}"))?;
+    notary
+        .validate()
+        .map_err(|error| format!("invalid MLS governance proof notary value: {error}"))?;
+    let genesis_events = bundle
+        .frontier_events
+        .iter()
+        .filter(|event| event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE)
+        .collect::<Vec<_>>();
+    if genesis_events.len() > 1 {
+        return Err("MLS governance proof contains multiple Realm genesis Events".to_owned());
+    }
+    if let Some(genesis) = genesis_events.first() {
+        let genesis_notary = genesis
+            .payload
+            .get("object")
+            .and_then(|object| object.get("notary"))
+            .cloned()
+            .ok_or_else(|| {
+                "MLS governance Realm genesis Event omits payload.object.notary".to_owned()
+            })?;
+        let genesis_notary = serde_json::from_value::<arkret_sdk::NotaryValue>(genesis_notary)
+            .map_err(|error| format!("decode MLS governance genesis notary: {error}"))?;
+        genesis_notary
+            .validate()
+            .map_err(|error| format!("invalid MLS governance genesis notary: {error}"))?;
+        if genesis_notary != notary {
+            return Err(
+                "MLS governance proof notary cell differs from the signed Realm genesis Event"
+                    .to_owned(),
+            );
+        }
+    } else if matches!(bundle.effective_scope, arkret_wire::ScopeRef::Realm { .. }) {
+        return Err("Realm-scoped MLS governance proof omits its genesis Event".to_owned());
+    }
+    Ok(notary)
+}
+
+fn managed_agent_pcr_delegated_controller(
+    bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
+    notary: &arkret_sdk::NotaryValue,
+) -> Result<Option<arkret_sdk::Did>, String> {
+    let managed = bundle
+        .frontier_events
+        .iter()
+        .filter(|event| {
+            event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE
+                && event.executed_by.is_some()
+                && event
+                    .payload
+                    .get("object")
+                    .and_then(|object| object.get("fields"))
+                    .and_then(|fields| fields.get("purpose"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some("principal_control")
+        })
+        .collect::<Vec<_>>();
+    if managed.is_empty() {
+        return Ok(None);
+    }
+    if managed.len() != 1 {
+        return Err(
+            "MLS governance proof contains an ambiguous managed Agent PCR genesis".to_owned(),
+        );
+    }
+    let create = managed[0];
+    // v1 carries no producer effect set to compare against. The equivalent
+    // check is that the registered contract projects the canonical four
+    // genesis cells for this create — which `materialize_managed_agent_pcr_control`
+    // asserts through the same injected evaluator the receiver uses.
+    arkret_bootstrap::materialize_managed_agent_pcr_control(
+        std::slice::from_ref(create),
+        &crate::operation::cell_write_projector,
+    )
+    .map_err(|error| format!("managed Agent PCR genesis is not canonical: {error}"))?;
+    if create.realm_id != bundle.realm_id
+        || create
+            .payload
+            .get("object")
+            .and_then(|object| object.get("created_by"))
+            .and_then(serde_json::Value::as_str)
+            != Some(create.actor_id.as_str())
+        || create
+            .payload
+            .get("object")
+            .and_then(|object| object.get("fields"))
+            .and_then(|fields| fields.get("purpose"))
+            .and_then(serde_json::Value::as_str)
+            != Some("principal_control")
+        || !notary.includes_signer_as_primary(&create.actor_id)
+    {
+        return Err(
+            "managed Agent PCR genesis does not bind its Agent actor, Realm, and notary".to_owned(),
+        );
+    }
+    let controller = create
+        .executed_by
+        .clone()
+        .ok_or_else(|| "managed Agent PCR genesis omits its delegated controller".to_owned())?;
+    let authorization_ref = create.authorization_ref.as_deref().ok_or_else(|| {
+        "managed Agent PCR genesis omits its controller authorization_ref".to_owned()
+    })?;
+    if controller == create.actor_id
+        || authorization_ref != format!("{}#managed-controller", create.actor_id)
+    {
+        return Err(
+            "managed Agent PCR genesis has an invalid controller delegation binding".to_owned(),
+        );
+    }
+    Ok(Some(controller))
+}
+
+fn verify_seal<R>(
+    seal: &Seal,
+    notary: &arkret_sdk::NotaryValue,
+    delegated_controller: Option<&arkret_sdk::Did>,
+    resolver: &R,
+) -> arkret_sdk::Result<()>
+where
+    R: DidResolver,
+{
+    let canonical_bytes = seal.canonical_bytes_for_id()?;
+    let signature = match &seal.notary_signature {
+        NotarySig::Single(signature) => signature,
+        NotarySig::Multi(_) | NotarySig::Threshold(_) => {
+            return Err(arkret_sdk::Error::Protocol(
+                "only single-signature Seal proofs are supported by this verifier".to_owned(),
+            ));
+        }
+    };
+    if signature.alg != "EdDSA" {
+        return Err(arkret_sdk::Error::Protocol(
+            "MLS governance Seal signature must use EdDSA".to_owned(),
+        ));
+    }
+    let signer = verification_method_did(&signature.verification_method)?;
+    if !notary.includes_signer_as_primary(&signer) && delegated_controller != Some(&signer) {
+        return Err(arkret_sdk::Error::Protocol(format!(
+            "Seal signer {signer} is not authorized by the materialized Realm notary cell"
+        )));
+    }
+    if let Some((actor, device)) = managed_seal_device_proof_pair(seal, delegated_controller)
+        .map_err(arkret_sdk::Error::Protocol)?
+    {
+        let key = match crate::identity::device_directory::cached_device_signing_key(
+            &actor, &device,
+        ) {
+            crate::identity::device_directory::CacheLookup::Hit(key) => key,
+            crate::identity::device_directory::CacheLookup::NegativeHit => {
+                return Err(arkret_sdk::Error::Protocol(format!(
+                    "MLS governance Seal controller device key is revoked or unavailable for {actor}#{device}"
+                )));
+            }
+            crate::identity::device_directory::CacheLookup::Miss => {
+                return Err(arkret_sdk::Error::Protocol(format!(
+                    "MLS governance Seal controller device key was not prefetched for {actor}#{device}"
+                )));
+            }
+        };
+        return arkret_sdk::signatures::Ed25519DetachedJwsVerifier::new()
+            .verify_detached_jws(&signature.jws, &canonical_bytes, &key)
+            .map_err(|error| {
+                arkret_sdk::Error::Protocol(format!(
+                    "Seal controller device signature invalid: {error}"
+                ))
+            });
+    }
+    // DID-P2-B / spec §3+§6: this is ordinary per-signature verification, not an
+    // authority trigger. `resolver` here is the in-memory
+    // [`StaticProofDidResolver`] the caller pre-populated with already
+    // authority-resolved documents, so the correct API is the pinned-document
+    // verifier, which holds no network resolver at all and additionally
+    // compares `document.id == issuer` (the deprecated `verify_jws_ed25519`
+    // accepted an `issuer` argument and never compared it).
+    let document = resolver.resolve_did(&signer).map_err(|error| {
+        arkret_sdk::Error::Protocol(format!("Seal signer document unavailable: {error}"))
+    })?;
+    arkret_identity::verify_jws_with_document(
+        &canonical_bytes,
+        &signature.jws,
+        &signature.verification_method,
+        &signer,
+        &document,
+    )
+    .map_err(|error| arkret_sdk::Error::Protocol(format!("Seal signature invalid: {error}")))
+}
+
+/// Verify a managed Agent PCR frontier receipt before it is trusted as the
+/// predecessor for a controller-authored successor Seal.
+pub(crate) fn verify_managed_agent_pcr_seal_head(
+    seal: &Seal,
+    controller: &arkret_sdk::Did,
+) -> arkret_sdk::Result<()> {
+    seal.validate_structural()?;
+    seal.validate_id()?;
+    let canonical_bytes = seal.canonical_bytes_for_id()?;
+    let signature = match &seal.notary_signature {
+        NotarySig::Single(signature) => signature,
+        NotarySig::Multi(_) | NotarySig::Threshold(_) => {
+            return Err(arkret_sdk::Error::Protocol(
+                "managed Agent PCR Seal head requires one controller-device signature".to_owned(),
+            ));
+        }
+    };
+    if signature.alg != "EdDSA" {
+        return Err(arkret_sdk::Error::Protocol(
+            "managed Agent PCR Seal head signature must use EdDSA".to_owned(),
+        ));
+    }
+    let signer = verification_method_did(&signature.verification_method)?;
+    if &signer != controller {
+        return Err(arkret_sdk::Error::Protocol(format!(
+            "managed Agent PCR Seal head signer {signer} is not controller {controller}"
+        )));
+    }
+    let (actor, device) = managed_seal_device_proof_pair(seal, Some(controller))
+        .map_err(arkret_sdk::Error::Protocol)?
+        .ok_or_else(|| {
+            arkret_sdk::Error::Protocol(
+                "managed Agent PCR Seal head has no controller-device verification method"
+                    .to_owned(),
+            )
+        })?;
+    let key = match crate::identity::device_directory::cached_device_signing_key(&actor, &device) {
+        crate::identity::device_directory::CacheLookup::Hit(key) => key,
+        crate::identity::device_directory::CacheLookup::NegativeHit => {
+            return Err(arkret_sdk::Error::Protocol(format!(
+                "managed Agent PCR Seal head device key is revoked or unavailable for {actor}#{device}"
+            )));
+        }
+        crate::identity::device_directory::CacheLookup::Miss => {
+            return Err(arkret_sdk::Error::Protocol(format!(
+                "managed Agent PCR Seal head device key was not prefetched for {actor}#{device}"
+            )));
+        }
+    };
+    arkret_sdk::signatures::Ed25519DetachedJwsVerifier::new()
+        .verify_detached_jws(&signature.jws, &canonical_bytes, &key)
+        .map_err(|error| {
+            arkret_sdk::Error::Protocol(format!(
+                "managed Agent PCR Seal head controller-device signature invalid: {error}"
+            ))
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1218,259 +1473,4 @@ mod tests {
         );
         let _ = std::fs::remove_file(path);
     }
-}
-
-fn target_notary_value(
-    bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
-) -> Result<arkret_sdk::NotaryValue, String> {
-    let expected = arkret_wire::null_subject_cell("ak.component.notary.v1");
-    let leaf = bundle
-        .control_state
-        .iter()
-        .find(|leaf| leaf.cell.as_str() == expected)
-        .ok_or_else(|| "MLS governance proof omits the Realm notary cell".to_owned())?;
-    let notary: arkret_sdk::NotaryValue = serde_json::from_value(leaf.state.value.clone())
-        .map_err(|error| format!("decode MLS governance proof notary cell: {error}"))?;
-    notary
-        .validate()
-        .map_err(|error| format!("invalid MLS governance proof notary value: {error}"))?;
-    let genesis_events = bundle
-        .frontier_events
-        .iter()
-        .filter(|event| event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE)
-        .collect::<Vec<_>>();
-    if genesis_events.len() > 1 {
-        return Err("MLS governance proof contains multiple Realm genesis Events".to_owned());
-    }
-    if let Some(genesis) = genesis_events.first() {
-        let genesis_notary = genesis
-            .payload
-            .get("object")
-            .and_then(|object| object.get("notary"))
-            .cloned()
-            .ok_or_else(|| {
-                "MLS governance Realm genesis Event omits payload.object.notary".to_owned()
-            })?;
-        let genesis_notary = serde_json::from_value::<arkret_sdk::NotaryValue>(genesis_notary)
-            .map_err(|error| format!("decode MLS governance genesis notary: {error}"))?;
-        genesis_notary
-            .validate()
-            .map_err(|error| format!("invalid MLS governance genesis notary: {error}"))?;
-        if genesis_notary != notary {
-            return Err(
-                "MLS governance proof notary cell differs from the signed Realm genesis Event"
-                    .to_owned(),
-            );
-        }
-    } else if matches!(bundle.effective_scope, arkret_wire::ScopeRef::Realm { .. }) {
-        return Err("Realm-scoped MLS governance proof omits its genesis Event".to_owned());
-    }
-    Ok(notary)
-}
-
-fn managed_agent_pcr_delegated_controller(
-    bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
-    notary: &arkret_sdk::NotaryValue,
-) -> Result<Option<arkret_sdk::Did>, String> {
-    let managed = bundle
-        .frontier_events
-        .iter()
-        .filter(|event| {
-            event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE
-                && event.executed_by.is_some()
-                && event
-                    .payload
-                    .get("object")
-                    .and_then(|object| object.get("fields"))
-                    .and_then(|fields| fields.get("purpose"))
-                    .and_then(serde_json::Value::as_str)
-                    == Some("principal_control")
-        })
-        .collect::<Vec<_>>();
-    if managed.is_empty() {
-        return Ok(None);
-    }
-    if managed.len() != 1 {
-        return Err(
-            "MLS governance proof contains an ambiguous managed Agent PCR genesis".to_owned(),
-        );
-    }
-    let create = managed[0];
-    // v1 carries no producer effect set to compare against. The equivalent
-    // check is that the registered contract projects the canonical four
-    // genesis cells for this create — which `materialize_managed_agent_pcr_control`
-    // asserts through the same injected evaluator the receiver uses.
-    arkret_bootstrap::materialize_managed_agent_pcr_control(
-        std::slice::from_ref(create),
-        &crate::operation::cell_write_projector,
-    )
-    .map_err(|error| format!("managed Agent PCR genesis is not canonical: {error}"))?;
-    if create.realm_id != bundle.realm_id
-        || create
-            .payload
-            .get("object")
-            .and_then(|object| object.get("created_by"))
-            .and_then(serde_json::Value::as_str)
-            != Some(create.actor_id.as_str())
-        || create
-            .payload
-            .get("object")
-            .and_then(|object| object.get("fields"))
-            .and_then(|fields| fields.get("purpose"))
-            .and_then(serde_json::Value::as_str)
-            != Some("principal_control")
-        || !notary.includes_signer_as_primary(&create.actor_id)
-    {
-        return Err(
-            "managed Agent PCR genesis does not bind its Agent actor, Realm, and notary".to_owned(),
-        );
-    }
-    let controller = create
-        .executed_by
-        .clone()
-        .ok_or_else(|| "managed Agent PCR genesis omits its delegated controller".to_owned())?;
-    let authorization_ref = create.authorization_ref.as_deref().ok_or_else(|| {
-        "managed Agent PCR genesis omits its controller authorization_ref".to_owned()
-    })?;
-    if controller == create.actor_id
-        || authorization_ref != format!("{}#managed-controller", create.actor_id)
-    {
-        return Err(
-            "managed Agent PCR genesis has an invalid controller delegation binding".to_owned(),
-        );
-    }
-    Ok(Some(controller))
-}
-
-fn verify_seal<R>(
-    seal: &Seal,
-    notary: &arkret_sdk::NotaryValue,
-    delegated_controller: Option<&arkret_sdk::Did>,
-    resolver: &R,
-) -> arkret_sdk::Result<()>
-where
-    R: DidResolver,
-{
-    let canonical_bytes = seal.canonical_bytes_for_id()?;
-    let signature = match &seal.notary_signature {
-        NotarySig::Single(signature) => signature,
-        NotarySig::Multi(_) | NotarySig::Threshold(_) => {
-            return Err(arkret_sdk::Error::Protocol(
-                "only single-signature Seal proofs are supported by this verifier".to_owned(),
-            ));
-        }
-    };
-    if signature.alg != "EdDSA" {
-        return Err(arkret_sdk::Error::Protocol(
-            "MLS governance Seal signature must use EdDSA".to_owned(),
-        ));
-    }
-    let signer = verification_method_did(&signature.verification_method)?;
-    if !notary.includes_signer_as_primary(&signer) && delegated_controller != Some(&signer) {
-        return Err(arkret_sdk::Error::Protocol(format!(
-            "Seal signer {signer} is not authorized by the materialized Realm notary cell"
-        )));
-    }
-    if let Some((actor, device)) = managed_seal_device_proof_pair(seal, delegated_controller)
-        .map_err(arkret_sdk::Error::Protocol)?
-    {
-        let key = match crate::identity::device_directory::cached_device_signing_key(
-            &actor, &device,
-        ) {
-            crate::identity::device_directory::CacheLookup::Hit(key) => key,
-            crate::identity::device_directory::CacheLookup::NegativeHit => {
-                return Err(arkret_sdk::Error::Protocol(format!(
-                    "MLS governance Seal controller device key is revoked or unavailable for {actor}#{device}"
-                )));
-            }
-            crate::identity::device_directory::CacheLookup::Miss => {
-                return Err(arkret_sdk::Error::Protocol(format!(
-                    "MLS governance Seal controller device key was not prefetched for {actor}#{device}"
-                )));
-            }
-        };
-        return arkret_sdk::signatures::Ed25519DetachedJwsVerifier::new()
-            .verify_detached_jws(&signature.jws, &canonical_bytes, &key)
-            .map_err(|error| {
-                arkret_sdk::Error::Protocol(format!(
-                    "Seal controller device signature invalid: {error}"
-                ))
-            });
-    }
-    // DID-P2-B / spec §3+§6: this is ordinary per-signature verification, not an
-    // authority trigger. `resolver` here is the in-memory
-    // [`StaticProofDidResolver`] the caller pre-populated with already
-    // authority-resolved documents, so the correct API is the pinned-document
-    // verifier, which holds no network resolver at all and additionally
-    // compares `document.id == issuer` (the deprecated `verify_jws_ed25519`
-    // accepted an `issuer` argument and never compared it).
-    let document = resolver.resolve_did(&signer).map_err(|error| {
-        arkret_sdk::Error::Protocol(format!("Seal signer document unavailable: {error}"))
-    })?;
-    arkret_identity::verify_jws_with_document(
-        &canonical_bytes,
-        &signature.jws,
-        &signature.verification_method,
-        &signer,
-        &document,
-    )
-    .map_err(|error| arkret_sdk::Error::Protocol(format!("Seal signature invalid: {error}")))
-}
-
-/// Verify a managed Agent PCR frontier receipt before it is trusted as the
-/// predecessor for a controller-authored successor Seal.
-pub(crate) fn verify_managed_agent_pcr_seal_head(
-    seal: &Seal,
-    controller: &arkret_sdk::Did,
-) -> arkret_sdk::Result<()> {
-    seal.validate_structural()?;
-    seal.validate_id()?;
-    let canonical_bytes = seal.canonical_bytes_for_id()?;
-    let signature = match &seal.notary_signature {
-        NotarySig::Single(signature) => signature,
-        NotarySig::Multi(_) | NotarySig::Threshold(_) => {
-            return Err(arkret_sdk::Error::Protocol(
-                "managed Agent PCR Seal head requires one controller-device signature".to_owned(),
-            ));
-        }
-    };
-    if signature.alg != "EdDSA" {
-        return Err(arkret_sdk::Error::Protocol(
-            "managed Agent PCR Seal head signature must use EdDSA".to_owned(),
-        ));
-    }
-    let signer = verification_method_did(&signature.verification_method)?;
-    if &signer != controller {
-        return Err(arkret_sdk::Error::Protocol(format!(
-            "managed Agent PCR Seal head signer {signer} is not controller {controller}"
-        )));
-    }
-    let (actor, device) = managed_seal_device_proof_pair(seal, Some(controller))
-        .map_err(arkret_sdk::Error::Protocol)?
-        .ok_or_else(|| {
-            arkret_sdk::Error::Protocol(
-                "managed Agent PCR Seal head has no controller-device verification method"
-                    .to_owned(),
-            )
-        })?;
-    let key = match crate::identity::device_directory::cached_device_signing_key(&actor, &device) {
-        crate::identity::device_directory::CacheLookup::Hit(key) => key,
-        crate::identity::device_directory::CacheLookup::NegativeHit => {
-            return Err(arkret_sdk::Error::Protocol(format!(
-                "managed Agent PCR Seal head device key is revoked or unavailable for {actor}#{device}"
-            )));
-        }
-        crate::identity::device_directory::CacheLookup::Miss => {
-            return Err(arkret_sdk::Error::Protocol(format!(
-                "managed Agent PCR Seal head device key was not prefetched for {actor}#{device}"
-            )));
-        }
-    };
-    arkret_sdk::signatures::Ed25519DetachedJwsVerifier::new()
-        .verify_detached_jws(&signature.jws, &canonical_bytes, &key)
-        .map_err(|error| {
-            arkret_sdk::Error::Protocol(format!(
-                "managed Agent PCR Seal head controller-device signature invalid: {error}"
-            ))
-        })
 }

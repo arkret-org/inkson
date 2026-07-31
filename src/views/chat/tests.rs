@@ -597,7 +597,7 @@ fn chat_message_create_operation_emits_schema_canonical_content() {
     .expect("builds");
 
     assert_eq!(op.kind.as_str(), "ak.message.create");
-    assert!(op.payload.get("message_id").is_none());
+    assert!(!op.payload.contains_key("message_id"));
     assert_eq!(
         arkret_sdk::MessageId::from_event_id(&op.event_id).as_str(),
         "ak:message:01904100-0000-7000-8000-000000000001"
@@ -616,14 +616,14 @@ fn chat_message_create_operation_emits_schema_canonical_content() {
         Some("hello from chat")
     );
     assert!(op.payload["content"].get("blocks").is_none());
-    assert!(op.payload.get("body").is_none());
-    assert!(op.payload.get("encrypted").is_none());
-    assert!(op.payload.get("kind").is_none());
-    assert!(op.payload.get("mentions").is_none());
-    assert!(op.payload.get("audience_mentions").is_none());
-    assert!(op.payload.get("mention_relations").is_none());
-    assert!(op.payload.get("reply_to").is_none());
-    assert!(op.payload.get("thread_id").is_none());
+    assert!(!op.payload.contains_key("body"));
+    assert!(!op.payload.contains_key("encrypted"));
+    assert!(!op.payload.contains_key("kind"));
+    assert!(!op.payload.contains_key("mentions"));
+    assert!(!op.payload.contains_key("audience_mentions"));
+    assert!(!op.payload.contains_key("mention_relations"));
+    assert!(!op.payload.contains_key("reply_to"));
+    assert!(!op.payload.contains_key("thread_id"));
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
@@ -664,7 +664,7 @@ fn chat_message_create_operation_keeps_public_update_notification_projection_out
     )
     .expect("builds");
 
-    assert!(op.payload.get("priority").is_none());
+    assert!(!op.payload.contains_key("priority"));
     assert!(op.payload["content"].get("priority").is_none());
     assert!(op.payload["content"].get("notification").is_none());
     assert_eq!(
@@ -733,9 +733,9 @@ fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
         op.payload["content"]["audience_mentions"][0]["audience"].as_str(),
         Some("strand_engaged")
     );
-    assert!(op.payload.get("audience_mentions").is_none());
-    assert!(op.payload.get("mentions").is_none());
-    assert!(op.payload.get("mention_relations").is_none());
+    assert!(!op.payload.contains_key("audience_mentions"));
+    assert!(!op.payload.contains_key("mentions"));
+    assert!(!op.payload.contains_key("mention_relations"));
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
@@ -789,7 +789,7 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
     );
     assert_eq!(mention["agent_slug_at_time"].as_str(), Some("summary"));
     assert!(mention.get("target").is_none());
-    assert!(op.payload.get("mentions").is_none());
+    assert!(!op.payload.contains_key("mentions"));
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
@@ -856,7 +856,7 @@ fn mention_sidecar_is_omitted_without_an_epoch_routing_key() {
 
     apply_mention_sidecar_digestes(&mut event, &mentions, None);
 
-    assert!(event.payload.get("mention_sidecar_digest").is_none());
+    assert!(!event.payload.contains_key("mention_sidecar_digest"));
 }
 
 #[test]
@@ -877,7 +877,7 @@ fn chat_message_create_operation_includes_reply_fields_only_when_present() {
         op.payload["reply_to"].as_str(),
         Some("ak:message:01904100-0000-7000-8000-000000000004")
     );
-    assert!(op.payload.get("thread_id").is_none());
+    assert!(!op.payload.contains_key("thread_id"));
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
@@ -983,9 +983,9 @@ fn shared_pin_operations_use_pin_events_not_account_data() {
     assert_eq!(add.payload["pin_scope"]["id"], strand_id);
     assert_eq!(add.payload["target_ref"], target_ref);
     assert_eq!(add.payload["rank"], "r100");
-    assert!(add.payload.get("key").is_none());
-    assert!(add.payload.get("encrypted_payload").is_none());
-    assert!(add.payload.get("body").is_none());
+    assert!(!add.payload.contains_key("key"));
+    assert!(!add.payload.contains_key("encrypted_payload"));
+    assert!(!add.payload.contains_key("body"));
 
     let remove = shared_message_pin_remove_operation(
         "ak:realm:01904100-0000-7000-8000-000000000010",
@@ -996,7 +996,7 @@ fn shared_pin_operations_use_pin_events_not_account_data() {
     .expect("shared pin remove builds");
     assert_eq!(remove.kind.as_str(), "ak.pin.remove");
     assert_eq!(remove.payload["target_ref"], target_ref);
-    assert!(remove.payload.get("key").is_none());
+    assert!(!remove.payload.contains_key("key"));
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
@@ -1075,7 +1075,7 @@ fn private_saved_item_uses_saved_account_data_not_pin_event() {
     assert_eq!(op.payload["key"], item.account_data_key);
     assert_eq!(op.payload["expected_revision"], 0);
     assert_eq!(op.payload["encrypted_payload"]["kind"], "saved_item");
-    assert!(op.payload.get("body").is_none());
+    assert!(!op.payload.contains_key("body"));
     assert_ne!(op.kind, "ak.pin.add");
 }
 
@@ -4300,7 +4300,7 @@ fn secure_content_block_round_trips_back_to_text() {
         .expect("content block serializes");
     let bytes = serde_json::to_vec(&content_value).expect("content block bytes");
     let parsed: Value = serde_json::from_slice(&bytes).expect("content block parses");
-    assert_eq!(text_body_from_value(&parsed).as_deref(), Some(body));
+    assert_eq!(text_body_from_value(&parsed), Some(body));
 }
 
 #[test]
@@ -4456,8 +4456,8 @@ fn chat_message_revise_operation_uses_schema_target_ref() {
     );
     assert_eq!(op.payload["content"]["kind"], "ak.content.text");
     assert_eq!(op.payload["content"]["body"], "edited");
-    assert!(op.payload.get("body").is_none());
-    assert!(op.payload.get("target_event_id").is_none());
+    assert!(!op.payload.contains_key("body"));
+    assert!(!op.payload.contains_key("target_event_id"));
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
@@ -4485,7 +4485,7 @@ fn chat_message_revise_operation_addresses_message_target_via_message_id() {
         op.payload["message_id"],
         "ak:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
     );
-    assert!(op.payload.get("target_ref").is_none());
+    assert!(!op.payload.contains_key("target_ref"));
     assert_eq!(op.payload["content"]["kind"], "ak.content.text");
     assert_eq!(op.payload["content"]["body"], "edited");
     arkret_sdk::schema::event_payload_validator_catalog()
@@ -4512,7 +4512,7 @@ fn chat_message_redact_operation_uses_event_target_for_event_id() {
         "ak:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
     );
     assert_eq!(op.payload["reason"], "author_redaction");
-    assert!(op.payload.get("message_id").is_none());
+    assert!(!op.payload.contains_key("message_id"));
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
@@ -4537,7 +4537,7 @@ fn chat_message_redact_operation_uses_message_id_for_message_target() {
         "ak:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
     );
     assert_eq!(op.payload["reason"], "author_redaction");
-    assert!(op.payload.get("target_event_id").is_none());
+    assert!(!op.payload.contains_key("target_event_id"));
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
@@ -4562,8 +4562,8 @@ fn chat_reaction_add_operation_uses_schema_target_ref() {
         "ak:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
     );
     assert_eq!(op.payload["key"], "+1");
-    assert!(op.payload.get("event_id").is_none());
-    assert!(op.payload.get("actor").is_none());
+    assert!(!op.payload.contains_key("event_id"));
+    assert!(!op.payload.contains_key("actor"));
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(

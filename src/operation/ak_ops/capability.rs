@@ -74,6 +74,10 @@ pub fn capability_grant_actions(
     )
 }
 
+// Invariant assertions: each `expect` message names the check that
+// establishes it a few lines earlier. Rewriting them as `?` would add
+// error paths no caller can reach.
+#[allow(clippy::expect_used)]
 /// Build a capability grant with caller-supplied canonical resource selectors.
 /// Participation uses this form for Circle and Strand scopes; the ordinary
 /// Realm-admin helper above keeps its Realm-wide default.

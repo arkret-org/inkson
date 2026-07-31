@@ -542,6 +542,10 @@ async fn persist_pending_direct_conversation_mls(
         })
 }
 
+// Invariant assertions: each `expect` message names the check that
+// establishes it a few lines earlier. Rewriting them as `?` would add
+// error paths no caller can reach.
+#[allow(clippy::expect_used)]
 async fn materialize_direct_conversation(
     api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
@@ -711,7 +715,7 @@ async fn materialize_direct_conversation(
                 secure_store.as_ref(),
                 &realm_id,
                 &actor_id,
-                &device_id,
+                device_id,
             )
             .map_err(|error| anyhow::anyhow!(error.user_message()))?
         };
@@ -723,7 +727,7 @@ async fn materialize_direct_conversation(
                 secure_store.as_ref(),
                 &realm_id,
                 &actor_id,
-                &device_id,
+                device_id,
             )
             .map_err(|error| anyhow::anyhow!(error.user_message()))?
             .ok_or_else(|| {
@@ -742,7 +746,7 @@ async fn materialize_direct_conversation(
                 &mut state_store.write(),
                 &realm_id,
                 &actor_id,
-                &device_id,
+                device_id,
                 Some(&summary),
             )
             .map_err(anyhow::Error::msg)?
@@ -779,7 +783,7 @@ async fn materialize_direct_conversation(
             secure_store.as_ref(),
             &realm_id,
             &actor_id,
-            &device_id,
+            device_id,
             &draft.claimed_keypackage,
             draft.claim_nonce.as_str(),
             draft.claim_receipt.as_ref(),

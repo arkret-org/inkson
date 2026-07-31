@@ -396,7 +396,7 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
         genesis.payload["creator_principal_id"].as_str(),
         Some(actor)
     );
-    assert!(genesis.payload.get("governance_binding").is_some());
+    assert!(genesis.payload.contains_key("governance_binding"));
     assert_registered_payload_valid(&genesis);
 }
 
@@ -508,11 +508,11 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     );
     assert_eq!(commit.kind.as_str(), "ak.mls.commit");
     assert_registered_payload_valid(&commit);
-    assert!(commit.payload.get("group_id").is_none());
-    assert!(commit.payload.get("expected_prev_epoch").is_none());
-    assert!(commit.payload.get("commit_bytes_b64").is_none());
-    assert!(commit.payload.get("preconditions").is_none());
-    assert!(commit.payload.get("effects").is_none());
+    assert!(!commit.payload.contains_key("group_id"));
+    assert!(!commit.payload.contains_key("expected_prev_epoch"));
+    assert!(!commit.payload.contains_key("commit_bytes_b64"));
+    assert!(!commit.payload.contains_key("preconditions"));
+    assert!(!commit.payload.contains_key("effects"));
     assert_eq!(
         commit.payload["governance_binding"]["realm_id"],
         json!("ak:realm:01904100-0000-7000-8000-000000000001")

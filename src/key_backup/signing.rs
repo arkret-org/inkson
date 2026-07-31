@@ -253,6 +253,10 @@ fn apply_key_backup_trust_anchor(
     Ok(())
 }
 
+// Invariant assertions: each `expect` message names the check that
+// establishes it a few lines earlier. Rewriting them as `?` would add
+// error paths no caller can reach.
+#[allow(clippy::expect_used)]
 pub fn build_key_backup_unlock_proof_active(
     backup: &Value,
     principal_id: &str,

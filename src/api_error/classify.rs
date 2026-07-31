@@ -141,6 +141,10 @@ pub fn is_actor_seq_cas_conflict_error(error: &anyhow::Error) -> bool {
     actor_seq_cas_conflict_details(error).is_some()
 }
 
+// Invariant assertions: each `expect` message names the check that
+// establishes it a few lines earlier. Rewriting them as `?` would add
+// error paths no caller can reach.
+#[allow(clippy::expect_used)]
 /// Return the closed actor-chain CAS details only when the service explicitly
 /// proves that the submitted immutable Event was not accepted.
 pub fn actor_seq_cas_conflict_details(

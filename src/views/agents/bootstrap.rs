@@ -962,6 +962,10 @@ async fn submit_managed_agent_pcr_seal(
     Ok(seal)
 }
 
+// Invariant assertions: each `expect` message names the check that
+// establishes it a few lines earlier. Rewriting them as `?` would add
+// error paths no caller can reach.
+#[allow(clippy::expect_used)]
 /// Close all currently accepted managed Agent PCR Events into a Seal signed by
 /// the active controller device. The accepted head returned by frontier can
 /// lag the Event log and is the predecessor for the successor authored here.

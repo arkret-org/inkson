@@ -713,37 +713,6 @@ pub(super) fn build_active_series_event(
     .build_sdk_event("inkson")
 }
 
-#[cfg(test)]
-mod rotation_resume_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn pending_rotation_index_round_trips_and_clears() {
-        let store = garth::MemorySecureKeyStore::new();
-        let target = "ak:device:01964137-0000-7000-8000-000000000022";
-        let pending = PendingRotation {
-            transaction_id: TransactionId::new(
-                "ak:transaction:01964137-0000-7000-8000-000000000033",
-            )
-            .unwrap(),
-            actor_id: "did:webvh:z6mkfixture:alice.example".to_owned(),
-            current_device_id: "ak:device:01964137-0000-7000-8000-000000000011".to_owned(),
-        };
-
-        save_pending_rotation(&store, target, &pending)
-            .await
-            .unwrap();
-        let restored = load_pending_rotation(&store, target).unwrap().unwrap();
-        assert_eq!(restored.transaction_id, pending.transaction_id);
-        assert_eq!(restored.actor_id, pending.actor_id);
-        assert_eq!(restored.current_device_id, pending.current_device_id);
-
-        clear_pending_rotation(&store, target).unwrap();
-        clear_pending_rotation(&store, target).unwrap();
-        assert!(load_pending_rotation(&store, target).unwrap().is_none());
-    }
-}
-
 fn prepare_class(
     list_payload: &Value,
     backup_kind: BackupRotationKind,
@@ -799,4 +768,35 @@ fn backup_ref(body: &Value) -> Result<BackupObjectRef> {
         backup_id: arkret_sdk::BackupId::new(backup_id.to_owned())?,
         ciphertext_digest: Hash::new(ciphertext_digest.to_owned())?,
     })
+}
+
+#[cfg(test)]
+mod rotation_resume_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn pending_rotation_index_round_trips_and_clears() {
+        let store = garth::MemorySecureKeyStore::new();
+        let target = "ak:device:01964137-0000-7000-8000-000000000022";
+        let pending = PendingRotation {
+            transaction_id: TransactionId::new(
+                "ak:transaction:01964137-0000-7000-8000-000000000033",
+            )
+            .unwrap(),
+            actor_id: "did:webvh:z6mkfixture:alice.example".to_owned(),
+            current_device_id: "ak:device:01964137-0000-7000-8000-000000000011".to_owned(),
+        };
+
+        save_pending_rotation(&store, target, &pending)
+            .await
+            .unwrap();
+        let restored = load_pending_rotation(&store, target).unwrap().unwrap();
+        assert_eq!(restored.transaction_id, pending.transaction_id);
+        assert_eq!(restored.actor_id, pending.actor_id);
+        assert_eq!(restored.current_device_id, pending.current_device_id);
+
+        clear_pending_rotation(&store, target).unwrap();
+        clear_pending_rotation(&store, target).unwrap();
+        assert!(load_pending_rotation(&store, target).unwrap().is_none());
+    }
 }

@@ -404,6 +404,10 @@ pub(crate) fn push_contact_remark_account_data(
     });
 }
 
+// Invariant assertions: each `expect` message names the check that
+// establishes it a few lines earlier. Rewriting them as `?` would add
+// error paths no caller can reach.
+#[allow(clippy::expect_used)]
 #[component]
 pub fn SettingsPanel(
     account_did: Signal<String>,

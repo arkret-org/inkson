@@ -407,7 +407,7 @@ fn canonical_calendar_date_time(field: &str, value: &str, all_day: bool) -> Resu
     if let Some(dot) = local.find('.') {
         let suffix = local[dot..].to_owned();
         let offset = suffix
-            .find(|character| matches!(character, '+' | '-'))
+            .find(['+', '-'])
             .map(|index| suffix[index..].to_owned());
         local.truncate(dot);
         if let Some(offset) = offset {

@@ -182,11 +182,8 @@ impl AccountClientEventProjector {
 
 #[cfg(test)]
 impl ClientProjector for AccountClientEventProjector {
-    fn project(
-        &self,
-        batch: Vec<ClientEvent>,
-    ) -> impl std::future::Future<Output = garth::Result<()>> + '_ {
-        async move {
+    async fn project(&self, batch: Vec<ClientEvent>) -> garth::Result<()> {
+        {
             for event in batch {
                 self.record(event);
             }
@@ -855,22 +852,15 @@ fn realm_default_mls_removal_candidates(
     device_id: &str,
 ) -> Option<Vec<(String, Vec<arkret_sdk::EventId>)>> {
     let state = state_store.load();
-    let Some(projection) = state.realm_tree_projections.get(realm_id) else {
-        return None;
-    };
-    let Some((active_members, membership_frontier)) = realm_membership_removal_basis(projection)
-    else {
-        return None;
-    };
-    let Some(mut mls_members) = crate::mls::runtime::mls_group_member_principal_ids_for_realm(
+    let projection = state.realm_tree_projections.get(realm_id)?;
+    let (active_members, membership_frontier) = realm_membership_removal_basis(projection)?;
+    let mut mls_members = crate::mls::runtime::mls_group_member_principal_ids_for_realm(
         state_store,
         secure_store,
         realm_id,
         actor_id,
         device_id,
-    ) else {
-        return None;
-    };
+    )?;
     mls_members.sort();
     mls_members.dedup();
     Some(

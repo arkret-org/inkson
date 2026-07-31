@@ -626,6 +626,7 @@ fn load_latest_cross_signing_publish(
         .map(Some)
         .map_err(|err| format!("cross-signing publish state decode: {err}"))
 }
+use std::collections::BTreeMap;
 
 #[cfg(test)]
 mod tests {
@@ -934,8 +935,8 @@ mod tests {
             admission.welcome.payload["ciphertext"],
             admission.welcome_envelope.welcome
         );
-        assert!(admission.welcome.payload.get("welcome_bytes_b64").is_none());
-        assert!(admission.welcome.payload.get("key_package_id").is_none());
+        assert!(!admission.welcome.payload.contains_key("welcome_bytes_b64"));
+        assert!(!admission.welcome.payload.contains_key("key_package_id"));
         assert!(
             admission.welcome.payload["claim_envelope"]["signature"]["sig"]
                 .as_str()
@@ -1095,4 +1096,3 @@ mod tests {
         );
     }
 }
-use std::collections::BTreeMap;

@@ -96,7 +96,7 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
             "key": "+1"
         }),
     );
-    let events = vec![create, reaction];
+    let events = [create, reaction];
     let decoder = garth::InboundDecoder::new();
 
     let decoded: Vec<_> = events

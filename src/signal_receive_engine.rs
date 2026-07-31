@@ -282,12 +282,12 @@ impl SignalSink for InksonSignalSink {
         self.products.prefetch_sender_key(envelope)
     }
 
-    fn deliver<'a>(
+    async fn deliver<'a>(
         &'a self,
         envelope: &'a arkret_wire::SignalEnvelope,
         plaintext: garth::SignalPlaintext,
-    ) -> impl std::future::Future<Output = garth::Result<()>> + 'a {
-        async move {
+    ) -> garth::Result<()> {
+        {
             match plaintext.kind.as_str() {
                 garth::SIGNAL_PLAINTEXT_KIND_CALL => {
                     // The decrypted body verbatim: `CallSignalPlaintext` is a

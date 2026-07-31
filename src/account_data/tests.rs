@@ -788,8 +788,8 @@ fn contact_and_realm_remarks_are_encrypted_account_data() {
         0,
     )
     .build("node");
-    assert!(op.payload.get("encrypted_payload").is_some());
-    assert!(op.payload.get("body").is_none());
+    assert!(op.payload.contains_key("encrypted_payload"));
+    assert!(!op.payload.contains_key("body"));
 }
 
 #[test]
@@ -806,7 +806,7 @@ fn private_account_data_builders_emit_encrypted_payload() {
     .build("node");
     assert_eq!(op.kind, "ak.account_data.set");
     assert_eq!(op.payload["key"], key);
-    assert!(op.payload.get("body").is_none());
+    assert!(!op.payload.contains_key("body"));
     assert_eq!(op.payload["encrypted_payload"]["ciphertext"], "opaque");
 
     let tombstone = build_private_account_data_tombstone(
@@ -840,7 +840,7 @@ fn private_account_data_builder_emits_required_revision() {
     .build("node");
     assert_eq!(op.kind, "ak.account_data.set");
     assert_eq!(op.payload["expected_revision"], 7);
-    assert!(op.payload.get("body").is_none());
+    assert!(!op.payload.contains_key("body"));
     assert_eq!(op.payload["encrypted_payload"]["ciphertext"], "opaque");
 }
 
@@ -857,7 +857,7 @@ fn generic_builder_does_not_put_private_values_under_body() {
         0,
     )
     .build("node");
-    assert!(op.payload.get("body").is_none());
+    assert!(!op.payload.contains_key("body"));
     assert_eq!(op.payload["encrypted_payload"]["ciphertext"], "opaque");
 }
 

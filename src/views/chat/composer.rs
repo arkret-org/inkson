@@ -195,10 +195,10 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
             (&mentions_enabled,),
             move |(mentions_enabled,)| {
                 if !mentions_enabled {
-                    if let Some(request_signal) = request_signal.as_mut() {
-                        if request_signal.peek().is_some() {
-                            request_signal.set(None);
-                        }
+                    if let Some(request_signal) = request_signal.as_mut()
+                        && request_signal.peek().is_some()
+                    {
+                        request_signal.set(None);
                     }
                     return;
                 }
@@ -1759,9 +1759,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             api_token.clone(),
                                             None,
                                         )
-                                        .and_then(|api| {
-                                            api.sdk_http_client().map_err(anyhow::Error::from)
-                                        }) {
+                                        .and_then(|api| api.sdk_http_client())
+                                        {
                                             Ok(http) => http
                                                 .agent_sidecar_get(&session.sidecar_id)
                                                 .await

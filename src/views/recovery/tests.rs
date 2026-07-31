@@ -103,8 +103,10 @@ fn recovery_state_without_user_material_is_not_configured() {
 
 #[test]
 fn recovery_state_with_key_is_configured() {
-    let mut keyed = RecoveryState::default();
-    keyed.recovery_key_fingerprint = "sha256:abc".to_owned();
+    let keyed = RecoveryState {
+        recovery_key_fingerprint: "sha256:abc".to_owned(),
+        ..Default::default()
+    };
     assert!(recovery_state_has_user_material(&keyed));
 }
 

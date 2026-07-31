@@ -457,6 +457,10 @@ fn local_pcr_member_receipt(
     Ok(member)
 }
 
+// Invariant assertions: each `expect` message names the check that
+// establishes it a few lines earlier. Rewriting them as `?` would add
+// error paths no caller can reach.
+#[allow(clippy::expect_used)]
 fn local_pcr_receipt_signer_principal(event: &arkret_sdk::Event) -> &arkret_sdk::Did {
     if is_managed_agent_pcr_control(event) {
         event
