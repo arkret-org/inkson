@@ -661,12 +661,12 @@ pub fn validate_realm_history_content_scheme_for_profile(
 fn build_realm_delivery_binding_policy(
     realm_id: &str,
     notary_did: &str,
-) -> anyhow::Result<arkret_sdk::DeliveryBindingPolicyPayload> {
+) -> anyhow::Result<arkret_sdk::RealmDeliveryBindingPolicyPayload> {
     let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|err| anyhow::anyhow!("invalid realm_id for delivery_binding_policy: {err:?}"))?;
     let recipient_service = arkret_sdk::Did::new(notary_did.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid delivery binding recipient service DID: {err}"))?;
-    Ok(arkret_sdk::DeliveryBindingPolicyPayload {
+    Ok(arkret_sdk::RealmDeliveryBindingPolicyPayload {
         realm_id: Some(realm_id),
         allowed_binding_sources: Some(
             [arkret_sdk::BindingSource::RealmPolicy]
@@ -1053,7 +1053,7 @@ pub fn build_realm_state_event(
         // 2026-08-01-realm-policy-bundle-closed-def-omits-mandated-components.md`.
         EventKind::RealmPolicyBundle => value.clone(),
         EventKind::RealmDeliveryBindingPolicy => {
-            let typed: arkret_sdk::DeliveryBindingPolicyPayload =
+            let typed: arkret_sdk::RealmDeliveryBindingPolicyPayload =
                 serde_json::from_value(value.clone()).map_err(|err| {
                     anyhow::anyhow!("invalid Realm delivery_binding_policy {value}: {err}")
                 })?;

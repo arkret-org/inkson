@@ -45,12 +45,19 @@ impl DidResolver for StaticProofDidResolver {
     fn resolve_did(
         &self,
         did: &arkret_sdk::Did,
-    ) -> arkret_sdk::identity::Result<arkret_sdk::DidDocument> {
-        self.documents.get(did.as_str()).cloned().ok_or_else(|| {
-            arkret_sdk::identity::IdentityError::Protocol(format!(
-                "no authority-resolved DID document for proof signer {did}"
-            ))
-        })
+    ) -> arkret_sdk::identity::Result<arkret_sdk::identity::ResolvedDid> {
+        self.documents
+            .get(did.as_str())
+            .cloned()
+            // These documents come from the authority resolver chain, which
+            // already consumed whatever method evidence existed; this cache
+            // carries none of its own, so it is a proofless resolution.
+            .map(arkret_sdk::identity::ResolvedDid::proofless)
+            .ok_or_else(|| {
+                arkret_sdk::identity::IdentityError::Protocol(format!(
+                    "no authority-resolved DID document for proof signer {did}"
+                ))
+            })
     }
 }
 
@@ -1093,7 +1100,7 @@ where
     // verifier, which holds no network resolver at all and additionally
     // compares `document.id == issuer` (the deprecated `verify_jws_ed25519`
     // accepted an `issuer` argument and never compared it).
-    let document = resolver.resolve_did(&signer).map_err(|error| {
+    let document = resolver.resolve_did_document(&signer).map_err(|error| {
         arkret_sdk::Error::Protocol(format!("Seal signer document unavailable: {error}"))
     })?;
     arkret_identity::verify_jws_with_document(

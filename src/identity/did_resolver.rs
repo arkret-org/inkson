@@ -123,8 +123,10 @@ pub fn verify_principal(
         .policy()
         .validate(principal)
         .map_err(|e| VerifyError::Disallowed(format!("{e:?}")))?;
+    // Ordinary verification path: the document is all this returns, so it uses
+    // the document-only accessor rather than dropping method evidence by hand.
     let doc = resolver
-        .resolve_did(principal)
+        .resolve_did_document(principal)
         .map_err(|e| VerifyError::Unresolved(format!("{e:?}")))?;
     if &doc.id != principal {
         return Err(VerifyError::MethodMismatch);
@@ -268,7 +270,7 @@ impl ResolverDidAnchor {
     /// an online resolution.
     fn accepted_document(&self, actor: &Did, now: DateTime<Utc>) -> Option<DidDocument> {
         let state = self.bindings.as_ref()?;
-        let key = state.scope.key(actor, state.purpose, None, None);
+        let key = state.scope.key(actor, state.purpose, None);
         state
             .store
             .ordinary_lookup(&key, now)
@@ -453,7 +455,15 @@ impl ResolverDidAnchor {
         self.cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(service.clone(), document, Utc::now(), ttl)
+            // `verify_did_webvh_document_and_log_bytes` verifies the log but
+            // returns only the document, so the cached resolution carries no
+            // method-proof rows: §5.2 forbids synthesizing one here.
+            .insert(
+                service.clone(),
+                arkret_sdk::identity::ResolvedDid::proofless(document),
+                Utc::now(),
+                ttl,
+            )
             .is_ok()
     }
 }
@@ -750,8 +760,8 @@ pub fn resolve_with_cache(
     now: DateTime<Utc>,
 ) -> Result<DidDocument, VerifyError> {
     // 1) Fresh cache hit: reuse directly. `get` also lazily evicts expired entries.
-    if let Some(doc) = cache.get(principal, now) {
-        return Ok(doc);
+    if let Some(resolved) = cache.get(principal, now) {
+        return Ok(resolved.document);
     }
     // 2) Miss / expired entry: walk the full resolver chain (policy validation + id check).
     let doc = verify_principal(resolver, principal)?;
@@ -761,7 +771,12 @@ pub fn resolve_with_cache(
         .ttl
         .unwrap_or_else(|| Duration::minutes(15));
     cache
-        .insert(principal.clone(), doc.clone(), now, ttl)
+        .insert(
+            principal.clone(),
+            arkret_sdk::identity::ResolvedDid::proofless(doc.clone()),
+            now,
+            ttl,
+        )
         .map_err(|error| VerifyError::Unresolved(error.to_string()))?;
     Ok(doc)
 }

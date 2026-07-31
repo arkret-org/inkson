@@ -564,7 +564,11 @@ fn sign_welcome_claim_envelope(
     {
         envelope.trust_binding =
             arkret_sdk::MlsRequesterTrustBinding::SskGeneration(publish.generation);
-        envelope.signature.kid = publish.self_signing_key.kid.clone();
+        // The SSK `kid` is a DID URL now; the MLS envelope's signature selector
+        // is still the generic non-empty string, so project it explicitly.
+        envelope.signature.kid =
+            arkret_sdk::NonEmptyString::new(publish.self_signing_key.kid.as_str().to_owned())
+                .map_err(|err| format!("MLS Welcome claim signing kid: {err}"))?;
         let signing_bytes = envelope
             .canonical_signing_bytes()
             .map_err(|err| format!("MLS Welcome claim canonical bytes: {err}"))?;

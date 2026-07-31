@@ -478,7 +478,9 @@ impl CrossSigningExecutor {
         );
 
         let psk_record = PublishedKey {
-            kid: non_empty(psk_kid.clone())?,
+            // A published cross-signing key is a controller key, so its `kid` is
+            // the full verification-method DID URL, not a bare label.
+            kid: arkret_sdk::DidUrl::new(psk_kid.clone()).map_err(anyhow::Error::msg)?,
             alg: non_empty("EdDSA")?,
             public_key: non_empty(encode_ed25519_did_key_multibase(&psk.verifying_key()))?,
             key_format: KeyFormat::Multibase,
@@ -496,7 +498,7 @@ impl CrossSigningExecutor {
             trust_domain: self.trust_domain.clone(),
             principal_signing_key: psk_record.clone(),
             self_signing_key: SubordinateSignedKey {
-                kid: non_empty(ssk_kid)?,
+                kid: arkret_sdk::DidUrl::new(ssk_kid).map_err(anyhow::Error::msg)?,
                 alg: non_empty("EdDSA")?,
                 public_key: non_empty(encode_ed25519_did_key_multibase(&ssk.verifying_key()))?,
                 key_format: KeyFormat::Multibase,
@@ -511,7 +513,7 @@ impl CrossSigningExecutor {
                 },
             },
             user_signing_key: SubordinateSignedKey {
-                kid: non_empty(usk_kid)?,
+                kid: arkret_sdk::DidUrl::new(usk_kid).map_err(anyhow::Error::msg)?,
                 alg: non_empty("EdDSA")?,
                 public_key: non_empty(encode_ed25519_did_key_multibase(&usk.verifying_key()))?,
                 key_format: KeyFormat::Multibase,

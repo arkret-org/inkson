@@ -405,7 +405,7 @@ mod tests {
         let records = rebooted.accepted_did_bindings();
         assert_eq!(records.len(), 1, "an orphaned row is still a valid pairing");
         let bindings = InksonDidBindingStore::hydrate(records);
-        let new_key = new.key(&did, DidBindingPurpose::Principal, None, None);
+        let new_key = new.key(&did, DidBindingPurpose::Principal, None);
         assert!(
             bindings.ordinary_lookup(&new_key, Utc::now()).is_none(),
             "the old-digest acceptance must be unreachable under the new policy"
@@ -562,7 +562,6 @@ mod tests {
                     &scope.key(
                         &Did::new(peer.to_owned()).expect("did"),
                         DidBindingPurpose::Principal,
-                        None,
                         None
                     ),
                     Utc::now()
@@ -608,7 +607,7 @@ mod tests {
             fn resolve_did(
                 &self,
                 did: &Did,
-            ) -> arkret_sdk::identity::Result<arkret_sdk::DidDocument> {
+            ) -> arkret_sdk::identity::Result<arkret_sdk::identity::ResolvedDid> {
                 self.calls.fetch_add(1, Ordering::SeqCst);
                 Err(arkret_sdk::identity::IdentityError::Protocol(format!(
                     "ordinary read must not resolve {did}"
@@ -634,7 +633,7 @@ mod tests {
         };
         let second_boot = LocalStateStore::with_path(&path);
         let bindings = second_boot.hydrate_did_binding_store();
-        let key = scope.key(&peer_did, DidBindingPurpose::DeviceSigner, None, None);
+        let key = scope.key(&peer_did, DidBindingPurpose::DeviceSigner, None);
 
         // Ordinary sync / render reads, repeated: still zero network.
         for _ in 0..5 {
@@ -653,7 +652,6 @@ mod tests {
         let unknown = scope.key(
             &Did::new("did:web:stranger.example".to_owned()).expect("did"),
             DidBindingPurpose::DeviceSigner,
-            None,
             None,
         );
         assert!(bindings.ordinary_lookup(&unknown, Utc::now()).is_none());

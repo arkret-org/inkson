@@ -1215,10 +1215,14 @@ fn render_pair_strand(
                                     arkret_sdk::base64url_encode(signature),
                                 ),
                             ) {
-                                (Ok(verification_method), Ok(alg), Ok(signature)) => {
+                                (Ok(kid), Ok(alg), Ok(signature)) => {
                                     arkret_sdk::DevicePairingChallengeProof {
                                         transcript: arkret_sdk::DevicePairingChallengeTranscriptKind::ServerMediated,
-                                        verification_method,
+                                        // Device-local selector, not a DID URL —
+                                        // the field was renamed away from
+                                        // `verification_method` precisely to stop
+                                        // the two being confused.
+                                        kid,
                                         alg,
                                         transcript_digest,
                                         signature,

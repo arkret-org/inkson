@@ -1140,13 +1140,13 @@ mod tests {
             principal_id: actor.clone(),
             trust_domain: TypedTrustDomainId::new(TIER2_TRUST_DOMAIN).unwrap(),
             principal_signing_key: PublishedKey {
-                kid: NonEmptyString::new(psk_kid.clone()).unwrap(),
+                kid: arkret_sdk::DidUrl::new(psk_kid.clone()).unwrap(),
                 alg: NonEmptyString::new("EdDSA").unwrap(),
                 public_key: NonEmptyString::new(psk_multibase.clone()).unwrap(),
                 key_format: KeyFormat::Multibase,
             },
             self_signing_key: SubordinateSignedKey {
-                kid: NonEmptyString::new(ssk_kid.clone()).unwrap(),
+                kid: arkret_sdk::DidUrl::new(ssk_kid.clone()).unwrap(),
                 alg: NonEmptyString::new("EdDSA").unwrap(),
                 public_key: NonEmptyString::new(ssk_multibase.clone()).unwrap(),
                 key_format: KeyFormat::Multibase,
@@ -1157,7 +1157,7 @@ mod tests {
                 },
             },
             user_signing_key: SubordinateSignedKey {
-                kid: NonEmptyString::new(usk_kid).unwrap(),
+                kid: arkret_sdk::DidUrl::new(usk_kid).unwrap(),
                 alg: NonEmptyString::new("EdDSA").unwrap(),
                 // Distinct from SSK (publish validation requires it).
                 public_key: NonEmptyString::new(format!("{ssk_multibase}USK")).unwrap(),

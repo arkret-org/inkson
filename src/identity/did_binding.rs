@@ -35,8 +35,8 @@
 use arkret_sdk::identity::FreshnessRequirement;
 use arkret_sdk::identity::{
     AcceptedDidBinding, BindingError, BindingInvalidation, BindingStoreError, DidBindingPurpose,
-    DidBindingStatus, DigestError, EvidenceEnvelope, InMemoryVerifiedDidBindingStore,
-    LimitedTrustReason, VerifiedDidBinding, VerifiedDidBindingDocumentInput, VerifiedDidBindingKey,
+    DidBindingStatus, DigestError, EvidenceReceipt, InMemoryVerifiedDidBindingStore, LimitedTrust,
+    MethodEvidence, VerifiedDidBinding, VerifiedDidBindingDocumentInput, VerifiedDidBindingKey,
     VerifiedDidBindingStore, policy_digest,
 };
 use arkret_sdk::{Did, DidDocument, DidUrl, Hash, TypedTrustDomainId};
@@ -152,12 +152,14 @@ impl DidBindingScope {
     }
 
     /// The store key an ordinary reader looks a binding up under.
+    ///
+    /// `version_id` is not a key dimension: §5.2 makes it a product of the
+    /// resolution, so a reader cannot know it before the lookup.
     pub(crate) fn key(
         &self,
         did: &Did,
         purpose: DidBindingPurpose,
         verification_method: Option<DidUrl>,
-        version_id: Option<String>,
     ) -> VerifiedDidBindingKey {
         VerifiedDidBindingKey {
             did: did.clone(),
@@ -165,7 +167,6 @@ impl DidBindingScope {
             purpose,
             policy_digest: self.policy_digest.clone(),
             verification_method,
-            version_id,
         }
     }
 }
@@ -179,16 +180,25 @@ impl DidBindingScope {
 /// acceptance can be audited and so a different document — or the same document
 /// under a revised policy — produces a different, non-reusable acceptance.
 ///
-/// The envelope comes from the SDK ([`EvidenceEnvelope`]) rather than being
-/// hand-rolled here. The previous local version embedded the whole serialized
-/// document, duplicating the binding's own `document_digest`; the envelope
-/// commits to that digest plus the `policy_digest`, which is strictly more than
-/// the document alone and is byte-comparable with the other repos.
-pub(crate) fn evidence_digest_for_document(
+/// The receipt comes from the SDK ([`EvidenceReceipt`]) rather than being
+/// hand-rolled here, so it is byte-comparable with the other repos. §5.2 fixes
+/// its inputs to the DID method, the digest of the verified normalized document
+/// and the registered method-proof rows — `policy_digest` deliberately stays
+/// *outside* it, side by side on the binding, so evidence invalidation is not
+/// coupled to policy rotation.
+///
+/// inkson surfaces no proof rows: its `did:webvh` ingest validates the SCID and
+/// the append-only chain but the SDK resolver does not hand back the witness set
+/// a `webvh_log` row requires, and a row the caller invented is exactly what
+/// §5.2 makes unconstructible.
+pub(crate) fn evidence_receipt_for_document(
     document: &DidDocument,
-    policy_digest: &Hash,
-) -> Result<Hash, DigestError> {
-    EvidenceEnvelope::for_document(document, policy_digest.clone())?.digest()
+) -> Result<EvidenceReceipt, BindingError> {
+    Ok(EvidenceReceipt::new(
+        document.id.method(),
+        arkret_sdk::identity::document_canonical_digest(document)?,
+        &MethodEvidence::none(),
+    ))
 }
 
 /// Why a locally-verified document could not be turned into an acceptance.
@@ -217,9 +227,9 @@ pub(crate) enum BindingAcceptError {
 ///
 /// `history_head` / `version_id` are `None` for every method inkson resolves
 /// today (`did:key`, `did:web`, and `did:webvh` whose head state the SDK
-/// validates but does not surface as a typed pin), so the limited-trust
-/// capability is recorded explicitly via [`LimitedTrustReason::for_pins`] —
-/// leaving it implicit is rejected by the SDK constructor.
+/// validates but does not surface as a typed pin), so the per-pin limited-trust
+/// record is written explicitly — leaving it implicit is rejected by the SDK
+/// constructor.
 pub(crate) fn accept_verified_document(
     scope: &DidBindingScope,
     purpose: DidBindingPurpose,
@@ -227,6 +237,7 @@ pub(crate) fn accept_verified_document(
     document: &DidDocument,
     now: DateTime<Utc>,
 ) -> Result<AcceptedDidBinding, BindingAcceptError> {
+    let receipt = evidence_receipt_for_document(document)?;
     let binding = VerifiedDidBinding::from_verified_document(
         document,
         VerifiedDidBindingDocumentInput {
@@ -235,8 +246,12 @@ pub(crate) fn accept_verified_document(
             verification_method,
             history_head: None,
             version_id: None,
-            limited_trust: LimitedTrustReason::for_pins(None, None),
-            evidence_digest: evidence_digest_for_document(document, &scope.policy_digest)?,
+            // Neither pin is surfaced, and no method inkson resolves publishes
+            // proof rows here, so both absences are the terminal
+            // `method_unsupported` rather than a resolver failure.
+            limited_trust: LimitedTrust::for_proofless_method(None, None).record_for(),
+            evidence_digest: receipt.digest()?,
+            evidence_dependencies: receipt.evidence_dependencies()?,
             policy_digest: scope.policy_digest.clone(),
             verified_at: now,
             refresh_after: Some(now + Duration::minutes(BINDING_REFRESH_MINUTES)),
@@ -244,7 +259,7 @@ pub(crate) fn accept_verified_document(
             status: DidBindingStatus::Active,
         },
     )?;
-    Ok(AcceptedDidBinding::new(binding, document.clone())?)
+    Ok(AcceptedDidBinding::new(binding, document.clone(), receipt)?)
 }
 
 /// inkson's [`VerifiedDidBindingStore`], hydrated from and snapshotted back
@@ -461,7 +476,7 @@ mod tests {
         assert_eq!(records.len(), 1);
 
         let rehydrated = InksonDidBindingStore::hydrate(records);
-        let key = scope.key(&document.id, DidBindingPurpose::DeviceSigner, None, None);
+        let key = scope.key(&document.id, DidBindingPurpose::DeviceSigner, None);
         let hit = rehydrated
             .ordinary_lookup(&key, Utc::now())
             .expect("binding survives a restart");
@@ -531,7 +546,7 @@ mod tests {
         assert!(
             rehydrated
                 .ordinary_lookup(
-                    &scope.key(&document.id, DidBindingPurpose::Principal, None, None),
+                    &scope.key(&document.id, DidBindingPurpose::Principal, None),
                     Utc::now()
                 )
                 .is_none(),
@@ -554,7 +569,7 @@ mod tests {
             )
             .expect("acceptance"),
         );
-        let other = scope.key(&document.id, DidBindingPurpose::Issuer, None, None);
+        let other = scope.key(&document.id, DidBindingPurpose::Issuer, None);
         assert!(store.ordinary_lookup(&other, Utc::now()).is_none());
     }
 
@@ -577,7 +592,7 @@ mod tests {
         assert!(
             store
                 .ordinary_lookup(
-                    &beta.key(&document.id, DidBindingPurpose::Principal, None, None),
+                    &beta.key(&document.id, DidBindingPurpose::Principal, None),
                     Utc::now()
                 )
                 .is_none(),
@@ -586,7 +601,7 @@ mod tests {
         assert!(
             store
                 .ordinary_lookup(
-                    &alpha.key(&document.id, DidBindingPurpose::Principal, None, None),
+                    &alpha.key(&document.id, DidBindingPurpose::Principal, None),
                     Utc::now()
                 )
                 .is_some()
@@ -609,7 +624,7 @@ mod tests {
             )
             .expect("acceptance"),
         );
-        let key = scope.key(&document.id, DidBindingPurpose::Principal, None, None);
+        let key = scope.key(&document.id, DidBindingPurpose::Principal, None);
         let now = Utc::now();
         let hit = store
             .ordinary_lookup(&key, now)
@@ -637,7 +652,7 @@ mod tests {
             )
             .expect("acceptance"),
         );
-        let key = scope.key(&document.id, DidBindingPurpose::Principal, None, None);
+        let key = scope.key(&document.id, DidBindingPurpose::Principal, None);
         assert!(store.ordinary_lookup(&key, Utc::now()).is_none());
     }
 }
