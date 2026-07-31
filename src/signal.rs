@@ -518,12 +518,12 @@ pub fn seal_signal_envelope(
 
 /// Envelope fixtures for the receive-side tests of other modules.
 ///
-/// [`encrypt_signal_payload`] fails closed until the SDK lands the
-/// `ak.signal-v1` exporter derivation, so a test that needs a *signed*
-/// envelope supplies opaque ciphertext and lets [`seal_signal_envelope`]
-/// recompute the AAD binding, the envelope digest and the device proof exactly
-/// as production does. Only the AEAD body is fake; every field a receiver
-/// checks is real.
+/// Sealing a real Signal needs mutable persisted MLS state and its account
+/// snapshot secret ([`encrypt_signal_payload_with_store`]), which a unit test
+/// of a receive path does not have. These helpers therefore supply opaque
+/// ciphertext and let [`seal_signal_envelope`] recompute the AAD binding, the
+/// envelope digest and the device proof exactly as production does. Only the
+/// AEAD body is fake; every field a receiver checks is real.
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::*;
@@ -810,8 +810,8 @@ mod tests {
         assert_eq!(candidate.signal_class(), arkret_wire::SignalClass::Session);
     }
 
-    /// v1 has no plaintext branch. Until the SDK exposes the `ak.signal-v1`
-    /// exporter derivation, the sender fails closed instead of shipping a
+    /// v1 has no plaintext branch. A caller that cannot durably burn the
+    /// SDK-owned Signal nonce counter fails closed instead of shipping a
     /// readable body — `signal.md` §3.
     #[test]
     fn encryption_fails_closed_rather_than_falling_back_to_plaintext() {

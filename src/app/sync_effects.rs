@@ -8,6 +8,7 @@ pub(super) fn SyncEffects(
     sync_generation: Signal<u64>,
     mut sync_engine_active_generation: Signal<Option<u64>>,
     mut realm_events_engine_active_key: Signal<Option<String>>,
+    mut signal_receive_engine_active_generation: Signal<Option<u64>>,
     sync_bootstrap_complete: Signal<bool>,
     token: Signal<String>,
     account_did: Signal<String>,
@@ -64,6 +65,64 @@ pub(super) fn SyncEffects(
         let mut active_generation = sync_engine_active_generation;
         spawn(async move {
             crate::sync_engine::run_sync_engine(
+                current_gen,
+                runtime_adapter::value_reader(sync_generation),
+                ctx,
+            )
+            .await;
+            completion_effects.complete(&effect);
+            if *active_generation.peek() == Some(current_gen) {
+                active_generation.set(None);
+            }
+        });
+    });
+
+    // The encrypted Signal receive rail. It is account-scoped like the account
+    // engine (the operation takes no selector at all), so it shares the same
+    // generation axis and is spawned exactly once per generation. Only the
+    // single-leader tab mounts this component, which is also what keeps one
+    // browser session from holding two Signal consumers.
+    let signal_effects = runtime_services.effects.clone();
+    let signal_client_runtime = runtime_services.client.clone();
+    let signal_product_sink = runtime_services.signal_product_sink.clone();
+    use_effect(move || {
+        let current_gen = sync_generation();
+        let base = base_url();
+        let session = token();
+        let actor = account_did();
+        let device = device_id();
+        if base.trim().is_empty()
+            || session.trim().is_empty()
+            || actor.trim().is_empty()
+            || device.trim().is_empty()
+            || !sync_bootstrap_complete()
+        {
+            return;
+        }
+        if *signal_receive_engine_active_generation.peek() == Some(current_gen) {
+            return;
+        }
+        signal_receive_engine_active_generation.set(Some(current_gen));
+        let effect = signal_effects.register(crate::runtime::effects::EffectKey {
+            owner: crate::runtime::effects::EffectOwner::Account(actor.clone()),
+            name: "signal-receive".to_owned(),
+            generation: current_gen,
+        });
+        let completion_effects = signal_effects.clone();
+        let ctx = crate::signal_receive_engine::SignalReceiveEngineContext {
+            base_url: runtime_adapter::value_reader(base_url),
+            token: runtime_adapter::value_reader(token),
+            state_store: runtime_adapter::state_store_handle(state_store),
+            account_did: actor,
+            device_id: device,
+            profiles: runtime_adapter::value_reader(profiles),
+            client_runtime: signal_client_runtime.clone(),
+            effect: effect.clone(),
+            products: signal_product_sink.clone(),
+        };
+        let mut active_generation = signal_receive_engine_active_generation;
+        spawn(async move {
+            crate::signal_receive_engine::run_signal_receive_engine(
                 current_gen,
                 runtime_adapter::value_reader(sync_generation),
                 ctx,

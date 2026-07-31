@@ -45,32 +45,6 @@ impl garth::AsyncSyncTransport for InksonAccountTransport {
     }
 }
 
-/// Synchronous, fail-closed [`garth::SignalSenderKeyResolver`].
-///
-/// [`garth::SignalReceiver::accept`] resolves the sending device's key before
-/// it will touch the AEAD, so the lookup has to be synchronous; only the local
-/// device-directory cache can answer that. A cache Miss fails the Signal
-/// closed rather than admitting it.
-///
-/// This is the cached-key half only. `signal.md` §1 additionally requires
-/// `proof.verification_method` to resolve **at `envelope.seal_ref`** to an
-/// active signing method the sender actor authorized for `sender_device_id`,
-/// and forbids substituting string equality on the fragment. inkson does not
-/// yet hold accepted per-Seal device-authorization state, so that half is not
-/// enforced here and the resolver must not be presented as if it were.
-pub fn cached_signal_sender_key(
-    envelope: &arkret_wire::SignalEnvelope,
-) -> Option<arkret_sdk::signatures::PublicKeyMaterial> {
-    match crate::identity::device_directory::cached_device_signing_key(
-        envelope.sender_actor_id.as_str(),
-        envelope.sender_device_id.as_str(),
-    ) {
-        crate::identity::device_directory::CacheLookup::Hit(key) => Some(key),
-        crate::identity::device_directory::CacheLookup::NegativeHit
-        | crate::identity::device_directory::CacheLookup::Miss => None,
-    }
-}
-
 #[derive(Clone)]
 pub struct InksonLocalStateStoreAdapter {
     inner: Arc<dyn LocalStateBackend>,

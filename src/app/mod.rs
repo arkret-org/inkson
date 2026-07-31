@@ -100,6 +100,7 @@ mod session_shell;
 mod shell_effects;
 mod sidebar;
 mod sidebar_width;
+mod signal_products;
 mod sync_effects;
 pub(crate) use clipboard::*;
 pub(crate) use command_palette::*;
@@ -562,9 +563,27 @@ fn AppBootstrap() -> Element {
     use_context_provider(|| crate::components::MlsBackupSignal(needs_mls_backup));
     // Signal product hubs are populated only by the encrypted Signal receive
     // path after envelope proof, MLS AEAD and product authorization succeed.
-    let _call_signal_hub = use_context_provider(crate::views::call_signals::CallSignalHub::new);
-    let _message_stream_hub =
+    // `crate::signal_receive_engine` drives that path and reaches these hubs
+    // through the router installed below, so the engine itself stays free of
+    // UI types.
+    let call_signal_hub = use_context_provider(crate::views::call_signals::CallSignalHub::new);
+    let message_stream_hub =
         use_context_provider(crate::views::message_streams::MessageStreamHub::new);
+    {
+        let signal_product_router = runtime_services.signal_product_sink.clone();
+        use_hook(move || {
+            signal_product_router.install(std::rc::Rc::new(
+                signal_products::AppSignalProductSink::new(
+                    call_signal_hub,
+                    message_stream_hub,
+                    base_url,
+                    token,
+                    account_did,
+                    did_cache,
+                ),
+            ));
+        });
+    }
     let mls_restore_payload_cache = use_signal(|| Option::<Value>::None);
     let mls_unlock_detection_key_seen = use_signal(|| Option::<String>::None);
 
@@ -587,6 +606,9 @@ fn AppBootstrap() -> Element {
     // Dedup key (`<generation>|<realm_id>`) for the per-realm events engine, so
     // a base_url/token re-render doesn't stack a second loop on the same realm.
     let realm_events_engine_active_key = use_signal(|| Option::<String>::None);
+    // The Signal receive rail takes no selector, so one loop per generation is
+    // the whole lifecycle.
+    let signal_receive_engine_active_generation = use_signal(|| Option::<u64>::None);
     let bootstrap_pending = use_signal(|| true);
 
     // AKP-0007 P3B.4.3 — active multi-profile snapshot, threaded into
@@ -1319,6 +1341,7 @@ fn AppBootstrap() -> Element {
                 sync_generation,
                 sync_engine_active_generation,
                 realm_events_engine_active_key,
+                signal_receive_engine_active_generation,
                 sync_bootstrap_complete,
                 token,
                 account_did,
