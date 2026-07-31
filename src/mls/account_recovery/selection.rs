@@ -1,5 +1,6 @@
 //! Pure selection helpers over a `list_key_backups`-shaped payload.
 
+use arkret_wire::SchemaId;
 use serde_json::Value;
 
 use super::backup_body::{
@@ -59,7 +60,7 @@ pub(super) fn active_series_id_for_backup_class<'a>(
         .and_then(|records| {
             records.iter().find(|record| {
                 record.get("schema").and_then(Value::as_str)
-                    == Some(crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA)
+                    == Some(SchemaId::KEY_BACKUP_ACTIVE_SERIES_V1)
                     && record.get("backup_kind").and_then(Value::as_str) == Some(backup_kind)
             })
         })

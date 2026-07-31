@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 
+use arkret_wire::AccountDataKey as WireAccountDataKey;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -57,13 +58,13 @@ pub enum AccountDataKey {
 impl AccountDataKey {
     pub fn as_wire(&self) -> &str {
         match self {
-            Self::ClientUi => "ak.client.ui_state",
-            Self::ClientReadReceipts => "ak.read_receipt.preferences",
-            Self::ClientPresence => "ak.presence.visibility",
-            Self::ClientPresencePreference => "ak.presence.preference",
-            Self::ClientBlocklist => "ak.account.blocklist",
-            Self::ClientNotifications => "ak.push_rules",
-            Self::ClientDndSchedule => "ak.dnd_schedule",
+            Self::ClientUi => WireAccountDataKey::CLIENT_UI_STATE,
+            Self::ClientReadReceipts => WireAccountDataKey::READ_RECEIPT_PREFERENCES,
+            Self::ClientPresence => WireAccountDataKey::PRESENCE_VISIBILITY,
+            Self::ClientPresencePreference => WireAccountDataKey::PRESENCE_PREFERENCE,
+            Self::ClientBlocklist => WireAccountDataKey::ACCOUNT_BLOCKLIST,
+            Self::ClientNotifications => WireAccountDataKey::PUSH_RULES,
+            Self::ClientDndSchedule => WireAccountDataKey::DND_SCHEDULE,
             Self::ClientLanguage => "client.language",
             Self::Custom(s) => s,
         }
@@ -71,13 +72,13 @@ impl AccountDataKey {
 
     pub fn from_wire(s: &str) -> Self {
         match s {
-            "ak.client.ui_state" => Self::ClientUi,
-            "ak.read_receipt.preferences" => Self::ClientReadReceipts,
-            "ak.presence.visibility" => Self::ClientPresence,
-            "ak.presence.preference" => Self::ClientPresencePreference,
-            "ak.account.blocklist" => Self::ClientBlocklist,
-            "ak.push_rules" => Self::ClientNotifications,
-            "ak.dnd_schedule" => Self::ClientDndSchedule,
+            WireAccountDataKey::CLIENT_UI_STATE => Self::ClientUi,
+            WireAccountDataKey::READ_RECEIPT_PREFERENCES => Self::ClientReadReceipts,
+            WireAccountDataKey::PRESENCE_VISIBILITY => Self::ClientPresence,
+            WireAccountDataKey::PRESENCE_PREFERENCE => Self::ClientPresencePreference,
+            WireAccountDataKey::ACCOUNT_BLOCKLIST => Self::ClientBlocklist,
+            WireAccountDataKey::PUSH_RULES => Self::ClientNotifications,
+            WireAccountDataKey::DND_SCHEDULE => Self::ClientDndSchedule,
             "client.language" => Self::ClientLanguage,
             other => Self::Custom(other.to_owned()),
         }

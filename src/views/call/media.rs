@@ -148,15 +148,12 @@ pub(super) async fn submit_call_state_participant(
         "session_focus": session.focus_id.clone(),
         "participants": [participant],
     });
-    let op = crate::operation::OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::CallState,
-    )
-    .target_ref(call_id)
-    .body(body)
-    .build_sdk_event("inkson")
-    .map_err(|err| err.to_string())?;
+    let op =
+        crate::operation::OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::CallState)
+            .target_ref(call_id)
+            .body(body)
+            .build_sdk_event("inkson")
+            .map_err(|err| err.to_string())?;
     with_authed_api(base, api_token.to_owned(), move |api| async move {
         api.event_submitter()?.submit_sdk_event(&op).await?;
         Ok(())

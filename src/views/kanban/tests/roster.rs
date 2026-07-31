@@ -136,7 +136,7 @@ fn member_display_label_uses_identity_name_when_no_verified_handle_exists() {
     // R3.2: `MemberIdentity` discloses subject_id + display_profile
     // only. A materialized DID path is not itself verified handle evidence.
     let identity = MemberIdentity {
-        schema: arkret_sdk::MEMBER_IDENTITY_SCHEMA.to_owned(),
+        schema: arkret_sdk::SchemaId::MEMBER_IDENTITY_V1.to_owned(),
         realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001")
             .unwrap(),
         actor_id: arkret_sdk::Did::new("did:web:acme.example:users:alice".to_owned()).unwrap(),

@@ -479,7 +479,7 @@ pub fn build_requested_scope_disclosure_for_pairing(
     .map_err(|error| anyhow::anyhow!("agent disclosure verification method is invalid: {error}"))?;
     let issued_at = Utc::now();
     let mut disclosure = AgentRequestedScopeDisclosure {
-        schema: arkret_sdk::AGENT_REQUESTED_SCOPE_DISCLOSURE_SCHEMA.to_owned(),
+        schema: arkret_sdk::SchemaId::AGENT_REQUESTED_SCOPE_DISCLOSURE_V1.to_owned(),
         request_id: RequestId::new(format!("ak:request:{request_uuid}"))?,
         agent_id,
         controller_id,
@@ -672,7 +672,7 @@ pub fn build_agent_key_authorization_for_pairing(
     let agent_key_id = NonEmptyString::new(request.verification_method.as_str().to_owned())
         .map_err(anyhow::Error::msg)?;
     let mut signing_key_binding = AgentSigningKeyBinding {
-        schema: NonEmptyString::new(arkret_sdk::AGENT_SIGNING_KEY_BINDING_SCHEMA.to_owned())
+        schema: NonEmptyString::new(arkret_sdk::SchemaId::AGENT_SIGNING_KEY_BINDING_V1.to_owned())
             .map_err(anyhow::Error::msg)?,
         agent_id: request.agent_id.clone(),
         agent_key_id: agent_key_id.clone(),
@@ -1138,7 +1138,7 @@ pub fn build_act_on_behalf_message_operation(
     crate::operation::OperationBuilder::new(
         realm_id,
         controller_id,
-        arkret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::EventKind::MessageCreate,
     )
     .target_ref(strand_id)
     .executed_by(agent_id)

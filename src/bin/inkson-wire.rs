@@ -291,7 +291,7 @@ fn mls_governance_proof(input: Value) -> Result<Value> {
     let mut frontier_events = input
         .events
         .iter()
-        .filter(|event| event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE)
+        .filter(|event| event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE)
         .cloned()
         .collect::<Vec<_>>();
     frontier_events.sort_by(|left, right| left.event_id.as_str().cmp(right.event_id.as_str()));

@@ -29,12 +29,7 @@ pub fn build_account_data_set(
         "updated_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
     });
     payload[value_field] = value;
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::AccountDataSet,
-    )
-    .body(payload)
+    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::AccountDataSet).body(payload)
 }
 
 pub fn build_account_data_tombstone(
@@ -43,24 +38,21 @@ pub fn build_account_data_tombstone(
     key: &AccountDataKey,
     expected_revision: u64,
 ) -> OperationBuilder {
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::AccountDataSet,
+    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::AccountDataSet).body(
+        serde_json::json!({
+            "key": key.as_wire(),
+            "owner": actor,
+            "expected_revision": expected_revision,
+            "tombstone": true,
+            "updated_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
+        }),
     )
-    .body(serde_json::json!({
-        "key": key.as_wire(),
-        "owner": actor,
-        "expected_revision": expected_revision,
-        "tombstone": true,
-        "updated_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
-    }))
 }
 
 pub fn private_account_data_key_prefix(key: &str) -> Option<&'static str> {
     if let Some(prefix) = [
-        arkret_sdk::ACCOUNT_DATA_KEY_CONTACTS_ACTOR,
-        arkret_sdk::ACCOUNT_DATA_KEY_CONTACTS_REALM,
+        arkret_sdk::AccountDataKey::CONTACTS_ACTOR,
+        arkret_sdk::AccountDataKey::CONTACTS_REALM,
     ]
     .into_iter()
     .find(|prefix| {
@@ -71,13 +63,13 @@ pub fn private_account_data_key_prefix(key: &str) -> Option<&'static str> {
     }
 
     [
-        arkret_sdk::ACCOUNT_DATA_KEY_REMINDER,
-        arkret_sdk::ACCOUNT_DATA_KEY_SCHEDULED_SEND,
-        arkret_sdk::ACCOUNT_DATA_KEY_SNOOZE,
-        arkret_sdk::ACCOUNT_DATA_KEY_SAVED,
-        arkret_sdk::ACCOUNT_DATA_KEY_DRAFT,
-        arkret_sdk::ACCOUNT_DATA_KEY_FILE_TRANSFER,
-        arkret_sdk::ACCOUNT_DATA_KEY_SEARCH_INDEX_MANIFEST,
+        arkret_sdk::AccountDataKey::REMINDERS_V1,
+        arkret_sdk::AccountDataKey::SCHEDULED_SEND_V1,
+        arkret_sdk::AccountDataKey::SNOOZE_V1,
+        arkret_sdk::AccountDataKey::SAVED_V1,
+        arkret_sdk::AccountDataKey::DRAFT_V1,
+        arkret_sdk::AccountDataKey::FILE_TRANSFER_V1,
+        arkret_sdk::AccountDataKey::SEARCH_INDEX_MANIFEST_V1,
     ]
     .into_iter()
     .find(|prefix| {
@@ -160,12 +152,7 @@ pub fn build_private_account_data_set(
         "encrypted_payload": encrypted_payload,
         "updated_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
     });
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::AccountDataSet,
-    )
-    .body(payload))
+    Ok(OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::AccountDataSet).body(payload))
 }
 
 pub fn build_private_account_data_tombstone(
@@ -175,16 +162,15 @@ pub fn build_private_account_data_tombstone(
     expected_revision: u64,
 ) -> anyhow::Result<OperationBuilder> {
     validate_private_account_data_key(key)?;
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::AccountDataSet,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::AccountDataSet).body(
+            serde_json::json!({
+                "key": key,
+                "owner": actor,
+                "expected_revision": expected_revision,
+                "tombstone": true,
+                "updated_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
+            }),
+        ),
     )
-    .body(serde_json::json!({
-        "key": key,
-        "owner": actor,
-        "expected_revision": expected_revision,
-        "tombstone": true,
-        "updated_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
-    })))
 }

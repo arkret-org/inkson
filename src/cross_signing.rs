@@ -392,14 +392,10 @@ impl CrossSigningSetupOutput {
     ) -> anyhow::Result<arkret_sdk::Event> {
         let body = serde_json::to_value(&self.publish_content)
             .context("serialize cross_signing publish content")?;
-        OperationBuilder::new(
-            realm_id,
-            actor,
-            arkret_sdk::events::kinds::EventKind::CrossSigningPublish,
-        )
-        .target_ref(self.publish_content.principal_id.as_str())
-        .body(body)
-        .build_sdk_event("inkson")
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::CrossSigningPublish)
+            .target_ref(self.publish_content.principal_id.as_str())
+            .body(body)
+            .build_sdk_event("inkson")
     }
 }
 

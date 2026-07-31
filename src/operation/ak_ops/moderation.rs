@@ -55,13 +55,11 @@ pub fn moderation_decision(
         effective_at: None,
         expires_at: None,
     };
-    Ok(OperationBuilder::new(
-        &realm,
-        actor,
-        arkret_sdk::events::kinds::EventKind::ModerationDecision,
+    Ok(
+        OperationBuilder::new(&realm, actor, arkret_sdk::EventKind::ModerationDecision)
+            .target_ref(target_ref)
+            .body(payload_value(&payload, "moderation_decision payload")?),
     )
-    .target_ref(target_ref)
-    .body(payload_value(&payload, "moderation_decision payload")?))
 }
 
 /// `ak.moderation.decision.lift` — observed-remove / supersede a
@@ -85,13 +83,11 @@ pub fn moderation_decision_lift(
         reason: None,
         effective_at: None,
     };
-    Ok(OperationBuilder::new(
-        &realm,
-        actor,
-        arkret_sdk::events::kinds::EventKind::ModerationDecisionLift,
+    Ok(
+        OperationBuilder::new(&realm, actor, arkret_sdk::EventKind::ModerationDecisionLift)
+            .target_ref(target_ref)
+            .body(payload_value(&payload, "moderation_decision_lift payload")?),
     )
-    .target_ref(target_ref)
-    .body(payload_value(&payload, "moderation_decision_lift payload")?))
 }
 
 /// `ak.moderation.appeal.review` — reviewer takes an appeal under
@@ -114,13 +110,9 @@ pub fn moderation_appeal_review(
     if let Some(notes_ref) = notes_ref {
         body["notes_ref"] = json!(notes_ref);
     }
-    OperationBuilder::new(
-        &realm,
-        actor,
-        arkret_sdk::events::kinds::EventKind::ModerationAppealReview,
-    )
-    .target_ref(appeal_id)
-    .body(body)
+    OperationBuilder::new(&realm, actor, arkret_sdk::EventKind::ModerationAppealReview)
+        .target_ref(appeal_id)
+        .body(body)
 }
 
 /// `ak.moderation.appeal.decision` — reviewer verdict
@@ -153,7 +145,7 @@ pub fn moderation_appeal_decision(
     OperationBuilder::new(
         &realm,
         actor,
-        arkret_sdk::events::kinds::EventKind::ModerationAppealDecision,
+        arkret_sdk::EventKind::ModerationAppealDecision,
     )
     .target_ref(appeal_id)
     .body(body)
@@ -179,11 +171,7 @@ pub fn moderation_appeal_close(
     if let Some(close_reason) = close_reason {
         body["close_reason"] = json!(close_reason);
     }
-    OperationBuilder::new(
-        &realm,
-        actor,
-        arkret_sdk::events::kinds::EventKind::ModerationAppealClose,
-    )
-    .target_ref(appeal_id)
-    .body(body)
+    OperationBuilder::new(&realm, actor, arkret_sdk::EventKind::ModerationAppealClose)
+        .target_ref(appeal_id)
+        .body(body)
 }

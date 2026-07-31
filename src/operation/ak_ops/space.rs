@@ -34,13 +34,11 @@ pub fn space_create(
         object.rank = Some(rank.to_owned());
     }
     let body = object_create_payload_value(object, "ak.space.create payload serialize")?;
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::SpaceCreate,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::SpaceCreate)
+            .target_ref(container_space_id)
+            .body(body),
     )
-    .target_ref(container_space_id)
-    .body(body))
 }
 
 /// Build a `ak.space.restore` operation. Reverses `realm_archive`
@@ -52,16 +50,14 @@ pub fn space_restore(
     actor: &str,
     container_space_id: &str,
 ) -> anyhow::Result<OperationBuilder> {
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::SpaceRestore,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::SpaceRestore)
+            .target_ref(container_space_id)
+            .body(space_state_transition_payload_value(
+                container_space_id,
+                arkret_sdk::ObjectState::Active,
+            )?),
     )
-    .target_ref(container_space_id)
-    .body(space_state_transition_payload_value(
-        container_space_id,
-        arkret_sdk::ObjectState::Active,
-    )?))
 }
 
 /// Build a `ak.space.update` patch operation for structural Space
@@ -74,11 +70,9 @@ pub fn space_update_patch(
     patch: serde_json::Value,
 ) -> anyhow::Result<OperationBuilder> {
     let patch = patch_from_value(patch)?;
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::SpaceUpdate,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::SpaceUpdate)
+            .target_ref(space_id)
+            .body(space_patch_payload_value(space_id, patch)?),
     )
-    .target_ref(space_id)
-    .body(space_patch_payload_value(space_id, patch)?))
 }

@@ -378,7 +378,7 @@ fn managed_agent_pcr_authority_set_ref_from_events(
     accepted_events: &[arkret_sdk::Event],
 ) -> anyhow::Result<arkret_sdk::Hash> {
     let mut creates = accepted_events.iter().filter(|candidate| {
-        candidate.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE
+        candidate.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE
             && candidate.realm_id == event.realm_id
             && candidate.actor_id == event.actor_id
             && candidate.executed_by == event.executed_by
@@ -529,7 +529,7 @@ pub(crate) mod test_support {
         action: &str,
     ) -> arkret_wire::AuthoritySetPolicy {
         arkret_wire::AuthoritySetPolicy {
-            schema: arkret_wire::AUTHORITY_SET_POLICY_SCHEMA.to_owned(),
+            schema: arkret_wire::SchemaId::AUTHORITY_SET_POLICY_V1.to_owned(),
             authority_set_id: "ak.authority_set.realm_admission.v1".to_owned(),
             policy_kind: arkret_wire::AuthoritySetPolicyKind::RealmAdmission,
             scope_ref,

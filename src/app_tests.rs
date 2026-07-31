@@ -480,6 +480,8 @@ fn recovery_auto_prompt_local_only_key_is_prompted_once_per_fingerprint() {
 }
 
 // YOU-05-010: shared hermetic state-store fixture from `local_state`.
+use arkret_wire::SchemaId;
+
 #[cfg(not(target_arch = "wasm32"))]
 use crate::state::isolated_store_for_tests as isolated_store;
 
@@ -875,7 +877,7 @@ fn mls_recovery_setup_missing_stays_false_when_account_backup_exists() {
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let payload = serde_json::json!({
         "active_series": [{
-            "schema": crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA,
+            "schema": SchemaId::KEY_BACKUP_ACTIVE_SERIES_V1,
             "actor_id": "did:web:alice.example",
             "backup_kind": "secret_storage",
             "active_series_id": "ak:backup_series:01964137-1000-7000-8000-0000000000a1",

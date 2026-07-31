@@ -429,7 +429,7 @@ mod tests {
             backend_token: "jwt".to_owned(),
             participant_identity: "ak:rtc_participant:self".to_owned(),
             participant_binding: arkret_sdk::CallMediaParticipantBinding {
-                scheme: arkret_sdk::PARTICIPANT_BINDING_SCHEMA.to_owned(),
+                scheme: arkret_sdk::ParticipantBinding::SCHEMA.to_owned(),
                 sig: "sig".to_owned(),
                 issuer_kid: arkret_sdk::DidUrl::new("did:web:media.example#key-1").unwrap(),
                 realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-9b64700c6ee8")

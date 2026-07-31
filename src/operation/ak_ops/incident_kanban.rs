@@ -36,14 +36,12 @@ pub fn kanban_card_strand_create(
             .with_profile("kanban_card"),
     )
     .with_track("discussion", arkret_sdk::StrandTrackConfig::discussion());
-    Ok(OperationBuilder::new(
-        &realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::StrandCreate,
+    Ok(
+        OperationBuilder::new(&realm_id, actor, arkret_sdk::EventKind::StrandCreate)
+            .target_ref(strand_id)
+            .body(object_create_payload_value(
+                object,
+                "ak.strand.create kanban card payload serialize",
+            )?),
     )
-    .target_ref(strand_id)
-    .body(object_create_payload_value(
-        object,
-        "ak.strand.create kanban card payload serialize",
-    )?))
 }

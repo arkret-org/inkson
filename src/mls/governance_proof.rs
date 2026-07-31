@@ -83,7 +83,7 @@ pub(crate) fn proof_request(
         mls_group_id: mls_group_id.into(),
         previous_epoch,
         next_epoch,
-        binding_profile: arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE.to_owned(),
+        binding_profile: arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1.to_owned(),
         reducer_profile: "ak.reducer.v1".to_owned(),
         trusted_anchor_seal_id: state_store
             .trusted_mls_governance_anchor(realm_id.as_str())
@@ -926,7 +926,7 @@ fn target_notary_value(
     let genesis_events = bundle
         .frontier_events
         .iter()
-        .filter(|event| event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE)
+        .filter(|event| event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE)
         .collect::<Vec<_>>();
     if genesis_events.len() > 1 {
         return Err("MLS governance proof contains multiple Realm genesis Events".to_owned());
@@ -965,7 +965,7 @@ fn managed_agent_pcr_delegated_controller(
         .frontier_events
         .iter()
         .filter(|event| {
-            event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE
+            event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE
                 && event.executed_by.is_some()
                 && event
                     .payload

@@ -77,19 +77,15 @@ pub fn build_call_state(
     from: Option<CallState>,
     to: CallState,
 ) -> OperationBuilder {
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::CallState,
-    )
-    .target_ref(call_id)
-    .body(json!({
-        "call_id": call_id,
-        "state_transition": {
-            "from": from.map(CallState::as_wire),
-            "to": to.as_wire()
-        }
-    }))
+    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::CallState)
+        .target_ref(call_id)
+        .body(json!({
+            "call_id": call_id,
+            "state_transition": {
+                "from": from.map(CallState::as_wire),
+                "to": to.as_wire()
+            }
+        }))
 }
 
 /// Outcome of feeding a decrypted `ak.call.signal` body through the receiver.
@@ -198,27 +194,23 @@ pub fn build_call_recording_start(
         arkret_sdk::RecordingCaptureKind::Recording => "recording_start_event_id",
         arkret_sdk::RecordingCaptureKind::Transcript => "transcript_start_event_id",
     };
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::CallRecordingStart,
-    )
-    .event_id(event_id.clone())
-    .target_ref(call_id)
-    .body(json!({
-        "call_id": call_id,
-        "recording_id": recording_id,
-        "recording_agent": actor,
-        "capture_kind": capture_kind,
-        "mode": mode,
-        "visible_notice": visible_notice,
-        "result": {
-            start_ref_field: event_id,
-            "retention": {
-                "consent_confirmed": true
+    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::CallRecordingStart)
+        .event_id(event_id.clone())
+        .target_ref(call_id)
+        .body(json!({
+            "call_id": call_id,
+            "recording_id": recording_id,
+            "recording_agent": actor,
+            "capture_kind": capture_kind,
+            "mode": mode,
+            "visible_notice": visible_notice,
+            "result": {
+                start_ref_field: event_id,
+                "retention": {
+                    "consent_confirmed": true
+                }
             }
-        }
-    }))
+        }))
 }
 
 #[cfg(test)]

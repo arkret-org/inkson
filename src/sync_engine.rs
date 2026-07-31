@@ -3367,7 +3367,7 @@ mod tests {
     #[tokio::test]
     async fn account_response_projects_client_events_and_decodes_realm_payloads() {
         let message_event = sdk_event(
-            arkret_sdk::events::EventKind::MESSAGE_CREATE,
+            arkret_sdk::EventKind::MESSAGE_CREATE,
             json!({
                 "strand_id": "ak:strand:0196419b-0000-7000-8000-000000000011",
                 "track_name": "discussion",

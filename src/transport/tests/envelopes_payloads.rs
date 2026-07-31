@@ -524,7 +524,7 @@ fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
     let event = OperationBuilder::new(
         "ak:realm:0196419b-0000-7000-8000-000000000010",
         "did:web:alice.example",
-        arkret_sdk::events::kinds::EventKind::StrandUpdate,
+        arkret_sdk::EventKind::StrandUpdate,
     )
     .target_ref(strand_id)
     .body(payload)

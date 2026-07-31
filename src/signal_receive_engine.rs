@@ -299,7 +299,7 @@ impl SignalSink for InksonSignalSink {
                         .call_signal(envelope, decrypted_body_value(&plaintext))
                         .await;
                 }
-                garth::SIGNAL_PLAINTEXT_KIND_MESSAGE_STREAM => {
+                garth::MESSAGE_STREAM_KIND => {
                     self.products.message_stream(&plaintext).await;
                 }
                 garth::SIGNAL_PLAINTEXT_KIND_PRESENCE | SIGNAL_PLAINTEXT_KIND_TYPING => {

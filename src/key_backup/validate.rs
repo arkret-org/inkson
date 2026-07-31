@@ -1,11 +1,11 @@
+use arkret_wire::SchemaId;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde_json::Value;
 
 use super::{
-    BackupKind, KEY_BACKUP_SCHEMA, is_base64url_token, is_protocol_backup_id,
-    is_protocol_backup_series_id, is_protocol_device_id, is_sha_digest, key_backup_hkdf_info,
-    required_str, required_u64,
+    BackupKind, is_base64url_token, is_protocol_backup_id, is_protocol_backup_series_id,
+    is_protocol_device_id, is_sha_digest, key_backup_hkdf_info, required_str, required_u64,
 };
 
 pub fn validate_key_backup_put_request(backup_id: &str, body: &Value) -> Result<(), String> {
@@ -25,9 +25,7 @@ pub fn validate_key_backup_plaintext_binding(
     body: &Value,
     plaintext: &Value,
 ) -> Result<(), String> {
-    if plaintext.get("schema").and_then(Value::as_str)
-        != Some(crate::key_backup::KEY_BACKUP_PLAINTEXT_SCHEMA)
-    {
+    if plaintext.get("schema").and_then(Value::as_str) != Some(SchemaId::KEY_BACKUP_PLAINTEXT_V1) {
         return Err("key-backup plaintext schema mismatch".to_owned());
     }
     for field in ["backup_id", "backup_kind", "series_id", "series_seq"] {
@@ -344,7 +342,7 @@ fn validate_domain_separation(body: &Value, class: BackupKind) -> Result<(), Str
             return Err(format!("domain_separation.aead_aad.{key} mismatch"));
         }
     }
-    if aad.get("schema").and_then(Value::as_str) != Some(KEY_BACKUP_SCHEMA) {
+    if aad.get("schema").and_then(Value::as_str) != Some(SchemaId::KEY_BACKUP_V1) {
         return Err("domain_separation.aead_aad.schema mismatch".to_owned());
     }
     let expected_device = body

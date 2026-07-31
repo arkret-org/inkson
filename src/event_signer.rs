@@ -1231,7 +1231,7 @@ mod tests {
         let mut event = OperationBuilder::new(
             TEST_REALM_ID,
             "did:web:bob.example",
-            arkret_sdk::events::kinds::EventKind::MessageCreate,
+            arkret_sdk::EventKind::MessageCreate,
         )
         .body(json!({
             "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
@@ -1278,7 +1278,7 @@ mod tests {
         let mut event = OperationBuilder::new(
             TEST_REALM_ID,
             "did:web:alice.example",
-            arkret_sdk::events::kinds::EventKind::MessageCreate,
+            arkret_sdk::EventKind::MessageCreate,
         )
         .body(json!({
             "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
@@ -1321,7 +1321,7 @@ mod tests {
         let mut event = OperationBuilder::new(
             TEST_REALM_ID,
             "did:web:carol.example",
-            arkret_sdk::events::kinds::EventKind::MessageCreate,
+            arkret_sdk::EventKind::MessageCreate,
         )
         .body(json!({
             "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
@@ -1381,7 +1381,7 @@ mod tests {
         let mut event = OperationBuilder::new(
             TEST_REALM_ID,
             "did:web:carol.example",
-            arkret_sdk::events::kinds::EventKind::MessageCreate,
+            arkret_sdk::EventKind::MessageCreate,
         )
         .body(json!({
             "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
@@ -1634,7 +1634,7 @@ mod tests {
         let mut event = OperationBuilder::new(
             TEST_REALM_ID,
             "did:web:dave.example",
-            arkret_sdk::events::kinds::EventKind::MessageCreate,
+            arkret_sdk::EventKind::MessageCreate,
         )
         .body(json!({
             "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
@@ -1662,7 +1662,7 @@ mod tests {
         let mut event = OperationBuilder::new(
             TEST_REALM_ID,
             "did:web:eve.example",
-            arkret_sdk::events::kinds::EventKind::MessageCreate,
+            arkret_sdk::EventKind::MessageCreate,
         )
         .body(json!({
             "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",

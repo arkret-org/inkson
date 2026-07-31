@@ -79,14 +79,10 @@ pub(crate) fn shared_message_pin_add_operation(
     };
     let payload = serde_json::to_value(payload)?;
     validate_pin_payload("ak.pin.add", &payload)?;
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::PinAdd,
-    )
-    .target_ref(target_ref)
-    .body(payload)
-    .build_sdk_event("inkson")
+    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::PinAdd)
+        .target_ref(target_ref)
+        .body(payload)
+        .build_sdk_event("inkson")
 }
 
 pub(crate) fn shared_message_pin_remove_operation(
@@ -102,14 +98,10 @@ pub(crate) fn shared_message_pin_remove_operation(
     };
     let payload = serde_json::to_value(payload)?;
     validate_pin_payload("ak.pin.remove", &payload)?;
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::PinRemove,
-    )
-    .target_ref(target_ref)
-    .body(payload)
-    .build_sdk_event("inkson")
+    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::PinRemove)
+        .target_ref(target_ref)
+        .body(payload)
+        .build_sdk_event("inkson")
 }
 
 fn validate_pin_payload(kind: &str, payload: &Value) -> anyhow::Result<()> {
@@ -212,14 +204,10 @@ pub(crate) fn chat_message_redact_operation(
     let body = serde_json::to_value(payload)
         .map_err(|err| anyhow::anyhow!("serialize message redaction payload: {err}"))?;
 
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::MessageRedact,
-    )
-    .target_ref(target_id)
-    .body(body)
-    .build_sdk_event("inkson")
+    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MessageRedact)
+        .target_ref(target_id)
+        .body(body)
+        .build_sdk_event("inkson")
 }
 
 pub(crate) fn chat_reaction_add_operation(
@@ -228,17 +216,13 @@ pub(crate) fn chat_reaction_add_operation(
     event_id: &str,
     key: &str,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::ReactionAdd,
-    )
-    .target_ref(event_id)
-    .body(json!({
-        "target_ref": event_id,
-        "key": key,
-    }))
-    .build_sdk_event("inkson")
+    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::ReactionAdd)
+        .target_ref(event_id)
+        .body(json!({
+            "target_ref": event_id,
+            "key": key,
+        }))
+        .build_sdk_event("inkson")
 }
 
 /// E2EE reaction (encryption-and-audit.md §2.9): the plaintext `key` carries
@@ -254,18 +238,14 @@ pub(crate) fn chat_reaction_add_operation_encrypted(
 ) -> anyhow::Result<arkret_sdk::Event> {
     let encrypted_payload_json =
         serde_json::to_value(encrypted_payload).unwrap_or(serde_json::Value::Null);
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::ReactionAdd,
-    )
-    .target_ref(event_id)
-    .body(json!({
-        "target_ref": event_id,
-        "key": routing_tag,
-        "encrypted_payload": encrypted_payload_json,
-    }))
-    .build_sdk_event("inkson")
+    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::ReactionAdd)
+        .target_ref(event_id)
+        .body(json!({
+            "target_ref": event_id,
+            "key": routing_tag,
+            "encrypted_payload": encrypted_payload_json,
+        }))
+        .build_sdk_event("inkson")
 }
 
 /// Build the `ak.reaction.add` operation for a tapped emoji, choosing the
@@ -539,18 +519,14 @@ fn chat_message_create_operation_with_content_and_expiry(
     if let Some(expiry) = expiry {
         payload = payload.with_expiry(expiry);
     }
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::MessageCreate,
-    )
-    .event_id(message_event_id)
-    .target_ref(strand_id)
-    .body(sdk_payload_value(
-        payload.to_value(),
-        "chat ak.message.create payload serialize",
-    )?)
-    .build_sdk_event("inkson")
+    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MessageCreate)
+        .event_id(message_event_id)
+        .target_ref(strand_id)
+        .body(sdk_payload_value(
+            payload.to_value(),
+            "chat ak.message.create payload serialize",
+        )?)
+        .build_sdk_event("inkson")
 }
 
 pub(crate) fn chat_send_error_message(error: &anyhow::Error) -> String {

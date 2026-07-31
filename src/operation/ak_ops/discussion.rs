@@ -33,13 +33,11 @@ pub fn discussion_strand_create(
     let payload = arkret_sdk::ObjectCreatePayload::new(strand)
         .to_value()
         .map_err(|e| anyhow::anyhow!("ak.strand.create payload serialize: {e}"))?;
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::StrandCreate,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::StrandCreate)
+            .target_ref(strand_id)
+            .body(payload),
     )
-    .target_ref(strand_id)
-    .body(payload))
 }
 
 /// Build a canonical `ak.circle.create` operation for a private
@@ -65,13 +63,11 @@ pub fn discussion_circle_create(
         did_id(actor)?,
     );
     let body = object_create_payload_value(circle, "ak.circle.create payload serialize")?;
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::CircleCreate,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::CircleCreate)
+            .target_ref(circle_id)
+            .body(body),
     )
-    .target_ref(circle_id)
-    .body(body))
 }
 
 /// Build a `ak.strand.create` operation whose full Strand scope is a
@@ -99,13 +95,11 @@ pub fn scoped_discussion_strand_create(
     let payload = arkret_sdk::ObjectCreatePayload::new(strand)
         .to_value()
         .map_err(|e| anyhow::anyhow!("ak.strand.create payload serialize: {e}"))?;
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::StrandCreate,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::StrandCreate)
+            .target_ref(strand_id)
+            .body(payload),
     )
-    .target_ref(strand_id)
-    .body(payload))
 }
 
 /// Build the private-side relation from a Circle-scoped discussion Strand
@@ -118,21 +112,19 @@ pub fn confidential_discussion_relation_create(
     circle_id: &str,
 ) -> anyhow::Result<OperationBuilder> {
     let relation_id = format!("ak:relation:{}", crate::operation::uuid_v7());
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::RelationCreate,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::RelationCreate)
+            .target_ref(&relation_id)
+            .body(relation_create_payload_value(
+                realm_id,
+                actor,
+                &relation_id,
+                "confidential_discussion_of",
+                private_strand_id,
+                public_seal_ref,
+                // The object branch carries the private side's Circle scope, which the
+                // flat branch had nowhere to put.
+                Some(circle_id),
+            )?),
     )
-    .target_ref(&relation_id)
-    .body(relation_create_payload_value(
-        realm_id,
-        actor,
-        &relation_id,
-        "confidential_discussion_of",
-        private_strand_id,
-        public_seal_ref,
-        // The object branch carries the private side's Circle scope, which the
-        // flat branch had nowhere to put.
-        Some(circle_id),
-    )?))
 }

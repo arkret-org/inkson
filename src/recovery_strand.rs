@@ -18,7 +18,7 @@ use arkret_models_crypto::{
     RecoverySessionProofSubmitRequestBody,
 };
 use arkret_sdk::{DeviceId, Did, DidUrl, NonEmptyString, PolicyId, TypedTrustDomainId};
-use arkret_wire::{AuthoritySetIssuer, AuthoritySetIssuerRole};
+use arkret_wire::{AuthoritySetIssuer, AuthoritySetIssuerRole, SchemaId};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::SigningKey;
@@ -492,7 +492,7 @@ async fn publish_recovery_policy(
     let event = crate::operation::OperationBuilder::new(
         realm_id,
         principal_id,
-        arkret_sdk::events::kinds::EventKind::PolicySet,
+        arkret_sdk::EventKind::PolicySet,
     )
     .body(serde_json::to_value(payload)?)
     .build_sdk_event("inkson-recovery-policy")?;
@@ -547,7 +547,7 @@ async fn submit_first_recovery_policy_seal(
         .events
         .iter()
         .find(|event| {
-            event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE
+            event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE
                 && event.actor_id.as_str() == principal_id
         })
         .ok_or_else(|| anyhow::anyhow!("self-PCR history omitted its bootstrap create Event"))?;
@@ -555,7 +555,7 @@ async fn submit_first_recovery_policy_seal(
         .events
         .iter()
         .find(|event| {
-            event.kind.as_str() == arkret_sdk::events::EventKind::DEVICE_AUTHORIZE
+            event.kind.as_str() == arkret_sdk::EventKind::DEVICE_AUTHORIZE
                 && event.actor_id.as_str() == principal_id
                 && event.actor_seq == 1
         })
@@ -845,7 +845,7 @@ pub async fn ensure_recovery_directed_ssk_backup(
         .flatten()
         .find(|record| {
             record.get("schema").and_then(Value::as_str)
-                == Some(crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA)
+                == Some(SchemaId::KEY_BACKUP_ACTIVE_SERIES_V1)
                 && record.get("backup_kind").and_then(Value::as_str)
                     == Some(crate::key_backup::BackupKind::SecretStorage.as_str())
         })

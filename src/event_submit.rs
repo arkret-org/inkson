@@ -2158,7 +2158,7 @@ impl EventSubmitter {
         crate::authorization_lease::ensure_for_events(&self.http, sdk_events).await?;
         // `idempotency_key` is not a body field in v1: it travels only in the
         // `Idempotency-Key` header.
-        let anchor_unit = first_event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE;
+        let anchor_unit = first_event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE;
         let mut submissions = Vec::with_capacity(sdk_events.len());
         for event in sdk_events {
             let submission = if anchor_unit {
@@ -2201,10 +2201,10 @@ impl EventSubmitter {
     ) -> anyhow::Result<arkret_sdk::EventsSubmitOutcome> {
         if events
             .first()
-            .is_some_and(|event| event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE)
-            && events.get(1).is_some_and(|event| {
-                event.kind.as_str() == arkret_sdk::events::EventKind::CAPABILITY_GRANT
-            })
+            .is_some_and(|event| event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE)
+            && events
+                .get(1)
+                .is_some_and(|event| event.kind.as_str() == arkret_sdk::EventKind::CAPABILITY_GRANT)
         {
             crate::identity::authoring_generation::resolve_event_authoring_generation(
                 &self.http, &events[0],
@@ -2220,13 +2220,13 @@ impl EventSubmitter {
         &self,
         mut events: Vec<arkret_sdk::Event>,
     ) -> anyhow::Result<Vec<arkret_sdk::Event>> {
-        let first_is_realm_create = events.first().is_some_and(|event| {
-            event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE
-        });
+        let first_is_realm_create = events
+            .first()
+            .is_some_and(|event| event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE);
         let is_identity_anchor_unit = first_is_realm_create
             && events.len() == 2
             && events.get(1).is_some_and(|event| {
-                event.kind.as_str() == arkret_sdk::events::EventKind::DEVICE_AUTHORIZE
+                event.kind.as_str() == arkret_sdk::EventKind::DEVICE_AUTHORIZE
             })
             && arkret_bootstrap::validate_self_principal_bootstrap_unit(
                 &events[0],
@@ -2392,7 +2392,7 @@ fn account_authority_http_client(
 pub(crate) fn attach_capability_grant_payload_proof(
     event: &mut arkret_sdk::Event,
 ) -> anyhow::Result<()> {
-    if event.kind.as_str() != arkret_sdk::events::EventKind::CAPABILITY_GRANT {
+    if event.kind.as_str() != arkret_sdk::EventKind::CAPABILITY_GRANT {
         return Ok(());
     }
     let signer = crate::event_signer::active_signer().ok_or_else(|| {
@@ -2405,7 +2405,7 @@ pub(crate) fn attach_capability_grant_payload_proof_with_signer(
     event: &mut arkret_sdk::Event,
     signer: &crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<()> {
-    if event.kind.as_str() != arkret_sdk::events::EventKind::CAPABILITY_GRANT {
+    if event.kind.as_str() != arkret_sdk::EventKind::CAPABILITY_GRANT {
         return Ok(());
     }
     let grant_value = event
@@ -2498,13 +2498,13 @@ fn mls_genesis_event_id_from_events(
         .iter()
         .find(|event| {
             event.realm_id.as_str() == realm_id
-                && event.kind.as_str() == arkret_sdk::events::EventKind::MLS_GENESIS
+                && event.kind.as_str() == arkret_sdk::EventKind::MLS_GENESIS
         })
         .map(|event| event.event_id.clone())
 }
 
 fn cba_exempt_reducer_kind(kind: &arkret_sdk::events::kinds::EventKind) -> bool {
-    matches!(kind, arkret_sdk::events::kinds::EventKind::RealmCreate)
+    matches!(kind, arkret_sdk::EventKind::RealmCreate)
 }
 
 /// Authority facts pinned by a Realm's accepted `ak.realm.create`.
@@ -2545,7 +2545,7 @@ fn realm_create_authority_from_events(
 ) -> Option<RealmCreateAuthority> {
     events.iter().find_map(|event| {
         if event.realm_id.as_str() != realm_id
-            || event.kind.as_str() != arkret_sdk::events::EventKind::REALM_CREATE
+            || event.kind.as_str() != arkret_sdk::EventKind::REALM_CREATE
         {
             return None;
         }

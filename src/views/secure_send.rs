@@ -81,7 +81,7 @@ pub(crate) fn run_local_mls_encrypt(
         principal_id,
         device_id,
         "application/vnd.arkret.message+json",
-        arkret_sdk::events::EventKind::MESSAGE_CREATE,
+        arkret_sdk::EventKind::MESSAGE_CREATE,
         plaintext_bytes,
         metadata_plaintext_bytes,
         circle_id,
@@ -353,14 +353,11 @@ pub(crate) fn build_secure_send(
     let msg_payload_value = message_payload
         .to_value()
         .map_err(|err| format!("Send Secure payload encode failed: {err}"))?;
-    let message_envelope = OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::MessageCreate,
-    )
-    .event_id(message_event_id)
-    .body(msg_payload_value)
-    .build_sdk_event("inkson");
+    let message_envelope =
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MessageCreate)
+            .event_id(message_event_id)
+            .body(msg_payload_value)
+            .build_sdk_event("inkson");
 
     let commit_event = commit_envelope;
     let mut message_event = message_envelope
@@ -418,7 +415,7 @@ pub(crate) fn build_sidecar_exchange_control_send(
         actor,
         device_id,
         "application/vnd.arkret.agent-sidecar-exchange-control+json",
-        arkret_sdk::events::EventKind::AGENT_SIDECAR_EXCHANGE_CONTROL,
+        arkret_sdk::EventKind::AGENT_SIDECAR_EXCHANGE_CONTROL,
         &plaintext,
         None,
         Some(circle_id),
@@ -511,7 +508,7 @@ pub(crate) fn build_sidecar_exchange_control_send(
     let mut control_event = OperationBuilder::new(
         realm_id,
         actor,
-        arkret_sdk::events::kinds::EventKind::AgentSidecarExchangeControl,
+        arkret_sdk::EventKind::AgentSidecarExchangeControl,
     )
     .circle_id(circle_id)
     .refs(refs)

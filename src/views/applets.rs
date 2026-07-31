@@ -192,8 +192,7 @@ fn build_formal_applet_install_events(
     }
     let registration_submission = match snapshot.plan.events_to_submit.as_slice() {
         [submission]
-            if submission.event_kind
-                == arkret_sdk::events::kinds::EventKind::AppletRegistration.as_str() =>
+            if submission.event_kind == arkret_sdk::EventKind::AppletRegistration.as_str() =>
         {
             submission
         }
@@ -202,7 +201,7 @@ fn build_formal_applet_install_events(
     let registration = operation_builder_for_scope(
         &snapshot.effective_scope,
         actor_id,
-        arkret_sdk::events::kinds::EventKind::AppletRegistration,
+        arkret_sdk::EventKind::AppletRegistration,
     )
     .body(Value::Object(
         registration_submission
@@ -234,7 +233,7 @@ fn build_formal_applet_install_events(
         let grant_id = arkret_sdk::GrantId::new(arkret_sdk::new_prefixed_uuid7("ak:grant:"))?;
         let grant = arkret_sdk::CapabilityGrant {
             id: grant_id.clone(),
-            schema: arkret_wire::CAPABILITY_SCHEMA.to_owned(),
+            schema: arkret_wire::SchemaId::CAPABILITY_V1.to_owned(),
             realm_id: Some(realm_id.clone()),
             issuer: actor.clone(),
             subject: arkret_sdk::CapabilitySubject::Did(snapshot.package.service_id.clone()),
@@ -270,7 +269,7 @@ fn build_formal_applet_install_events(
             operation_builder_for_scope(
                 &snapshot.effective_scope,
                 actor_id,
-                arkret_sdk::events::kinds::EventKind::CapabilityGrant,
+                arkret_sdk::EventKind::CapabilityGrant,
             )
             .body(serde_json::to_value(payload)?)
             .build_sdk_event("inkson")?,

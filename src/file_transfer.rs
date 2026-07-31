@@ -9,6 +9,7 @@ pub use arkret_sdk::{
     FileTransferKeyDelivery, FileTransferKeyEnvelope, FileTransferKeyMessage, FileTransferRecord,
     FileTransferStatus,
 };
+use arkret_wire::{AEAD_PROFILE_XCHACHA20_POLY1305_V1, SchemaId};
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD as BASE64_STANDARD, URL_SAFE_NO_PAD};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
@@ -23,8 +24,6 @@ pub const FILE_TRANSFER_PURPOSE: &str = "file_transfer";
 pub const FILE_TRANSFER_RECORD_KIND: &str = "file_transfer";
 pub const FILE_TRANSFER_RECORD_ENVELOPE_SCHEME: &str = "ak.file_transfer.account_data_envelope.v1";
 pub const FILE_TRANSFER_BLOB_SCHEME: &str = "ak.file_transfer.encrypted_blob.v1";
-pub const FILE_TRANSFER_SCHEMA: &str = "ak.schema.file_transfer.v1";
-pub const FILE_TRANSFER_AEAD_PROFILE: &str = "ak.aead.xchacha20_poly1305.v1";
 pub const FILE_TRANSFER_RETENTION_DAYS: i64 = 7;
 pub const FILE_TRANSFER_KEY_HPKE_INFO: &[u8] = b"arkret-file-transfer-key-hpke-x25519-v1";
 
@@ -468,7 +467,7 @@ fn prepare_actor_private_file(
         chrono::Utc::now() + chrono::Duration::days(FILE_TRANSFER_RETENTION_DAYS),
     );
     let aad = FileTransferAad {
-        schema: FILE_TRANSFER_SCHEMA.to_owned(),
+        schema: SchemaId::FILE_TRANSFER_V1.to_owned(),
         purpose: FILE_TRANSFER_PURPOSE.to_owned(),
         transfer_id: transfer_id.clone(),
         origin_device_id: device_id.trim().to_owned(),
@@ -525,7 +524,7 @@ impl PreparedFileTransfer {
             },
             encryption: FileTransferEncryption {
                 scheme: FILE_TRANSFER_BLOB_SCHEME.to_owned(),
-                aead_profile: FILE_TRANSFER_AEAD_PROFILE.to_owned(),
+                aead_profile: AEAD_PROFILE_XCHACHA20_POLY1305_V1.to_owned(),
                 nonce: URL_SAFE_NO_PAD.encode(self.nonce),
                 aad: self.aad,
                 key_delivery: FileTransferKeyDelivery::AccountDataWrappedKey {
@@ -598,7 +597,7 @@ impl PreparedFileTransfer {
             },
             encryption: FileTransferEncryption {
                 scheme: FILE_TRANSFER_BLOB_SCHEME.to_owned(),
-                aead_profile: FILE_TRANSFER_AEAD_PROFILE.to_owned(),
+                aead_profile: AEAD_PROFILE_XCHACHA20_POLY1305_V1.to_owned(),
                 nonce,
                 aad: self.aad,
                 key_delivery: FileTransferKeyDelivery::ToDeviceWrappedKey {
@@ -667,7 +666,7 @@ fn build_file_transfer_device_key_dispatch(
         nonce: record.encryption.nonce.clone(),
         content_digest: record.content_digest.clone(),
         key_envelope: FileTransferKeyEnvelope {
-            scheme: arkret_sdk::FILE_TRANSFER_KEY_ENVELOPE_SCHEME.to_owned(),
+            scheme: arkret_wire::HPKE_SUITE_X25519_CHACHA20POLY1305_V1.to_owned(),
             enc: URL_SAFE_NO_PAD.encode(sealed.enc),
             ciphertext: URL_SAFE_NO_PAD.encode(sealed.ciphertext),
             aad_digest: crate::canonical::sha256_digest(&aad),
@@ -791,7 +790,7 @@ fn file_transfer_item_from_account_data(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("account_data entry missing account_data_key"))?;
     if !account_data_key
-        .strip_prefix(arkret_sdk::ACCOUNT_DATA_KEY_FILE_TRANSFER)
+        .strip_prefix(arkret_sdk::AccountDataKey::FILE_TRANSFER_V1)
         .is_some_and(|rest| rest.starts_with(':'))
     {
         anyhow::bail!("not a file-transfer account_data entry");
@@ -829,7 +828,7 @@ fn seal_record_envelope(
     getrandom::fill(&mut nonce)
         .map_err(|error| anyhow::anyhow!("file-transfer record nonce rng: {error}"))?;
     let aad = json!({
-        "schema": FILE_TRANSFER_SCHEMA,
+        "schema": SchemaId::FILE_TRANSFER_V1,
         "purpose": "file_transfer_record",
         "transfer_key": account_data_key,
         "actor_id": actor_id,
@@ -848,7 +847,7 @@ fn seal_record_envelope(
         .map_err(|error| anyhow::anyhow!("file-transfer record seal failed: {error}"))?;
     let inner_envelope = json!({
         "scheme": FILE_TRANSFER_RECORD_ENVELOPE_SCHEME,
-        "aead_profile": FILE_TRANSFER_AEAD_PROFILE,
+        "aead_profile": AEAD_PROFILE_XCHACHA20_POLY1305_V1,
         "nonce": URL_SAFE_NO_PAD.encode(nonce),
         "aad": aad,
         "ciphertext": URL_SAFE_NO_PAD.encode(ciphertext),
@@ -883,7 +882,9 @@ fn open_record_envelope(
     {
         anyhow::bail!("file-transfer account-data envelope scheme mismatch");
     }
-    if envelope.get("aead_profile").and_then(Value::as_str) != Some(FILE_TRANSFER_AEAD_PROFILE) {
+    if envelope.get("aead_profile").and_then(Value::as_str)
+        != Some(AEAD_PROFILE_XCHACHA20_POLY1305_V1)
+    {
         anyhow::bail!("file-transfer account-data envelope AEAD mismatch");
     }
     let nonce = decode_fixed::<XCHACHA_NONCE_LEN>(required_str(&envelope, "nonce")?)?;
@@ -914,7 +915,7 @@ fn open_record_envelope(
 }
 
 fn validate_record_envelope_aad(aad: &Value, account_data_key: &str) -> anyhow::Result<()> {
-    if aad.get("schema").and_then(Value::as_str) != Some(FILE_TRANSFER_SCHEMA) {
+    if aad.get("schema").and_then(Value::as_str) != Some(SchemaId::FILE_TRANSFER_V1) {
         anyhow::bail!("file-transfer record envelope AAD schema mismatch");
     }
     if aad.get("purpose").and_then(Value::as_str) != Some("file_transfer_record") {
@@ -975,7 +976,7 @@ fn validate_ciphertext_blob_binding(
     if record.encryption.scheme != FILE_TRANSFER_BLOB_SCHEME {
         anyhow::bail!("file-transfer encryption scheme mismatch");
     }
-    if record.encryption.aead_profile != FILE_TRANSFER_AEAD_PROFILE {
+    if record.encryption.aead_profile != AEAD_PROFILE_XCHACHA20_POLY1305_V1 {
         anyhow::bail!("file-transfer AEAD profile mismatch");
     }
     validate_content_aad(record)?;
@@ -984,7 +985,7 @@ fn validate_ciphertext_blob_binding(
 
 fn validate_content_aad(record: &FileTransferRecord) -> anyhow::Result<()> {
     let aad = &record.encryption.aad;
-    if aad.schema != FILE_TRANSFER_SCHEMA {
+    if aad.schema != SchemaId::FILE_TRANSFER_V1 {
         anyhow::bail!("file-transfer content AAD schema mismatch");
     }
     if aad.purpose != FILE_TRANSFER_PURPOSE {

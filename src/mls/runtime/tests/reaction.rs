@@ -68,7 +68,7 @@ fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
     // Declare the minimal-metadata profile on the cached projection.
     state.save_realm_tree_projection(
         realm,
-        json!({ "active_profiles": [arkret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE] }),
+        json!({ "active_profiles": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1] }),
     );
     assert!(state.realm_projection_is_minimal_metadata(realm));
 

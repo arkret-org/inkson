@@ -25,6 +25,7 @@
 //! recovery strand.
 
 use anyhow::{Result, anyhow, bail};
+use arkret_wire::{HPKE_SUITE_X25519_CHACHA20POLY1305_V1, SECRET_REQUEST_KIND, SECRET_SEND_KIND};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::{Value, json};
@@ -34,14 +35,11 @@ use crate::mls::runtime::{self, StoredAccountMlsSecret};
 use crate::secure_key_store::SecureKeyStore;
 
 /// Wire `kind` for the secret request.
-pub const SECRET_SHARE_KIND_REQUEST: &str = "ak.secret.request";
 /// Wire `kind` for the sealed secret response.
-pub const SECRET_SHARE_KIND_SEND: &str = "ak.secret.send";
 /// HPKE scheme label on `ak.secret.send.content.scheme`. Matches the canonical
 /// device HPKE label in `device-lifecycle.md` §4. The crypto suite is the
 /// RFC 9180 base mode of [`crate::hpke_backup`] (DHKEM-X25519 / HKDF-SHA256 /
 /// ChaCha20Poly1305).
-pub const SECRET_SHARE_SCHEME: &str = "ak.hpke_x25519_aead_chacha20poly1305.v1";
 /// `secret_id` for the account MLS snapshot secret — the only secret class the
 /// D2D direct-share path ships in v1. Equal to
 /// [`crate::mls::account_recovery::MLS_ACCOUNT_SECRET_SECRET_ID`].
@@ -49,7 +47,6 @@ pub const SECRET_SHARE_SECRET_ID: &str = "inkson_mls_account_secret";
 
 /// HPKE `info` (domain separation). Distinct from the key-backup `info` so a
 /// secret-share envelope can never be confused with a recovery backup envelope.
-const SECRET_SHARE_HPKE_INFO: &[u8] = b"ak.secret-share/v1";
 
 /// Per-strand state held by the requesting (new) device between sending
 /// `ak.secret.request` and opening the matching `ak.secret.send`. The private
@@ -159,13 +156,18 @@ pub fn build_send_content(
         request.from_device.as_str(),
         expires_at,
     )?;
-    let sealed = hpke_backup::hpke_seal(&recipient_pk, SECRET_SHARE_HPKE_INFO, &aad, &plaintext)?;
+    let sealed = hpke_backup::hpke_seal(
+        &recipient_pk,
+        arkret_wire::SECRET_SHARE_HPKE_INFO,
+        &aad,
+        &plaintext,
+    )?;
     let content = arkret_crypto::secret_share::SecretShareSendContent {
         request_id: request.request_id.clone(),
         secret_id: SECRET_SHARE_SECRET_ID.to_owned(),
         from_device: arkret_sdk::DeviceId::new(self_device_id.to_owned())
             .map_err(|err| anyhow!("invalid secret-share sending device id: {err}"))?,
-        scheme: SECRET_SHARE_SCHEME.to_owned(),
+        scheme: HPKE_SUITE_X25519_CHACHA20POLY1305_V1.to_owned(),
         enc: URL_SAFE_NO_PAD.encode(sealed.enc),
         ciphertext: URL_SAFE_NO_PAD.encode(sealed.ciphertext),
     };
@@ -202,8 +204,8 @@ pub fn open_send_content(
         bail!("ak.secret.send.from_device does not match envelope sender_device_id");
     }
     let scheme = send_content.scheme;
-    if scheme != SECRET_SHARE_SCHEME {
-        bail!("ak.secret.send.scheme {scheme:?} is not {SECRET_SHARE_SCHEME}");
+    if scheme != HPKE_SUITE_X25519_CHACHA20POLY1305_V1 {
+        bail!("ak.secret.send.scheme {scheme:?} is not {HPKE_SUITE_X25519_CHACHA20POLY1305_V1}");
     }
     let enc = URL_SAFE_NO_PAD
         .decode(send_content.enc.as_bytes())
@@ -222,7 +224,7 @@ pub fn open_send_content(
     let plaintext = hpke_backup::hpke_open(
         &requester.recipient_private_key,
         &enc,
-        SECRET_SHARE_HPKE_INFO,
+        arkret_wire::SECRET_SHARE_HPKE_INFO,
         &aad,
         &ciphertext,
     )?;
@@ -280,7 +282,7 @@ pub async fn send_request(
         &format!("ak.secret.request:{}", requester.request_id),
         account_did,
         target_existing_device_id,
-        SECRET_SHARE_KIND_REQUEST,
+        SECRET_REQUEST_KIND,
         &crate::clock::timestamp_in(30),
         content,
     )
@@ -318,7 +320,7 @@ pub async fn respond_to_request(
         &format!("ak.secret.send:{}", request.request_id),
         account_did,
         request.from_device.as_str(),
-        SECRET_SHARE_KIND_SEND,
+        SECRET_SEND_KIND,
         &expires_at,
         content,
     )
@@ -337,7 +339,7 @@ pub fn try_open_envelope(
     account_did: &str,
     our_device_id: &str,
 ) -> Result<Option<OpenedSecret>> {
-    if envelope.get("kind").and_then(Value::as_str) != Some(SECRET_SHARE_KIND_SEND) {
+    if envelope.get("kind").and_then(Value::as_str) != Some(SECRET_SEND_KIND) {
         return Ok(None);
     }
     let sender_device_id = string_field(envelope, "sender_device_id")?;
@@ -370,7 +372,7 @@ fn send_aad(
     arkret_sdk::canonical::validate_timestamp_canonical(expires_at)
         .map_err(|err| anyhow!("invalid secret-share expires_at {expires_at:?}: {err}"))?;
     let aad = json!({
-        "kind": SECRET_SHARE_KIND_SEND,
+        "kind": SECRET_SEND_KIND,
         "sender_principal_id": sender_principal_id,
         "sender_device_id": sender_device_id,
         "recipient_principal_id": recipient_principal_id,
@@ -548,7 +550,7 @@ mod tests {
 
         // A materialized ak.secret.send envelope (as soland would hand it back).
         let envelope = json!({
-            "kind": SECRET_SHARE_KIND_SEND,
+            "kind": SECRET_SEND_KIND,
             "sender_principal_id": ACCOUNT_DID,
             "sender_device_id": OLD_DEVICE,
             "recipient_principal_id": ACCOUNT_DID,

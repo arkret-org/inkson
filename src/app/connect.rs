@@ -1425,7 +1425,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 }
                                 if crate::account_data::private_account_data_key_prefix(
                                     account_data_key,
-                                ) == Some(arkret_sdk::ACCOUNT_DATA_KEY_SAVED)
+                                ) == Some(arkret_sdk::AccountDataKey::SAVED_V1)
                                 {
                                     if let Some(content) = entry
                                         .get("content")

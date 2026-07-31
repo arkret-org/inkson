@@ -204,7 +204,7 @@ impl SignalPayload {
             } => {
                 let receipt = arkret_sdk::ReadReceipt {
                     receipt_kind: "read".to_owned(),
-                    schema: arkret_sdk::READ_RECEIPT_SCHEMA.to_owned(),
+                    schema: arkret_sdk::SchemaId::READ_RECEIPT_V1.to_owned(),
                     realm_id: realm_id.clone(),
                     actor_id: actor_id.clone(),
                     event_id: event_id.clone(),

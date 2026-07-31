@@ -123,7 +123,7 @@ pub fn build_appeal_submit_op(
     Ok(OperationBuilder::new(
         &realm_id,
         appellant,
-        arkret_sdk::events::kinds::EventKind::ModerationAppealSubmit,
+        arkret_sdk::EventKind::ModerationAppealSubmit,
     )
     .target_ref(decision_event_id)
     .body(body))

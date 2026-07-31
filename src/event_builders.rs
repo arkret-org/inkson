@@ -4,6 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use arkret_wire::ProfileId;
 use serde_json::{Value, json};
 
 use crate::operation::{
@@ -405,7 +406,7 @@ fn build_realm_genesis_object(
     );
     // `Realm::new` seeds `schema_refs` with the core profile; an ordinary Realm
     // declares only the Realm schema itself.
-    object.schema_refs = vec![arkret_wire::constants::REALM_SCHEMA_ID.to_owned()];
+    object.schema_refs = vec![arkret_wire::SchemaId::REALM_V1.to_owned()];
     object.security_class = Some(parse_wire_enum("security_class", security_class)?);
     object.default_discoverability = parse_wire_enum("discoverability", discoverability)?;
     object.default_join_rule = parse_wire_enum("join_rule", join_rule)?;
@@ -470,17 +471,13 @@ fn build_realm_create_event_from_object(
     let realm_body = arkret_sdk::RealmCreatePayload::new(object)
         .to_value()
         .map_err(|e| anyhow::anyhow!("ak.realm.create payload serialize: {e}"))?;
-    OperationBuilder::new(
-        realm_id,
-        actor_id,
-        arkret_sdk::events::kinds::EventKind::RealmCreate,
-    )
-    .target_ref(realm_id)
-    .body(realm_body)
-    .preconditions(preconditions)
-    .requirements(event_requirements_with_schema("ak.schema.realm.v1"))
-    .created_at(created_at)
-    .build_sdk_event("inkson")
+    OperationBuilder::new(realm_id, actor_id, arkret_sdk::EventKind::RealmCreate)
+        .target_ref(realm_id)
+        .body(realm_body)
+        .preconditions(preconditions)
+        .requirements(event_requirements_with_schema("ak.schema.realm.v1"))
+        .created_at(created_at)
+        .build_sdk_event("inkson")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -555,8 +552,8 @@ pub fn build_managed_agent_pcr_create_event(
     let controller_did = arkret_sdk::Did::new(controller_id.to_owned())
         .map_err(|error| anyhow::anyhow!("invalid managed Agent controller DID: {error}"))?;
     object.schema_refs = vec![
-        arkret_wire::constants::REALM_SCHEMA_ID.to_owned(),
-        arkret_bootstrap::PRINCIPAL_CONTROL_REALM_PROFILE.to_owned(),
+        arkret_wire::SchemaId::REALM_V1.to_owned(),
+        ProfileId::PRINCIPAL_CONTROL_REALM_V1.to_owned(),
     ];
     object.fields.insert(
         "purpose".to_owned(),
@@ -894,16 +891,12 @@ pub fn build_space_create_event(
     let space_body = arkret_sdk::SpaceCreatePayload::new(space_object)
         .to_value()
         .map_err(|e| anyhow::anyhow!("ak.space.create payload serialize: {e}"))?;
-    OperationBuilder::new(
-        realm_id,
-        actor_id,
-        arkret_sdk::events::kinds::EventKind::SpaceCreate,
-    )
-    .target_ref(space_id)
-    .body(space_body)
-    .requirements(event_requirements_with_schema("ak.schema.space.v1"))
-    .created_at(created_at)
-    .build_sdk_event("inkson")
+    OperationBuilder::new(realm_id, actor_id, arkret_sdk::EventKind::SpaceCreate)
+        .target_ref(space_id)
+        .body(space_body)
+        .requirements(event_requirements_with_schema("ak.schema.space.v1"))
+        .created_at(created_at)
+        .build_sdk_event("inkson")
 }
 
 /// Build a Space lifecycle event (`ak.space.archive` /
@@ -1082,14 +1075,10 @@ pub fn build_realm_archive_event(
         typed = typed.with_reason(reason);
     }
     let payload = typed.to_value()?;
-    OperationBuilder::new(
-        realm_id,
-        actor_id,
-        arkret_sdk::events::kinds::EventKind::RealmArchive,
-    )
-    .body(payload)
-    .created_at(created_at)
-    .build_sdk_event("inkson")
+    OperationBuilder::new(realm_id, actor_id, arkret_sdk::EventKind::RealmArchive)
+        .body(payload)
+        .created_at(created_at)
+        .build_sdk_event("inkson")
 }
 
 /// Build a `ak.realm.destroy` terminal lifecycle event.
@@ -1107,14 +1096,10 @@ pub fn build_realm_destroy_event(
     // _required omitted so the reducer applies its default; additionalProperties
     // :false).
     let payload = arkret_sdk::RealmDestroyPayload::new(reason).to_value()?;
-    OperationBuilder::new(
-        realm_id,
-        actor_id,
-        arkret_sdk::events::kinds::EventKind::RealmDestroy,
-    )
-    .body(payload)
-    .created_at(created_at)
-    .build_sdk_event("inkson")
+    OperationBuilder::new(realm_id, actor_id, arkret_sdk::EventKind::RealmDestroy)
+        .body(payload)
+        .created_at(created_at)
+        .build_sdk_event("inkson")
 }
 
 /// Build a `ak.realm.alias` declaration — the ONLY wire carrier of a Realm
@@ -1271,7 +1256,7 @@ pub fn build_plaintext_visible_services_event(
     let event = OperationBuilder::new(
         realm_id,
         actor_id,
-        arkret_sdk::events::kinds::EventKind::RealmPlaintextVisibleServices,
+        arkret_sdk::EventKind::RealmPlaintextVisibleServices,
     )
     .body(body_value)
     .preconditions(preconditions)
@@ -1364,15 +1349,11 @@ fn build_member_state_transition_event_with_binding(
     } else {
         vec![head_eq_precondition(&cell, Value::Null)?]
     };
-    OperationBuilder::new(
-        realm_id,
-        actor_id,
-        arkret_sdk::events::kinds::EventKind::MemberState,
-    )
-    .target_ref(member_actor_id)
-    .body(payload)
-    .preconditions(preconditions)
-    .build_sdk_event("inkson")
+    OperationBuilder::new(realm_id, actor_id, arkret_sdk::EventKind::MemberState)
+        .target_ref(member_actor_id)
+        .body(payload)
+        .preconditions(preconditions)
+        .build_sdk_event("inkson")
 }
 
 fn space_cell(cell_family: &str, space_id: &str) -> String {

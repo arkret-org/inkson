@@ -29,7 +29,7 @@ fn genesis_governance_binding(group_id: &str) -> arkret_sdk::MlsGovernanceBindin
         policy_root,
         capability_root,
         discussion_metadata_digest,
-        arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+        arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
         arkret_sdk::CORE_REDUCER_PROFILE,
     )
     .unwrap()

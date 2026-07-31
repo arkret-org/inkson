@@ -69,8 +69,8 @@ impl EncryptedClientAsset {
     #[cfg(test)]
     fn scheme(&self) -> &'static str {
         match self.envelope {
-            EncryptedAttachment::WholeFile(_) => blob_aead::SCHEME_WHOLE_FILE,
-            EncryptedAttachment::Stream(_) => blob_aead::SCHEME_STREAM,
+            EncryptedAttachment::WholeFile(_) => arkret_wire::BLOB_SCHEME_WHOLE_FILE_AEAD_V1,
+            EncryptedAttachment::Stream(_) => arkret_wire::BLOB_SCHEME_STREAM_AEAD_V1,
         }
     }
 
@@ -269,9 +269,8 @@ pub fn encrypt_mls_asset(
 
 #[cfg(test)]
 mod tests {
-    use arkret_crypto::blob_aead::{
-        SCHEME_STREAM, SCHEME_WHOLE_FILE, decrypt_stream, decrypt_whole_file,
-    };
+    use arkret_crypto::blob_aead::{decrypt_stream, decrypt_whole_file};
+    use arkret_wire::{BLOB_SCHEME_STREAM_AEAD_V1, BLOB_SCHEME_WHOLE_FILE_AEAD_V1};
 
     use super::*;
 
@@ -301,7 +300,7 @@ mod tests {
         let asset = encrypt_mls_asset(plaintext, &key, 42, test_key_ref(), "image/png").unwrap();
 
         assert_ne!(asset.ciphertext.as_slice(), plaintext.as_slice());
-        assert_eq!(asset.scheme(), SCHEME_WHOLE_FILE);
+        assert_eq!(asset.scheme(), BLOB_SCHEME_WHOLE_FILE_AEAD_V1);
         assert_eq!(asset.blob_ref(), blob_typed_id(&asset.ciphertext));
         assert_eq!(
             asset.ciphertext_digest(),
@@ -325,7 +324,7 @@ mod tests {
             .collect();
         let asset = encrypt_mls_asset(&plaintext, &key, 9, test_key_ref(), "video/mp4").unwrap();
 
-        assert_eq!(asset.scheme(), SCHEME_STREAM);
+        assert_eq!(asset.scheme(), BLOB_SCHEME_STREAM_AEAD_V1);
         assert_eq!(asset.segment_bytes(), Some(u64::from(DEFAULT_SEGMENT_SIZE)));
         assert!(asset.segment_count().unwrap() >= 2);
         assert_eq!(asset.blob_ref(), blob_typed_id(&asset.ciphertext));
@@ -353,9 +352,9 @@ mod tests {
         .unwrap();
         let thumbnail = bundle.thumbnail.as_ref().expect("thumbnail encrypted");
 
-        assert_eq!(bundle.attachment.scheme(), SCHEME_STREAM);
+        assert_eq!(bundle.attachment.scheme(), BLOB_SCHEME_STREAM_AEAD_V1);
         // §3.3.4: thumbnail always whole-file regardless of size.
-        assert_eq!(thumbnail.scheme(), SCHEME_WHOLE_FILE);
+        assert_eq!(thumbnail.scheme(), BLOB_SCHEME_WHOLE_FILE_AEAD_V1);
         // Independent ciphertexts / blob refs.
         assert_ne!(bundle.attachment.ciphertext, thumbnail.ciphertext);
         assert_ne!(bundle.attachment.blob_ref(), thumbnail.blob_ref());
@@ -390,7 +389,7 @@ mod tests {
         )
         .unwrap();
         assert!(bundle.thumbnail.is_none());
-        assert_eq!(bundle.attachment.scheme(), SCHEME_WHOLE_FILE);
+        assert_eq!(bundle.attachment.scheme(), BLOB_SCHEME_WHOLE_FILE_AEAD_V1);
         let key_ref = match bundle.attachment.envelope {
             EncryptedAttachment::WholeFile(envelope) => envelope.key_ref,
             EncryptedAttachment::Stream(envelope) => envelope.key_ref,

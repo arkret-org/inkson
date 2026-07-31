@@ -11,16 +11,16 @@ use arkret_models_identity::artifacts_device_identity::{
     DeviceEnrollmentAuthorityBinding, DeviceEnrollmentAuthorityBindingKind,
 };
 use arkret_wire::{
-    AUTHORITY_SET_POLICY_SCHEMA, AuthoritySetAuthorizationRule, AuthoritySetIssuer,
-    AuthoritySetIssuerRole, AuthoritySetPolicy, AuthoritySetPolicyKind, AuthoritySetPolicySource,
-    AuthoritySetRef, AuthoritySetSourceKind, AuthorizeEventPublicationIntent, Base64UrlString,
-    CanonicalPublicMaterial, DidUrl, EnrollmentAuthorityIdentityModel,
-    EnrollmentAuthorityRecoveryPlan, Event, EventId, EventRef, Hash, Hlc, IssueAuthorityTicketStep,
-    LeaseBasisRef, NonEmptyString, PreparedDidPublication, RECOVERY_ACCOUNT_AUTHORITY_SET_ID,
-    ReceiptId, RecoveryAuthorityHolderProof, RecoveryAuthorityTicket, RecoveryAuthorityTicketId,
-    RecoveryAuthorityTicketIssueRequest, RecoveryAuthorizationPreimage, RecoveryBinding,
-    RecoveryPreparedPlan, RecoveryTransactionCreateRequest, ReplacementDevicePossessionProof,
-    RiskTier, SecurityTransaction, SecurityTransactionBinding, SecurityTransactionCreateRequest,
+    AuthoritySetAuthorizationRule, AuthoritySetIssuer, AuthoritySetIssuerRole, AuthoritySetPolicy,
+    AuthoritySetPolicyKind, AuthoritySetPolicySource, AuthoritySetRef, AuthoritySetSourceKind,
+    AuthorizeEventPublicationIntent, Base64UrlString, CanonicalPublicMaterial, DidUrl,
+    EnrollmentAuthorityIdentityModel, EnrollmentAuthorityRecoveryPlan, Event, EventId, EventRef,
+    Hash, Hlc, IssueAuthorityTicketStep, LeaseBasisRef, NonEmptyString, PreparedDidPublication,
+    RECOVERY_ACCOUNT_AUTHORITY_SET_ID, ReceiptId, RecoveryAuthorityHolderProof,
+    RecoveryAuthorityTicket, RecoveryAuthorityTicketId, RecoveryAuthorityTicketIssueRequest,
+    RecoveryAuthorizationPreimage, RecoveryBinding, RecoveryPreparedPlan,
+    RecoveryTransactionCreateRequest, ReplacementDevicePossessionProof, RiskTier, SchemaId,
+    SecurityTransaction, SecurityTransactionBinding, SecurityTransactionCreateRequest,
     SecurityTransactionPreparedPlan, SecurityTransactionState, SecurityTransactionStep,
     TransactionId,
 };
@@ -212,7 +212,7 @@ pub(crate) async fn prepare_cross_signing_recovery(
         .clone();
     let placeholder_hlc = Hlc::new("000000000000-0000-00000000".to_owned())?;
     let mut authorize = Event::new_at(
-        arkret_wire::events::EventKind::DEVICE_AUTHORIZE,
+        arkret_wire::EventKind::DEVICE_AUTHORIZE,
         scope_ref.clone(),
         verified_session.principal_id.clone(),
         1,
@@ -225,7 +225,7 @@ pub(crate) async fn prepare_cross_signing_recovery(
         &verified_session.publication_authority_context.basis_ref,
     );
     let mut list_update = Event::new_at(
-        arkret_wire::events::EventKind::DEVICE_LIST_UPDATE,
+        arkret_wire::EventKind::DEVICE_LIST_UPDATE,
         scope_ref,
         verified_session.principal_id.clone(),
         1,
@@ -519,7 +519,7 @@ pub(crate) async fn prepare_enrollment_authority_recovery(
     )?;
     let mut authorize_event = Event::new_with_id_at(
         authorize_event_id.clone(),
-        arkret_wire::events::EventKind::DEVICE_AUTHORIZE,
+        arkret_wire::EventKind::DEVICE_AUTHORIZE,
         scope_ref.clone(),
         verified_session.principal_id.clone(),
         authorize_actor_seq,
@@ -534,7 +534,7 @@ pub(crate) async fn prepare_enrollment_authority_recovery(
         CanonicalPublicMaterial::canonical_json(serde_json::to_value(&authorize_event)?)?;
 
     let authority_set_policy = AuthoritySetPolicy {
-        schema: AUTHORITY_SET_POLICY_SCHEMA.to_owned(),
+        schema: SchemaId::AUTHORITY_SET_POLICY_V1.to_owned(),
         authority_set_id: RECOVERY_ACCOUNT_AUTHORITY_SET_ID.to_owned(),
         policy_kind: AuthoritySetPolicyKind::PrincipalControl,
         scope_ref: scope_ref.clone(),
@@ -592,7 +592,7 @@ pub(crate) async fn prepare_enrollment_authority_recovery(
         };
     let mut reanchor_event = Event::new_with_id_at(
         reanchor_event_id.clone(),
-        arkret_wire::events::EventKind::DEVICE_REANCHOR,
+        arkret_wire::EventKind::DEVICE_REANCHOR,
         scope_ref,
         verified_session.principal_id.clone(),
         actor_frontier.next_actor_seq,

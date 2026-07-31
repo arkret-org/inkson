@@ -63,7 +63,7 @@ fn recovery_hpke_backup() -> Value {
 
 fn active_series_record(backup_kind: &str, active_series_id: &str) -> Value {
     serde_json::json!({
-        "schema": crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA,
+        "schema": SchemaId::KEY_BACKUP_ACTIVE_SERIES_V1,
         "actor_id": ACTOR,
         "backup_kind": backup_kind,
         "active_series_id": active_series_id,
@@ -98,6 +98,8 @@ fn payload_with_inferred_active_series(backups: Vec<Value>) -> Value {
 }
 
 // YOU-05-010: shared hermetic state-store fixture from `local_state`.
+use arkret_wire::SchemaId;
+
 use crate::state::isolated_store_for_tests as temp_state_store;
 
 fn history_envelope(

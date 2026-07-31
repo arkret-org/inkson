@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn client_event_path_projects_without_reparsing_the_envelope() {
         let mut event = arkret_sdk::Event::new(
-            arkret_sdk::events::EventKind::STRAND_UPDATE,
+            arkret_sdk::EventKind::STRAND_UPDATE,
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001")
                     .unwrap(),

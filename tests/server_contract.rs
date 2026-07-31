@@ -1,5 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
+use arkret_wire::AccountDataKey;
 use chrono::Utc;
 use inkson::account_data::{
     AccountDataKey, ContactRemark, RealmRemark, contact_remark_account_data_key,
@@ -357,7 +358,7 @@ fn inkson_accepts_server_contract_payloads() {
     let grants: inkson::models::GrantList = serde_json::from_value(json!({
         "grants": [{
             "id": "ak:grant:0196419b-0000-7000-8000-000000000000",
-            "schema": arkret_wire::CAPABILITY_SCHEMA,
+            "schema": arkret_wire::SchemaId::CAPABILITY_V1,
             "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
             "issuer": "did:web:server.local",
             "subject": "did:web:alice.example",
@@ -745,7 +746,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     let event = OperationBuilder::new(
         realm_id,
         "did:web:local.example",
-        arkret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
         "strand_id": "ak:strand:01904100-0000-7000-8000-0000000000ce",

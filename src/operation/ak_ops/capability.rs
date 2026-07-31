@@ -27,13 +27,11 @@ pub fn capability_revoke(
         grant_id: grant_id_typed,
         reason: reason.map(ToOwned::to_owned),
     };
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::CapabilityRevoke,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::CapabilityRevoke)
+            .target_ref(grant_id)
+            .body(payload_value(&payload, "capability_revoke payload")?),
     )
-    .target_ref(grant_id)
-    .body(payload_value(&payload, "capability_revoke payload")?))
 }
 
 /// `ak.capability.grant` event carrying the canonical
@@ -121,16 +119,12 @@ pub fn capability_grant_actions_with_resources(
     if !constraints.is_null() {
         grant["constraints"] = constraints;
     }
-    OperationBuilder::new(
-        &realm,
-        actor,
-        arkret_sdk::events::kinds::EventKind::CapabilityGrant,
-    )
-    .target_ref(grant_id)
-    .body(json!({
-        "grant_id": grant_id,
-        "grant": grant,
-    }))
+    OperationBuilder::new(&realm, actor, arkret_sdk::EventKind::CapabilityGrant)
+        .target_ref(grant_id)
+        .body(json!({
+            "grant_id": grant_id,
+            "grant": grant,
+        }))
 }
 
 #[cfg(test)]

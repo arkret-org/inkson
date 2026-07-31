@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
+use arkret_wire::SchemaId;
 use serde_json::{Value, json};
 
-use super::{BackupKind, KEY_BACKUP_SCHEMA, key_backup_hkdf_info};
+use super::{BackupKind, key_backup_hkdf_info};
 
 pub fn attach_key_backup_domain_separation(body: &mut Value, class: BackupKind, subdomain: &str) {
     let item_kinds = body
@@ -58,7 +59,7 @@ pub fn attach_key_backup_domain_separation(body: &mut Value, class: BackupKind, 
         "hkdf_info": key_backup_hkdf_info(class, subdomain),
         "subdomain": subdomain,
         "aead_aad": {
-            "schema": KEY_BACKUP_SCHEMA,
+            "schema": SchemaId::KEY_BACKUP_V1,
             "actor_id": body.get("actor_id").cloned().unwrap_or(Value::Null),
             "device_id": device_id,
             "backup_kind": class.as_str(),

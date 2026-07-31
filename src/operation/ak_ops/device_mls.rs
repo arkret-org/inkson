@@ -38,13 +38,11 @@ pub fn device_revoke(
     };
     let body = serde_json::to_value(payload)
         .map_err(|err| anyhow::anyhow!("device_revoke_payload serialize: {err}"))?;
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::DeviceRevoke,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::DeviceRevoke)
+            .target_ref(target_device_id)
+            .body(body),
     )
-    .target_ref(target_device_id)
-    .body(body))
 }
 
 /// `ak.mls.commit` event carrying the current wire-schema MLS
@@ -59,13 +57,11 @@ pub fn mls_commit_with_governance(
 ) -> anyhow::Result<OperationBuilder> {
     let group_id = payload.mls_group_id().to_owned();
     let body = serde_json::to_value(payload)?;
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::MlsCommit,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MlsCommit)
+            .target_ref(group_id)
+            .body(body),
     )
-    .target_ref(group_id)
-    .body(body))
 }
 
 /// `ak.mls.proposal` event for a durable MLS membership-change intent.
@@ -76,13 +72,11 @@ pub fn mls_proposal_with_governance(
     payload: &arkret_sdk::MlsProposalPayload,
 ) -> anyhow::Result<OperationBuilder> {
     let body = serde_json::to_value(payload)?;
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::MlsProposal,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MlsProposal)
+            .target_ref(group_id.to_owned())
+            .body(body),
     )
-    .target_ref(group_id.to_owned())
-    .body(body))
 }
 
 /// `ak.mls.genesis` event installing an MLS group at epoch 0. Emitted
@@ -100,13 +94,9 @@ pub fn mls_genesis_with_governance(
     group_id: &str,
     payload: &Value,
 ) -> OperationBuilder {
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::MlsGenesis,
-    )
-    .target_ref(group_id.to_owned())
-    .body(payload.clone())
+    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MlsGenesis)
+        .target_ref(group_id.to_owned())
+        .body(payload.clone())
 }
 
 /// `ak.mls.welcome` event carrying the durable Welcome claim envelope and
@@ -119,11 +109,7 @@ pub fn mls_welcome_with_governance(
     group_id: &str,
     payload: &Value,
 ) -> OperationBuilder {
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::MlsWelcome,
-    )
-    .target_ref(group_id.to_owned())
-    .body(payload.clone())
+    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MlsWelcome)
+        .target_ref(group_id.to_owned())
+        .body(payload.clone())
 }

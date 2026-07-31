@@ -22,6 +22,7 @@ mod sections;
 mod widgets;
 
 use account_data::*;
+use arkret_wire::AccountDataKey;
 use base64::Engine as _;
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
@@ -51,30 +52,23 @@ use crate::workflows::blocked_release_workflows;
 
 /// `ak.account_data` key used by the read-receipt preferences entry. Spec:
 /// `discovery/client-preferences.md` §3.6.
-pub(crate) const READ_RECEIPT_ACCOUNT_DATA_KEY: &str = "ak.read_receipt.preferences";
 
 /// `ak.account_data` key used by the cross-device UI preferences entry
 /// (theme, sidebar collapsed, per-Realm view). Spec:
 /// `discovery/client-preferences.md` §2.
-pub(crate) const CLIENT_UI_ACCOUNT_DATA_KEY: &str = "ak.client.ui_state";
 
 /// `ak.account_data` key used by the actor-private personal blocklist.
 /// Spec: `discovery/client-preferences.md` §2 / §3 privacy preferences.
-pub(crate) const CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY: &str = "ak.account.blocklist";
 
 /// `ak.account_data` key used by notification push-rule preferences.
-pub(crate) const PUSH_RULES_ACCOUNT_DATA_KEY: &str = "ak.push_rules";
 
 /// `ak.account_data` key used by do-not-disturb preferences.
-pub(crate) const DND_ACCOUNT_DATA_KEY: &str = "ak.dnd_schedule";
 
 /// `ak.account_data` key used by the principal-private presence policy.
-pub(crate) const PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY: &str = "ak.presence.visibility";
 
 /// `ak.account_data` key used by the manual presence preference
 /// (profiles-presence.md §3.6). Send-side enforced; pushed encrypted —
 /// servers MUST NOT require a projection of this key.
-pub(crate) const PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY: &str = "ak.presence.preference";
 
 /// Resolve the relative expiry picker choice into an absolute RFC 3339
 /// UTC `clears_at` (profiles-presence.md §3.6). `never` (and anything
@@ -135,7 +129,7 @@ pub(crate) fn push_client_ui_account_data_with_avatar(
         &std::collections::BTreeMap::new(),
         avatar_blob_ref.as_deref(),
     );
-    let body = match encrypted_account_data_value(CLIENT_UI_ACCOUNT_DATA_KEY, &body) {
+    let body = match encrypted_account_data_value(AccountDataKey::CLIENT_UI_STATE, &body) {
         Ok(body) => body,
         Err(error) => {
             tracing::warn!(%error, "ak.client.ui_state encryption failed");
@@ -144,7 +138,7 @@ pub(crate) fn push_client_ui_account_data_with_avatar(
     };
     spawn(async move {
         match with_event_submitter(&base_url, api_token, |sub| async move {
-            crate::transport::account::set_account_data(&sub, CLIENT_UI_ACCOUNT_DATA_KEY, body)
+            crate::transport::account::set_account_data(&sub, AccountDataKey::CLIENT_UI_STATE, body)
                 .await
         })
         .await
@@ -220,7 +214,7 @@ pub(crate) fn push_blocklist_account_data(
             if let Err(err) = with_event_submitter(&base_url, api_token, |sub| async move {
                 crate::transport::account::delete_account_data(
                     &sub,
-                    CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY,
+                    AccountDataKey::ACCOUNT_BLOCKLIST,
                 )
                 .await
             })
@@ -236,7 +230,7 @@ pub(crate) fn push_blocklist_account_data(
     }
     let plaintext_body = crate::account_data::build_blocklist_account_data_body(&entries);
     let body =
-        match encrypted_account_data_value(CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY, &plaintext_body) {
+        match encrypted_account_data_value(AccountDataKey::ACCOUNT_BLOCKLIST, &plaintext_body) {
             Ok(body) => body,
             Err(err) => {
                 tracing::warn!(
@@ -250,7 +244,7 @@ pub(crate) fn push_blocklist_account_data(
         match with_event_submitter(&base_url, api_token, |sub| async move {
             crate::transport::account::set_account_data(
                 &sub,
-                CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY,
+                AccountDataKey::ACCOUNT_BLOCKLIST,
                 body,
             )
             .await

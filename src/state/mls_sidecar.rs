@@ -58,7 +58,7 @@ fn projection_mls_genesis_event_id(
             .get("kind")
             .or_else(|| event.get("event_kind"))
             .and_then(Value::as_str)?;
-        if kind != arkret_sdk::events::EventKind::MLS_GENESIS {
+        if kind != arkret_sdk::EventKind::MLS_GENESIS {
             return None;
         }
         if event

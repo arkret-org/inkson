@@ -93,7 +93,7 @@ fn minimal_metadata_projection_detected_from_profiles_arrays() {
     let top = "ak:realm:0196419b-0000-7000-8000-0000000000a1";
     store.save_realm_tree_projection(
         top.to_owned(),
-        json!({ "profiles": [arkret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE] }),
+        json!({ "profiles": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1] }),
     );
     assert!(store.realm_projection_is_minimal_metadata(top));
 
@@ -104,7 +104,7 @@ fn minimal_metadata_projection_detected_from_profiles_arrays() {
             "summary": {
                 "active_profiles": [
                     "ak.profile.core.v1",
-                    arkret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE
+                    arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1
                 ]
             }
         }),

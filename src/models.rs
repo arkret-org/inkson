@@ -5,6 +5,7 @@ pub use arkret_sdk::{
     ContactList as ContactListView, ContactListRow, DirectConversationSummary, ServiceDescribe,
     VerifiedProfileEntry,
 };
+use arkret_wire::ProfileId;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -92,7 +93,7 @@ pub fn contact_grants_me_invite(contact: &ContactListRow) -> bool {
 pub use arkret_models_collaboration::governance::invite_addressing::{
     DisclosureLevel, DisclosurePolicy as InviteDisclosurePolicy, InviteReceivePolicy,
 };
-pub use arkret_wire::{INVITE_RECEIVE_POLICY_SCHEMA, InviteReceiveAction, UnknownInviteAction};
+pub use arkret_wire::{InviteReceiveAction, UnknownInviteAction};
 
 /// R15: result of `ak.realm.create`. Carries a `ak:realm:*` id under the
 /// canonical `realm_id` field (was previously squeezed into a shared
@@ -125,9 +126,6 @@ pub struct SpaceCreateResult {
 // (Move/Seal pipeline DTOs deleted; all writes now go through
 // ak.self.events.command.submit via SubmitEventResult.)
 
-pub const PROFILE_CORE_EVENT_STORE: &str = "ak.profile.core_event_store.v1";
-pub const PROFILE_PRINCIPAL_SERVER_EVENTS_API: &str = "ak.profile.principal_server_events_api.v1";
-
 /// Return whether the canonical service description advertises a profile.
 pub fn service_supports_profile(description: &ServiceDescribe, profile: &str) -> bool {
     description
@@ -147,10 +145,10 @@ pub fn missing_event_envelope_write_requirements(
     description: &ServiceDescribe,
 ) -> Vec<&'static str> {
     let mut missing = Vec::new();
-    if !service_supports_profile(description, PROFILE_CORE_EVENT_STORE)
-        && !service_supports_profile(description, PROFILE_PRINCIPAL_SERVER_EVENTS_API)
+    if !service_supports_profile(description, ProfileId::CORE_EVENT_STORE_V1)
+        && !service_supports_profile(description, ProfileId::PRINCIPAL_SERVER_EVENTS_API_V1)
     {
-        missing.push(PROFILE_CORE_EVENT_STORE);
+        missing.push(ProfileId::CORE_EVENT_STORE_V1);
     }
     if !service_supports_operation(
         description,
@@ -453,6 +451,8 @@ pub fn projection_realm_id_for_known_node(
 
 #[cfg(test)]
 mod tests {
+    use arkret_wire::SchemaId;
+
     use super::{
         RealmTreeNode, RealmTreeNodeKind, projection_realm_id_for_known_node,
         projection_realm_id_for_node,
@@ -623,7 +623,7 @@ mod tests {
         // the `trusted_*` / `denied_principal_services` lists the U4 form
         // never touches.
         let value = serde_json::json!({
-            "schema": super::INVITE_RECEIVE_POLICY_SCHEMA,
+            "schema": SchemaId::INVITE_RECEIVE_POLICY_V1,
             "subject_id": "did:web:me.example",
             "holder_allowed_introduction_kinds": ["consent_grant", "locator_ref"],
             "explicit_address_behavior": "drop",
@@ -652,7 +652,7 @@ mod tests {
     fn default_invite_receive_policy_carries_schema_and_subject() {
         let subject_id = arkret_sdk::Did::new("did:web:me.example").unwrap();
         let policy = super::InviteReceivePolicy::spec_default(subject_id);
-        assert_eq!(policy.schema, super::INVITE_RECEIVE_POLICY_SCHEMA);
+        assert_eq!(policy.schema, SchemaId::INVITE_RECEIVE_POLICY_V1);
         assert_eq!(policy.subject_id.as_str(), "did:web:me.example");
         assert_eq!(
             policy.explicit_address_behavior,

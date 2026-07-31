@@ -1,4 +1,5 @@
 use arkret_models_crypto::KeyBackupContentItem;
+use arkret_wire::HPKE_SUITE_X25519_CHACHA20POLY1305_V1;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde_json::{Value, json};
@@ -111,7 +112,7 @@ pub fn build_did_recovery_backup_body(
 
 /// AEAD identifiers for HPKE backups. This surface pins the v1 default-MUST
 /// application-layer HPKE suite `ak.hpke_x25519_aead_chacha20poly1305.v1`
-/// (see [`crate::hpke_backup::HPKE_SUITE`]), whose AEAD is RFC 9180
+/// (see [`HPKE_SUITE_X25519_CHACHA20POLY1305_V1`]), whose AEAD is RFC 9180
 /// ChaCha20-Poly1305 (96-bit nonce). The `encryption.hpke_suite` selector is
 /// written explicitly so `aead.name` is unambiguously consistent with the
 /// selected suite per `hpke-suite-registry.json` registry rules.
@@ -252,7 +253,7 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
         "encryption": {
             "recipient_method": "recovery_public_key",
             "recipient_key_ref": recovery_key_ref,
-            "hpke_suite": crate::hpke_backup::HPKE_SUITE,
+            "hpke_suite": HPKE_SUITE_X25519_CHACHA20POLY1305_V1,
             "aead": {
                 "name": HPKE_AEAD_NAME,
                 "aead_profile": HPKE_AEAD_PROFILE,

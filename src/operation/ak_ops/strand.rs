@@ -38,7 +38,7 @@ pub fn strand_watch_set(
     Ok(OperationBuilder::new(
         realm_id,
         sender_actor,
-        arkret_sdk::events::kinds::EventKind::StrandWatchSet,
+        arkret_sdk::EventKind::StrandWatchSet,
     )
     .target_ref(strand_id)
     .body(payload))
@@ -68,13 +68,11 @@ pub fn strand_tracks_update(
     patch: serde_json::Value,
 ) -> anyhow::Result<OperationBuilder> {
     let patch = patch_from_value(patch)?;
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::StrandTracksUpdate,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::StrandTracksUpdate)
+            .target_ref(strand_id)
+            .body(strand_tracks_update_payload_value(strand_id, patch)?),
     )
-    .target_ref(strand_id)
-    .body(strand_tracks_update_payload_value(strand_id, patch)?))
 }
 
 /// Convenience wrapper: enable `track` on `strand_id`. Emits the unified
@@ -157,13 +155,11 @@ pub fn strand_archive(
     actor: &str,
     strand_id: &str,
 ) -> anyhow::Result<OperationBuilder> {
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::StrandArchive,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::StrandArchive)
+            .target_ref(strand_id)
+            .body(object_lifecycle_payload_value(strand_id)?),
     )
-    .target_ref(strand_id)
-    .body(object_lifecycle_payload_value(strand_id)?))
 }
 
 /// Build a `ak.strand.restore` operation. Reverses [`strand_archive`]
@@ -175,13 +171,11 @@ pub fn strand_restore(
     actor: &str,
     strand_id: &str,
 ) -> anyhow::Result<OperationBuilder> {
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::StrandRestore,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::StrandRestore)
+            .target_ref(strand_id)
+            .body(object_lifecycle_payload_value(strand_id)?),
     )
-    .target_ref(strand_id)
-    .body(object_lifecycle_payload_value(strand_id)?))
 }
 
 /// Build a `ak.strand.update` delta operation using the canonical
@@ -195,13 +189,11 @@ pub fn strand_update_patch(
     patch: serde_json::Value,
 ) -> anyhow::Result<OperationBuilder> {
     let patch = patch_from_value(patch)?;
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::StrandUpdate,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::StrandUpdate)
+            .target_ref(strand_id)
+            .body(strand_object_patch_payload_value(strand_id, patch)?),
     )
-    .target_ref(strand_id)
-    .body(strand_object_patch_payload_value(strand_id, patch)?))
 }
 
 /// Strand position update (kanban card position) via the canonical
@@ -271,13 +263,11 @@ pub fn strand_position_cas_update(
                 &effect_rank,
                 expected_rank.as_deref(),
             )?;
-            Ok(OperationBuilder::new(
-                realm_id,
-                actor,
-                arkret_sdk::events::kinds::EventKind::StrandReorder,
+            Ok(
+                OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::StrandReorder)
+                    .target_ref(strand_id)
+                    .body(payload),
             )
-            .target_ref(strand_id)
-            .body(payload))
         }
         _ => {
             // expected_position is only emitted when BOTH a prior
@@ -294,13 +284,11 @@ pub fn strand_position_cas_update(
                 expected_space.as_deref(),
                 expected,
             )?;
-            Ok(OperationBuilder::new(
-                realm_id,
-                actor,
-                arkret_sdk::events::kinds::EventKind::StrandMove,
+            Ok(
+                OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::StrandMove)
+                    .target_ref(strand_id)
+                    .body(payload),
             )
-            .target_ref(strand_id)
-            .body(payload))
         }
     }
 }

@@ -340,7 +340,7 @@ pub(crate) fn build_realm_key_share_event(
     let event = crate::operation::OperationBuilder::new(
         realm_id,
         actor_id,
-        arkret_sdk::events::kinds::EventKind::RealmKeyShare,
+        arkret_sdk::EventKind::RealmKeyShare,
     )
     .body(body)
     .authorization_ref(authorization_grant_ref.as_str())
@@ -391,7 +391,7 @@ pub(crate) fn wrap_realm_key_share_payload_event(
     let event = crate::operation::OperationBuilder::new(
         realm_id,
         actor_id,
-        arkret_sdk::events::kinds::EventKind::RealmKeyShare,
+        arkret_sdk::EventKind::RealmKeyShare,
     )
     .body(body)
     .authorization_ref(authorization_grant_ref.as_str())

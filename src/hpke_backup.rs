@@ -39,7 +39,6 @@ use zeroize::{Zeroize, Zeroizing};
 /// default-MUST application-layer HPKE suite. Emitted into the envelope so the
 /// AEAD `name` (`chacha20_poly1305`) is unambiguously consistent with the
 /// selected suite per `hpke-suite-registry.json` registry rules.
-pub const HPKE_SUITE: &str = "ak.hpke_x25519_aead_chacha20poly1305.v1";
 
 /// HKDF info domain separator for deriving the recovery X25519 keypair from
 /// BIP-39 entropy (see [`derive_recovery_keypair_from_entropy`]). This is an

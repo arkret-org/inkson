@@ -4,9 +4,9 @@ use arkret_models_collaboration::events_payloads::key_backup::resolve_controller
 use arkret_models_crypto::{BackupSeriesEraseRequestBody, BackupSeriesEraseStatus};
 use arkret_wire::{
     BackupObjectRef, BackupRotationKind, BackupSeriesId, CLIENT_STEP_ATTESTATION_SIGNED_FIELDS,
-    ClientStepAttestation, ClientStepAttestationAuthData, Did, EventsSubmitBatchRequestBody, Hash,
-    LeaseBasisRef, RiskTier, SecurityTransactionBinding, SecurityTransactionState,
-    SecurityTransactionStep, TransactionId,
+    ClientStepAttestation, ClientStepAttestationAuthData, Did, EventKind,
+    EventsSubmitBatchRequestBody, Hash, LeaseBasisRef, RiskTier, SchemaId,
+    SecurityTransactionBinding, SecurityTransactionState, SecurityTransactionStep, TransactionId,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -455,7 +455,7 @@ async fn drive_security_rotation(
     )
     .map_err(|error| anyhow!(error.to_string()))?;
     let local_commit = arkret_models_crypto::SecurityRotationLocalCommit {
-        schema: arkret_models_crypto::SECURITY_ROTATION_LOCAL_COMMIT_SCHEMA.to_owned(),
+        schema: SchemaId::SECURITY_ROTATION_LOCAL_COMMIT_V1.to_owned(),
         transaction_id: transaction.transaction_id.clone(),
         transaction_request_digest: transaction.request_digest.clone(),
         prepared_plan_digest: transaction.prepared_plan_digest.clone(),
@@ -670,7 +670,7 @@ pub(super) fn build_active_series_event(
     let verification_method = signer.verification_method_for_principal(&principal)?;
     let issued_at = arkret_sdk::canonical::format_timestamp_canonical(crate::clock::now_utc());
     let mut payload = json!({
-        "schema": crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA,
+        "schema": SchemaId::KEY_BACKUP_ACTIVE_SERIES_V1,
         "actor_id": actor_id,
         "backup_kind": wire_backup_kind(kind),
         "active_series_id": series_id,
@@ -707,7 +707,7 @@ pub(super) fn build_active_series_event(
     crate::operation::OperationBuilder::new(
         arkret_sdk::principal_control_realm_id(&principal),
         actor_id,
-        crate::operation::EventKind::KeyBackupActiveSeries,
+        EventKind::KeyBackupActiveSeries,
     )
     .body(payload)
     .build_sdk_event("inkson")

@@ -2,11 +2,6 @@
 
 use crate::models::{ServiceDescribe, service_supports_operation, service_supports_profile};
 
-pub const PROFILE_MINIMAL_CLIENT: &str = "ak.profile.minimal_client.v1";
-pub const PROFILE_KANBAN_MVP: &str = "ak.profile.kanban_mvp.v1";
-pub const PROFILE_FULL_CLIENT: &str = "ak.profile.full_client.v1";
-pub const PROFILE_E2EE_CLIENT: &str = "ak.profile.e2ee_client.v1";
-
 /// Report whether the server supports a client profile.
 ///
 /// Until service discovery completes, the UI remains permissive. Once a
@@ -37,10 +32,12 @@ fn missing_requirements(profile_id: &str, server: &ServiceDescribe) -> Vec<Strin
 
 #[cfg(test)]
 mod tests {
+    use arkret_wire::ProfileId;
+
     use super::*;
 
     #[test]
     fn profile_ready_is_permissive_until_describe_finishes() {
-        assert!(profile_ready(None, PROFILE_E2EE_CLIENT));
+        assert!(profile_ready(None, ProfileId::E2EE_CLIENT_V1));
     }
 }

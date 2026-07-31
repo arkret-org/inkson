@@ -24,7 +24,6 @@ use serde_json::Value;
 
 /// The `ak.profile.mls_governance_binding.full.v1` profile id. Mirrors the
 /// hardening profile registered in `spec/v1/artifacts/profiles/conformance-profiles.json`.
-pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "ak.profile.mls_governance_binding.full.v1";
 
 /// The two §10 preconditions an `ak.mls.commit` Event MUST carry.
 ///

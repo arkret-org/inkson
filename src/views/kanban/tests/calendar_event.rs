@@ -23,7 +23,7 @@ fn calendar_patch_writes_one_activation_pair_and_clears_the_legacy_shape() {
     // Activation is exactly one pair: the schema ref plus the whole subtree.
     assert_eq!(
         patch["schema_refs"]["value"],
-        json!([arkret_sdk::schema::CALENDAR_EVENT_SCHEMA])
+        json!([arkret_sdk::SchemaId::CALENDAR_EVENT_V1])
     );
     let calendar = &patch["metadata.fields.calendar"]["value"];
     assert_eq!(calendar["start"], "2026-06-20T09:00:00");
@@ -220,7 +220,7 @@ fn calendar_projection_reads_schedule_and_plain_location() {
         assigned_actor_ids: Vec::new(),
         assigned_to_relations: Vec::new(),
         fields,
-        schema_refs: vec![arkret_sdk::schema::CALENDAR_EVENT_SCHEMA.to_owned()],
+        schema_refs: vec![arkret_sdk::SchemaId::CALENDAR_EVENT_V1.to_owned()],
         rsvps: Vec::new(),
         schedule_revision_heads: vec![
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),

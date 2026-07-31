@@ -310,7 +310,7 @@ pub(super) fn relation_create_payload_value(
     scope_circle_id: Option<&str>,
 ) -> anyhow::Result<Value> {
     let relation = arkret_sdk::Relation {
-        schema: arkret_wire::RELATION_SCHEMA.to_owned(),
+        schema: arkret_wire::SchemaId::RELATION_V1.to_owned(),
         id: arkret_sdk::RelationId::new(relation_id.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid relation id {relation_id:?}: {err}"))?,
         realm_id: arkret_sdk::RealmId::new(trim_realm_id(realm_id))

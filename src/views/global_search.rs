@@ -156,7 +156,7 @@ pub fn local_decrypted_index_search(
             "message_id": event_ref,
             "actor_id": event.sender,
             "content": { "body": body },
-            "index_profile": arkret_sdk::PROFILE_SEARCH_CLIENT_INDEX,
+            "index_profile": arkret_sdk::ProfileId::SEARCH_CLIENT_INDEX_V1,
             "index_source": "local_decrypted_client_index"
         }));
     }
@@ -559,7 +559,7 @@ mod tests {
         assert_eq!(response.results[0]["content"]["body"], "alpha local body");
         assert_eq!(
             response.results[0]["index_profile"],
-            arkret_sdk::PROFILE_SEARCH_CLIENT_INDEX
+            arkret_sdk::ProfileId::SEARCH_CLIENT_INDEX_V1
         );
         assert_eq!(
             response.results[0]["index_source"],

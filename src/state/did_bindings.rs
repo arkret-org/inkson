@@ -42,11 +42,10 @@
 use arkret_sdk::identity::{AcceptedDidBinding, BindingInvalidation};
 use arkret_sdk::{Did, TypedTrustDomainId};
 
+use super::*;
 #[cfg(test)]
 use crate::identity::did_binding::InksonDidBindingStore;
 use crate::identity::did_binding::MAX_PERSISTED_DID_BINDINGS;
-
-use super::*;
 
 impl LocalStateStore {
     /// Persisted accepted bindings for the **active account only**.
@@ -322,10 +321,10 @@ pub(crate) fn is_binding_invalidating_kind(kind: &str) -> bool {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use super::*;
     use arkret_sdk::identity::DidBindingPurpose;
     use chrono::Utc;
 
+    use super::*;
     use crate::identity::did_binding::{DidBindingScope, accept_verified_document};
     use crate::identity::did_resolver::DeploymentProfile;
 
@@ -591,8 +590,9 @@ mod tests {
     /// touches it.
     #[test]
     fn restart_serves_the_accepted_binding_with_zero_resolver_calls() {
-        use arkret_sdk::identity::DidResolver;
         use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use arkret_sdk::identity::DidResolver;
 
         /// Any call to this resolver is a protocol violation for an ordinary
         /// read; it counts the attempt and then fails closed.

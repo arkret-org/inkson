@@ -312,7 +312,7 @@ pub(crate) fn realm_projection_history_visibility(body: &Value) -> Option<String
                 .get("kind")
                 .or_else(|| event.get("type"))
                 .and_then(Value::as_str)
-                == Some(arkret_sdk::events::EventKind::REALM_CREATE)
+                == Some(arkret_sdk::EventKind::REALM_CREATE)
         })
         .find_map(|event| {
             normalized_history_visibility(event.pointer("/payload/object/history_visibility"))
@@ -365,7 +365,7 @@ pub(crate) fn realm_projection_content_scheme(body: &Value) -> Option<String> {
                 .get("kind")
                 .or_else(|| event.get("type"))
                 .and_then(Value::as_str)
-                == Some(arkret_sdk::events::EventKind::REALM_CREATE)
+                == Some(arkret_sdk::EventKind::REALM_CREATE)
         })
         .find_map(|event| {
             non_empty_string(event.pointer("/payload/object/content_scheme"))
@@ -386,7 +386,7 @@ pub(crate) fn realm_projection_content_scheme(body: &Value) -> Option<String> {
                 .get("kind")
                 .or_else(|| event.get("type"))
                 .and_then(Value::as_str)
-                == Some(arkret_sdk::events::EventKind::REALM_CREATE)
+                == Some(arkret_sdk::EventKind::REALM_CREATE)
         })
         .then(|| "mls_rfc9420".to_owned())
 }
@@ -415,7 +415,7 @@ fn explicit_realm_title(body: &Value) -> Option<String> {
         state_event_values(body)
             .filter(|event| {
                 event.get("kind").and_then(Value::as_str)
-                    == Some(arkret_sdk::events::EventKind::REALM_CREATE)
+                    == Some(arkret_sdk::EventKind::REALM_CREATE)
             })
             .find_map(|event| {
                 event.get("payload").and_then(|payload| {
@@ -437,7 +437,7 @@ fn explicit_realm_summary(body: &Value) -> Option<String> {
             state_event_values(body)
                 .filter(|event| {
                     event.get("kind").and_then(Value::as_str)
-                        == Some(arkret_sdk::events::EventKind::REALM_CREATE)
+                        == Some(arkret_sdk::EventKind::REALM_CREATE)
                 })
                 .find_map(|event| {
                     event.get("payload").and_then(|payload| {

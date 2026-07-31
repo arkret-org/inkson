@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::fmt;
 
+use arkret_wire::SchemaId;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
@@ -8,7 +9,7 @@ use serde_json::{Value, json};
 
 use super::{
     DEFAULT_SSK_GENERATION, KEY_BACKUP_RAW_SIGNATURE_ALGORITHM, KEY_BACKUP_SIGNED_FIELDS,
-    KEY_BACKUP_SIGNED_FIELDS_MANDATORY, KEY_BACKUP_UNLOCK_PROOF_SCHEMA, required_str_anyhow,
+    KEY_BACKUP_SIGNED_FIELDS_MANDATORY, required_str_anyhow,
 };
 
 const UNLOCKED_KEY_BACKUP_CACHE_MAX_ENTRIES: usize = 64;
@@ -323,7 +324,7 @@ pub fn build_key_backup_unlock_proof_active(
                 .to_owned()
         });
     let mut proof = json!({
-        "schema": KEY_BACKUP_UNLOCK_PROOF_SCHEMA,
+        "schema": SchemaId::KEY_BACKUP_UNLOCK_PROOF_V1,
         "recovery_session_id": recovery_session_id,
         "principal_id": principal_id,
         "requesting_device_id": requesting_device_id,

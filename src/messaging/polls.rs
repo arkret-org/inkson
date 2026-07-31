@@ -348,22 +348,18 @@ pub fn build_poll_create_op(
                 .map_err(|err| anyhow::anyhow!("poll create content serialize: {err}"))?,
         )?,
     );
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::MessageCreate,
-    )
-    .target_ref(strand_id)
-    .body(sdk_payload_value(
-        payload.to_value(),
-        "poll ak.message.create payload serialize",
-    )?)
-    .build_sdk_event("inkson")
+    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MessageCreate)
+        .target_ref(strand_id)
+        .body(sdk_payload_value(
+            payload.to_value(),
+            "poll ak.message.create payload serialize",
+        )?)
+        .build_sdk_event("inkson")
 }
 
 /// Derive the wire message id from a freshly built poll-create Event.
 pub fn poll_message_ref(event: &arkret_sdk::Event) -> Option<String> {
-    (event.kind == arkret_sdk::events::kinds::EventKind::MessageCreate).then(|| {
+    (event.kind == arkret_sdk::EventKind::MessageCreate).then(|| {
         arkret_sdk::MessageId::from_event_id(&event.event_id)
             .as_str()
             .to_owned()
@@ -406,17 +402,13 @@ pub fn build_poll_vote_op(
                 .map_err(|err| anyhow::anyhow!("poll vote content serialize: {err}"))?,
         )?,
     );
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::MessageCreate,
-    )
-    .target_ref(strand_id)
-    .body(sdk_payload_value(
-        payload.to_value(),
-        "poll vote ak.message.create payload serialize",
-    )?)
-    .build_sdk_event("inkson")
+    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MessageCreate)
+        .target_ref(strand_id)
+        .body(sdk_payload_value(
+            payload.to_value(),
+            "poll vote ak.message.create payload serialize",
+        )?)
+        .build_sdk_event("inkson")
 }
 
 /// Generate a fresh local poll id (`poll-<uuid>`), used only as the

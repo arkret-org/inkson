@@ -28,13 +28,13 @@
 //! - `invite-policy-blocked-row[data-subject]`, `invite-policy-unblock-{subject}`
 //! - `invite-policy-save-button`, `invite-policy-status`
 
+use arkret_wire::SchemaId;
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 
 use crate::i18n::tr;
 use crate::models::{
-    DisclosureLevel, INVITE_RECEIVE_POLICY_SCHEMA, InviteDisclosurePolicy, InviteReceiveAction,
-    InviteReceivePolicy,
+    DisclosureLevel, InviteDisclosurePolicy, InviteReceiveAction, InviteReceivePolicy,
 };
 use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
 use crate::ui::button::{Button, ButtonVariant};
@@ -471,7 +471,7 @@ fn InvitePolicySettingsCardBody(token: Signal<String>, subject_id: arkret_sdk::D
                         // SET; the SDK type carries the server's `trusted_*`
                         // lists from the GET hydrate, so they round-trip intact.
                         let mut to_save = policy.read().clone();
-                        to_save.schema = INVITE_RECEIVE_POLICY_SCHEMA.to_owned();
+                        to_save.schema = SchemaId::INVITE_RECEIVE_POLICY_V1.to_owned();
                         to_save.subject_id = subject_id.clone();
                         saving.set(true);
                         status.set(tr("invite_policy.saving"));

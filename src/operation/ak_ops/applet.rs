@@ -29,7 +29,7 @@ pub fn applet_discovery(
     OperationBuilder::new(
         realm_id,
         actor,
-        arkret_sdk::events::kinds::EventKind::AppletDiscovery,
+        arkret_sdk::EventKind::AppletDiscovery,
     )
     .target_ref(service_id)
     // `resource_discovery_state_payload` is closed over
@@ -109,11 +109,9 @@ pub fn applet_bridge_error(
     };
     let body = serde_json::to_value(payload)
         .map_err(|err| anyhow::anyhow!("applet_bridge_error_payload serialize: {err}"))?;
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::AppletBridgeError,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::AppletBridgeError)
+            .target_ref(failed_transaction_ref)
+            .body(body),
     )
-    .target_ref(failed_transaction_ref)
-    .body(body))
 }

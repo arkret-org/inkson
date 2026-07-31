@@ -231,7 +231,7 @@ pub fn ActionApproveDialog(
                                 let op = crate::operation::OperationBuilder::new(
                                     &space,
                                     &actor,
-                                    arkret_sdk::events::kinds::EventKind::AgentActionApprove,
+                                    arkret_sdk::EventKind::AgentActionApprove,
                                 )
                                 .body(payload)
                                 .build_sdk_event("inkson");
@@ -458,7 +458,7 @@ pub fn DraftApprovalPanel(token: Signal<String>, controller_id: String) -> Eleme
                                                     let op = crate::operation::OperationBuilder::new(
                                                         &realm,
                                                         &actor,
-                                                        arkret_sdk::events::kinds::EventKind::AgentActionApprove,
+                                                        arkret_sdk::EventKind::AgentActionApprove,
                                                     )
                                                     .body(payload)
                                                     .build_sdk_event("inkson");
@@ -521,7 +521,7 @@ pub fn DraftApprovalPanel(token: Signal<String>, controller_id: String) -> Eleme
                                                     let op = crate::operation::OperationBuilder::new(
                                                         &realm,
                                                         &actor,
-                                                        arkret_sdk::events::kinds::EventKind::AgentActionReject,
+                                                        arkret_sdk::EventKind::AgentActionReject,
                                                     )
                                                     .body(payload)
                                                     .build_sdk_event("inkson");

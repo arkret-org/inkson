@@ -118,7 +118,9 @@ fn invitee_from_target_json(target: &str) -> anyhow::Result<Option<InviteeResolu
         Ok(value) => value,
         Err(_) => return Ok(None),
     };
-    if value.get("schema").and_then(Value::as_str) == Some(arkret_sdk::PRINCIPAL_LOCATOR_SCHEMA) {
+    if value.get("schema").and_then(Value::as_str)
+        == Some(arkret_sdk::SchemaId::PRINCIPAL_LOCATOR_V1)
+    {
         let locator: arkret_sdk::PrincipalLocator = serde_json::from_value(value)?;
         return invitee_from_principal_locator(locator).map(Some);
     }
@@ -571,7 +573,7 @@ mod invite_addressing_tests {
     #[test]
     fn principal_locator_builds_locator_ref_evidence() {
         let locator = json!({
-            "schema": arkret_sdk::PRINCIPAL_LOCATOR_SCHEMA,
+            "schema": arkret_sdk::SchemaId::PRINCIPAL_LOCATOR_V1,
             "subject_id": "did:web:bob.example",
             "recipient_service_id": "did:web:ps.bob.example",
             "issued_at": "2026-06-07T00:00:00.000Z",

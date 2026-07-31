@@ -1085,7 +1085,7 @@ mod tests {
             policy_root,
             capability_root,
             discussion_metadata_digest,
-            arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+            arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
             "ak.reducer.realm.v1",
         )
         .unwrap();

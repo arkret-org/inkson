@@ -672,8 +672,8 @@ pub struct CachedMlsGovernanceProof {
 /// - **one bad row must not destroy the account.** `read_account_state` treats *any*
 ///   `ClientLocalState` decode failure as a corrupt blob and starts from defaults, so a strict
 ///   vector would escalate "one tampered binding" into "lose every draft, cursor and MLS snapshot".
-/// - **local state is not an authority.** A record that fails must degrade into a resolver miss, not
-///   into an accepted binding — the same rule the in-memory store applies.
+/// - **local state is not an authority.** A record that fails must degrade into a resolver miss,
+///   not into an accepted binding — the same rule the in-memory store applies.
 pub fn decode_accepted_did_bindings(
     rows: Vec<Value>,
 ) -> Vec<arkret_sdk::identity::AcceptedDidBinding> {

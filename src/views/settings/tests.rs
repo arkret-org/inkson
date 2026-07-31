@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use arkret_wire::AccountDataKey;
+
 use super::*;
 
 /// F-BLOCKLIST-VALID-1: the live form validator should accept the
@@ -81,13 +83,16 @@ fn build_read_receipt_preferences_body_has_canonical_field_shape() {
 /// when reading the entry back from `/sync`.
 #[test]
 fn read_receipt_account_data_key_matches_spec() {
-    assert_eq!(READ_RECEIPT_ACCOUNT_DATA_KEY, "ak.read_receipt.preferences");
+    assert_eq!(
+        AccountDataKey::READ_RECEIPT_PREFERENCES,
+        "ak.read_receipt.preferences"
+    );
 }
 
 #[test]
 fn presence_visibility_account_data_matches_spec() {
     assert_eq!(
-        PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY,
+        AccountDataKey::PRESENCE_VISIBILITY,
         "ak.presence.visibility"
     );
     let hidden = build_presence_visibility_body(crate::state::PresenceVisibility::Nobody);
@@ -99,7 +104,7 @@ fn presence_visibility_account_data_matches_spec() {
 #[test]
 fn presence_preference_account_data_matches_spec() {
     assert_eq!(
-        PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY,
+        AccountDataKey::PRESENCE_PREFERENCE,
         "ak.presence.preference"
     );
     let body = build_presence_preference_body(&crate::state::PresencePreferenceState {
@@ -133,5 +138,5 @@ fn presence_expiry_choice_resolves_to_future_clears_at() {
 
 #[test]
 fn blocklist_account_data_key_matches_spec() {
-    assert_eq!(CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY, "ak.account.blocklist");
+    assert_eq!(AccountDataKey::ACCOUNT_BLOCKLIST, "ak.account.blocklist");
 }

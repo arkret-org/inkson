@@ -1,3 +1,5 @@
+use arkret_wire::ProfileId;
+
 use super::*;
 
 #[derive(Clone, PartialEq)]
@@ -118,7 +120,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 &session,
                 &actor,
                 &device,
-                profile_ready(description.as_ref(), PROFILE_E2EE_CLIENT),
+                profile_ready(description.as_ref(), ProfileId::E2EE_CLIENT_V1),
                 sync_bootstrap_complete(),
             ) else {
                 return;
@@ -267,7 +269,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 return;
             }
             let description = server_description();
-            if !profile_ready(description.as_ref(), PROFILE_E2EE_CLIENT)
+            if !profile_ready(description.as_ref(), ProfileId::E2EE_CLIENT_V1)
                 || !sync_bootstrap_complete()
             {
                 return;
@@ -516,7 +518,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 })
                 .filter(|realm_id| !realm_id.trim().is_empty());
             let description = server_description();
-            if !profile_ready(description.as_ref(), PROFILE_E2EE_CLIENT)
+            if !profile_ready(description.as_ref(), ProfileId::E2EE_CLIENT_V1)
                 || !sync_bootstrap_complete()
             {
                 return;
@@ -548,7 +550,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         .or_else(|| message.get("type"))
                         .and_then(serde_json::Value::as_str)
                         .unwrap_or_default();
-                    if kind != arkret_sdk::events::EventKind::REALM_KEY_SHARE {
+                    if kind != arkret_sdk::EventKind::REALM_KEY_SHARE {
                         continue;
                     }
                     if let Some(share_realm_id) =
@@ -902,7 +904,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 &actor,
                 &device,
                 &bootstrap_realm_id,
-                profile_ready(description.as_ref(), PROFILE_E2EE_CLIENT),
+                profile_ready(description.as_ref(), ProfileId::E2EE_CLIENT_V1),
                 sync_bootstrap_complete(),
             ) else {
                 return;

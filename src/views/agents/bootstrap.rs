@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use arkret_models_collaboration::agent_operations::AgentPcrRecoveryState;
 use arkret_models_crypto::{KeyBackupContentItem, ManagedFrontierRef, ManagedPrincipalBinding};
+use arkret_wire::SchemaId;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
@@ -523,7 +524,7 @@ fn build_managed_pcr_backup_body(
         })
         .collect::<Vec<_>>();
     let plaintext = json!({
-        "schema": crate::key_backup::KEY_BACKUP_PLAINTEXT_SCHEMA,
+        "schema": SchemaId::KEY_BACKUP_PLAINTEXT_V1,
         "backup_id": backup_id,
         "backup_kind": "mls_history",
         "series_id": series_id,
@@ -649,7 +650,7 @@ fn build_active_mls_history_series_event(
         .ok_or_else(|| anyhow::anyhow!("active controller signer is required"))?;
     let issued_at = arkret_sdk::canonical::format_timestamp_canonical(crate::clock::now_utc());
     let mut payload = json!({
-        "schema": crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA,
+        "schema": SchemaId::KEY_BACKUP_ACTIVE_SERIES_V1,
         "actor_id": controller_id,
         "backup_kind": "mls_history",
         "active_series_id": series_id,
@@ -925,7 +926,7 @@ async fn collect_current_managed_pcr_backup_items(
 
 fn has_managed_agent_pcr_create(events: &[arkret_sdk::Event]) -> bool {
     events.iter().any(|event| {
-        event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE
+        event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE
             && event.executed_by.is_some()
             && event
                 .payload
@@ -1982,14 +1983,14 @@ mod tests {
         let payload = json!({
             "active_series": [
                 {
-                    "schema": crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA,
+                    "schema": SchemaId::KEY_BACKUP_ACTIVE_SERIES_V1,
                     "actor_id": controller_id,
                     "backup_kind": "secret_storage",
                     "active_series_id": account_series_id,
                     "series_pointer_version": 1
                 },
                 {
-                    "schema": crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA,
+                    "schema": SchemaId::KEY_BACKUP_ACTIVE_SERIES_V1,
                     "actor_id": controller_id,
                     "backup_kind": "mls_history",
                     "active_series_id": history_series_id,

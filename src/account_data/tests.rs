@@ -771,11 +771,11 @@ fn contact_and_realm_remarks_are_encrypted_account_data() {
 
     assert_eq!(
         private_account_data_key_prefix(&realm_key),
-        Some(arkret_sdk::ACCOUNT_DATA_KEY_CONTACTS_REALM)
+        Some(arkret_sdk::AccountDataKey::CONTACTS_REALM)
     );
     assert_eq!(
         private_account_data_key_prefix(&actor_key),
-        Some(arkret_sdk::ACCOUNT_DATA_KEY_CONTACTS_ACTOR)
+        Some(arkret_sdk::AccountDataKey::CONTACTS_ACTOR)
     );
     assert!(validate_private_account_data_key(&realm_key).is_ok());
     assert!(validate_private_account_data_key(&actor_key).is_ok());

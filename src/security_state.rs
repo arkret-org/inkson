@@ -165,7 +165,7 @@ pub fn realm_authority_root_controller_from_events(events: &[Value]) -> Option<S
             .get("kind")
             .or_else(|| event.get("event_kind"))
             .and_then(Value::as_str)?;
-        if kind != arkret_sdk::events::EventKind::REALM_CREATE {
+        if kind != arkret_sdk::EventKind::REALM_CREATE {
             return None;
         }
         event

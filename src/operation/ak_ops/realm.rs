@@ -19,16 +19,14 @@ pub fn realm_archive(
     actor: &str,
     container_space_id: &str,
 ) -> anyhow::Result<OperationBuilder> {
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::SpaceArchive,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::SpaceArchive)
+            .target_ref(container_space_id)
+            .body(space_state_transition_payload_value(
+                container_space_id,
+                arkret_sdk::ObjectState::Archived,
+            )?),
     )
-    .target_ref(container_space_id)
-    .body(space_state_transition_payload_value(
-        container_space_id,
-        arkret_sdk::ObjectState::Archived,
-    )?))
 }
 
 /// Build a `ak.message.revise` operation carrying the replacement content
@@ -61,13 +59,11 @@ pub fn message_revise_content(
     let body = serde_json::to_value(payload)
         .map_err(|err| anyhow::anyhow!("serialize message revise payload: {err}"))?;
 
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::MessageRevise,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MessageRevise)
+            .target_ref(target_ref)
+            .body(body),
     )
-    .target_ref(target_ref)
-    .body(body))
 }
 
 /// Build a `ak.realm.update` patch operation. The reducer accepts
@@ -81,13 +77,11 @@ pub fn realm_update_patch(
     patch: serde_json::Value,
 ) -> anyhow::Result<OperationBuilder> {
     let patch = patch_from_value(patch)?;
-    Ok(OperationBuilder::new(
-        envelope_realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::RealmUpdate,
+    Ok(
+        OperationBuilder::new(envelope_realm_id, actor, arkret_sdk::EventKind::RealmUpdate)
+            .target_ref(realm_id)
+            .body(object_patch_payload_value(realm_id, patch)?),
     )
-    .target_ref(realm_id)
-    .body(object_patch_payload_value(realm_id, patch)?))
 }
 
 /// Build a `ak.realm.organization` statement operation (YGN-ORG-02).
@@ -183,11 +177,9 @@ pub fn realm_organization_statement(
     let body = serde_json::to_value(&payload)
         .map_err(|err| anyhow::anyhow!("invalid ak.realm.organization payload: {err}"))?;
 
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::RealmOrganization,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::RealmOrganization)
+            .target_ref(organization_did)
+            .body(body),
     )
-    .target_ref(organization_did)
-    .body(body))
 }

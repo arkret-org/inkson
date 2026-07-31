@@ -337,7 +337,7 @@ mod tests {
     /// signed by `signer`. `verification_method` selects `actor#device`.
     fn signed_payload(actor_id: &str, device_id: &str, name: &str, signer: &SigningKey) -> Value {
         let mut identity = MemberIdentity {
-            schema: arkret_sdk::MEMBER_IDENTITY_SCHEMA.to_owned(),
+            schema: arkret_sdk::SchemaId::MEMBER_IDENTITY_V1.to_owned(),
             realm_id: RealmId::new(TEST_REALM).unwrap(),
             actor_id: Did::new(actor_id.to_owned()).unwrap(),
             subject_id: Did::new(actor_id.to_owned()).unwrap(),
@@ -498,7 +498,7 @@ mod tests {
         // itself — it consumes ingested events — but a smoke test here
         // keeps the SDK surface honest.
         let identity = MemberIdentity {
-            schema: arkret_sdk::MEMBER_IDENTITY_SCHEMA.to_owned(),
+            schema: arkret_sdk::SchemaId::MEMBER_IDENTITY_V1.to_owned(),
             realm_id: RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),
             actor_id: Did::new("did:web:alice.example".to_owned()).unwrap(),
             subject_id: Did::new("did:web:alice.example".to_owned()).unwrap(),

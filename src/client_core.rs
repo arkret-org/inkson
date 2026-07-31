@@ -754,7 +754,7 @@ mod tests {
         let realm_id =
             arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap();
         let event = arkret_sdk::Event::new(
-            arkret_sdk::events::EventKind::MESSAGE_CREATE,
+            arkret_sdk::EventKind::MESSAGE_CREATE,
             arkret_sdk::ScopeRef::Realm {
                 realm_id: realm_id.clone(),
             },

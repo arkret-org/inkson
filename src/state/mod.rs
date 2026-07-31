@@ -275,7 +275,7 @@ fn realm_tree_projection_field(body: &Value, field: &str) -> Option<String> {
 fn realm_tree_projection_value_is_minimal_metadata(body: &Value) -> bool {
     realm_tree_projection_profiles(body)
         .iter()
-        .any(|profile| profile == arkret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE)
+        .any(|profile| profile == arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1)
 }
 
 impl Default for LocalStateStore {

@@ -3,16 +3,13 @@
 //! tasks (local state stays authoritative) plus a couple of label / option
 //! derivations used by the notification override picker.
 
+use arkret_wire::AccountDataKey;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use dioxus::prelude::*;
 use serde_json::json;
 
-use super::{
-    DND_ACCOUNT_DATA_KEY, PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY,
-    PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY, PUSH_RULES_ACCOUNT_DATA_KEY,
-    READ_RECEIPT_ACCOUNT_DATA_KEY, build_read_receipt_preferences_body,
-};
+use super::build_read_receipt_preferences_body;
 use crate::notification_rules::{WatchLevel, parse_dnd_settings};
 use crate::state::{LocalStateStore, PresencePreferenceState, PresenceVisibility};
 use crate::transport::auth::with_event_submitter;
@@ -73,17 +70,22 @@ pub(super) fn push_read_receipt_account_data(
         &state_store.read().read_receipt_strand_overrides(),
         &state_store.read().read_receipt_strand_display_overrides(),
     );
-    let body = match encrypted_account_data_value(READ_RECEIPT_ACCOUNT_DATA_KEY, &plaintext) {
-        Ok(body) => body,
-        Err(error) => {
-            tracing::warn!(%error, "ak.read_receipt.preferences encryption failed");
-            return;
-        }
-    };
+    let body =
+        match encrypted_account_data_value(AccountDataKey::READ_RECEIPT_PREFERENCES, &plaintext) {
+            Ok(body) => body,
+            Err(error) => {
+                tracing::warn!(%error, "ak.read_receipt.preferences encryption failed");
+                return;
+            }
+        };
     spawn(async move {
         match with_event_submitter(&base_url, api_token, |sub| async move {
-            crate::transport::account::set_account_data(&sub, READ_RECEIPT_ACCOUNT_DATA_KEY, body)
-                .await
+            crate::transport::account::set_account_data(
+                &sub,
+                AccountDataKey::READ_RECEIPT_PREFERENCES,
+                body,
+            )
+            .await
         })
         .await
         {
@@ -133,7 +135,7 @@ pub(super) fn push_presence_preference_account_data(
             if let Err(err) = with_event_submitter(&base_url, api_token, |sub| async move {
                 crate::transport::account::delete_account_data(
                     &sub,
-                    PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY,
+                    AccountDataKey::PRESENCE_PREFERENCE,
                 )
                 .await
             })
@@ -148,8 +150,7 @@ pub(super) fn push_presence_preference_account_data(
         return;
     }
     let plaintext = build_presence_preference_body(&preference);
-    let body = match encrypted_account_data_value(PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY, &plaintext)
-    {
+    let body = match encrypted_account_data_value(AccountDataKey::PRESENCE_PREFERENCE, &plaintext) {
         Ok(body) => body,
         Err(err) => {
             tracing::warn!("ak.account_data.set for ak.presence.preference skipped: {err}");
@@ -160,7 +161,7 @@ pub(super) fn push_presence_preference_account_data(
         match with_event_submitter(&base_url, api_token, |sub| async move {
             crate::transport::account::set_account_data(
                 &sub,
-                PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY,
+                AccountDataKey::PRESENCE_PREFERENCE,
                 body,
             )
             .await
@@ -190,8 +191,7 @@ pub(super) fn push_presence_visibility_account_data(
     state_store: SyncSignal<LocalStateStore>,
 ) {
     let plaintext = build_presence_visibility_body(state_store.read().presence_visibility());
-    let body = match encrypted_account_data_value(PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY, &plaintext)
-    {
+    let body = match encrypted_account_data_value(AccountDataKey::PRESENCE_VISIBILITY, &plaintext) {
         Ok(body) => body,
         Err(error) => {
             tracing::warn!(%error, "ak.presence.visibility encryption failed");
@@ -202,7 +202,7 @@ pub(super) fn push_presence_visibility_account_data(
         match with_event_submitter(&base_url, api_token, |sub| async move {
             crate::transport::account::set_account_data(
                 &sub,
-                PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY,
+                AccountDataKey::PRESENCE_VISIBILITY,
                 body,
             )
             .await
@@ -323,7 +323,7 @@ pub(super) fn push_notification_rules_account_data(
         "actions": ["notify"]
     }));
     let body = json!({ "rules": rules });
-    let body = match encrypted_account_data_value(PUSH_RULES_ACCOUNT_DATA_KEY, &body) {
+    let body = match encrypted_account_data_value(AccountDataKey::PUSH_RULES, &body) {
         Ok(body) => body,
         Err(err) => {
             tracing::warn!("ak.account_data.set for ak.push_rules skipped: {}", err);
@@ -332,7 +332,7 @@ pub(super) fn push_notification_rules_account_data(
     };
     spawn(async move {
         match with_event_submitter(&base_url, api_token, |sub| async move {
-            crate::transport::account::set_account_data(&sub, PUSH_RULES_ACCOUNT_DATA_KEY, body)
+            crate::transport::account::set_account_data(&sub, AccountDataKey::PUSH_RULES, body)
                 .await
         })
         .await
@@ -385,7 +385,7 @@ pub(super) fn push_dnd_account_data(
         notification_settings_status.set("DND settings saved locally; sign in to sync.".to_owned());
         return;
     }
-    let body = match encrypted_account_data_value(DND_ACCOUNT_DATA_KEY, &plaintext_body) {
+    let body = match encrypted_account_data_value(AccountDataKey::DND_SCHEDULE, &plaintext_body) {
         Ok(body) => body,
         Err(err) => {
             notification_settings_status.set(format!("DND save failed: {err}"));
@@ -394,7 +394,8 @@ pub(super) fn push_dnd_account_data(
     };
     spawn(async move {
         match with_event_submitter(&base_url, api_token.clone(), |sub| async move {
-            crate::transport::account::set_account_data(&sub, DND_ACCOUNT_DATA_KEY, body).await
+            crate::transport::account::set_account_data(&sub, AccountDataKey::DND_SCHEDULE, body)
+                .await
         })
         .await
         {

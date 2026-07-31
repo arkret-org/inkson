@@ -9,10 +9,7 @@ use serde_json::Value;
 use crate::api_error::is_auth_expired_error;
 use crate::components::{SecurityStateBadge, SelfAttributionBadge, UiIcon};
 use crate::config::{ClientConfig, LocalConfigStore, normalize_device_id, normalize_server_url};
-use crate::conformance::{
-    PROFILE_E2EE_CLIENT, PROFILE_FULL_CLIENT, PROFILE_KANBAN_MVP, PROFILE_MINIMAL_CLIENT,
-    profile_ready,
-};
+use crate::conformance::profile_ready;
 use crate::i18n::{Locale, TextDirection};
 use crate::models::{
     RealmTreeNode, RealmTreeNodeKind, ServiceDescribe, missing_v1_principal_server_requirements,
@@ -102,6 +99,7 @@ mod sidebar;
 mod sidebar_width;
 mod signal_products;
 mod sync_effects;
+use arkret_wire::ProfileId;
 pub(crate) use clipboard::*;
 pub(crate) use command_palette::*;
 use connect::*;
@@ -712,10 +710,19 @@ fn AppBootstrap() -> Element {
                 .unwrap_or_else(&*current_account_avatar_blob_ref)
         }
     })();
-    let minimal_ready = profile_ready(active_server_description.as_ref(), PROFILE_MINIMAL_CLIENT);
-    let kanban_ready = profile_ready(active_server_description.as_ref(), PROFILE_KANBAN_MVP);
-    let full_ready = profile_ready(active_server_description.as_ref(), PROFILE_FULL_CLIENT);
-    let e2ee_ready = profile_ready(active_server_description.as_ref(), PROFILE_E2EE_CLIENT);
+    let minimal_ready = profile_ready(
+        active_server_description.as_ref(),
+        ProfileId::MINIMAL_CLIENT_V1,
+    );
+    let kanban_ready = profile_ready(active_server_description.as_ref(), ProfileId::KANBAN_MVP_V1);
+    let full_ready = profile_ready(
+        active_server_description.as_ref(),
+        ProfileId::FULL_CLIENT_V1,
+    );
+    let e2ee_ready = profile_ready(
+        active_server_description.as_ref(),
+        ProfileId::E2EE_CLIENT_V1,
+    );
     let event_write_ready = active_server_description
         .as_ref()
         .map(service_supports_event_envelope_write_plane)

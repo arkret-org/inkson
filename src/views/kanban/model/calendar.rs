@@ -326,7 +326,7 @@ pub(crate) fn calendar_patch_entries(
     }
     patch.insert(
         CALENDAR_SCHEMA_REFS_PATH.to_owned(),
-        json!({ "$op": "set", "value": [arkret_sdk::schema::CALENDAR_EVENT_SCHEMA] }),
+        json!({ "$op": "set", "value": [arkret_sdk::SchemaId::CALENDAR_EVENT_V1] }),
     );
     // The subtree is validated as a whole object, so it is written as a whole
     // object rather than field by field. `location` is split back out into its
@@ -962,7 +962,7 @@ fn calendar_location_plaintext_label(value: &Value) -> String {
 
 fn validate_calendar_event_value(value: &Value) -> Result<(), String> {
     arkret_sdk::ProtocolSchemaRegistry::default()
-        .validate_value(arkret_sdk::schema::CALENDAR_EVENT_SCHEMA, value)
+        .validate_value(arkret_sdk::SchemaId::CALENDAR_EVENT_V1, value)
         .map_err(|err| format!("calendar schedule does not match schema: {err}"))
 }
 

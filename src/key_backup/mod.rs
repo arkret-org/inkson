@@ -10,11 +10,7 @@ pub use domain_sep::*;
 pub use signing::*;
 pub use validate::*;
 
-const KEY_BACKUP_SCHEMA: &str = "ak.schema.key_backup.v1";
 const KEY_BACKUP_RAW_SIGNATURE_ALGORITHM: &str = "Ed25519";
-pub const KEY_BACKUP_UNLOCK_PROOF_SCHEMA: &str = "ak.schema.key_backup_unlock_proof.v1";
-pub const KEY_BACKUP_PLAINTEXT_SCHEMA: &str = "ak.schema.key_backup_plaintext.v1";
-pub const KEY_BACKUP_ACTIVE_SERIES_SCHEMA: &str = "ak.schema.key_backup_active_series.v1";
 pub const DEFAULT_SSK_GENERATION: u64 = 1;
 
 pub use arkret_sdk::BackupKind;

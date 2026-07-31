@@ -39,12 +39,7 @@ pub fn invite_create_structured(
     let body = payload
         .to_value()
         .map_err(|err| anyhow::anyhow!("invite create payload: {err}"))?;
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::InviteCreate,
-    )
-    .body(body))
+    Ok(OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::InviteCreate).body(body))
 }
 
 pub fn invite_accept(
@@ -53,13 +48,11 @@ pub fn invite_accept(
     invite_id: &str,
 ) -> anyhow::Result<OperationBuilder> {
     let body = invite_ref_payload_value(invite_id, None)?;
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::InviteAccept,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::InviteAccept)
+            .target_ref(invite_id)
+            .body(body),
     )
-    .target_ref(invite_id)
-    .body(body))
 }
 
 /// Build a `ak.invite.cancel` Control Move.
@@ -98,13 +91,11 @@ pub fn invite_cancel(
                 serde_json::Value::String(target_state.to_owned()),
             ),
         ]);
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::InviteCancel,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::InviteCancel)
+            .target_ref(invite_id)
+            .body(body),
     )
-    .target_ref(invite_id)
-    .body(body))
 }
 
 /// Build the high-risk `ak.invite.revoke` path used by token/3PID invites.
@@ -151,11 +142,9 @@ pub fn invite_revoke(
             serde_json::Value::String(invitee.to_string()),
         );
     }
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::InviteRevoke,
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::InviteRevoke)
+            .target_ref(invite_id)
+            .body(Value::Object(body.clone())),
     )
-    .target_ref(invite_id)
-    .body(Value::Object(body.clone())))
 }

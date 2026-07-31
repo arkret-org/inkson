@@ -74,7 +74,7 @@ fn operation_builder_generates_valid_envelope() {
     let op = OperationBuilder::new(
         "ak:realm:0196419b-0000-7000-8000-0000000000aa",
         "did:web:alice",
-        arkret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
         "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
@@ -108,7 +108,7 @@ fn operation_builder_delegates_event_time_normalization_to_the_sdk() {
     let op = OperationBuilder::new(
         "ak:realm:0196419b-0000-7000-8000-0000000000aa",
         "did:web:alice",
-        arkret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
         "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
@@ -130,7 +130,7 @@ fn operation_round_trip_serde() {
     let op = OperationBuilder::new(
         "ak:realm:0196419b-0000-7000-8000-0000000000ab",
         "did:web:bob",
-        arkret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
         "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
@@ -148,7 +148,7 @@ fn operation_builder_can_emit_signed_authorization_binding() {
     let op = OperationBuilder::new(
         "ak:realm:0196419b-0000-7000-8000-0000000000ab",
         "did:web:bob",
-        arkret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
         "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
@@ -186,7 +186,7 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
     let op = OperationBuilder::new(
         "ak:realm:0196419b-0000-7000-8000-0000000000ab",
         "did:web:bob",
-        arkret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
         "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
@@ -243,7 +243,7 @@ fn event_envelope_rejects_unknown_top_level_fields() {
     let op = OperationBuilder::new(
         "ak:realm:0196419b-0000-7000-8000-0000000000ab",
         "did:web:bob",
-        arkret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
         "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
@@ -341,7 +341,7 @@ fn mls_commit_builder_matches_registered_payload_schema() {
             "sha256:4444444444444444444444444444444444444444444444444444444444444444".to_owned(),
         )
         .unwrap(),
-        arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+        arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
         arkret_sdk::CORE_REDUCER_PROFILE,
     )
     .unwrap();
@@ -695,7 +695,7 @@ fn canonical_digest_is_stable_across_key_order() {
     let mut op_a = OperationBuilder::new(
         "ak:realm:0196419b-0000-7000-8000-0000000000ab",
         "did:web:alice",
-        arkret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
         "track_name": "discussion",
@@ -729,7 +729,7 @@ fn sign_ed25519_attaches_typed_proof() {
     let mut op = OperationBuilder::new(
         "ak:realm:01904100-0000-7000-8000-000000000001",
         "did:web:alice",
-        arkret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
         "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
@@ -754,7 +754,7 @@ fn sdk_event_conversion_accepts_unsigned_builder_for_signing() {
     let op = OperationBuilder::new(
         "ak:realm:01904100-0000-7000-8000-000000000001",
         "did:web:alice.example",
-        arkret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
         "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
@@ -777,7 +777,7 @@ fn sdk_submit_event_conversion_preserves_signed_digest() {
     let mut op = OperationBuilder::new(
         "ak:realm:01904100-0000-7000-8000-000000000001",
         "did:web:alice.example",
-        arkret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
         "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
@@ -805,7 +805,7 @@ fn require_proof_fails_when_unsigned() {
     let mut op = OperationBuilder::new(
         "ak:realm:0196419b-0000-7000-8000-0000000000ab",
         "did:web:alice",
-        arkret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
         "strand_id": "ak:strand:0196419b-0000-7000-8000-0000000000f1",
