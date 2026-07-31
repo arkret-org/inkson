@@ -17,6 +17,7 @@ pub(super) async fn relay_local_signals(
     actor: &str,
     device: &str,
     mut call_seq: Signal<u64>,
+    state_store: &crate::runtime::input::StateStoreHandle,
 ) {
     let signals = transport.borrow_mut().drain_local_signals();
     for signal in signals {
@@ -51,6 +52,7 @@ pub(super) async fn relay_local_signals(
             signal_kind,
             seq,
             data,
+            state_store,
         )
         .await;
     }
@@ -89,6 +91,7 @@ pub(super) fn apply_inbox_items(
     mut last_error: Signal<String>,
     mut participants: Signal<Vec<CallParticipant>>,
     mut mic_muted: Signal<bool>,
+    relay_store: crate::runtime::input::StateStoreHandle,
 ) {
     // Items that need an async relay (offer → answer) defer to a single
     // spawned task after the synchronous transport mutations are applied, so
@@ -241,6 +244,7 @@ pub(super) fn apply_inbox_items(
                 &actor,
                 &device,
                 call_seq,
+                &relay_store,
             )
             .await;
         });
@@ -354,6 +358,7 @@ pub(super) fn emit_async(
     signal_kind: &str,
     data: serde_json::Value,
     mut call_seq: Signal<u64>,
+    state_store: crate::runtime::input::StateStoreHandle,
 ) {
     if call_id.trim().is_empty() || realm_id.trim().is_empty() {
         return;
@@ -382,6 +387,7 @@ pub(super) fn emit_async(
             &signal_kind,
             seq,
             data,
+            &state_store,
         )
         .await;
     });
@@ -405,6 +411,7 @@ pub(super) async fn emit_signal(
     signal_kind: &str,
     seq: u64,
     data: serde_json::Value,
+    state_store: &crate::runtime::input::StateStoreHandle,
 ) -> Result<(), String> {
     // No accepted MLS key material for the scope means the Signal capability is
     // withdrawn there (`signal.md` §3). v1 has no plaintext branch.
@@ -426,6 +433,7 @@ pub(super) async fn emit_signal(
     };
     let (actor, device) = (actor.to_owned(), device.to_owned());
     let material = material.clone();
+    let state_store = state_store.clone();
     with_event_submitter(base, api_token.to_owned(), |sub| async move {
         sub.send_scope_signal(
             scope_ref,
@@ -434,6 +442,7 @@ pub(super) async fn emit_signal(
             &material,
             &payload,
             crate::signal::SignalSequence(seq),
+            &state_store,
         )
         .await
     })
@@ -450,6 +459,7 @@ pub(super) fn spawn_reject(
     call_id: String,
     actor: String,
     device: String,
+    state_store: crate::runtime::input::StateStoreHandle,
 ) {
     spawn(async move {
         let _ = emit_signal(
@@ -463,6 +473,7 @@ pub(super) fn spawn_reject(
             "reject",
             1,
             json!({ "reason": "declined" }),
+            &state_store,
         )
         .await;
     });
@@ -479,6 +490,7 @@ pub(super) fn end_call(
     actor: &str,
     device: &str,
     call_seq: Signal<u64>,
+    state_store: crate::runtime::input::StateStoreHandle,
 ) {
     if let Some(t) = transport.read().as_ref() {
         t.borrow_mut().close();
@@ -494,6 +506,7 @@ pub(super) fn end_call(
         "hangup",
         json!({ "reason": "user_hangup" }),
         call_seq,
+        state_store,
     );
 }
 

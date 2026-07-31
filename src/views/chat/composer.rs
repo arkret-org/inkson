@@ -524,8 +524,11 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 ) else {
                                     return;
                                 };
+                                let typing_store =
+                                    crate::app::runtime_adapter::state_store_handle(state_store);
                                 typing_throttle.on_keystroke(move |is_typing| {
                                     let base = base.clone();
+                                    let typing_store = typing_store.clone();
                                     let realm = realm.clone();
                                     let actor = actor.clone();
                                     let device = device.clone();
@@ -554,6 +557,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                         typing: is_typing,
                                                     },
                                                     sequence,
+                                                    &typing_store,
                                                 )
                                                 .await
                                             },

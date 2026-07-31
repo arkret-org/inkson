@@ -49,6 +49,10 @@ pub fn CallPanel(
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let state_store = crate::app::SessionContext::get().state_store;
+    // Sealing a Signal burns the SDK-owned AEAD nonce counter into the
+    // persisted MLS snapshot before submit, so every emit needs the store
+    // itself and not just the key-material descriptor.
+    let signal_store = crate::app::runtime_adapter::state_store_handle(state_store);
     let initial_stage = if incoming {
         CallStage::IncomingRinging
     } else if !call_id.is_empty() {
@@ -122,6 +126,7 @@ pub fn CallPanel(
         let base = base_url.clone();
         let actor = account_did.clone();
         let device = device_id.clone();
+        let signal_store = signal_store.clone();
         use_effect(move || {
             let call = active_call_id();
             // Subscribe to inbox changes for this call id.
@@ -153,6 +158,7 @@ pub fn CallPanel(
                 last_error,
                 participants,
                 mic_muted,
+                signal_store.clone(),
             );
         });
     }
@@ -186,6 +192,7 @@ pub fn CallPanel(
         let base = base_url.clone();
         let actor = account_did.clone();
         let device = device_id.clone();
+        let signal_store = signal_store.clone();
         move |mode: CallMode| {
             let base = base.clone();
             let actor = actor.clone();
@@ -236,6 +243,7 @@ pub fn CallPanel(
             status.set("placing call".to_owned());
             last_error.set(String::new());
             let invite_peers = peers.clone();
+            let signal_store = signal_store.clone();
 
             spawn(async move {
                 // 1) Invite signal opens the call (ephemeral `ak.call.signal`).
@@ -255,6 +263,7 @@ pub fn CallPanel(
                         "invite",
                         1,
                         invite_data,
+                        &signal_store,
                     )
                     .await
                     {
@@ -332,6 +341,7 @@ pub fn CallPanel(
                                     "invite",
                                     1,
                                     invite_data,
+                                    &signal_store,
                                 )
                                 .await
                                 {
@@ -374,8 +384,15 @@ pub fn CallPanel(
                                     return;
                                 }
                                 relay_local_signals(
-                                    &shared, &base, &api_token, &realm_id, &call, &actor, &device,
+                                    &shared,
+                                    &base,
+                                    &api_token,
+                                    &realm_id,
+                                    &call,
+                                    &actor,
+                                    &device,
                                     call_seq,
+                                    &signal_store,
                                 )
                                 .await;
                                 stage.set(CallStage::Connecting);
@@ -585,10 +602,12 @@ pub fn CallPanel(
                                     let base = base_url.clone();
                                     let actor = account_did.clone();
                                     let device = device_id.clone();
+                                    let signal_store = signal_store.clone();
                                     move |_| {
                                         end_call(
                                             &transport, &base, &token(), &active_realm(),
                                             &active_call_id(), &actor, &device, call_seq,
+                                            signal_store.clone(),
                                         );
                                         stage.set(CallStage::Ended);
                                         status.set("cancelled".to_owned());
@@ -628,6 +647,7 @@ pub fn CallPanel(
                                     let base = base_url.clone();
                                     let actor = account_did.clone();
                                     let device = device_id.clone();
+                                    let signal_store = signal_store.clone();
                                     move |_| {
                                         let base = base.clone();
                                         let actor = actor.clone();
@@ -635,6 +655,7 @@ pub fn CallPanel(
                                         let realm_id = active_realm();
                                         let call = active_call_id();
                                         let api_token = token();
+                                        let signal_store = signal_store.clone();
                                         let (
                                             media_dids,
                                             focus_id,
@@ -728,6 +749,7 @@ pub fn CallPanel(
                                                         "answer",
                                                         1,
                                                         json!({ "accepted": true }),
+                                                        &signal_store,
                                                     )
                                                     .await;
                                                     let expected = expected_participant_set(
@@ -790,11 +812,12 @@ pub fn CallPanel(
                                     let base = base_url.clone();
                                     let actor = account_did.clone();
                                     let device = device_id.clone();
+                                    let signal_store = signal_store.clone();
                                     move |_| {
                                         let _ = crate::media::rtc::MEDIA_TOKEN_TTL_MAX_SECS;
                                         spawn_reject(
                                             base.clone(), token(), active_realm(), active_call_id(),
-                                            actor.clone(), device.clone(),
+                                            actor.clone(), device.clone(), signal_store.clone(),
                                         );
                                         stage.set(CallStage::Ended);
                                         status.set("declined".to_owned());
@@ -896,6 +919,7 @@ pub fn CallPanel(
                                     let base = base_url.clone();
                                     let actor = account_did.clone();
                                     let device = device_id.clone();
+                                    let signal_store = signal_store.clone();
                                     move |_| {
                                         let next = !mic_muted();
                                         mic_muted.set(next);
@@ -908,6 +932,7 @@ pub fn CallPanel(
                                             &actor, &device, "mute_state",
                                             json!({ "audio_muted": next, "video_muted": !camera_on(), "by": "self" }),
                                             call_seq,
+                                            signal_store.clone(),
                                         );
                                     }
                                 },
@@ -934,6 +959,7 @@ pub fn CallPanel(
                                     let base = base_url.clone();
                                     let actor = account_did.clone();
                                     let device = device_id.clone();
+                                    let signal_store = signal_store.clone();
                                     move |_| {
                                         let next = !screen_sharing();
                                         screen_sharing.set(next);
@@ -946,6 +972,7 @@ pub fn CallPanel(
                                             &actor, &device, "media_state",
                                             json!({ "screen": { "enabled": next } }),
                                             call_seq,
+                                            signal_store.clone(),
                                         );
                                     }
                                 },
@@ -988,10 +1015,12 @@ pub fn CallPanel(
                                     let base = base_url.clone();
                                     let actor = account_did.clone();
                                     let device = device_id.clone();
+                                    let signal_store = signal_store.clone();
                                     move |_| {
                                         end_call(
                                             &transport, &base, &token(), &active_realm(),
                                             &active_call_id(), &actor, &device, call_seq,
+                                            signal_store.clone(),
                                         );
                                         stage.set(CallStage::Ended);
                                         recording.set(RecordingState::Off);

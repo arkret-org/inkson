@@ -214,6 +214,10 @@ pub(super) fn ChatEffects(
             ) else {
                 return;
             };
+            // The seal burns the SDK-owned nonce counter into the persisted
+            // MLS snapshot before submit, so the send path needs the store
+            // itself, not just the material descriptor.
+            let receipt_store = crate::app::runtime_adapter::state_store_handle(state_store);
             let sequence = crate::signal::next_signal_sequence();
             spawn(async move {
                 let _ = crate::transport::auth::with_event_submitter(
@@ -233,6 +237,7 @@ pub(super) fn ChatEffects(
                                     event_id: arkret_sdk::EventId::new(top_event.clone())?,
                                 },
                                 sequence,
+                                &receipt_store,
                             )
                             .await
                     },
@@ -319,6 +324,8 @@ pub(super) fn ChatEffects(
             ) else {
                 return;
             };
+            let presence_store =
+                crate::app::runtime_adapter::state_store_handle(state_store_for_presence);
             let sequence = crate::signal::next_signal_sequence();
             spawn(async move {
                 let _ = crate::transport::auth::with_event_submitter(
@@ -338,6 +345,7 @@ pub(super) fn ChatEffects(
                                 last_active_at: None,
                             },
                             sequence,
+                            &presence_store,
                         )
                         .await
                     },

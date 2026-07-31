@@ -23,6 +23,11 @@ pub(super) fn ModeratorControls(
 ) -> Element {
     // A4 — base_url from session context instead of a prop.
     let base_url = crate::app::SessionContext::base_url_string();
+    // Signal sealing burns the persisted MLS nonce counter, so every emit
+    // needs the store, not just the key material descriptor.
+    let signal_store = crate::app::runtime_adapter::state_store_handle(
+        crate::app::SessionContext::get().state_store,
+    );
     rsx! {
         div { class: "event", "data-testid": "call-moderator-controls",
             div { class: "event-head",
@@ -39,6 +44,7 @@ pub(super) fn ModeratorControls(
                         let device = device.clone();
                         let realm_id = realm_id.clone();
                         let call_id = call_id.clone();
+                        let signal_store = signal_store.clone();
                         move |_| {
                             // §6.1 — moderator-forced mute is a `mute_state`
                             // frame per target, not a `moderation` action.
@@ -61,6 +67,7 @@ pub(super) fn ModeratorControls(
                                         "target_device_id": target_device_id,
                                     }),
                                     call_seq,
+                                    signal_store.clone(),
                                 );
                             }
                         }
@@ -76,12 +83,14 @@ pub(super) fn ModeratorControls(
                         let device = device.clone();
                         let realm_id = realm_id.clone();
                         let call_id = call_id.clone();
+                        let signal_store = signal_store.clone();
                         move |_| {
                             emit_async(
                                 &base, &token(), &realm_id, None, &call_id, &actor, &device,
                                 "moderation",
                                 json!({ "signal_kind": "moderation", "data": { "action": "end_for_all" } }),
                                 call_seq,
+                                signal_store.clone(),
                             );
                         }
                     },
@@ -112,6 +121,7 @@ pub(super) fn ModeratorControls(
                                     let call_id = call_id.clone();
                                     let target = target.clone();
                                     let target_device = target_device.clone();
+                                    let signal_store = signal_store.clone();
                                     move |_| {
                                         let Some(target_device_id) = target_device.clone() else {
                                             return;
@@ -128,6 +138,7 @@ pub(super) fn ModeratorControls(
                                                 },
                                             }),
                                             call_seq,
+                                            signal_store.clone(),
                                         );
                                     }
                                 },
@@ -144,6 +155,7 @@ pub(super) fn ModeratorControls(
                                     let call_id = call_id.clone();
                                     let target = target.clone();
                                     let target_device = target_device.clone();
+                                    let signal_store = signal_store.clone();
                                     move |_| {
                                         let Some(target_device_id) = target_device.clone() else {
                                             return;
@@ -160,6 +172,7 @@ pub(super) fn ModeratorControls(
                                                 },
                                             }),
                                             call_seq,
+                                            signal_store.clone(),
                                         );
                                     }
                                 },

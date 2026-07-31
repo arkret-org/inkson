@@ -367,20 +367,6 @@ pub struct SignalRailUnavailable {
     pub scope: String,
 }
 
-/// Compatibility guard for call sites that do not provide mutable persisted
-/// MLS state. Signal nonce state must never live only in a detached material
-/// descriptor, so these callers fail closed.
-pub fn encrypt_signal_payload(
-    header: &SignalHeader,
-    _material: &SignalKeyMaterial,
-    _plaintext: &[u8],
-) -> Result<arkret_wire::SignalEncryptedPayload, SignalRailUnavailable> {
-    Err(SignalRailUnavailable {
-        scope: serde_json::to_string(&header.scope_ref)
-            .unwrap_or_else(|_| header.scope_ref.realm_id().as_str().to_owned()),
-    })
-}
-
 /// Seal a Signal and durably burn the SDK-owned nonce counter before submit.
 pub fn encrypt_signal_payload_with_store(
     state_store: &mut crate::state::LocalStateStore,
@@ -808,28 +794,6 @@ mod tests {
             data: Some(json!({"sdp_mid": "0"})),
         };
         assert_eq!(candidate.signal_class(), arkret_wire::SignalClass::Session);
-    }
-
-    /// v1 has no plaintext branch. A caller that cannot durably burn the
-    /// SDK-owned Signal nonce counter fails closed instead of shipping a
-    /// readable body — `signal.md` §3.
-    #[test]
-    fn encryption_fails_closed_rather_than_falling_back_to_plaintext() {
-        let header = SignalHeader::new(
-            arkret_sdk::ScopeRef::Realm { realm_id: realm() },
-            actor(),
-            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-a11ce0000001").unwrap(),
-            arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "ab".repeat(32))).unwrap(),
-            arkret_wire::SignalClass::Session,
-            crate::clock::now_utc(),
-        );
-        let material = SignalKeyMaterial {
-            group_state_ref: "ak:event:01964200-0000-7000-8000-000000000004".to_owned(),
-            epoch: 4,
-            aead_profile: "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519".to_owned(),
-            device_nonce_counter: 0,
-        };
-        assert!(encrypt_signal_payload(&header, &material, b"{}").is_err());
     }
 
     /// Restates the deleted `presence_proof_round_trips_through_ephemeral_sdk_verifier`

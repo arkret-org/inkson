@@ -1105,6 +1105,7 @@ impl EventSubmitter {
         material: &crate::signal::SignalKeyMaterial,
         payload: &crate::signal::SignalPayload,
         sequence: crate::signal::SignalSequence,
+        state_store: &crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
         let seal_ref = self.current_seal_for(scope_ref.realm_id().as_str()).await?;
         let header = crate::signal::SignalHeader::new(
@@ -1118,15 +1119,24 @@ impl EventSubmitter {
             payload.signal_class(),
             crate::clock::now_utc(),
         );
-        self.send_signal(header, material, payload, sequence).await
+        self.send_signal(header, material, payload, sequence, state_store)
+            .await
     }
 
+    /// Seal and submit one Signal.
+    ///
+    /// `state_store` is not optional plumbing: the AEAD nonce counter lives in
+    /// the persisted MLS snapshot and `encoding.md` §10.1 requires it to be
+    /// durably burnt before the envelope leaves this device. A caller that
+    /// cannot supply mutable persisted state cannot send a Signal at all —
+    /// v1 has no plaintext branch to fall back to.
     pub async fn send_signal(
         &self,
         header: crate::signal::SignalHeader,
         material: &crate::signal::SignalKeyMaterial,
         payload: &crate::signal::SignalPayload,
         sequence: crate::signal::SignalSequence,
+        state_store: &crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
         let plaintext = payload.to_plaintext(
             &header.sender_actor_id,
@@ -1134,8 +1144,16 @@ impl EventSubmitter {
             sequence,
             header.sent_at,
         )?;
-        let encrypted_payload =
-            crate::signal::encrypt_signal_payload(&header, material, &plaintext)?;
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        let encrypted_payload = state_store.write(|store| {
+            crate::signal::encrypt_signal_payload_with_store(
+                store,
+                secure_store.as_ref(),
+                &header,
+                material,
+                &plaintext,
+            )
+        })?;
         let envelope = crate::signal::seal_signal_envelope(header, encrypted_payload)?;
         self.submit_signal_envelope(&envelope).await
     }
