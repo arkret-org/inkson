@@ -146,6 +146,10 @@ pub mod sync_engine;
 pub mod sync_parse;
 pub mod telemetry;
 pub(crate) mod transport;
+pub use transport::realm_write::{
+    relinquish_capability, reset_realm_authority, transfer_realm_owner,
+    update_realm_authority_basis,
+};
 /// `ak.profile.binding.websocket.v1` host wiring: the platform socket, the
 /// holder-key signature and the transport-selection decision.
 ///

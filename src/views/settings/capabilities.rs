@@ -1,19 +1,19 @@
-//! G3.Y3 — Capability delegation viewer (`/settings/capabilities`).
+//! G3.Y3 — Capability authority viewer (`/settings/capabilities`).
 //!
 //! Read-only-ish UI for inspecting `ak.capability.*` rows attached to
 //! the current actor: capabilities held (subject), capabilities granted
-//! out (issuer), and the full delegation chain for each row. The cotest
+//! out (issuer), plus the reducer-derived authority audit for each row. The cotest
 //! `authz/capability-chain` scenario is already live; this view focuses
-//! on inspection until revoke/delegation endpoints are available.
+//! on inspection until revoke and relinquish controls are available.
 //!
 //! Spec seals:
 //! - `authz/capabilities.md` §3 — capability schema.
-//! - `authz/capabilities.md` §3.2 — delegation.
+//! - `authz/capabilities.md` §3.2 — issuer authority.
 //! - `authz/capabilities.md` §3.3 — revoke + cascade.
 //! - `authz/capabilities.md` §3.4 — audit trail.
 
 use arkret_models_collaboration::governance::grant_constraint::{
-    CapabilityGrant, CapabilitySubject,
+    AuthorityRootRef, CapabilityGrant, CapabilitySubject, IssuerAuthorityRef,
 };
 use dioxus::prelude::*;
 
@@ -25,7 +25,7 @@ use crate::views::helpers::{actor_display_label, short_protocol_id};
 
 /// One row in the user's capability list. Backed by either the user
 /// being the subject (capability held) or the issuer (capability
-/// delegated to someone else). Mapped from the authoritative SDK
+/// granted to someone else). Mapped from the authoritative SDK
 /// [`CapabilityGrant`] rows that `ak.self.authz.grants.query.effective`
 /// returns (soland serialises the SDK `GrantList` verbatim).
 #[derive(Clone, Debug, PartialEq)]
@@ -36,23 +36,12 @@ struct CapabilityRow {
     issuer_did: String,
     subject_did: String,
     expires_at: String,
-    /// Per `authz/capabilities.md` §3.2 — each delegation hop carries
-    /// its own attenuation. Rendered as `capability-chain-step`
-    /// entries in the detail modal.
-    chain: Vec<DelegationStep>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct DelegationStep {
-    issuer_did: String,
-    subject_did: String,
-    constraints: String,
+    authority_depth: Option<u64>,
+    issuer_authority_refs: Vec<String>,
+    authority_root_refs: Vec<String>,
 }
 
 /// Map one authoritative SDK [`CapabilityGrant`] onto a display row.
-/// The SDK grant carries no per-hop delegation chain (only
-/// `parent_grant_id`), so `chain` stays empty until soland exposes a
-/// chain projection (see the G3.Y3-followup note below).
 fn decode_capability_row(grant: &CapabilityGrant) -> CapabilityRow {
     CapabilityRow {
         capability_id: grant.id.as_str().to_owned(),
@@ -71,7 +60,36 @@ fn decode_capability_row(grant: &CapabilityGrant) -> CapabilityRow {
             .expires_at
             .map(arkret_sdk::canonical::format_timestamp_canonical)
             .unwrap_or_default(),
-        chain: Vec::new(),
+        authority_depth: grant.authority_depth,
+        issuer_authority_refs: grant
+            .issuer_authority_refs
+            .iter()
+            .map(|authority| match authority {
+                IssuerAuthorityRef::Grant { grant_id } => {
+                    format!("grant {}", grant_id.as_str())
+                }
+                IssuerAuthorityRef::RealmRoot {
+                    realm_id,
+                    authority_generation,
+                    ..
+                } => format!(
+                    "realm root {} generation {}",
+                    realm_id.as_str(),
+                    authority_generation
+                ),
+            })
+            .collect(),
+        authority_root_refs: grant
+            .authority_root_refs
+            .iter()
+            .map(|root| match root {
+                AuthorityRootRef::RealmRoot {
+                    realm_id,
+                    authority_generation,
+                    ..
+                } => format!("{} generation {}", realm_id.as_str(), authority_generation),
+            })
+            .collect(),
     }
 }
 
@@ -180,6 +198,10 @@ pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<Strin
                 if let Some(row) = rows.read().iter().find(|r| r.capability_id == capability_id).cloned() {
                     {
                         let capability_id_label = short_protocol_id(&row.capability_id);
+                        let authority_depth_label = row
+                            .authority_depth
+                            .map(|depth| depth.to_string())
+                            .unwrap_or_else(|| "pending".to_owned());
                         rsx! {
                             Dialog {
                                 open: true,
@@ -193,7 +215,7 @@ pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<Strin
                                 div {
                                     class: "event modal",
                                     div { class: "event-head",
-                                        span { "Delegation chain" }
+                                        span { "Authority audit" }
                                         Button {
                                             variant: ButtonVariant::Ghost,
                                             size: ButtonSize::Icon,
@@ -205,41 +227,33 @@ pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<Strin
                                         }
                                     }
                                     div { class: "muted", title: "{row.capability_id}", "{capability_id_label}" }
-                                    if row.chain.is_empty() {
+                                    div {
+                                        class: "muted",
+                                        "Authority depth: {authority_depth_label}"
+                                    }
+                                    if row.issuer_authority_refs.is_empty() {
                                         div {
                                             class: "muted",
-                                            "data-testid": "capability-chain-empty",
-                                            "No attenuation chain — capability is held directly from the root issuer."
+                                            "data-testid": "capability-authority-empty",
+                                            "Issuer authority is not available in this projection."
                                         }
                                     } else {
                                         ol { class: "settings-list",
-                                            for (idx, step) in row.chain.iter().enumerate() {
-                                                {
-                                                    let issuer_did_label = actor_display_label(
-                                                        &state_store.read(),
-                                                        &step.issuer_did,
-                                                    );
-                                                    let subject_did_label = actor_display_label(
-                                                        &state_store.read(),
-                                                        &step.subject_did,
-                                                    );
-                                                    rsx! {
-                                                        li {
-                                                            class: "event",
-                                                            "data-testid": "capability-chain-step",
-                                                            "data-step-index": "{idx}",
-                                                            div { class: "event-head",
-                                                                span { "Step {idx + 1}" }
-                                                                span {
-                                                                    class: "mono",
-                                                                    title: "{step.issuer_did} → {step.subject_did}",
-                                                                    "{issuer_did_label} → {subject_did_label}"
-                                                                }
-                                                            }
-                                                            div { class: "muted mono", "constraints {step.constraints}" }
-                                                        }
-                                                    }
+                                            for (idx, authority) in row.issuer_authority_refs.iter().enumerate() {
+                                                li {
+                                                    class: "event",
+                                                    "data-testid": "capability-authority-ref",
+                                                    "data-ref-index": "{idx}",
+                                                    div { class: "mono", "{authority}" }
                                                 }
+                                            }
+                                        }
+                                    }
+                                    if !row.authority_root_refs.is_empty() {
+                                        div { class: "muted", "Authority roots" }
+                                        ul { class: "settings-list",
+                                            for root in row.authority_root_refs.iter() {
+                                                li { class: "mono", "{root}" }
                                             }
                                         }
                                     }
@@ -273,6 +287,20 @@ mod tests {
             "issued_at": "2026-01-01T00:00:00.000Z",
             "expires_at": "2026-12-31T00:00:00.000Z",
             "proofs": [],
+            "issuer_authority_refs": [{
+                "kind": "realm_root",
+                "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
+                "cell_ref": "ak:cell:ak.component.realm.authority_root.v1:null",
+                "controller_epoch_at_issuance": 0,
+                "authority_generation": 0
+            }],
+            "authority_depth": 1,
+            "authority_root_refs": [{
+                "kind": "realm_root",
+                "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
+                "cell_ref": "ak:cell:ak.component.realm.authority_root.v1:null",
+                "authority_generation": 0
+            }]
         }))
         .expect("sample grant decodes as SDK CapabilityGrant")
     }
@@ -288,10 +316,9 @@ mod tests {
         assert_eq!(row.issuer_did, "did:web:alice.example");
         assert_eq!(row.subject_did, "did:web:bob.example");
         assert!(row.expires_at.starts_with("2026-12-31"));
-        // The SDK grant carries no per-hop chain projection (only
-        // `parent_grant_id`), so the detail modal renders the
-        // "held directly" empty state.
-        assert!(row.chain.is_empty());
+        assert_eq!(row.authority_depth, Some(1));
+        assert_eq!(row.issuer_authority_refs.len(), 1);
+        assert_eq!(row.authority_root_refs.len(), 1);
     }
 
     #[test]

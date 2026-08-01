@@ -656,7 +656,7 @@ pub fn validate_realm_history_content_scheme_for_profile(
 /// Principal Server is the sole admissible recipient service, and the only
 /// admissible binding source is the Realm policy this Event establishes.
 /// Authored through the SDK strong type
-/// (`event-payload.schema.json#/$defs/delivery_binding_policy_payload`,
+/// (`event-payload.schema.json#/$defs/realm_delivery_binding_policy_payload`,
 /// `additionalProperties:false`).
 fn build_realm_delivery_binding_policy(
     realm_id: &str,
@@ -1121,6 +1121,71 @@ pub fn build_realm_destroy_event(
         .body(payload)
         .created_at(created_at)
         .build_sdk_event("inkson")
+}
+
+fn realm_authority_builder_context(
+    realm_id: &arkret_sdk::RealmId,
+    actor_id: &str,
+) -> anyhow::Result<(arkret_sdk::ScopeRef, arkret_sdk::Did, arkret_sdk::Hlc)> {
+    Ok((
+        arkret_sdk::ScopeRef::Realm {
+            realm_id: realm_id.clone(),
+        },
+        arkret_sdk::Did::new(actor_id.to_owned())
+            .map_err(|error| anyhow::anyhow!("invalid Realm authority actor DID: {error}"))?,
+        arkret_sdk::Hlc::new("000000000000-0000-00000000")
+            .map_err(|error| anyhow::anyhow!("invalid authoring HLC placeholder: {error}"))?,
+    ))
+}
+
+/// Build the current-controller half of a Realm owner transfer. The payload
+/// already contains the successor's independent acceptance proof.
+pub fn build_realm_owner_transfer_control_event(
+    actor_id: &str,
+    payload: arkret_sdk::RealmOwnerTransferPayload,
+) -> anyhow::Result<arkret_sdk::Event> {
+    let (scope_ref, actor_id, hlc) = realm_authority_builder_context(&payload.realm_id, actor_id)?;
+    arkret_policy::realm_bootstrap::build_realm_owner_transfer_event(
+        scope_ref, actor_id, 1, hlc, payload,
+    )
+    .map_err(Into::into)
+}
+
+/// Build a destructive authority-generation reset. The SDK validates the
+/// exact confirmation token and stamps the root-cell authorization reference.
+pub fn build_realm_authority_reset_control_event(
+    actor_id: &str,
+    payload: arkret_sdk::RealmAuthorityResetPayload,
+) -> anyhow::Result<arkret_sdk::Event> {
+    let (scope_ref, actor_id, hlc) = realm_authority_builder_context(&payload.realm_id, actor_id)?;
+    arkret_policy::realm_bootstrap::build_realm_authority_reset_event(
+        scope_ref, actor_id, 1, hlc, payload,
+    )
+    .map_err(Into::into)
+}
+
+/// Build an explicit capability-registry basis adoption Event.
+pub fn build_realm_authority_basis_update_control_event(
+    actor_id: &str,
+    payload: arkret_sdk::RealmAuthorityBasisUpdatePayload,
+) -> anyhow::Result<arkret_sdk::Event> {
+    let (scope_ref, actor_id, hlc) = realm_authority_builder_context(&payload.realm_id, actor_id)?;
+    arkret_policy::realm_bootstrap::build_realm_authority_basis_update_event(
+        scope_ref, actor_id, 1, hlc, payload,
+    )
+    .map_err(Into::into)
+}
+
+/// Build a subject-only grant relinquish Event. No revoke capability or
+/// `authorization_ref` is attached.
+pub fn build_capability_relinquish_control_event(
+    realm_id: arkret_sdk::RealmId,
+    subject_id: &str,
+    payload: arkret_sdk::CapabilityRelinquishPayload,
+) -> anyhow::Result<arkret_sdk::Event> {
+    let (scope_ref, subject_id, hlc) = realm_authority_builder_context(&realm_id, subject_id)?;
+    arkret_policy::build_capability_relinquish_event(scope_ref, subject_id, 1, hlc, payload)
+        .map_err(Into::into)
 }
 
 /// Build a `ak.realm.alias` declaration — the ONLY wire carrier of a Realm
@@ -1888,5 +1953,40 @@ mod notary_derivation_tests {
         )
         .unwrap();
         assert_realm_candidate_matches_closed_schema(&event);
+    }
+
+    #[test]
+    fn realm_authority_and_relinquish_builders_preserve_distinct_authorization_modes() {
+        let realm = "ak:realm:01964137-0000-7000-8000-000000000077";
+        let transfer: arkret_sdk::RealmOwnerTransferPayload = serde_json::from_value(json!({
+            "realm_id": realm,
+            "expected_state_digest": format!("sha256:{}", "1".repeat(64)),
+            "patch": {
+                "controller_id": "did:web:bob.example",
+                "controller_epoch": 1
+            },
+            "successor_acceptance": "successor-detached-proof"
+        }))
+        .unwrap();
+        let event =
+            build_realm_owner_transfer_control_event("did:web:alice.example", transfer).unwrap();
+        assert_eq!(event.kind.as_str(), "ak.realm.owner.transfer");
+        assert_eq!(
+            event.authorization_ref.as_deref(),
+            Some(arkret_wire::REALM_AUTHORITY_ROOT_CELL)
+        );
+
+        let relinquish = build_capability_relinquish_control_event(
+            arkret_sdk::RealmId::new(realm).unwrap(),
+            "did:web:bob.example",
+            arkret_sdk::CapabilityRelinquishPayload {
+                grant_id: arkret_sdk::GrantId::new("ak:grant:01964137-0000-7000-8000-000000000088")
+                    .unwrap(),
+                reason: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(relinquish.kind.as_str(), "ak.capability.relinquish");
+        assert!(relinquish.authorization_ref.is_none());
     }
 }

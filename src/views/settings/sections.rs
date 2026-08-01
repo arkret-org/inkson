@@ -22,7 +22,7 @@ pub(super) enum SettingsSection {
     Consent,
     /// G3.Y3 — personal blocklist (`/settings/blocklist`).
     Blocklist,
-    /// G3.Y3 — capability delegation viewer (`/settings/capabilities`).
+    /// G3.Y3 — capability authority viewer (`/settings/capabilities`).
     Capabilities,
     Theme,
     Release,
@@ -140,7 +140,7 @@ pub(super) const SETTINGS_SECURITY_GROUP: &[SettingsSection] = &[
     SettingsSection::Devices,
     SettingsSection::Recovery,
     SettingsSection::Encryption,
-    // Capability delegation ("App authorizations") is a device-scoped
+    // Capability authority ("App authorizations") is a device-scoped
     // security control, so it sits with devices/recovery.
     SettingsSection::Capabilities,
 ];

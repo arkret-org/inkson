@@ -614,7 +614,7 @@ fn build_plaintext_visible_services_event_matches_event_schema() {
 /// The genesis `ak.realm.delivery_binding_policy` value is authored through
 /// the SDK `DeliveryBindingPolicyPayload` strong type; this gate pins the
 /// emitted body against the closed
-/// `event-payload.schema.json#/$defs/delivery_binding_policy_payload`.
+/// `event-payload.schema.json#/$defs/realm_delivery_binding_policy_payload`.
 ///
 /// It deliberately does NOT run the envelope gate: `event-envelope.schema.json`
 /// routes this kind to the generic `state_payload` (`{value,state,reason}`,
@@ -660,7 +660,7 @@ fn realm_bootstrap_delivery_binding_policy_matches_payload_schema() {
     );
     assert_matches_payload_def(
         "build_realm_bootstrap_events[delivery_binding_policy]",
-        "delivery_binding_policy_payload",
+        "realm_delivery_binding_policy_payload",
         &serde_json::to_value(&policy.payload).expect("payload serializes"),
     );
 }

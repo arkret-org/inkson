@@ -12,11 +12,14 @@
 use serde_json::{Value, json};
 
 use crate::event_builders::{
-    build_member_state_transition_event, build_plaintext_visible_services_event,
-    build_realm_archive_event, build_realm_bootstrap_events, build_realm_destroy_event,
-    build_realm_history_sharing_policy_event, build_realm_state_event, build_space_create_event,
-    build_space_lifecycle_event, parse_realm_bootstrap_members,
-    recommended_history_sharing_policy_for_visibility, recommended_realm_policy_bundle_value,
+    build_capability_relinquish_control_event, build_member_state_transition_event,
+    build_plaintext_visible_services_event, build_realm_archive_event,
+    build_realm_authority_basis_update_control_event, build_realm_authority_reset_control_event,
+    build_realm_bootstrap_events, build_realm_destroy_event,
+    build_realm_history_sharing_policy_event, build_realm_owner_transfer_control_event,
+    build_realm_state_event, build_space_create_event, build_space_lifecycle_event,
+    parse_realm_bootstrap_members, recommended_history_sharing_policy_for_visibility,
+    recommended_realm_policy_bundle_value,
 };
 use crate::event_submit::EventSubmitter;
 use crate::models::{RealmCreateResult, RealmPolicyResult, SpaceCreateResult, SubmitEventResult};
@@ -519,6 +522,49 @@ pub async fn destroy_realm(
     reason: &str,
 ) -> anyhow::Result<SubmitEventResult> {
     let event = build_realm_destroy_event(realm_id, actor_id, reason)?;
+    submitter.submit_sdk_event(&event).await
+}
+
+/// Submit a two-party Realm owner transfer. `successor_acceptance` is already
+/// embedded in the typed payload and is never synthesized by the service.
+pub async fn transfer_realm_owner(
+    submitter: &EventSubmitter,
+    actor_id: &str,
+    payload: arkret_sdk::RealmOwnerTransferPayload,
+) -> anyhow::Result<SubmitEventResult> {
+    let event = build_realm_owner_transfer_control_event(actor_id, payload)?;
+    submitter.submit_sdk_event(&event).await
+}
+
+/// Submit an independently confirmed authority-generation reset.
+pub async fn reset_realm_authority(
+    submitter: &EventSubmitter,
+    actor_id: &str,
+    payload: arkret_sdk::RealmAuthorityResetPayload,
+) -> anyhow::Result<SubmitEventResult> {
+    let event = build_realm_authority_reset_control_event(actor_id, payload)?;
+    submitter.submit_sdk_event(&event).await
+}
+
+/// Submit an explicit capability registry basis adoption.
+pub async fn update_realm_authority_basis(
+    submitter: &EventSubmitter,
+    actor_id: &str,
+    payload: arkret_sdk::RealmAuthorityBasisUpdatePayload,
+) -> anyhow::Result<SubmitEventResult> {
+    let event = build_realm_authority_basis_update_control_event(actor_id, payload)?;
+    submitter.submit_sdk_event(&event).await
+}
+
+/// Relinquish one grant held by the current subject. This path intentionally
+/// does not request or attach `ak.capability.revoke` authority.
+pub async fn relinquish_capability(
+    submitter: &EventSubmitter,
+    realm_id: arkret_sdk::RealmId,
+    subject_id: &str,
+    payload: arkret_sdk::CapabilityRelinquishPayload,
+) -> anyhow::Result<SubmitEventResult> {
+    let event = build_capability_relinquish_control_event(realm_id, subject_id, payload)?;
     submitter.submit_sdk_event(&event).await
 }
 
