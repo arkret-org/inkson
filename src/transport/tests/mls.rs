@@ -50,11 +50,20 @@ fn keypackage_upload_device_signature_is_raw_signature_tuple() {
 
 #[test]
 fn keypackage_claim_request_carries_required_capabilities() {
+    let signer = std::sync::Arc::new(
+        crate::event_signer::build_ed25519_signer_with_verification_method(
+            [44u8; 32],
+            "did:web:bob.example",
+            "did:web:bob.example#device",
+        ),
+    );
+    let _guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
     let body = mls_api_helpers::build_mls_keypackage_claim_request(
         "did:web:alice.example",
         "ak:realm:0196419b-0000-7000-8000-000000000000",
         "did:web:bob.example",
-        "claim-nonce-1",
+        "did:web:arkret.example",
+        "AAAAAAAAAAAAAAAAAAAAAA",
         Some("ak:device:0196419b-0000-7000-8000-000000000001"),
         Some("mls-group-1"),
     )

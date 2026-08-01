@@ -205,10 +205,12 @@ impl MlsEndpoints<'_> {
         target_device_id: Option<&str>,
         mls_group_id: Option<&str>,
     ) -> anyhow::Result<arkret_sdk::KeyPackagesClaimOutcome> {
+        let authority_service_id = self.transport.describe_cached().await?.service_id.clone();
         let body = crate::mls_api_helpers::build_mls_keypackage_claim_request(
             target_principal_id,
             intended_realm_id,
             requester,
+            authority_service_id.as_str(),
             claim_nonce,
             target_device_id,
             mls_group_id,

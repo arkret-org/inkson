@@ -534,13 +534,8 @@ pub fn summarize_runtime_key_approval_request(
     let request = parse_runtime_key_approval_request(raw)?;
     let public_key_fingerprint =
         arkret_signatures::agent::agent_runtime_public_key_digest(&request.public_key)?;
-    let proof_expires_at = request
-        .proof_of_possession
-        .as_map()
-        .get("expires_at")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
+    let proof_expires_at =
+        arkret_sdk::canonical::format_timestamp_canonical(request.proof_of_possession.expires_at);
     Ok(RuntimeKeyApprovalSummary {
         pairing_request_id: request.pairing_request_id,
         agent_id: request.agent_id,
@@ -604,25 +599,34 @@ pub fn build_agent_key_authorization_for_pairing(
         .ok_or_else(|| anyhow::anyhow!("agent key_state.pairing_code is required"))?;
     let pairing_expires_at = key_state
         .pairing_expires_at
-        .map(arkret_sdk::canonical::format_timestamp_canonical)
         .ok_or_else(|| anyhow::anyhow!("agent key_state.pairing_expires_at is required"))?;
     let requested_scope = key_state.requested_scope.clone();
-    let runtime_public_key_digest =
+    let _runtime_public_key_digest =
         arkret_signatures::agent::agent_runtime_public_key_digest(&request.public_key)?;
     let runtime_public_key = request.public_key.clone();
     if runtime_public_key.kid.as_str() != request.verification_method.as_str() {
         anyhow::bail!("runtime request public_key.kid does not match verification_method");
     }
-    let pairing_digest = arkret_signatures::agent::agent_key_pairing_request_binding_digest(
-        &controller,
-        &request.agent_id,
-        &request.verification_method,
-        &runtime_public_key_digest,
-        request.pairing_request_id.as_str(),
-        pairing_code,
-        &pairing_expires_at,
-        service_id,
-    )?;
+    let runtime_key_binding_digest =
+        arkret_models_collaboration::agent_operations::agent_runtime_key_binding_digest(
+            &request.agent_id,
+            &request.pairing_request_id,
+            &request.verification_method,
+            &request.public_key,
+            request.runtime_attestation.as_ref(),
+        )?;
+    let pairing_digest =
+        arkret_models_collaboration::agent_operations::agent_key_pairing_request_binding_digest(
+            arkret_wire::ServiceOperationId::GATE_ACCOUNT_COMMAND_PAIR_AGENT_KEY,
+            &controller,
+            &request.agent_id,
+            &request.pairing_request_id,
+            pairing_code,
+            pairing_expires_at,
+            &Did::new(service_id.to_owned())?,
+            &runtime_key_binding_digest,
+            &request.proof_of_possession,
+        )?;
     let issued_at = Utc::now();
     let runtime_attestation = request.runtime_attestation.clone();
     // Runtime replacement re-pairing (key-management §3.6.1): the new key
@@ -671,18 +675,26 @@ pub fn build_agent_key_authorization_for_pairing(
     .map_err(anyhow::Error::msg)?;
     let agent_key_id = NonEmptyString::new(request.verification_method.as_str().to_owned())
         .map_err(anyhow::Error::msg)?;
+    let signing_public_key = AgentSigningPublicKey {
+        kty: request.public_key.kty.clone(),
+        alg: NonEmptyString::new("Ed25519").map_err(anyhow::Error::msg)?,
+        key: request.public_key.key.clone(),
+    };
+    let signing_public_key_digest =
+        arkret_signatures::agent::agent_runtime_public_key_digest(&serde_json::json!({
+            "kty": signing_public_key.kty,
+            "kid": request.verification_method,
+            "alg": signing_public_key.alg,
+            "key": signing_public_key.key,
+        }))?;
     let mut signing_key_binding = AgentSigningKeyBinding {
         schema: NonEmptyString::new(arkret_sdk::SchemaId::AGENT_SIGNING_KEY_BINDING_V1.to_owned())
             .map_err(anyhow::Error::msg)?,
         agent_id: request.agent_id.clone(),
         agent_key_id: agent_key_id.clone(),
         verification_method: request.verification_method.clone(),
-        public_key: AgentSigningPublicKey {
-            kty: request.public_key.kty.clone(),
-            alg: request.public_key.alg.clone(),
-            key: request.public_key.key.clone(),
-        },
-        public_key_digest: runtime_public_key_digest.clone(),
+        public_key: signing_public_key,
+        public_key_digest: signing_public_key_digest.clone(),
         agent_key_authorize_event_id: authorize_event_id.clone(),
         issued_at,
         expires_at: None,
@@ -710,7 +722,7 @@ pub fn build_agent_key_authorization_for_pairing(
         agent_id: request.agent_id.clone(),
         key_id: agent_key_id.clone(),
         verification_method: request.verification_method.clone(),
-        public_key_digest: Hash::new(runtime_public_key_digest.as_str().to_owned())?,
+        public_key_digest: Hash::new(signing_public_key_digest.as_str().to_owned())?,
         signing_key_binding_digest,
         accountable_principal_id: controller.clone(),
         agent_key_scope: requested_scope,

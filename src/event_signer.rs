@@ -300,6 +300,30 @@ impl InksonEventSigner {
         Ok(signature.to_bytes().to_vec())
     }
 
+    /// Produce the compact detached JWS spelling used by closed request
+    /// proofs whose canonical transcript is defined outside Event Envelope.
+    pub(crate) fn sign_detached_jws_bytes(
+        &self,
+        canonical_bytes: &[u8],
+    ) -> Result<String, EventSignerError> {
+        let signature = self
+            .inner
+            .sign(canonical_bytes)
+            .map_err(|error| EventSignerError::Backend(error.to_string()))?;
+        let header = serde_json::to_vec(&serde_json::json!({
+            "alg": self.algorithm(),
+        }))
+        .map_err(|error| EventSignerError::Encoding(error.to_string()))?;
+        if let Ok(mut guard) = self.last_signed_at.lock() {
+            *guard = Some(crate::clock::now_utc());
+        }
+        Ok(format!(
+            "{}..{}",
+            URL_SAFE_NO_PAD.encode(header),
+            URL_SAFE_NO_PAD.encode(signature)
+        ))
+    }
+
     /// Adapt the session device key as an authenticated principal signer.
     ///
     /// The locally stored key can have a `did:key` identity while the server

@@ -104,6 +104,7 @@ pub(crate) fn build_mls_keypackage_claim_request(
     target_principal_id: &str,
     intended_realm_id: &str,
     requester: &str,
+    authority_service_id: &str,
     claim_nonce: &str,
     target_device_id: Option<&str>,
     mls_group_id: Option<&str>,
@@ -115,15 +116,23 @@ pub(crate) fn build_mls_keypackage_claim_request(
         .transpose()?
         .into_iter()
         .collect::<Vec<_>>();
-    Ok(arkret_sdk::KeyPackagesClaimRequestBody {
+    let requester = arkret_sdk::Did::new(requester.trim().to_owned())?;
+    let authority_service_id = arkret_sdk::Did::new(authority_service_id.trim().to_owned())?;
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("KeyPackage self-claim requires an active device signer"))?;
+    let verification_method = signer.verification_method_for_principal(&requester)?;
+    let created_at = crate::clock::now_utc();
+    let expires_at = created_at + chrono::Duration::minutes(5);
+    let mut body = arkret_sdk::KeyPackagesClaimRequestBody {
         target_principal_id: arkret_sdk::Did::new(target_principal_id.trim().to_owned())?,
         intended_realm_id: arkret_sdk::RealmId::new(crate::operation::trim_realm_id(
             intended_realm_id,
         ))?,
-        requester: arkret_sdk::Did::new(requester.trim().to_owned())?,
+        requester,
         required_capabilities: mls_keypackage_claim_required_capabilities(),
-        claim_nonce: claim_nonce.trim().to_owned(),
-        expires_at: crate::clock::now_utc() + chrono::Duration::minutes(10),
+        claim_nonce: arkret_wire::Base64UrlString::new(claim_nonce.trim().to_owned())
+            .map_err(|error| anyhow::anyhow!(error))?,
+        expires_at,
         target_device_ids,
         minimal_metadata_allowed: Some(true),
         timeout_ms: Some(30_000),
@@ -132,6 +141,20 @@ pub(crate) fn build_mls_keypackage_claim_request(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned),
-        proofs: Vec::new(),
-    })
+        proofs: [arkret_models_crypto::http_bodies::KeyPackageClaimProof {
+            kind: arkret_models_crypto::http_bodies::KeyPackageClaimProofKind::DetachedJws,
+            verification_method,
+            alg: arkret_models_crypto::http_bodies::KeyPackageClaimProofAlgorithm::EdDsa,
+            payload_digest: arkret_wire::Hash::new(format!("sha256:{}", "0".repeat(64)))?,
+            created_at,
+            audience: authority_service_id,
+            proof_purpose:
+                arkret_models_crypto::http_bodies::KeyPackageClaimProofPurpose::HolderAcceptance,
+            jws: "eyJhbGciOiJFZERTQSJ9..AA".to_owned(),
+        }],
+    };
+    body.proofs[0].payload_digest = body.payload_digest()?;
+    let binding = body.proof_binding_bytes()?;
+    body.proofs[0].jws = signer.sign_detached_jws_bytes(&binding)?;
+    Ok(body)
 }

@@ -436,14 +436,19 @@ mod personal_agent_tests {
             "public_key": {
                 "kty": "OKP",
                 "kid": verification_method,
-                "alg": "Ed25519",
+                "alg": "EdDSA",
                 "key": arkret_sdk::base64url_encode([9u8; 32]),
             },
             "proof_of_possession": {
+                "kind": "agent_runtime_key_possession",
+                "verification_method": verification_method,
+                "alg": "EdDSA",
                 "challenge": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
                 "audience": "did:web:arkret.example",
-                "request_canonical_digest": format!("sha256:{}", "0".repeat(64)),
+                "created_at": "2026-07-06T00:10:00.000Z",
                 "expires_at": "2026-07-06T00:15:00.000Z",
+                "runtime_key_binding_digest": format!("sha256:{}", "0".repeat(64)),
+                "transcript_digest": format!("sha256:{}", "1".repeat(64)),
                 "signature": arkret_sdk::base64url_encode([1u8; 64]),
             },
         })
@@ -510,26 +515,53 @@ mod personal_agent_tests {
             "requested_scope_digest": format!("sha256:{}", "0".repeat(64)),
         }))
         .unwrap();
-        let raw = serde_json::json!({
-            "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
-            "agent_id": agent,
-            "verification_method": verification_method,
-            "public_key": {
-                "kty": "OKP",
-                "kid": verification_method,
-                "alg": "Ed25519",
-                "key": arkret_sdk::base64url_encode([9u8; 32]),
-            },
-            "proof_of_possession": {
-                "challenge": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
-                "audience": service_id,
-                "request_canonical_digest": format!("sha256:{}", "0".repeat(64)),
-                "expires_at": "2026-07-06T00:15:00.000Z",
-                "signature": arkret_sdk::base64url_encode([1u8; 64]),
-            },
-        })
-        .to_string();
-        let request = parse_runtime_key_approval_request(&raw).unwrap();
+        let pairing_request_id = arkret_wire::OpaqueLocalId::new(
+            "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
+        )
+        .unwrap();
+        let agent_id = arkret_sdk::Did::new(agent.to_owned()).unwrap();
+        let verification_method = arkret_wire::DidUrl::new(verification_method).unwrap();
+        let public_key = arkret_models_collaboration::governance::agent_artifacts::PublicKey {
+            kty: arkret_wire::NonEmptyString::new("OKP").unwrap(),
+            kid: arkret_wire::NonEmptyString::new(verification_method.as_str()).unwrap(),
+            alg: arkret_wire::NonEmptyString::new("EdDSA").unwrap(),
+            key: arkret_wire::Base64UrlString::new(arkret_sdk::base64url_encode([9u8; 32]))
+                .unwrap(),
+            key_digest: None,
+        };
+        let runtime_key_binding_digest =
+            arkret_models_collaboration::agent_operations::agent_runtime_key_binding_digest(
+                &agent_id,
+                &pairing_request_id,
+                &verification_method,
+                &public_key,
+                None,
+            )
+            .unwrap();
+        let request =
+            arkret_models_collaboration::agent_operations::AgentRuntimeApprovalControllerProjection {
+                pairing_request_id: pairing_request_id.clone(),
+                agent_id,
+                verification_method: verification_method.clone(),
+                public_key,
+                proof_of_possession:
+                    arkret_models_collaboration::agent_operations::AgentRuntimeKeyPossessionProof {
+                        kind: arkret_models_collaboration::agent_operations::AgentRuntimeKeyPossessionProofKind::AgentRuntimeKeyPossession,
+                        verification_method: verification_method.clone(),
+                        alg: arkret_models_collaboration::agent_operations::AgentRuntimeKeyAlgorithm::EdDsa,
+                        challenge: pairing_request_id,
+                        audience: arkret_sdk::Did::new(service_id.to_owned()).unwrap(),
+                        created_at: "2026-07-06T00:10:00.000Z".parse().unwrap(),
+                        expires_at: "2026-07-06T00:15:00.000Z".parse().unwrap(),
+                        runtime_key_binding_digest,
+                        transcript_digest: arkret_wire::Hash::new(format!("sha256:{}", "0".repeat(64))).unwrap(),
+                        signature: arkret_wire::Base64UrlString::new(
+                            arkret_sdk::base64url_encode([1u8; 64]),
+                        )
+                        .unwrap(),
+                    },
+                runtime_attestation: None,
+            };
 
         let disclosure = build_requested_scope_disclosure_for_pairing(
             controller, service_id, &key_state, &request,
@@ -546,18 +578,17 @@ mod personal_agent_tests {
         assert_eq!(disclosure.controller_id.as_str(), controller);
         assert_eq!(disclosure.requested_scope, key_state.requested_scope);
 
-        let runtime_digest =
-            arkret_signatures::agent::agent_runtime_public_key_digest(&request.public_key).unwrap();
         let expected_pairing_digest =
-            arkret_signatures::agent::agent_key_pairing_request_binding_digest(
+            arkret_models_collaboration::agent_operations::agent_key_pairing_request_binding_digest(
+                arkret_wire::ServiceOperationId::GATE_ACCOUNT_COMMAND_PAIR_AGENT_KEY,
                 &arkret_sdk::Did::new(controller.to_owned()).unwrap(),
                 &request.agent_id,
-                verification_method,
-                &runtime_digest,
                 &request.pairing_request_id,
                 "12345678",
-                "2026-07-06T00:15:00.000Z",
-                service_id,
+                "2026-07-06T00:15:00.000Z".parse().unwrap(),
+                &arkret_sdk::Did::new(service_id.to_owned()).unwrap(),
+                &request.proof_of_possession.runtime_key_binding_digest,
+                &request.proof_of_possession,
             )
             .unwrap();
 
@@ -566,8 +597,14 @@ mod personal_agent_tests {
             arkret_sdk::EventKind::AGENT_KEY_AUTHORIZE
         );
         assert_eq!(event.payload["agent_id"], agent);
-        assert_eq!(event.payload["verification_method"], verification_method);
-        assert_eq!(event.payload["public_key_digest"], runtime_digest.as_str());
+        assert_eq!(
+            event.payload["verification_method"],
+            verification_method.as_str()
+        );
+        assert_eq!(
+            event.payload["public_key_digest"],
+            signing_key_binding.public_key_digest.as_str()
+        );
         let binding_digest = arkret_signatures::agent_evidence::agent_signing_key_binding_digest(
             &signing_key_binding,
         )
@@ -583,7 +620,7 @@ mod personal_agent_tests {
             &signing_key_binding.controller_id,
             &request.verification_method,
             &event.event_id,
-            &runtime_digest,
+            &signing_key_binding.public_key_digest,
             &binding_digest,
             &arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
                 bytes: ed25519_dalek::SigningKey::from_bytes(&[41u8; 32])
@@ -689,14 +726,19 @@ mod personal_agent_tests {
             "public_key": {
                 "kty": "OKP",
                 "kid": verification_method,
-                "alg": "Ed25519",
+                "alg": "EdDSA",
                 "key": arkret_sdk::base64url_encode([9u8; 32]),
             },
             "proof_of_possession": {
+                "kind": "agent_runtime_key_possession",
+                "verification_method": verification_method,
+                "alg": "EdDSA",
                 "challenge": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
                 "audience": service_id,
-                "request_canonical_digest": format!("sha256:{}", "0".repeat(64)),
+                "created_at": "2026-07-06T00:10:00.000Z",
                 "expires_at": "2026-07-06T00:15:00.000Z",
+                "runtime_key_binding_digest": format!("sha256:{}", "0".repeat(64)),
+                "transcript_digest": format!("sha256:{}", "1".repeat(64)),
                 "signature": arkret_sdk::base64url_encode([1u8; 64]),
             },
         })
