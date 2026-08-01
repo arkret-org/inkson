@@ -26,6 +26,7 @@ pub(super) fn SyncEffects(
     } = SessionContext::get();
     let runtime_services = use_context::<crate::runtime::services::RuntimeServices>();
     let did_cache = use_context::<Signal<arkret_sdk::identity::DidResolutionCache>>();
+    let message_stream_hub = use_context::<crate::views::message_streams::MessageStreamHub>();
 
     let sync_effects = runtime_services.effects.clone();
     let sync_session = runtime_services.session.clone();
@@ -225,6 +226,7 @@ pub(super) fn SyncEffects(
             route_enabled: runtime_adapter::value_reader(realm_events_route_enabled),
             websocket_rail: realm_websocket_rail.clone(),
             realm_live_epoch: runtime_adapter::value_cell(realm_live_epoch),
+            message_stream_hub,
             profiles: runtime_adapter::value_reader(profiles),
             client_runtime: client_runtime.clone(),
             effect: effect.clone(),

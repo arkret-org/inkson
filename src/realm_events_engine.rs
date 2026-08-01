@@ -67,6 +67,9 @@ pub struct RealmEventsEngineContext {
     /// store, so the kanban panel can re-project off a signal that is NOT the
     /// (cross-member-lossy) account `sync_cursor`.
     pub realm_live_epoch: crate::runtime::input::ValueCell<u64>,
+    /// Removes transient message previews only after the matching final Event
+    /// has been durably folded by this projector.
+    pub message_stream_hub: crate::views::message_streams::MessageStreamHub,
     /// Active multi-profile config — the engine exits when the active profile
     /// rotates (mirrors the account engine's profile guard).
     pub profiles: crate::runtime::input::ValueReader<MultiProfileConfig>,
@@ -87,17 +90,32 @@ struct RealmIngestProjector {
     state_store: crate::runtime::input::StateStoreHandle,
     realm_id: String,
     realm_live_epoch: crate::runtime::input::ValueCell<u64>,
+    message_stream_hub: crate::views::message_streams::MessageStreamHub,
 }
 
 impl ClientProjector for RealmIngestProjector {
     async fn project(&self, batch: Vec<ClientEvent>) -> garth::Result<()> {
         if !batch.is_empty() {
+            let finals = batch
+                .iter()
+                .filter_map(accepted_direct_message_final)
+                .collect::<Vec<_>>();
             let changed = self.state_store.write(|store| {
                 crate::sync_engine::ingest_kanban_events(store, &self.realm_id, &batch)
                     + crate::sync_engine::ingest_message_events(store, &self.realm_id, &batch)
                     + crate::sync_engine::ingest_membership_events(store, &self.realm_id, &batch)
                     + crate::sync_engine::ingest_moderation_events(store, &batch)
             });
+            // The local fold above is the durable gate. A preview is never
+            // removed merely because a frame with the same message id was
+            // observed on the wire.
+            let mut message_stream_hub = self.message_stream_hub;
+            for (event, sender_device_id) in finals {
+                if let Err(error) = message_stream_hub.bind_verified_final(event, &sender_device_id)
+                {
+                    tracing::warn!(%error, event_id = %event.event_id, "message stream final binding failed closed");
+                }
+            }
             if changed > 0 {
                 self.realm_live_epoch
                     .update(|epoch| *epoch = epoch.wrapping_add(1));
@@ -105,6 +123,34 @@ impl ClientProjector for RealmIngestProjector {
         }
         Ok(())
     }
+}
+
+/// Extract the sender device from a service-accepted direct Message Event.
+///
+/// The Realm stream contains the canonical Event only after Soland's normal
+/// schema, proof, authorization and reducer gates. This function does not
+/// invent a second proof verifier: it accepts only the unique ordinary Event
+/// proof whose method is the exact `{actor_id}#{device_id}` mapping and hands
+/// that already-admitted device identity to Garth's §7.5 binder.
+fn accepted_direct_message_final(
+    client_event: &ClientEvent,
+) -> Option<(&arkret_sdk::Event, arkret_sdk::DeviceId)> {
+    let ClientEvent::Message(message) = client_event else {
+        return None;
+    };
+    let event = &message.event;
+    if event.kind != arkret_sdk::EventKind::MessageCreate
+        || event.executed_by.is_some()
+        || event.proofs.len() != 1
+    {
+        return None;
+    }
+    let method = event.proofs[0].verification_method.as_str();
+    let device = method
+        .strip_prefix(event.actor_id.as_str())?
+        .strip_prefix('#')?;
+    let device = arkret_sdk::DeviceId::new(device.to_owned()).ok()?;
+    Some((event, device))
 }
 
 /// Run the realm events subscribe loop for `realm_id` until the generation is
@@ -137,6 +183,7 @@ pub async fn run_realm_events_engine(
         state_store: ctx.state_store.clone(),
         realm_id,
         realm_live_epoch: ctx.realm_live_epoch.clone(),
+        message_stream_hub: ctx.message_stream_hub,
     };
     // `events/subscribe` without `after` is a live tail, not a history
     // endpoint. Bootstrap durable history through events.query.scan and let
@@ -231,5 +278,80 @@ impl TransportProvider for RealmTransportProvider {
             && !self.ctx.effect.is_cancelled()
             && !self.ctx.base_url.get().trim().is_empty()
             && !self.ctx.token.get().trim().is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    const REALM_ID: &str = "ak:realm:01904100-0000-7000-8000-000000000001";
+    const STRAND_ID: &str = "ak:strand:01904100-0000-7000-8000-000000000002";
+    const ACTOR_ID: &str = "did:web:alice.example";
+    const DEVICE_ID: &str = "ak:device:01904100-0000-7000-8000-000000000003";
+
+    fn direct_message_event() -> ClientEvent {
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID.to_owned()).unwrap();
+        let mut event = arkret_sdk::Event::new(
+            arkret_sdk::EventKind::MESSAGE_CREATE,
+            arkret_sdk::ScopeRef::Realm { realm_id },
+            arkret_sdk::Did::new(ACTOR_ID.to_owned()).unwrap(),
+            1,
+            arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
+            json!({
+                "strand_id": STRAND_ID,
+                "track_name": "discussion",
+                "content": {"kind": "ak.content.text", "body": "final"}
+            }),
+        )
+        .unwrap();
+        let event_digest = arkret_sdk::Hash::new(event.event_digest().unwrap()).unwrap();
+        event.proofs.push(arkret_sdk::Proof {
+            kind: "detached_jws".to_owned(),
+            verification_method: arkret_sdk::DidUrl::new(format!("{ACTOR_ID}#{DEVICE_ID}"))
+                .unwrap(),
+            alg: "EdDSA".to_owned(),
+            event_digest,
+            created_at: event.created_at,
+            domain: None,
+            audience: None,
+            proof_purpose: None,
+            jws: "a..b".to_owned(),
+        });
+        match garth::InboundDecoder::new()
+            .try_decode_event(event)
+            .unwrap()
+        {
+            garth::DecodedInbound::Message(message) => ClientEvent::Message(*message),
+            garth::DecodedInbound::Event(_) => panic!("message.create must decode as a message"),
+        }
+    }
+
+    #[test]
+    fn final_binding_extracts_only_the_exact_accepted_actor_device_proof() {
+        let event = direct_message_event();
+        let (final_event, device_id) =
+            accepted_direct_message_final(&event).expect("direct final is bindable");
+        assert_eq!(final_event.actor_id.as_str(), ACTOR_ID);
+        assert_eq!(device_id.as_str(), DEVICE_ID);
+    }
+
+    #[test]
+    fn final_binding_rejects_delegated_or_ambiguous_sender_identity() {
+        let mut delegated = direct_message_event();
+        let ClientEvent::Message(message) = &mut delegated else {
+            unreachable!();
+        };
+        message.event.executed_by = Some(arkret_sdk::Did::new("did:web:agent.example").unwrap());
+        assert!(accepted_direct_message_final(&delegated).is_none());
+
+        let mut ambiguous = direct_message_event();
+        let ClientEvent::Message(message) = &mut ambiguous else {
+            unreachable!();
+        };
+        message.event.proofs.push(message.event.proofs[0].clone());
+        assert!(accepted_direct_message_final(&ambiguous).is_none());
     }
 }

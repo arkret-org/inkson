@@ -96,16 +96,9 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
     // sender's canonical create was persisted locally.
     let all_messages_snapshot = (controller.messages)();
     let messages_for_reply_lookup = &all_messages_snapshot;
-    let durable_message_ids = all_messages_snapshot
-        .iter()
-        .filter_map(|message| message.protocol_message_id.clone())
-        .collect::<std::collections::BTreeSet<_>>();
     let message_stream_cards = crate::views::message_streams::MessageStreamHub::try_use()
         .map(|hub| hub.visible_for(&selected_realm_id, &selected_channel_value))
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|preview| !durable_message_ids.contains(&preview.message_id))
-        .collect::<Vec<_>>();
+        .unwrap_or_default();
     let pinned_target_set: std::collections::HashSet<String> = (controller.shared_pins)()
         .iter()
         .map(|pin| pin.target_ref.clone())
