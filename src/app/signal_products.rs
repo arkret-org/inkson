@@ -229,14 +229,23 @@ impl SignalProductSink for AppSignalProductSink {
         })
     }
 
-    fn read_receipt(&self, plaintext: &garth::SignalPlaintext) {
+    fn read_receipt(
+        &self,
+        plaintext: &garth::SignalPlaintext,
+        policy: &arkret_sdk::ReadReceiptPolicy,
+    ) {
         // No further authorization probe: unlike a message-stream preview, a
         // read receipt discloses no Message body, and `read-receipts.md` §2.4
         // makes display a local preference rather than a protocol gate. The
         // envelope admission already proved the sending device and bound the
         // plaintext `actor_id` to the authenticated `sender_actor_id`.
+        //
+        // §2.5 is the exception and is enforced inside the hub: `disabled` and
+        // `private` are client-side discards, because a Sync Service cannot
+        // read the receipt to apply them.
+        let local_actor = self.account_did.peek().clone();
         let mut hub = self.read_receipt_hub;
-        hub.apply_authorized(plaintext);
+        hub.apply_authorized(plaintext, policy, &local_actor);
     }
 
     fn advance_clock(&self, now: chrono::DateTime<chrono::Utc>) {

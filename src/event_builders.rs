@@ -696,8 +696,16 @@ pub fn recommended_realm_policy_bundle_value(
         content_scheme: Some(resolve_realm_content_scheme(content_scheme).to_owned()),
         content_encryption_floor: Some(RECOMMENDED_REALM_ENCRYPTION_FLOOR_TYPED),
         metadata_encryption_floor: Some(RECOMMENDED_REALM_ENCRYPTION_FLOOR_TYPED),
-        durability_policy: None,
-        mls_send_pause: None,
+        // `encryption-and-audit.md` §2.8 — a genesis Realm that does not declare
+        // `aad_visibility` gets the fail-closed `hidden` ceiling, and every
+        // later `routing_digest` envelope is rejected with
+        // `aad_visibility_policy_violation`. Declaring it here is what makes
+        // the AAD event-ref digest reachable at all; the value is the narrowest
+        // one that supports digest-based dedupe.
+        aad_visibility: Some(arkret_sdk::RealmAadVisibilityPolicy {
+            event_id: arkret_sdk::EncryptedEnvelopeAadVisibility::RoutingDigest,
+        }),
+        ..arkret_sdk::RealmPolicyBundlePayload::new(1)
     }
 }
 
@@ -1043,20 +1051,20 @@ pub fn build_realm_state_event(
         // The policy-bundle payload IS the flat closed object, not a
         // `state_payload` wrapper (`realm_policy_bundle_payload`'s `$comment`;
         // `event-envelope.schema.json` dispatches the kind straight to that
-        // def). Deliberately NOT re-parsed through
-        // `arkret_sdk::RealmPolicyBundlePayload`: the spec def now declares all
-        // 15 components (`join_policy`, `agent_participation`,
-        // `availability_policy`, `audit_policy`, `preauth`, `aad_visibility`,
-        // `media_service_decrypts`, `account_deactivation`,
-        // `relaxed_window_max_ms`, ...) while the SDK counterpart still mirrors
-        // only 6 of them and is `deny_unknown_fields`. Round-tripping through
-        // the narrow SDK type would reject the `join_policy` bundle
-        // `set_realm_policy_events` legally writes. The wire shape is still
-        // schema-checked: `realm_bootstrap_payloads_match_spec_schema` runs the
-        // batch through `event_payload_validator_catalog()` — the same
-        // spec-artifact validator soland applies at envelope admission.
-        // Remove this arm once the SDK type covers the full closed set.
-        EventKind::RealmPolicyBundle => value.clone(),
+        // def).
+        //
+        // Routed through the strong type again: the closed def now declares all
+        // fifteen components, including `join_policy`, `agent_participation`,
+        // `availability_policy` and `audit_policy`, so the narrow shape no
+        // longer rejects writes the normative prose mandates. Parsing here is
+        // what stops a partial or misspelled component from reaching the
+        // reducer, where a `cas_register` write would silently clear whatever
+        // it failed to restate.
+        EventKind::RealmPolicyBundle => {
+            let typed: arkret_sdk::RealmPolicyBundlePayload = serde_json::from_value(value.clone())
+                .map_err(|err| anyhow::anyhow!("invalid Realm policy_bundle {value}: {err}"))?;
+            typed.to_value()?
+        }
         EventKind::RealmDeliveryBindingPolicy => {
             let typed: arkret_sdk::RealmDeliveryBindingPolicyPayload =
                 serde_json::from_value(value.clone()).map_err(|err| {

@@ -318,6 +318,11 @@ pub(crate) fn build_secure_send(
         &encrypted_payload,
         envelope_aad,
         arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
+        // `hidden` is at or below every possible Realm ceiling, so the
+        // fail-closed `from_declared(None)` resolution always admits it. A
+        // caller that starts emitting `routing_digest` MUST pass the Realm's
+        // accepted `aad_visibility` component here instead.
+        arkret_sdk::AadVisibilityCeiling::from_declared(None),
         &group_state_ref,
     )
     .map_err(|err| format!("MLS encrypted envelope build failed: {err}"))?;
@@ -339,6 +344,11 @@ pub(crate) fn build_secure_send(
                 &metadata_payload,
                 metadata_aad,
                 arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
+                // `hidden` is at or below every possible Realm ceiling, so the
+                // fail-closed `from_declared(None)` resolution always admits it. A
+                // caller that starts emitting `routing_digest` MUST pass the Realm's
+                // accepted `aad_visibility` component here instead.
+                arkret_sdk::AadVisibilityCeiling::from_declared(None),
                 &group_state_ref,
             )
             .map_err(|err| format!("MLS encrypted metadata envelope build failed: {err}"))?,
@@ -492,6 +502,11 @@ pub(crate) fn build_sidecar_exchange_control_send(
         &encrypted_payload,
         envelope_aad,
         arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
+        // `hidden` is at or below every possible Realm ceiling, so the
+        // fail-closed `from_declared(None)` resolution always admits it. A
+        // caller that starts emitting `routing_digest` MUST pass the Realm's
+        // accepted `aad_visibility` component here instead.
+        arkret_sdk::AadVisibilityCeiling::from_declared(None),
         &group_state_ref,
     )
     .map_err(|error| format!("Sidecar close encrypted envelope build failed: {error}"))?;

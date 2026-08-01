@@ -291,6 +291,11 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
             &payload,
             aad,
             arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
+            // `hidden` is at or below every possible Realm ceiling, so the
+            // fail-closed `from_declared(None)` resolution always admits it. A
+            // caller that starts emitting `routing_digest` MUST pass the Realm's
+            // accepted `aad_visibility` component here instead.
+            arkret_sdk::AadVisibilityCeiling::from_declared(None),
             &group_state_ref,
         )
         .map_err(|error| format!("build encrypted Strand patch envelope: {error}"))?;

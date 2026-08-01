@@ -13,7 +13,7 @@
 //! keeps those bodies, the header assembly and the device proof.
 
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// Sender-side sequence within one `(scope_ref, sender_device_id)` stream.
 ///
@@ -106,80 +106,88 @@ impl SignalPayload {
 
     /// Canonical AEAD plaintext for this payload.
     ///
-    /// `kind`, `actor_id`, `payload_sequence` and `ttl_ms` are the closed
-    /// minimum every Signal plaintext carries — the shape
-    /// [`garth::SignalPlaintext`] parses on the receive side. They are
-    /// plaintext because the receiver dispatches on them after decryption;
-    /// they were header fields on the deleted rail and MUST NOT go back there.
+    /// Every profile goes through the SDK's shared Signal plaintext entry
+    /// (`sync/signal.md` §1.1): the strong type carries `kind` and
+    /// `payload_sequence` by construction and [`arkret_sdk::seal_signal_plaintext`]
+    /// is the only path to bytes. Nothing here serializes a type and then tops
+    /// up the common minimum afterwards — that is exactly how a profile ends up
+    /// emitting a body its own receiver cannot parse.
     pub fn to_plaintext(
         &self,
         actor_id: &arkret_sdk::Did,
-        realm_id: &arkret_sdk::RealmId,
         sequence: SignalSequence,
-        sent_at: chrono::DateTime<chrono::Utc>,
     ) -> anyhow::Result<Vec<u8>> {
-        if let Self::MessageStream(frame) = self {
-            if frame.payload_sequence() != sequence.0 {
-                anyhow::bail!(
-                    "message stream payload_sequence {} disagrees with Signal sequence {}",
-                    frame.payload_sequence(),
-                    sequence.0
-                );
+        let plaintext = |result: Result<Vec<u8>, arkret_wire::Error>, what: &str| {
+            result.map_err(|error| anyhow::anyhow!("{what} plaintext encoding failed: {error}"))
+        };
+        match self {
+            Self::MessageStream(frame) => {
+                if frame.payload_sequence() != sequence.0 {
+                    anyhow::bail!(
+                        "message stream payload_sequence {} disagrees with Signal sequence {}",
+                        frame.payload_sequence(),
+                        sequence.0
+                    );
+                }
+                plaintext(arkret_sdk::seal_signal_plaintext(frame), "message stream")
             }
-            return frame.canonical_plaintext().map_err(|error| {
-                anyhow::anyhow!("message stream plaintext encoding failed: {error}")
-            });
-        }
-        if let Self::CallSignal {
-            call_id,
-            signal_kind,
-            data,
-        } = self
-        {
-            let signal_kind: arkret_sdk::CallSignalKind =
-                serde_json::from_value(Value::String(signal_kind.clone())).map_err(|_| {
-                    anyhow::anyhow!(
-                        "call signal_kind {:?} is not in the canonical enum",
-                        signal_kind
-                    )
-                })?;
-            let data = data
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("call signal data is required"))?
-                .as_object()
-                .ok_or_else(|| anyhow::anyhow!("call signal data must be an object"))?
-                .clone()
-                .into_iter()
-                .collect();
-            return arkret_sdk::CallSignalPlaintext::new(
-                call_id.clone(),
+            Self::CallSignal {
+                call_id,
                 signal_kind,
-                sequence.0,
                 data,
-            )
-            .canonical_plaintext()
-            .map_err(|error| anyhow::anyhow!("call signal plaintext encoding failed: {error}"));
-        }
-        let body = match self {
-            Self::Typing { strand_id, typing } => json!({
-                "kind": "ak.typing",
-                "strand_id": strand_id.as_str(),
-                // The discussion track is the only writable Message timeline in v1.
-                "track_name": "discussion",
-                "typing": typing,
-            }),
+            } => {
+                let signal_kind: arkret_sdk::CallSignalKind =
+                    serde_json::from_value(Value::String(signal_kind.clone())).map_err(|_| {
+                        anyhow::anyhow!(
+                            "call signal_kind {:?} is not in the canonical enum",
+                            signal_kind
+                        )
+                    })?;
+                let data = data
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("call signal data is required"))?
+                    .as_object()
+                    .ok_or_else(|| anyhow::anyhow!("call signal data must be an object"))?
+                    .clone()
+                    .into_iter()
+                    .collect();
+                // `payload_sequence` and the per-call `seq` are independent axes;
+                // this profile carries both and may omit neither.
+                let payload = arkret_sdk::CallSignalPlaintext::new(
+                    sequence.0,
+                    call_id.clone(),
+                    signal_kind,
+                    sequence.0,
+                    data,
+                );
+                plaintext(arkret_sdk::seal_signal_plaintext(&payload), "call signal")
+            }
+            Self::Typing { strand_id, typing } => {
+                let payload =
+                    arkret_sdk::TypingPlaintext::new(sequence.0, strand_id.clone(), *typing)
+                        .map_err(|error| anyhow::anyhow!("typing plaintext rejected: {error}"))?
+                        .with_ttl_ms(self.ttl_ms()?)
+                        .map_err(|error| anyhow::anyhow!("typing ttl_ms rejected: {error}"))?;
+                plaintext(arkret_sdk::seal_signal_plaintext(&payload), "typing")
+            }
             Self::Presence {
                 state,
                 status_message,
                 last_active_at,
             } => {
-                if arkret_sdk::PresenceStatus::parse_wire(state).is_none() {
-                    anyhow::bail!("presence state {state:?} is not a canonical presence state");
-                }
-                let mut body = json!({
-                    "kind": "ak.presence",
-                    "state": state,
-                });
+                let state: arkret_sdk::PresenceState =
+                    serde_json::from_value(Value::String(state.clone())).map_err(|_| {
+                        anyhow::anyhow!(
+                            "presence state {state:?} is not a canonical presence state"
+                        )
+                    })?;
+                let mut payload = arkret_sdk::PresencePlaintext::new(
+                    sequence.0,
+                    actor_id.clone(),
+                    state,
+                    self.ttl_ms()?,
+                )
+                .map_err(|error| anyhow::anyhow!("presence plaintext rejected: {error}"))?;
                 if let Some(message) = status_message
                     .as_deref()
                     .map(str::trim)
@@ -187,65 +195,66 @@ impl SignalPayload {
                 {
                     // Sender-side fail-closed with the same constraint the
                     // receiver enforces (<=256 code points, NFC, no controls).
-                    let message = arkret_sdk::canonical::to_nfc(message);
-                    arkret_sdk::validate_status_message(&message).map_err(|err| {
-                        anyhow::anyhow!("presence status_message rejected: {err}")
-                    })?;
-                    body["status_message"] = Value::String(message);
+                    payload = payload
+                        .with_status_message(arkret_sdk::canonical::to_nfc(message))
+                        .map_err(|error| {
+                            anyhow::anyhow!("presence status_message rejected: {error}")
+                        })?;
                 }
                 if let Some(last_active_at) = last_active_at {
-                    body["last_active_at"] =
-                        Value::String(bucket_presence_timestamp(*last_active_at));
+                    payload =
+                        payload.with_last_active_at(bucket_presence_timestamp(*last_active_at));
                 }
-                body
+                plaintext(arkret_sdk::seal_signal_plaintext(&payload), "presence")
             }
             Self::ReadReceipt {
                 strand_id,
                 event_id,
             } => {
-                let receipt = arkret_sdk::ReadReceipt {
-                    receipt_kind: "read".to_owned(),
-                    schema: arkret_sdk::SchemaId::READ_RECEIPT_V1.to_owned(),
-                    realm_id: realm_id.clone(),
-                    actor_id: actor_id.clone(),
-                    event_id: event_id.clone(),
-                    hlc: None,
-                    read_scope: arkret_sdk::ReadReceiptScope::strand(
+                // No `ttl_ms`: the read-receipt profile does not have one. The
+                // envelope `expires_at` is already the TTL, and the closed
+                // schema rejects the field outright.
+                let receipt = arkret_sdk::ReadReceipt::new(
+                    sequence.0,
+                    actor_id.clone(),
+                    event_id.clone(),
+                    arkret_sdk::ReadReceiptScope::strand(
                         strand_id.as_str().to_owned(),
                         Some("discussion"),
                     ),
-                    created_at: sent_at,
-                };
-                let mut body = serde_json::to_value(&receipt)?;
-                body["kind"] = Value::String("ak.receipt.read".to_owned());
-                body
+                )
+                .map_err(|error| anyhow::anyhow!("read receipt plaintext rejected: {error}"))?;
+                plaintext(arkret_sdk::seal_signal_plaintext(&receipt), "read receipt")
             }
-            Self::CallSignal { .. } => unreachable!("handled by the SDK closed call shape"),
-            Self::MessageStream(_) => unreachable!("handled before generic Signal encoding"),
-        };
-        let mut body = body;
-        body["actor_id"] = Value::String(actor_id.as_str().to_owned());
-        body["payload_sequence"] = json!(sequence.0);
-        body["ttl_ms"] = json!(self.ttl().num_milliseconds());
-        let bytes = arkret_sdk::canonical::canonical_json_bytes(&body)
-            .map_err(|error| anyhow::anyhow!("signal plaintext encoding failed: {error}"))?;
-        if bytes.len() > arkret_wire::signal::MAX_SIGNAL_PLAINTEXT_BYTES {
-            anyhow::bail!(
-                "signal plaintext is {} bytes, over the {} byte ceiling",
-                bytes.len(),
-                arkret_wire::signal::MAX_SIGNAL_PLAINTEXT_BYTES
-            );
         }
-        Ok(bytes)
+    }
+
+    /// Product TTL in milliseconds, for the profiles whose closed schema has a
+    /// `ttl_ms` field.
+    fn ttl_ms(&self) -> anyhow::Result<u64> {
+        u64::try_from(self.ttl().num_milliseconds())
+            .map_err(|_| anyhow::anyhow!("signal ttl does not fit a plaintext ttl_ms"))
     }
 }
 
+/// One-hour epoch-aligned `<start>/<end>` bucket for `last_active_at`.
+///
+/// `signal-presence.schema.json` requires both halves to be RFC 3339 instants —
+/// an ISO 8601 duration on the right-hand side (`<start>/PT1H`) is not the
+/// registered form and would be rejected as `schema_violation` by the receiver.
 fn bucket_presence_timestamp(ts: chrono::DateTime<chrono::Utc>) -> String {
-    let bucketed = ts.timestamp() - ts.timestamp().rem_euclid(60 * 60);
-    let start = arkret_sdk::canonical::format_timestamp_canonical(
-        chrono::DateTime::<chrono::Utc>::from_timestamp(bucketed, 0).unwrap_or(ts),
-    );
-    format!("{start}/PT1H")
+    const BUCKET_SECONDS: i64 = 60 * 60;
+    let start_epoch = ts.timestamp() - ts.timestamp().rem_euclid(BUCKET_SECONDS);
+    let stamp = |epoch: i64| {
+        arkret_sdk::canonical::format_timestamp_canonical(
+            chrono::DateTime::<chrono::Utc>::from_timestamp(epoch, 0).unwrap_or(ts),
+        )
+    };
+    format!(
+        "{}/{}",
+        stamp(start_epoch),
+        stamp(start_epoch + BUCKET_SECONDS)
+    )
 }
 
 /// Immutable server-visible header of a Signal, assembled before encryption.
@@ -628,7 +637,7 @@ pub(crate) mod test_support {
             payload.signal_class(),
             sent_at,
         );
-        let plaintext = payload.to_plaintext(actor_id, realm_id, sequence, sent_at)?;
+        let plaintext = payload.to_plaintext(actor_id, sequence)?;
         let encrypted = opaque_encrypted_payload(&header);
         let envelope = seal_signal_envelope(header, encrypted)?;
         Ok((envelope, serde_json::from_slice(&plaintext)?))
@@ -637,6 +646,8 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     fn realm() -> arkret_sdk::RealmId {
@@ -660,14 +671,7 @@ mod tests {
             .unwrap(),
             typing: true,
         };
-        let plaintext = payload
-            .to_plaintext(
-                &actor(),
-                &realm(),
-                SignalSequence(7),
-                crate::clock::now_utc(),
-            )
-            .unwrap();
+        let plaintext = payload.to_plaintext(&actor(), SignalSequence(7)).unwrap();
         let body: Value = serde_json::from_slice(&plaintext).unwrap();
 
         assert_eq!(body["kind"], "ak.typing");
@@ -706,12 +710,7 @@ mod tests {
         );
         let body: Value = serde_json::from_slice(
             &SignalPayload::MessageStream(frame)
-                .to_plaintext(
-                    &actor(),
-                    &realm(),
-                    SignalSequence(8),
-                    crate::clock::now_utc(),
-                )
+                .to_plaintext(&actor(), SignalSequence(8))
                 .unwrap(),
         )
         .unwrap();
@@ -729,15 +728,7 @@ mod tests {
             status_message: None,
             last_active_at: None,
         };
-        assert!(
-            bad.to_plaintext(
-                &actor(),
-                &realm(),
-                SignalSequence(0),
-                crate::clock::now_utc()
-            )
-            .is_err()
-        );
+        assert!(bad.to_plaintext(&actor(), SignalSequence(0)).is_err());
 
         let payload = SignalPayload::Presence {
             state: "online".to_owned(),
@@ -748,20 +739,17 @@ mod tests {
                     .with_timezone(&chrono::Utc),
             ),
         };
-        let body: Value = serde_json::from_slice(
-            &payload
-                .to_plaintext(
-                    &actor(),
-                    &realm(),
-                    SignalSequence(1),
-                    crate::clock::now_utc(),
-                )
-                .unwrap(),
-        )
-        .unwrap();
+        let body: Value =
+            serde_json::from_slice(&payload.to_plaintext(&actor(), SignalSequence(1)).unwrap())
+                .unwrap();
         assert_eq!(body["state"], "online");
         assert_eq!(body["status_message"], "hi");
-        assert_eq!(body["last_active_at"], "2026-05-19T12:00:00.000Z/PT1H");
+        // `<start>/<end>`, both RFC 3339 instants: the schema does not accept
+        // an ISO 8601 duration on the right-hand side.
+        assert_eq!(
+            body["last_active_at"],
+            "2026-05-19T12:00:00.000Z/2026-05-19T13:00:00.000Z"
+        );
     }
 
     #[test]
@@ -774,19 +762,20 @@ mod tests {
             event_id: arkret_sdk::EventId::new("ak:event:01964200-0000-7000-8000-000000000002")
                 .unwrap(),
         };
-        let body: Value = serde_json::from_slice(
-            &payload
-                .to_plaintext(
-                    &actor(),
-                    &realm(),
-                    SignalSequence(2),
-                    crate::clock::now_utc(),
-                )
-                .unwrap(),
-        )
-        .unwrap();
+        let body: Value =
+            serde_json::from_slice(&payload.to_plaintext(&actor(), SignalSequence(2)).unwrap())
+                .unwrap();
         assert_eq!(body["kind"], "ak.receipt.read");
-        assert_eq!(body["receipt_kind"], "read");
+        assert_eq!(body["payload_sequence"], 2);
+        // The durable-object leftovers are gone: the receipt is a Signal
+        // plaintext, so it restates neither the Realm nor the send time, and
+        // has no `receipt_kind` / `schema` / `created_at`.
+        for retired in ["receipt_kind", "schema", "realm_id", "created_at", "ttl_ms"] {
+            assert!(
+                body.get(retired).is_none(),
+                "read receipt plaintext must not carry '{retired}': {body}"
+            );
+        }
         // `ReadReceiptScope` single-sources its target through `object_ref`.
         assert_eq!(body["read_scope"]["kind"], "strand");
         assert_eq!(
@@ -805,16 +794,7 @@ mod tests {
             signal_kind: "not_a_kind".to_owned(),
             data: None,
         };
-        assert!(
-            rejected
-                .to_plaintext(
-                    &actor(),
-                    &realm(),
-                    SignalSequence(3),
-                    crate::clock::now_utc()
-                )
-                .is_err()
-        );
+        assert!(rejected.to_plaintext(&actor(), SignalSequence(3)).is_err());
 
         let invite = SignalPayload::CallSignal {
             call_id: call_id.clone(),
@@ -942,16 +922,7 @@ mod tests {
             status_message: Some("字".repeat(257)),
             last_active_at: None,
         };
-        assert!(
-            payload
-                .to_plaintext(
-                    &actor(),
-                    &realm(),
-                    SignalSequence(0),
-                    crate::clock::now_utc()
-                )
-                .is_err()
-        );
+        assert!(payload.to_plaintext(&actor(), SignalSequence(0)).is_err());
     }
 
     #[test]

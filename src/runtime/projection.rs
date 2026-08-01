@@ -108,7 +108,16 @@ pub trait SignalProductSink {
     /// UI hint whose only gate is the envelope admission that already ran, and
     /// `read-receipts.md` §2.4 makes rendering it depend on a local display
     /// preference rather than on any further authorization round trip.
-    fn read_receipt(&self, plaintext: &garth::SignalPlaintext);
+    /// `policy` is the Realm's accepted `ak.realm.read_receipt_policy`.
+    /// `read-receipts.md` §2.5 makes the `disclosure="disabled"` /
+    /// `visibility="private"` discard a **client** obligation — the receipt is
+    /// Signal plaintext, so no service can apply it — which is why the sink
+    /// receives the policy instead of assuming the transport already filtered.
+    fn read_receipt(
+        &self,
+        plaintext: &garth::SignalPlaintext,
+        policy: &arkret_sdk::ReadReceiptPolicy,
+    );
 
     /// Advance the TTL state of Signal-backed projections: `signal.md` §7.4
     /// marks a preview stalled after 30 seconds without a valid frame and
@@ -140,7 +149,12 @@ impl SignalProductSink for NoopSignalProductSink {
         Box::pin(async {})
     }
 
-    fn read_receipt(&self, _plaintext: &garth::SignalPlaintext) {}
+    fn read_receipt(
+        &self,
+        _plaintext: &garth::SignalPlaintext,
+        _policy: &arkret_sdk::ReadReceiptPolicy,
+    ) {
+    }
 
     fn advance_clock(&self, _now: chrono::DateTime<chrono::Utc>) {}
 }
@@ -189,8 +203,12 @@ impl SignalProductSink for SignalProductRouter {
         Box::pin(async move { sink.message_stream(plaintext).await })
     }
 
-    fn read_receipt(&self, plaintext: &garth::SignalPlaintext) {
-        self.sink.borrow().read_receipt(plaintext);
+    fn read_receipt(
+        &self,
+        plaintext: &garth::SignalPlaintext,
+        policy: &arkret_sdk::ReadReceiptPolicy,
+    ) {
+        self.sink.borrow().read_receipt(plaintext, policy);
     }
 
     fn advance_clock(&self, now: chrono::DateTime<chrono::Utc>) {

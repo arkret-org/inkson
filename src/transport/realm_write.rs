@@ -356,23 +356,33 @@ pub async fn set_realm_policy_events(
         )?);
     }
     if let Some(join_policy) = join_policy {
-        let mut policy_bundle = if preserve_recommended_encryption_floor {
-            // None ⇒ the history-capable `mls_exporter_aead_v1` default. soland
-            // applies a one-way content_scheme ratchet, so a policy_bundle
-            // write MUST re-assert a scheme of rank ≥ the projected one;
-            // omitting it would be rejected for exporter-aead realms.
-            recommended_realm_policy_bundle_value(None).to_value()?
-        } else {
-            json!({
-                "policy_revision": 1,
-            })
-        };
-        policy_bundle["join_policy"] = join_policy;
+        // `join_policy` is now a declared component of the closed bundle def,
+        // so this write is a legal policy_bundle revision rather than an
+        // unregistered extra key.
+        //
+        // The cell is a `cas_register`: this revision restates the COMPLETE
+        // enabled component set, and anything omitted is cleared. Starting from
+        // the recommended genesis bundle keeps `content_scheme` (whose one-way
+        // ratchet would otherwise reject the write), the encryption floors and
+        // the `aad_visibility` ceiling — dropping that last one would lower the
+        // ceiling to `hidden` and start rejecting every `routing_digest`
+        // envelope, which presents as "dedupe suddenly broke", not as a policy
+        // edit.
+        let mut policy_bundle = recommended_realm_policy_bundle_value(None);
+        if !preserve_recommended_encryption_floor {
+            policy_bundle.content_scheme = None;
+            policy_bundle.content_encryption_floor = None;
+            policy_bundle.metadata_encryption_floor = None;
+        }
+        policy_bundle.join_policy = Some(
+            serde_json::from_value(join_policy)
+                .map_err(|error| anyhow::anyhow!("invalid Realm join_policy: {error}"))?,
+        );
         events.push(build_realm_state_event(
             realm_id,
             actor_id,
             EventKind::RealmPolicyBundle,
-            policy_bundle,
+            policy_bundle.to_value()?,
         )?);
     }
     for event in events {
@@ -415,17 +425,18 @@ pub async fn set_realm_durability_policy(
             "actor_id is required for ak.realm.policy_bundle"
         ));
     }
-    let durability_value = serde_json::to_value(policy)
-        .map_err(|err| anyhow::anyhow!("serialize durability_policy: {err}"))?;
-    let policy_bundle = json!({
-        "policy_revision": policy_revision,
-        "durability_policy": durability_value,
-    });
+    // Same `cas_register` restatement rule as the join-policy write: begin from
+    // the recommended component set so this revision does not clear
+    // `content_scheme`, the encryption floors or the `aad_visibility` ceiling
+    // on its way to setting one component.
+    let mut policy_bundle = recommended_realm_policy_bundle_value(None);
+    policy_bundle.policy_revision = policy_revision;
+    policy_bundle.durability_policy = Some(policy.clone());
     let event = build_realm_state_event(
         realm_id,
         actor_id,
         EventKind::RealmPolicyBundle,
-        policy_bundle,
+        policy_bundle.to_value()?,
     )?;
     submitter.submit_sdk_event(&event).await?;
     Ok(())

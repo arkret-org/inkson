@@ -124,17 +124,35 @@ impl ReadReceiptHub {
     /// Only `kind="strand"` receipts are projected: they are the only ones the
     /// message timeline can render, and a Realm/thread/view-scoped receipt
     /// pointing at a different surface must not be silently re-attributed to a
-    /// Strand. `read_scope` field access is by name rather than through the SDK
-    /// `ReadReceipt` type because that type cannot currently deserialize the
-    /// plaintext it is paired with — see
-    /// `arkret-work/review/spec-open/2026-08-01-read-receipt-signal-plaintext-closed-shape.md`.
-    pub fn apply_authorized(&mut self, plaintext: &garth::SignalPlaintext) -> bool {
-        let Some((key, message_id)) = strand_read_position(plaintext) else {
+    /// Strand.
+    ///
+    /// `policy` is the Realm's accepted `ak.realm.read_receipt_policy`.
+    /// `read-receipts.md` §2.5 puts the `disclosure="disabled"` and
+    /// `visibility="private"` enforcement point on the **client**: a Sync
+    /// Service cannot read a receipt at all, so a compliant receiver is what
+    /// makes those two settings observable. An unauthorized receipt is dropped
+    /// here rather than rendered.
+    pub fn apply_authorized(
+        &mut self,
+        plaintext: &garth::SignalPlaintext,
+        policy: &arkret_sdk::ReadReceiptPolicy,
+        local_actor_id: &str,
+    ) -> bool {
+        // The typed closed profile, selected by `kind` in the SDK dispatch. No
+        // field-name parse: `signal.md` §1.1 forbids it, and a receipt that did
+        // not validate against `ak.schema.read_receipt.v1` never gets here.
+        let Some(receipt) = plaintext.read_receipt() else {
+            return false;
+        };
+        if !read_receipt_is_displayable(receipt, policy, local_actor_id) {
+            return false;
+        }
+        let Some((key, message_id)) = strand_read_position(plaintext, receipt) else {
             return false;
         };
         self.projection
             .write()
-            .apply(key, message_id, plaintext.payload_sequence)
+            .apply(key, message_id, receipt.payload_sequence)
     }
 
     /// Actors whose read position lands exactly on `message_id`.
@@ -156,35 +174,57 @@ impl Default for ReadReceiptHub {
     }
 }
 
+/// `read-receipts.md` §2.5 — may this receipt be shown to the local user?
+///
+/// Both rules are client-side by construction: the receipt travels as Signal
+/// plaintext inside the ciphertext, so no service can apply them.
+///
+/// - `disclosure="disabled"`: the Realm generates no receipts, so an arriving one is non-compliant.
+///   Rendering it would leak a read position the Realm said would not exist.
+/// - `visibility="private"`: a receipt is only for the actor who authored the read *target*'s
+///   audience of one — the reader themself. Everyone else drops it.
+fn read_receipt_is_displayable(
+    receipt: &arkret_sdk::ReadReceipt,
+    policy: &arkret_sdk::ReadReceiptPolicy,
+    local_actor_id: &str,
+) -> bool {
+    if policy.disclosure == arkret_sdk::ReadReceiptDisclosure::Disabled {
+        return false;
+    }
+    if policy.visibility == arkret_sdk::ReadReceiptVisibility::Private
+        && receipt.actor_id.as_str() != local_actor_id
+    {
+        return false;
+    }
+    true
+}
+
 /// The Strand read position one decrypted receipt names, or `None` when it does
 /// not name one.
-fn strand_read_position(plaintext: &garth::SignalPlaintext) -> Option<(ReadPositionKey, String)> {
-    let scope = plaintext.body.get("read_scope")?;
-    if scope.get("kind").and_then(serde_json::Value::as_str) != Some("strand") {
+fn strand_read_position(
+    plaintext: &garth::SignalPlaintext,
+    receipt: &arkret_sdk::ReadReceipt,
+) -> Option<(ReadPositionKey, String)> {
+    if receipt.read_scope.kind != arkret_sdk::ReadScopeKind::Strand {
         return None;
     }
-    let scope_ref = scope
-        .get("object_ref")
-        .and_then(serde_json::Value::as_str)
+    let scope_ref = receipt
+        .read_scope
+        .object_ref
+        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
     // The receipt names the Event id it read up to; the timeline is keyed by
     // the Message id, which is the same UUIDv7 retyped. Doing that conversion
     // through the SDK keeps the retyping rule in one place instead of letting
     // this view rewrite an id prefix by hand.
-    let event_id = plaintext
-        .body
-        .get("event_id")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .and_then(|value| arkret_sdk::EventId::new(value.to_owned()).ok())?;
     Some((
         ReadPositionKey {
             realm_id: plaintext.scope_ref.realm_id().as_str().to_owned(),
             scope_ref: scope_ref.to_owned(),
-            actor_id: plaintext.actor_id.as_str().to_owned(),
+            actor_id: receipt.actor_id.as_str().to_owned(),
         },
-        arkret_sdk::MessageId::from_event_id(&event_id)
+        arkret_sdk::MessageId::from_event_id(&receipt.event_id)
             .as_str()
             .to_owned(),
     ))
