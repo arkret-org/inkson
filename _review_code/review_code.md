@@ -305,3 +305,16 @@
   now delegate to that shared builder. Direct-conversation, member add/remove,
   sidecar, idle/forced self-update, encrypted card, message, and reaction commit
   preparation therefore retain the same exact predecessor evidence.
+
+## 2026-08-01 — governance-proof acquisition did not retry the registered pending frontier
+
+- **Surface:** the first governance-proof chunk fetched during Direct Conversation MLS bootstrap.
+- **Regression:** accepted Control Events can briefly precede their durable Seal frontier. Soland
+  correctly returned `503 frontier_unavailable`, but Inkson's bounded proof retry recognized only
+  a `409 state_mismatch` whose message mentioned a Bottom projection, so a single aa click stopped
+  just before MLS genesis even though the Seal coordinator completed moments later.
+- **Correction:** the existing bounded exponential retry also recognizes exactly
+  `503 frontier_unavailable`; unrelated 503 responses and all other permanent failures remain
+  fail-closed. Regression coverage asserts both the allowed transient codes and rejected errors.
+- **Prevention dimension:** every bounded workflow waiting on a governance Seal must classify the
+  registered structured frontier state, not infer liveness only from one reducer error message.

@@ -202,12 +202,21 @@ async fn fetch_proof_chunk_with_retry(
 }
 
 fn governance_projection_pending(error: &arkret_sdk::http_client::Error) -> bool {
-    matches!(
-        error,
-        arkret_sdk::http_client::Error::Api { status: 409, error }
-            if error.code() == "state_mismatch"
+    match error {
+        arkret_sdk::http_client::Error::Api { status: 409, error } => {
+            error.code() == "state_mismatch"
                 && error.message().to_ascii_lowercase().contains("bottom")
-    )
+        }
+        // Direct-conversation materialization submits several Control Events
+        // back-to-back.  The governance endpoint is allowed to report this
+        // registered transient while the accepted Events are still being
+        // folded into the durable Seal frontier.  Keep the retry bounded by
+        // `MAX_PROJECTION_ATTEMPTS`; every other 503 remains fail-closed.
+        arkret_sdk::http_client::Error::Api { status: 503, error } => {
+            error.code() == arkret_sdk::error::ErrorCode::FRONTIER_UNAVAILABLE
+        }
+        _ => false,
+    }
 }
 
 pub(crate) fn welcome_proof_requests(
@@ -1388,7 +1397,7 @@ mod tests {
     }
 
     #[test]
-    fn only_bottom_projection_conflicts_are_retryable() {
+    fn only_normative_governance_projection_delays_are_retryable() {
         let pending = arkret_sdk::http_client::Error::Api {
             status: 409,
             error: Box::new(arkret_sdk::ErrorEnvelope::new(
@@ -1403,9 +1412,25 @@ mod tests {
                 "governance policy digest differs",
             )),
         };
+        let frontier_pending = arkret_sdk::http_client::Error::Api {
+            status: 503,
+            error: Box::new(arkret_sdk::ErrorEnvelope::new(
+                arkret_sdk::error::ErrorCode::FRONTIER_UNAVAILABLE,
+                "accepted Control Events are not sealed yet",
+            )),
+        };
+        let unrelated_unavailable = arkret_sdk::http_client::Error::Api {
+            status: 503,
+            error: Box::new(arkret_sdk::ErrorEnvelope::new(
+                "service_unavailable",
+                "database is offline",
+            )),
+        };
 
         assert!(governance_projection_pending(&pending));
+        assert!(governance_projection_pending(&frontier_pending));
         assert!(!governance_projection_pending(&policy_denial));
+        assert!(!governance_projection_pending(&unrelated_unavailable));
         assert!(!governance_projection_pending(
             &arkret_sdk::http_client::Error::Protocol("member cell is still Bottom".to_owned(),)
         ));
