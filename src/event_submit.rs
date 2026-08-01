@@ -439,6 +439,14 @@ pub(crate) fn is_durably_queued_error(error: &anyhow::Error) -> bool {
     error.downcast_ref::<DurablyQueuedError>().is_some()
 }
 
+/// Whether a prepare pass may make semantic authoring decisions (the
+/// authority-root claim) or must reproduce a frozen queued intent verbatim.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SemanticAuthoring {
+    Fresh,
+    FrozenIntent,
+}
+
 #[derive(Default)]
 struct OutboundAttemptResults {
     accepted: Mutex<BTreeMap<String, SubmitEventResult>>,
@@ -471,7 +479,7 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                 );
                 let (event, transport_idempotency_key) = self
                     .owner
-                    .prepare_sdk_event_for_submit(&event)
+                    .prepare_frozen_intent_for_submit(&event)
                     .await
                     .map_err(|error| garth::Error::Protocol(error.to_string()))?;
                 let canonical_body_bytes = arkret_sdk::canonical::canonical_json_bytes(&event)
@@ -1928,7 +1936,7 @@ impl EventSubmitter {
             Value::String(replacement_transport_key),
         );
         let (event, transport_idempotency_key) =
-            self.prepare_sdk_event_for_submit(&replacement).await?;
+            self.prepare_frozen_intent_for_submit(&replacement).await?;
         let canonical_body_bytes = arkret_sdk::canonical::canonical_json_bytes(&event)?;
         Ok(QueuedSdkEvent::authored(
             event,
@@ -1945,10 +1953,36 @@ impl EventSubmitter {
         &self,
         event: &arkret_sdk::Event,
     ) -> anyhow::Result<(arkret_sdk::Event, String)> {
+        self.prepare_sdk_event_inner(event, SemanticAuthoring::Fresh)
+            .await
+    }
+
+    /// [`Self::prepare_sdk_event_for_submit`] for re-authoring a FROZEN queued
+    /// intent. `authorization_ref` is a bound member of the semantic intent
+    /// (`EventIntent`), so a replay attempt MUST reproduce it verbatim —
+    /// stamping a claim the frozen intent does not carry would make the
+    /// authored envelope diverge from its intent and the queue's semantic
+    /// guard would (correctly) cancel the item. This is exactly what happened
+    /// to Events queued while the session was dead: their intents froze
+    /// without the claim, and a post-re-login replay must not "upgrade" them.
+    pub(crate) async fn prepare_frozen_intent_for_submit(
+        &self,
+        event: &arkret_sdk::Event,
+    ) -> anyhow::Result<(arkret_sdk::Event, String)> {
+        self.prepare_sdk_event_inner(event, SemanticAuthoring::FrozenIntent)
+            .await
+    }
+
+    async fn prepare_sdk_event_inner(
+        &self,
+        event: &arkret_sdk::Event,
+        authoring: SemanticAuthoring,
+    ) -> anyhow::Result<(arkret_sdk::Event, String)> {
         let mut signed = event.clone();
         self.refresh_unsigned_sdk_event_actor_frontier(&mut signed)
             .await?;
-        self.stamp_cba_basis_for_sdk_event(&mut signed).await?;
+        self.stamp_cba_basis_for_sdk_event_inner(&mut signed, authoring)
+            .await?;
         if signed.proofs.is_empty() {
             let proof_context = self.event_proof_context().await?;
             crate::event_signer::sign_sdk_event_with_active_context(&mut signed, proof_context)
@@ -1971,6 +2005,15 @@ impl EventSubmitter {
         &self,
         event: &mut arkret_sdk::Event,
     ) -> anyhow::Result<()> {
+        self.stamp_cba_basis_for_sdk_event_inner(event, SemanticAuthoring::Fresh)
+            .await
+    }
+
+    async fn stamp_cba_basis_for_sdk_event_inner(
+        &self,
+        event: &mut arkret_sdk::Event,
+        authoring: SemanticAuthoring,
+    ) -> anyhow::Result<()> {
         if event.seal_ref.is_some()
             || event.auth_context.is_some()
             || event.seal_basis.is_some()
@@ -1983,8 +2026,11 @@ impl EventSubmitter {
         };
         // The authority-root claim is a signed envelope member, so it must be
         // in place before the proof is attached; admission resolves it the
-        // same way on both planes.
-        self.stamp_realm_authority_root_claim(event).await;
+        // same way on both planes. It is a SEMANTIC decision though: replays
+        // of a frozen intent must reproduce the intent's choice verbatim.
+        if authoring == SemanticAuthoring::Fresh {
+            self.stamp_realm_authority_root_claim(event).await;
+        }
         match plane {
             CbaEffectPlane::Control => {
                 let seal_view = self
@@ -3161,6 +3207,57 @@ mod tests {
         assert_eq!(
             event.authorization_ref.as_deref(),
             Some(arkret_wire::REALM_AUTHORITY_ROOT_CELL)
+        );
+    }
+
+    /// Regression lock (2026-08-01): Events queued while the session was dead
+    /// froze their intents with `authorization_ref = None` (the authority
+    /// lookup 401ed). A post-re-login replay used the fresh-authoring prepare,
+    /// stamped the claim onto the envelope, diverged from the frozen intent
+    /// and the queue's semantic guard cancelled the item — the discussion
+    /// message could never send. Frozen-intent re-authoring MUST reproduce
+    /// the intent's authorization choice verbatim even when the claim is now
+    /// resolvable.
+    #[tokio::test]
+    async fn frozen_intent_replay_must_not_upgrade_the_authorization_claim() {
+        let realm = "ak:realm:01904100-0000-7000-8000-0000000000ad";
+        realm_create_authority_cache()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(
+                realm.to_owned(),
+                RealmCreateAuthority::Root {
+                    controller_id: AUTHORITY_CONTROLLER.to_owned(),
+                },
+            );
+        // Outage-era intent: owner-authored kind, but no claim was resolvable
+        // at enqueue time.
+        let mut event = sdk_event_with_kind(
+            "ak:event:01904100-0000-7000-8000-000000000013",
+            realm,
+            "ak.message.create",
+            AUTHORITY_CONTROLLER,
+        );
+        assert!(event.authorization_ref.is_none());
+
+        // Fresh authoring would stamp (the claim is resolvable from cache)…
+        let mut freshly_authored = event.clone();
+        dead_endpoint_submitter()
+            .stamp_realm_authority_root_claim(&mut freshly_authored)
+            .await;
+        assert!(freshly_authored.authorization_ref.is_some());
+
+        // …but the frozen-intent pipeline must leave the intent's choice
+        // untouched so the authored envelope still equals its bound intent.
+        let outcome = dead_endpoint_submitter()
+            .stamp_cba_basis_for_sdk_event_inner(&mut event, SemanticAuthoring::FrozenIntent)
+            .await;
+        // The dead endpoint fails later at the seal fetch; the claim decision
+        // happens before that and is what this test pins down.
+        let _ = outcome;
+        assert!(
+            event.authorization_ref.is_none(),
+            "frozen-intent replay stamped a claim the intent does not carry"
         );
     }
 

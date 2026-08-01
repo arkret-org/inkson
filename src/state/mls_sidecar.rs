@@ -1032,6 +1032,77 @@ impl LocalStateStore {
             .insert(key, policy_root.to_owned());
         let _ = self.flush();
     }
+
+    /// The receiver's `mls_governance_binding_stale` message for this effective
+    /// scope, when its last E2EE application DataEvent was refused for
+    /// governance-Seal coverage (`encryption-and-audit.md` §2.4.1
+    /// `epoch_update_required`). `None` means no receiver has reported a
+    /// coverage gap.
+    pub fn mls_coverage_stale_reason(
+        &self,
+        realm_id: &str,
+        circle_id: Option<&str>,
+    ) -> Option<String> {
+        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        self.load()
+            .mls_coverage_stale
+            .get(&key)
+            .map(|stale| stale.reason.clone())
+    }
+
+    /// Every effective scope of `realm_id` a receiver has paused, as the
+    /// `circle_id` argument the repair pass takes (`None` = Realm-default
+    /// group). Circle groups are independent MLS groups with their own
+    /// accumulator, so each one needs its own commit.
+    pub fn stale_mls_coverage_scopes(&self, realm_id: &str) -> Vec<Option<String>> {
+        self.load()
+            .mls_coverage_stale
+            .values()
+            .filter(|stale| stale.realm_id == realm_id)
+            .map(|stale| stale.circle_id.clone())
+            .collect()
+    }
+
+    /// Record a receiver's coverage refusal. Last-writer-wins so the stored
+    /// message always names the currently missing governance Seals.
+    pub fn record_mls_coverage_stale(
+        &mut self,
+        realm_id: impl Into<String>,
+        circle_id: Option<&str>,
+        reason: &str,
+    ) {
+        self.ensure_cached_loaded();
+        let realm_id = realm_id.into();
+        let circle_id = circle_id
+            .map(str::trim)
+            .filter(|circle_id| !circle_id.is_empty());
+        let key = mls_effective_scope_snapshot_key(&realm_id, circle_id);
+        self.cached.mls_coverage_stale.insert(
+            key,
+            crate::state::types::MlsCoverageStale {
+                realm_id,
+                circle_id: circle_id.map(str::to_owned),
+                reason: reason.to_owned(),
+            },
+        );
+        let _ = self.flush();
+    }
+
+    /// Clear the coverage refusal after an `ak.mls.commit` carrying a freshly
+    /// verified governance binding was accepted.
+    ///
+    /// Cleared on acceptance rather than on a successful resend: the accepted
+    /// commit is what writes the missing Seals into `covered_seals_cell`. If it
+    /// still was not enough, the next send is refused again and re-arms the
+    /// flag with the receiver's new message — the repair never silently
+    /// declares itself finished.
+    pub fn clear_mls_coverage_stale(&mut self, realm_id: &str, circle_id: Option<&str>) {
+        self.ensure_cached_loaded();
+        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        if self.cached.mls_coverage_stale.remove(&key).is_some() {
+            let _ = self.flush();
+        }
+    }
 }
 
 pub(crate) fn mls_effective_scope_snapshot_key(realm_id: &str, circle_id: Option<&str>) -> String {

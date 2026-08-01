@@ -134,7 +134,13 @@ fn terminal_session_grant_message(message: &str) -> bool {
             || message.contains("not active")
             || message.contains("expired")
             || message.contains("locked")
-            || message.contains("suspended"))
+            || message.contains("suspended")
+            // soland's introspection wording when the Auth Server no longer
+            // recognizes the grant at all (e.g. coauth restarted and lost
+            // it): "session grant introspection was rejected by the Auth
+            // Server". Without this arm the client kept the dead grant and
+            // retried every second instead of routing to sign-in.
+            || message.contains("rejected"))
 }
 
 pub fn is_actor_seq_cas_conflict_error(error: &anyhow::Error) -> bool {
@@ -216,6 +222,24 @@ pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
 pub fn is_stale_frontier_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
         envelope.code() == arkret_sdk::error::ErrorCode::STALE_FRONTIER
+    })
+}
+
+/// `true` for `encryption-and-audit.md` §2.5.2's governance-binding coverage
+/// refusal — the receiver rebuilt `M` at the DataEvent's `seal_ref` and the
+/// effective epoch's `covered_seals_cell` does not cover all of it.
+///
+/// §2.4.1 makes this `epoch_update_required`: the scope MUST stop sending new
+/// encrypted application messages until a Commit attests the missing governance
+/// Seals. Until this classifier existed, the refusal arrived as an untyped
+/// submit failure, so the send just failed and nothing ever advanced the epoch —
+/// the scope stayed unsendable for as long as the app ran.
+pub(crate) fn is_mls_governance_binding_stale_error(error: &anyhow::Error) -> bool {
+    api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
+        envelope.code() == arkret_sdk::error::ErrorCode::FAILED_PRECONDITION
+            && envelope
+                .message()
+                .contains(arkret_sdk::error::ReasonCode::MLS_GOVERNANCE_BINDING_STALE)
     })
 }
 
