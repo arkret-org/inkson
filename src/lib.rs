@@ -146,6 +146,13 @@ pub mod sync_engine;
 pub mod sync_parse;
 pub mod telemetry;
 pub(crate) mod transport;
+/// `ak.profile.binding.websocket.v1` host wiring: the platform socket, the
+/// holder-key signature and the transport-selection decision.
+///
+/// Public because the binding is exercised from outside this crate — the
+/// conformance suite drives a real handshake against a live service — while the
+/// rest of `transport` stays crate-internal.
+pub use transport::websocket;
 pub mod wire_helpers;
 /// C3: shared UI component layer. The former local `src/ui/` moved unchanged
 /// into the `yoface` crate (13 `#[css_module]` wrappers plus background utility

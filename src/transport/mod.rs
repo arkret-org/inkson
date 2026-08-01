@@ -13,6 +13,7 @@ pub mod keys;
 pub mod media;
 pub mod realm_read;
 pub mod realm_write;
+pub mod websocket;
 
 pub use blob::BlobEndpoints;
 pub use context::{RequestContext, TransportClient};

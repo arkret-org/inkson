@@ -553,7 +553,20 @@ mod tests {
         let Value::Object(body) = body else {
             unreachable!("test body must be an object");
         };
+        // The registered closed profile the receiver dispatches on. The tests
+        // below assert how each route reshapes `body`, so the parsed profile is
+        // built from the same body rather than hand-written beside it.
+        let payload = garth::SdkSignalPlaintext::Presence(
+            arkret_sdk::PresencePlaintext::new(
+                7,
+                arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+                arkret_sdk::PresenceState::Online,
+                30_000,
+            )
+            .expect("a minimal presence plaintext is valid"),
+        );
         garth::SignalPlaintext {
+            payload,
             kind: kind.to_owned(),
             actor_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
             payload_sequence: 7,
@@ -585,6 +598,9 @@ mod tests {
             garth::SIGNAL_PLAINTEXT_KIND_CALL,
             json!({
                 "kind": "ak.call.signal",
+                // §7.8's closed shape carries the shared plaintext minimum, so
+                // the route has to pass `payload_sequence` through untouched.
+                "payload_sequence": 7,
                 "call_id": "ak:call:01904100-0000-7000-8000-000000000003",
                 "signal_kind": "invite",
                 "seq": 7,

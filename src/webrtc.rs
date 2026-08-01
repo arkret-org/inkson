@@ -320,9 +320,7 @@ mod tests {
         }
         .to_plaintext(
             &arkret_sdk::Did::new(TEST_ACTOR).unwrap(),
-            &arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),
             crate::signal::SignalSequence(seq),
-            crate::clock::now_utc(),
         )
         .expect("call signal plaintext must encode");
         serde_json::from_slice(&bytes).unwrap()
@@ -362,9 +360,7 @@ mod tests {
         }
         .to_plaintext(
             &arkret_sdk::Did::new(TEST_ACTOR).unwrap(),
-            &arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),
             crate::signal::SignalSequence(1),
-            crate::clock::now_utc(),
         )
         .expect_err("non-canonical signal_kind must be rejected");
         assert!(sender_error.to_string().contains("signal_kind"));

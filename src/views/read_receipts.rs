@@ -296,12 +296,43 @@ mod tests {
         assert!(!projection.positions.contains_key(&key("did:web:a0")));
     }
 
+    /// The closed receipt a body stands for. `read_scope` comes from the body
+    /// so a scope-varying test exercises the real routing input.
+    fn receipt_of(plaintext: &garth::SignalPlaintext) -> &arkret_sdk::ReadReceipt {
+        match &plaintext.payload {
+            garth::SdkSignalPlaintext::ReadReceipt(receipt) => receipt,
+            other => unreachable!("the fixture builds a read receipt, not {other:?}"),
+        }
+    }
+
+    fn typed_receipt(body: &serde_json::Map<String, serde_json::Value>) -> arkret_sdk::ReadReceipt {
+        let read_scope = body
+            .get("read_scope")
+            .cloned()
+            .map(|scope| serde_json::from_value(scope).expect("read_scope is a scope"))
+            .unwrap_or_else(arkret_sdk::ReadReceiptScope::realm);
+        let event_id = body
+            .get("event_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(EVENT_ID);
+        arkret_sdk::ReadReceipt::new(
+            3,
+            arkret_sdk::Did::new("did:web:a").unwrap(),
+            arkret_sdk::EventId::new(event_id).unwrap(),
+            read_scope,
+        )
+        .expect("a minimal read receipt is valid")
+    }
+
     fn receipt(body: serde_json::Value) -> garth::SignalPlaintext {
         let serde_json::Value::Object(body) = body else {
             unreachable!("test body must be an object");
         };
         let at = chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap();
         garth::SignalPlaintext {
+            // The parsed profile is what the routing reads, so it has to carry
+            // the same `read_scope` the test body varies rather than a fixed one.
+            payload: garth::SdkSignalPlaintext::ReadReceipt(typed_receipt(&body)),
             kind: "ak.receipt.read".to_owned(),
             actor_id: arkret_sdk::Did::new("did:web:a").unwrap(),
             payload_sequence: 3,
@@ -323,22 +354,24 @@ mod tests {
     }
 
     /// A Realm-scoped receipt carries no Strand and a thread receipt points at a
-    /// root message; neither may be re-attributed to a Strand timeline. A
-    /// `strand` scope without `object_ref` is malformed and equally unusable.
+    /// root message; neither may be re-attributed to a Strand timeline.
+    ///
+    /// A `strand` scope without a usable `object_ref` is not tested here any
+    /// more: the adjudicated closed `ReadReceipt` rejects it at construction
+    /// (`read_scope.object_ref is required when kind is not realm`), so it is
+    /// not a state this routing can be reached in.
     #[test]
     fn only_strand_scoped_receipts_have_a_timeline_to_land_on() {
         for scope in [
             json!({"kind": "realm"}),
             json!({"kind": "thread", "object_ref": "ak:message:m"}),
-            json!({"kind": "strand"}),
-            json!({"kind": "strand", "object_ref": "  "}),
         ] {
             let plaintext = receipt(json!({
                 "kind": "ak.receipt.read",
                 "read_scope": scope,
                 "event_id": EVENT_ID,
             }));
-            assert!(strand_read_position(&plaintext).is_none());
+            assert!(strand_read_position(&plaintext, receipt_of(&plaintext)).is_none());
         }
 
         let strand = "ak:strand:01904100-0000-7000-8000-00000000000b";
@@ -347,7 +380,8 @@ mod tests {
             "read_scope": {"kind": "strand", "object_ref": strand, "track_name": "discussion"},
             "event_id": EVENT_ID,
         }));
-        let (key, message_id) = strand_read_position(&plaintext).expect("strand receipt");
+        let (key, message_id) =
+            strand_read_position(&plaintext, receipt_of(&plaintext)).expect("strand receipt");
         assert_eq!(key.scope_ref, strand);
         assert_eq!(key.actor_id, "did:web:a");
         assert_eq!(

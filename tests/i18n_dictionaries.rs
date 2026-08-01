@@ -72,10 +72,8 @@ fn no_orphan_chinese_keys_in_migrated_namespaces() {
 fn migrated_keys_resolve_to_real_text_in_both_locales() {
     let en = english_translations();
     let zh = chinese_translations();
-    let dicts = std::collections::HashMap::from([
-        ("en".to_owned(), en.clone()),
-        ("zh".to_owned(), zh),
-    ]);
+    let dicts =
+        std::collections::HashMap::from([("en".to_owned(), en.clone()), ("zh".to_owned(), zh)]);
 
     // `setup.opt.space_kind.space.hint` is intentionally blank: the generic
     // Space kind needs no explanatory line, and the call site filters empties.
@@ -132,10 +130,7 @@ fn option_table_keys_exist_for_every_wire_value() {
             ],
         ),
         ("encryption_profile", &["mls_rfc9420", "none"]),
-        (
-            "content_scheme",
-            &["mls_exporter_aead_v1", "mls_rfc9420"],
-        ),
+        ("content_scheme", &["mls_exporter_aead_v1", "mls_rfc9420"]),
         ("security_class", &["standard", "high_assurance"]),
         (
             "federation_policy",
@@ -145,10 +140,7 @@ fn option_table_keys_exist_for_every_wire_value() {
             "anchor_profile",
             &["single_did", "threshold", "open_set", "mixed"],
         ),
-        (
-            "hash_profile",
-            &["sha256", "sha512", "sha3_256", "blake3"],
-        ),
+        ("hash_profile", &["sha256", "sha512", "sha3_256", "blake3"]),
         (
             "space_kind",
             &["space", "project", "folder", "board", "list"],
