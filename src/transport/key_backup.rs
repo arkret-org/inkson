@@ -391,19 +391,71 @@ impl crate::transport::TransportClient {
             .map_err(anyhow::Error::from)
     }
 
-    // Key-backup delete is deliberately absent.
-    //
-    // `key-management.md` §7.8 made it a high-risk authority: the caller must
-    // consume a server-issued single-use delete challenge and present one of
-    // `principal_signing`, `device_quorum`, or `trusted_recovery_service` over
-    // the canonical delete-intent transcript. The client shortcut that used to
-    // live here signed nothing — it sent a `dev-ssk-delete:v1:<actor>:<backup>`
-    // string — and the SDK has since deleted the variant that carried it.
-    //
-    // Nothing in the product called it, so it is removed rather than stubbed:
-    // a placeholder here would turn a high-risk authority into an unguarded
-    // one the moment a delete surface was wired up. Reintroduce it together
-    // with the real §7.8 flow (see the spec-open batch downstream task).
+    /// Delete a key-backup envelope through the `key-management.md` §7.8.1
+    /// high-risk authority flow.
+    ///
+    /// Two round trips, in this order and no other: ask the service for the
+    /// single-use delete challenge, then sign the canonical delete-intent
+    /// transcript it fixes. The service issues the freshness — §7.8.1 does not
+    /// accept a caller-minted nonce — so there is no way to build the proof
+    /// before the first call returns.
+    ///
+    /// `request_id` is the caller's retry identity: the service keys its
+    /// idempotency record on `(principal_id, backup_id, request_id)` and returns
+    /// the *same* challenge while one is still valid, so a network retry MUST
+    /// reuse the value rather than mint a new one. A genuinely new delete
+    /// attempt uses a new `request_id`.
+    ///
+    /// The proof branch is `principal_signing`: the private half of the current
+    /// cross-signing principal signing key, whose `kid` is a verification method
+    /// of the principal's own DID document. The receiver resolves the method
+    /// through that document, which is what excludes the device key this client
+    /// signs Events with.
+    pub async fn delete_key_backup(
+        &self,
+        backup_id: &str,
+        actor_id: &str,
+        request_id: &str,
+        reason: Option<&str>,
+        state_store: &crate::state::LocalStateStore,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> anyhow::Result<arkret_sdk::KeysBackupsDeleteOutcome> {
+        let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid key backup id: {err}"))?;
+        let request_id = arkret_sdk::Base64UrlString::new(request_id.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid delete request_id: {err}"))?;
+
+        let client = self.sdk_http_client()?;
+        let challenge = client
+            .issue_key_backup_delete_challenge(
+                &backup_id,
+                &arkret_sdk::KeysBackupsIssueDeleteChallengeRequestBody {
+                    request_id: request_id.clone(),
+                },
+            )
+            .await?;
+
+        let (verification_method, principal_key) =
+            crate::key_backup::principal_signing_key(state_store, secure_store, actor_id)?;
+        let proof = crate::key_backup::key_backup_delete_principal_signing_proof(
+            &challenge,
+            reason,
+            &verification_method,
+            &principal_key,
+            crate::clock::now_utc(),
+        )?;
+
+        let body = arkret_sdk::KeysBackupsDeleteRequestBody {
+            request_id,
+            challenge_id: challenge.challenge_id.clone(),
+            proof,
+            reason: reason.map(str::to_owned),
+        };
+        client
+            .delete_key_backup(&backup_id, &body)
+            .await
+            .map_err(anyhow::Error::from)
+    }
 }
 
 fn key_backup_idempotency_key(

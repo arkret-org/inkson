@@ -827,13 +827,17 @@ mod tests {
         }
     }
 
-    /// A `did:web` sample resolution. `did:web` publishes no method proof, so
-    /// the cached value is deliberately `proofless` — synthesizing evidence
-    /// here would let a test assert a trust level the method cannot give.
-    fn sample_document(did_str: &str) -> (Did, arkret_sdk::identity::ResolvedDid) {
+    fn sample_document(did_str: &str) -> (Did, DidDocument) {
         let did = parse(did_str);
         let doc = DidDocument::new(did.clone(), "key-1", "z6Mksample");
-        (did, arkret_sdk::identity::ResolvedDid::proofless(doc))
+        (did, doc)
+    }
+
+    /// A cached resolution for a method that publishes nothing to prove — which
+    /// is what every fixture here is. Synthesizing evidence instead would let a
+    /// test assert a trust level `did:web` cannot give.
+    fn proofless(document: DidDocument) -> arkret_sdk::identity::ResolvedDid {
+        arkret_sdk::identity::ResolvedDid::proofless(document)
     }
 
     #[test]
@@ -846,7 +850,7 @@ mod tests {
         let (did, doc) = sample_document("did:web:alice.example");
         let t0 = Utc::now();
         cache
-            .insert(did.clone(), doc, t0, Duration::seconds(600))
+            .insert(did.clone(), proofless(doc), t0, Duration::seconds(600))
             .unwrap();
 
         let out = resolve_with_cache(&resolver, &cache, &did, t0 + Duration::seconds(1))
@@ -880,7 +884,7 @@ mod tests {
         let (did, doc) = sample_document("did:web:alice.example");
         let t0 = Utc::now();
         cache
-            .insert(did.clone(), doc, t0, Duration::seconds(60))
+            .insert(did.clone(), proofless(doc), t0, Duration::seconds(60))
             .unwrap();
         match resolve_with_cache(&resolver, &cache, &did, t0 + Duration::seconds(61)) {
             Err(VerifyError::Unresolved(_)) => {}
@@ -896,10 +900,10 @@ mod tests {
         let (did_b, doc_b) = sample_document("did:web:bob.example");
         let t0 = Utc::now();
         cache
-            .insert(did_a, doc_a, t0, Duration::seconds(60))
+            .insert(did_a, proofless(doc_a), t0, Duration::seconds(60))
             .unwrap();
         cache
-            .insert(did_b, doc_b, t0, Duration::seconds(60))
+            .insert(did_b, proofless(doc_b), t0, Duration::seconds(60))
             .unwrap();
         assert_eq!(cache.len(), 2);
         cache.clear();

@@ -1044,13 +1044,18 @@ pub fn build_realm_state_event(
         // `state_payload` wrapper (`realm_policy_bundle_payload`'s `$comment`;
         // `event-envelope.schema.json` dispatches the kind straight to that
         // def). Deliberately NOT re-parsed through
-        // `arkret_sdk::RealmPolicyBundlePayload`: that type mirrors the closed
-        // def exactly, while `realm-and-space.md` §2.3 and `join-policy.md` §3
-        // require the bundle to also carry `join_policy`, `agent_participation`,
-        // `availability_policy` and friends, which the def does not declare.
-        // Enforcing the narrow shape here would reject writes the normative
-        // prose mandates. See arkret-work `review/spec-open/
-        // 2026-08-01-realm-policy-bundle-closed-def-omits-mandated-components.md`.
+        // `arkret_sdk::RealmPolicyBundlePayload`: the spec def now declares all
+        // 15 components (`join_policy`, `agent_participation`,
+        // `availability_policy`, `audit_policy`, `preauth`, `aad_visibility`,
+        // `media_service_decrypts`, `account_deactivation`,
+        // `relaxed_window_max_ms`, ...) while the SDK counterpart still mirrors
+        // only 6 of them and is `deny_unknown_fields`. Round-tripping through
+        // the narrow SDK type would reject the `join_policy` bundle
+        // `set_realm_policy_events` legally writes. The wire shape is still
+        // schema-checked: `realm_bootstrap_payloads_match_spec_schema` runs the
+        // batch through `event_payload_validator_catalog()` — the same
+        // spec-artifact validator soland applies at envelope admission.
+        // Remove this arm once the SDK type covers the full closed set.
         EventKind::RealmPolicyBundle => value.clone(),
         EventKind::RealmDeliveryBindingPolicy => {
             let typed: arkret_sdk::RealmDeliveryBindingPolicyPayload =

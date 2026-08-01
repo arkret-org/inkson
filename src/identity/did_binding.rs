@@ -31,14 +31,14 @@
 //! `arkret_sdk::identity::resolve_and_verify_binding`, which consults this same
 //! store first and calls the resolver at most once.
 
-#[cfg(test)]
-use arkret_sdk::identity::FreshnessRequirement;
 use arkret_sdk::identity::{
     AcceptedDidBinding, BindingError, BindingInvalidation, BindingStoreError, DidBindingPurpose,
     DidBindingStatus, DigestError, EvidenceReceipt, InMemoryVerifiedDidBindingStore, LimitedTrust,
     MethodEvidence, VerifiedDidBinding, VerifiedDidBindingDocumentInput, VerifiedDidBindingKey,
     VerifiedDidBindingStore, policy_digest,
 };
+#[cfg(test)]
+use arkret_sdk::identity::{FreshnessProfile, FreshnessRequirement};
 use arkret_sdk::{Did, DidDocument, DidUrl, Hash, TypedTrustDomainId};
 use chrono::{DateTime, Duration, Utc};
 
@@ -370,14 +370,18 @@ impl VerifiedDidBindingStore for InksonDidBindingStore {
 
 /// Freshness an inkson *authority* call site demands.
 ///
-/// `require_fresh` plus a bounded max age: an authority trigger
-/// (`did-usage-and-verification.md` §4) may not ride on a `Stale` acceptance.
+/// §5.4 derives this from a registered profile rather than letting a call site
+/// hand-write a window: `fresh_for_seconds` is simultaneously the
+/// `refresh_after` offset and the authority `max_age`, so the two cannot drift.
+/// The controller profile is the one that matches inkson's client-side triggers.
 #[cfg(test)]
 pub(crate) fn authority_freshness() -> FreshnessRequirement {
-    FreshnessRequirement {
-        max_age: Some(Duration::minutes(BINDING_REFRESH_MINUTES)),
-        require_fresh: true,
-    }
+    FreshnessProfile::high_tier(
+        arkret_sdk::DidFreshnessProfileId::AuthorityControllerV1,
+        Duration::minutes(BINDING_REFRESH_MINUTES),
+        Some(Duration::days(BINDING_HARD_EXPIRY_DAYS)),
+    )
+    .requirement()
 }
 
 #[cfg(test)]
@@ -445,8 +449,8 @@ mod tests {
     /// The fork this convergence closed: the local digest used
     /// `format!("{:?}", fail_mode)` → `"FailClosed"` while the peer repos wrote
     /// `"fail_closed"` by hand, so the *same* policy value produced two
-    /// different digests. The canonical encoder must emit the snake_case token
-    /// and no `Debug` output anywhere in the digested object.
+    /// different digests. The §5.3 snapshot must emit the registered snake_case
+    /// token and no `Debug` output anywhere in the digested object.
     #[test]
     fn policy_digest_encodes_the_fail_mode_as_a_closed_token() {
         let policy = crate::identity::did_resolver::policy_for(DeploymentProfile::PersonalNode);
@@ -455,6 +459,10 @@ mod tests {
             .expect("the personal-node policy declares a closed method list")
             .canonical_value();
         assert_eq!(canonical["fail_mode"], serde_json::json!("fail_closed"));
+        assert_eq!(
+            canonical["policy_profile"],
+            serde_json::json!(arkret_sdk::identity::BASE_RESOLVER_POLICY_PROFILE)
+        );
         let rendered = canonical.to_string();
         assert!(
             !rendered.contains("FailClosed"),
