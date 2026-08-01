@@ -71,10 +71,16 @@ pub(crate) fn refresh_notifications(
                     invite_notifications,
                     &joined_realms,
                 );
+                let inbox_states =
+                    crate::account_data::notification_inbox_states_from_account_data_events(
+                        &account_did,
+                        &response.updates.account_data,
+                    );
                 let hydrated = {
                     let mut store = state_store.write();
                     store.ingest_to_device_messages(&response.updates.to_device);
                     store.save_notification_projection(raw_notifications.clone());
+                    apply_notification_inbox_states(&mut store, &inbox_states);
                     let local_state = store.load();
                     let effective_dnd = local_state
                         .notification_dnd_settings
@@ -278,6 +284,117 @@ pub(crate) fn mark_notification_read_state(
             )),
         }
     });
+}
+
+/// Archive / dismiss one notification and synchronize that decision to the
+/// holder's other devices.
+///
+/// `read` / `unread` stay on the read cursor; only these two states belong in
+/// `ak.notifications.inbox.<notification_id>`
+/// (`zh/discovery/client-preferences.md` §3.2). The local projection flips
+/// first and stays flipped: the cross-device write is convergence, not the
+/// authority for this device.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn set_notification_inbox_state(
+    base_url: String,
+    session_credential: String,
+    actor_id: String,
+    device_id: String,
+    notification_id: String,
+    state: arkret_sdk::NotificationInboxState,
+    mut state_store: SyncSignal<LocalStateStore>,
+    mut notifications: Signal<Vec<UiNotification>>,
+    mut status_msg: Signal<String>,
+) {
+    notifications.with_mut(|items| {
+        if let Some(entry) = items
+            .iter_mut()
+            .find(|candidate| candidate.id == notification_id)
+        {
+            entry.archived = true;
+        }
+    });
+    state_store
+        .write()
+        .set_notification_archived(notification_id.clone(), true);
+
+    if actor_id.trim().is_empty() || device_id.trim().is_empty() {
+        return;
+    }
+    spawn(async move {
+        let candidate = match build_notification_inbox_candidate(
+            &actor_id,
+            &device_id,
+            &notification_id,
+            state,
+        ) {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                status_msg.set(format!(
+                    "Notification archived locally; cross-device sync unavailable: {error:#}"
+                ));
+                return;
+            }
+        };
+        let account_data_key = candidate.account_data_key();
+        match with_event_submitter(&base_url, session_credential, |submitter| async move {
+            crate::transport::account::update_account_data_with_merge(
+                &submitter,
+                &account_data_key,
+                |current| {
+                    crate::account_data::merge_notification_inbox_account_data(
+                        &actor_id,
+                        &account_data_key,
+                        &candidate,
+                        current,
+                    )
+                },
+            )
+            .await
+        })
+        .await
+        {
+            Ok(_) => status_msg.set("Notification archived on all your devices.".to_owned()),
+            Err(err) => status_msg.set(format!(
+                "Notification archived locally; cross-device sync failed: {}",
+                err.display()
+            )),
+        }
+    });
+}
+
+/// Fold the holder's cross-device inbox states into the local projection.
+///
+/// Both `dismissed` and `archived` hide the row here; the distinction the key
+/// carries is preserved on the wire for clients that render them apart.
+fn apply_notification_inbox_states(
+    store: &mut LocalStateStore,
+    inbox_states: &[arkret_sdk::NotificationInboxValue],
+) {
+    store.batch(|store| {
+        for value in inbox_states {
+            store.set_notification_archived(value.notification_id.as_str().to_owned(), true);
+        }
+    });
+}
+
+fn build_notification_inbox_candidate(
+    actor_id: &str,
+    device_id: &str,
+    notification_id: &str,
+    state: arkret_sdk::NotificationInboxState,
+) -> anyhow::Result<arkret_sdk::NotificationInboxValue> {
+    let actor = arkret_sdk::Did::new(actor_id.trim().to_owned())
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let realm_id = arkret_sdk::principal_control_realm_id(&actor);
+    let updated_hlc =
+        crate::signing_stamp::issue_protocol_hlc(actor.as_str(), device_id.trim(), &realm_id)?;
+    crate::account_data::notification_inbox_value(
+        notification_id,
+        state,
+        updated_hlc.as_str(),
+        device_id.trim(),
+    )
 }
 
 pub(crate) fn run_notification_action(

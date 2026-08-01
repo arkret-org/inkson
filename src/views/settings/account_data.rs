@@ -4,8 +4,6 @@
 //! derivations used by the notification override picker.
 
 use arkret_wire::AccountDataKey;
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use dioxus::prelude::*;
 use serde_json::json;
 
@@ -34,23 +32,7 @@ pub(crate) fn encrypted_account_data_value(
     let actor = crate::secure_key_store::active_device_seed_scope()
         .filter(|actor| !actor.trim().is_empty())
         .ok_or_else(|| anyhow::anyhow!("active account scope is unavailable"))?;
-    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let account_secret =
-        crate::mls::runtime::load_or_create_account_mls_secret(secure_store.as_ref(), &actor, "")?;
-    let secret = URL_SAFE_NO_PAD
-        .decode(account_secret)
-        .map_err(|error| anyhow::anyhow!("account secret base64url: {error}"))?;
-    let secret: [u8; 32] = secret
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("account secret must be 32 bytes"))?;
-    let envelope = arkret_sdk::account_data_crypto::seal_account_data_value(
-        &secret,
-        &actor,
-        account_data_key,
-        plaintext,
-    )?;
-    serde_json::to_value(envelope)
-        .map_err(|error| anyhow::anyhow!("account-data encrypted value: {error}"))
+    crate::account_data::encrypt_account_data_value(&actor, account_data_key, plaintext)
 }
 
 /// Spawn a fire-and-forget task that pushes the current read-receipt

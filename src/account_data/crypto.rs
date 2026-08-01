@@ -3,6 +3,37 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::Serialize;
 use serde_json::Value;
 
+/// Seal `plaintext` for `account_data_key` under `actor_id`'s account secret.
+///
+/// The envelope AAD binds both `actor_id` and `account_data_key`, so a value
+/// cannot be replayed under another key or another account.
+pub fn encrypt_account_data_value(
+    actor_id: &str,
+    account_data_key: &str,
+    plaintext: &Value,
+) -> anyhow::Result<Value> {
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let account_secret = crate::mls::runtime::load_or_create_account_mls_secret(
+        secure_store.as_ref(),
+        actor_id,
+        "",
+    )?;
+    let secret = URL_SAFE_NO_PAD
+        .decode(account_secret)
+        .map_err(|error| anyhow::anyhow!("account secret base64url: {error}"))?;
+    let secret: [u8; 32] = secret
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("account secret must be 32 bytes"))?;
+    let envelope = arkret_sdk::account_data_crypto::seal_account_data_value(
+        &secret,
+        actor_id,
+        account_data_key,
+        plaintext,
+    )?;
+    serde_json::to_value(envelope)
+        .map_err(|error| anyhow::anyhow!("account-data encrypted value: {error}"))
+}
+
 pub fn decrypt_account_data_value(
     actor_id: &str,
     account_data_key: &str,

@@ -679,7 +679,10 @@ mod tests {
             body["strand_id"],
             "ak:strand:01964200-0000-7000-8000-000000000001"
         );
-        assert_eq!(body["track_name"], "discussion");
+        // `track_name` is optional on the wire and an absent value resolves to
+        // `discussion` on the receiver, so a sender that does not select a
+        // track MUST NOT spell the default out.
+        assert!(body.get("track_name").is_none());
         assert_eq!(body["typing"], true);
         assert_eq!(body["payload_sequence"], 7);
         // Typing is an ordinary session signal: the 30 second class ceiling.

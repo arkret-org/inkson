@@ -7,7 +7,7 @@ use dioxus::prelude::*;
 
 use super::actions::{
     mark_all_notifications_read, mark_notification_read_state, refresh_notifications,
-    run_notification_action,
+    run_notification_action, set_notification_inbox_state,
 };
 use super::model::{
     UiNotificationGroup, hydrate_notifications_with_privacy_gate, notification_kind_enabled,
@@ -42,7 +42,7 @@ pub fn NotificationsPanel(
         &initial_privacy_gate,
     );
 
-    let mut notifications = use_signal(move || initial_notifications.clone());
+    let notifications = use_signal(move || initial_notifications.clone());
     let mut group_by = use_signal(|| UiNotificationGroup::Latest);
     let mut show_archived = use_signal(|| false);
     let mut did_bootstrap = use_signal(|| false);
@@ -312,12 +312,22 @@ pub fn NotificationsPanel(
                                 title: "Archive",
                                 "aria-label": "Archive",
                                 onclick: {
+                                    let base_url = base_url.clone();
+                                    let account_did = account_did.clone();
+                                    let device_id = device_id.clone();
                                     let notification_id = notification.id.clone();
                                     move |_| {
-                                        if let Some(entry) = notifications.write().iter_mut().find(|candidate| candidate.id == notification_id) {
-                                            entry.archived = true;
-                                        }
-                                        state_store.write().set_notification_archived(notification_id.clone(), true);
+                                        set_notification_inbox_state(
+                                            base_url.clone(),
+                                            token(),
+                                            account_did.clone(),
+                                            device_id.clone(),
+                                            notification_id.clone(),
+                                            arkret_sdk::NotificationInboxState::Archived,
+                                            state_store,
+                                            notifications,
+                                            status_msg,
+                                        );
                                     }
                                 },
                                 UiIcon { name: "archive" }

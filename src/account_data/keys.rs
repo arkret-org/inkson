@@ -53,6 +53,8 @@ pub fn private_account_data_key_prefix(key: &str) -> Option<&'static str> {
     if let Some(prefix) = [
         arkret_sdk::AccountDataKey::CONTACTS_ACTOR,
         arkret_sdk::AccountDataKey::CONTACTS_REALM,
+        arkret_sdk::AccountDataKey::VIEWS_PRIVATE,
+        arkret_sdk::AccountDataKey::NOTIFICATIONS_INBOX,
     ]
     .into_iter()
     .find(|prefix| {
@@ -135,6 +137,20 @@ pub fn file_transfer_account_data_key(
 ) -> anyhow::Result<String> {
     arkret_sdk::file_transfer_account_data_key(namespace_key, transfer_id)
         .map_err(|error| anyhow::anyhow!(error.to_string()))
+}
+
+pub fn private_view_account_data_key(view_id: &str) -> anyhow::Result<String> {
+    let view_id = arkret_sdk::ViewId::new(view_id.to_owned())
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    Ok(arkret_sdk::private_view_account_data_key(&view_id))
+}
+
+pub fn notification_inbox_account_data_key(notification_id: &str) -> anyhow::Result<String> {
+    let notification_id = arkret_sdk::NotificationId::new(notification_id.to_owned())
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    Ok(arkret_sdk::notification_inbox_account_data_key(
+        &notification_id,
+    ))
 }
 
 pub fn build_private_account_data_set(

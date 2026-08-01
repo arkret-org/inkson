@@ -793,6 +793,47 @@ fn contact_and_realm_remarks_are_encrypted_account_data() {
 }
 
 #[test]
+fn private_view_and_notification_inbox_are_encrypted_account_data() {
+    let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
+    let view_key = private_view_account_data_key("ak:view:01904100-0000-7000-8000-848727f328fe")
+        .expect("valid view id");
+    let inbox_key =
+        notification_inbox_account_data_key("ak:notification:01904100-0000-7000-8000-848727f328ff")
+            .expect("valid notification id");
+
+    assert_eq!(
+        private_account_data_key_prefix(&view_key),
+        Some(arkret_sdk::AccountDataKey::VIEWS_PRIVATE)
+    );
+    assert_eq!(
+        private_account_data_key_prefix(&inbox_key),
+        Some(arkret_sdk::AccountDataKey::NOTIFICATIONS_INBOX)
+    );
+    validate_private_account_data_key(&view_key).unwrap();
+    validate_private_account_data_key(&inbox_key).unwrap();
+
+    // The definition / inbox state must land in `encrypted_payload`; `body`
+    // would put a View title or query in front of the server in plaintext.
+    for key in [&view_key, &inbox_key] {
+        let op = build_account_data_set(
+            realm_id,
+            "did:web:alice.example",
+            &AccountDataKey::Custom(key.clone()),
+            json!({"ciphertext": "opaque"}),
+            0,
+        )
+        .build("node");
+        assert!(op.payload.contains_key("encrypted_payload"), "{key}");
+        assert!(!op.payload.contains_key("body"), "{key}");
+    }
+
+    assert!(
+        private_view_account_data_key("ak:realm:01904100-0000-7000-8000-848727f328fe").is_err()
+    );
+    assert!(notification_inbox_account_data_key("not-a-notification-id").is_err());
+}
+
+#[test]
 fn private_account_data_builders_emit_encrypted_payload() {
     let key = "ak.scheduled_send.v1:ak:message:01904100-0000-7000-8000-000000000001";
     let op = build_private_account_data_set(

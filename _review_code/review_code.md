@@ -1,5 +1,21 @@
 # Regression Review
 
+## 2026-08-01 — the typing test asserted a `track_name` the sender no longer emits
+
+- Surface: `signal::tests::typing_body_is_ciphertext_content_not_header_metadata`.
+- Regression: `TypingPlaintext.track_name` became optional, with an absent value resolving to
+  `discussion` on the receiver, so `SignalPayload::Typing` — which selects no track — stopped
+  spelling the default out. The test still asserted the literal `"discussion"` on the wire.
+- Detection: `cargo test --lib` during unrelated account-data work. It was invisible for a while
+  because the lib **test** target did not compile at all against the current garth API (fixed
+  separately by the signal/SDK convergence work), and a lib-only `cargo check` stays green through
+  both conditions.
+- Resolution: assert `track_name` is absent and state the receiver-side default in the test.
+- Prevention dimension: a wire assertion on an optional field with a receiver-side default has to
+  say which of the two it is pinning; asserting the resolved value against the emitted body pins
+  neither.
+- Status: resolved.
+
 ## 2026-07-29 — Sidecar Chrome/Edge matrix no longer reached the seeded Realm
 
 - Surface: `inkson.strands.kanban.spec.ts` Sidecar browser matrix and its Arkret mock harness.
