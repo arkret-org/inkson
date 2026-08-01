@@ -798,6 +798,23 @@ pub struct MlsGroupStateRefRecord {
     pub event_id: arkret_sdk::EventId,
 }
 
+/// One effective scope paused by `encryption-and-audit.md` §2.4.1
+/// `epoch_update_required`.
+///
+/// The scope is carried in the record rather than only in the map key: the key
+/// is the Circle id for a Circle-scoped group, so a Circle entry alone cannot
+/// name the Realm whose MLS effect has to run the repair.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MlsCoverageStale {
+    pub realm_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub circle_id: Option<String>,
+    /// The receiver's own `mls_governance_binding_stale` message, so the repair
+    /// pass and the UI name the governance Seals the epoch has not attested
+    /// rather than a generic "send failed".
+    pub reason: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CachedAgentSignerEvidence {
     pub evidence: arkret_sdk::AgentSignerEvidence,
@@ -1012,6 +1029,18 @@ pub struct ClientLocalState {
     /// commit instead of recomputing from a moving root.
     #[serde(default)]
     pub mls_genesis_policy_root: BTreeMap<String, String>,
+    /// `encryption-and-audit.md` §2.4.1 `epoch_update_required` — effective
+    /// scopes whose last E2EE application DataEvent was refused with
+    /// `mls_governance_binding_stale`, keyed by
+    /// `mls_effective_scope_snapshot_key`.
+    ///
+    /// The flag is set only by a receiver's typed refusal — never guessed from
+    /// a moving Seal head. Every accepted `ak.mls.commit` also seals itself
+    /// into a new Seal, so "the head moved" is not evidence that coverage
+    /// lags; treating it as such makes the client emit one commit per Seal
+    /// forever.
+    #[serde(default)]
+    pub mls_coverage_stale: BTreeMap<String, MlsCoverageStale>,
     /// Bounded cache of complete, locally verified MLS governance proof
     /// bundles. Keys are canonical request digests; values expire quickly and
     /// are invalidated when sync observes a different accepted Seal head.
@@ -1393,6 +1422,7 @@ impl Default for ClientLocalState {
             mls_historical_snapshots: BTreeMap::new(),
             agent_signer_evidence: BTreeMap::new(),
             mls_genesis_policy_root: BTreeMap::new(),
+            mls_coverage_stale: BTreeMap::new(),
             mls_governance_proofs: BTreeMap::new(),
             mls_governance_proof_acquisitions: BTreeMap::new(),
             mls_governance_trust_anchors: BTreeMap::new(),

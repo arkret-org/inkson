@@ -687,6 +687,23 @@ pub(crate) async fn submit_secure_send(
             event_id: resp.event_id,
             status: resp.status,
         },
+        // §2.4.1 `epoch_update_required`: record the receiver's coverage
+        // refusal so the per-Realm MLS effect advances the epoch instead of
+        // leaving the scope silently unsendable.
+        Err(err)
+            if crate::mls::coverage_liveness::note_e2ee_submit_refusal(
+                &mut state_store,
+                realm_id,
+                circle_id.as_deref(),
+                &err,
+            ) =>
+        {
+            SecureSendOutcome::MessageFailed {
+                message: "Sending is paused until the MLS epoch covers the latest governance \
+                          Seal; advancing the epoch"
+                    .to_owned(),
+            }
+        }
         Err(err) => SecureSendOutcome::MessageFailed {
             message: format!("Message send failed: {err}"),
         },

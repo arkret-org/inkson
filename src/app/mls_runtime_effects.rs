@@ -1058,6 +1058,49 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     }
                 }
 
+                // `encryption-and-audit.md` §2.4.1 — a scope a receiver has put
+                // in `epoch_update_required` stays unsendable until an accepted
+                // `ak.mls.commit` attests the governance Seals it is missing.
+                // Every other commit trigger in this client hangs off a
+                // membership frontier change, so a capability grant, a policy
+                // update, or a single-member creator group had nothing to
+                // resume it. Same replay shape as the bootstrap above.
+                for circle_id in crate::mls::coverage_liveness::pending_mls_coverage_repairs(
+                    &state_store_for_probe.read(),
+                    &creator_bootstrap_realm_id,
+                ) {
+                    tracing::warn!(
+                        realm = %creator_bootstrap_realm_id,
+                        circle = circle_id.as_deref().unwrap_or("-"),
+                        "MLS governance coverage is stale; advancing the epoch to resume encrypted sending",
+                    );
+                    let coverage_error = match crate::transport::auth::authed_api(
+                        &detect_base,
+                        detect_session.clone(),
+                    ) {
+                        Ok(api) => crate::mls::coverage_liveness::ensure_mls_governance_coverage(
+                            &api,
+                            state_store_task,
+                            &creator_bootstrap_realm_id,
+                            circle_id.as_deref(),
+                            &detect_actor,
+                            &detect_device,
+                        )
+                        .await
+                        .err(),
+                        Err(error) => Some(error.to_string()),
+                    };
+                    if let Some(error) = coverage_error {
+                        tracing::warn!(
+                            realm = %creator_bootstrap_realm_id,
+                            circle = circle_id.as_deref().unwrap_or("-"),
+                            %error,
+                            "MLS coverage repair failed; the scope stays paused until the next attempt",
+                        );
+                        last_error_task.set(Some(format!("MLS coverage repair: {error}")));
+                    }
+                }
+
                 // Step-3 detection: if this device has no local account MLS
                 // secret yet OR local MLS history is missing/stale, and the
                 // server holds recovery material, flag the unlock prompt.

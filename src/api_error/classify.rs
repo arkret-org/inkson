@@ -225,6 +225,24 @@ pub fn is_stale_frontier_error(error: &anyhow::Error) -> bool {
     })
 }
 
+/// `true` for `encryption-and-audit.md` §2.5.2's governance-binding coverage
+/// refusal — the receiver rebuilt `M` at the DataEvent's `seal_ref` and the
+/// effective epoch's `covered_seals_cell` does not cover all of it.
+///
+/// §2.4.1 makes this `epoch_update_required`: the scope MUST stop sending new
+/// encrypted application messages until a Commit attests the missing governance
+/// Seals. Until this classifier existed, the refusal arrived as an untyped
+/// submit failure, so the send just failed and nothing ever advanced the epoch —
+/// the scope stayed unsendable for as long as the app ran.
+pub(crate) fn is_mls_governance_binding_stale_error(error: &anyhow::Error) -> bool {
+    api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
+        envelope.code() == arkret_sdk::error::ErrorCode::FAILED_PRECONDITION
+            && envelope
+                .message()
+                .contains(arkret_sdk::error::ReasonCode::MLS_GOVERNANCE_BINDING_STALE)
+    })
+}
+
 pub(crate) fn is_snapshot_unavailable_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
         let code = envelope.code();

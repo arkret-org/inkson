@@ -793,7 +793,24 @@ pub(super) fn dispatch_card_detail_update(
                     card.state = CardState::SoftFailed;
                     selected_card.set(Some(card));
                 }
-                board_status.set(format!("{kind} operation failed: {}", err.display()));
+                // §2.4.1 `epoch_update_required`: arm the coverage repair so the
+                // per-Realm MLS effect advances the epoch. Without this the
+                // refusal is just another failed write and the scope never
+                // recovers.
+                let paused = crate::mls::coverage_liveness::note_e2ee_submit_refusal(
+                    &mut state_store,
+                    &realm_id,
+                    None,
+                    err.inner(),
+                );
+                board_status.set(if paused {
+                    format!(
+                        "{kind} operation paused: MLS epoch must cover the latest governance Seal; \
+                         advancing the epoch"
+                    )
+                } else {
+                    format!("{kind} operation failed: {}", err.display())
+                });
             }
         }
     });
