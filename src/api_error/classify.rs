@@ -134,7 +134,13 @@ fn terminal_session_grant_message(message: &str) -> bool {
             || message.contains("not active")
             || message.contains("expired")
             || message.contains("locked")
-            || message.contains("suspended"))
+            || message.contains("suspended")
+            // soland's introspection wording when the Auth Server no longer
+            // recognizes the grant at all (e.g. coauth restarted and lost
+            // it): "session grant introspection was rejected by the Auth
+            // Server". Without this arm the client kept the dead grant and
+            // retried every second instead of routing to sign-in.
+            || message.contains("rejected"))
 }
 
 pub fn is_actor_seq_cas_conflict_error(error: &anyhow::Error) -> bool {

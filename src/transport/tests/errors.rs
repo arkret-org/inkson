@@ -293,6 +293,36 @@ fn recognizes_auth_expired_errors() {
     assert!(!is_auth_expired_error(&unrelated_capability_denied));
 }
 
+/// Regression lock (2026-08-01): when coauth restarts and forgets a session
+/// grant, soland answers every request with the exact wording below. This MUST
+/// classify as a terminal session-grant loss — the client previously treated
+/// it as a transient auth expiry and hammered 1-second retries forever instead
+/// of clearing the session and routing to sign-in.
+#[test]
+fn coauth_rejected_introspection_is_a_terminal_session_grant_loss() {
+    let rejected: anyhow::Error = TransportClientError {
+        status: StatusCode::UNAUTHORIZED,
+        error: decode_arkret_error(
+            StatusCode::UNAUTHORIZED,
+            br#"{"ok":false,"error":{"code":"unauthenticated","message":"session grant introspection was rejected by the Auth Server"},"request_id":"ak:request:test"}"#,
+        ),
+    }
+    .into();
+    assert!(is_terminal_session_grant_error(&rejected));
+    assert!(is_auth_expired_error(&rejected));
+
+    // A rejection that is not about the session grant must stay non-terminal.
+    let unrelated: anyhow::Error = TransportClientError {
+        status: StatusCode::UNAUTHORIZED,
+        error: decode_arkret_error(
+            StatusCode::UNAUTHORIZED,
+            br#"{"ok":false,"error":{"code":"unauthenticated","message":"device proof was rejected"},"request_id":"ak:request:test"}"#,
+        ),
+    }
+    .into();
+    assert!(!is_terminal_session_grant_error(&unrelated));
+}
+
 #[test]
 fn recognizes_plaintext_visibility_policy_errors() {
     let error: anyhow::Error = TransportClientError {
