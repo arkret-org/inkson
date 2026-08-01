@@ -709,6 +709,7 @@ pub async fn ensure_recovery_policy_and_did_recovery_backup(
     device_id: &str,
     recovery_key: &str,
 ) -> anyhow::Result<String> {
+    let signer = crate::event_signer::active_signer();
     let key_material = arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
         recovery_key,
         "",
@@ -750,8 +751,10 @@ pub async fn ensure_recovery_policy_and_did_recovery_backup(
         &plaintext,
         policy.policy_id.as_str(),
         policy.version,
+        signer.as_ref(),
     )?;
-    api.put_key_backup(&backup_id, body).await?;
+    api.put_key_backup(&backup_id, body, signer.as_ref())
+        .await?;
     Ok(backup_id)
 }
 
@@ -823,6 +826,7 @@ pub fn build_recovery_directed_ssk_backup_body(
         },
         &plaintext,
         Some((policy.policy_id.as_str(), policy.version)),
+        None,
     )
 }
 
@@ -921,7 +925,9 @@ pub async fn ensure_recovery_directed_ssk_backup(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("recovery-directed SSK backup omits backup_id"))?
         .to_owned();
-    api.put_key_backup(&backup_id, body).await?;
+    let signer = crate::event_signer::active_signer();
+    api.put_key_backup(&backup_id, body, signer.as_ref())
+        .await?;
     Ok(backup_id)
 }
 

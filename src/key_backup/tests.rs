@@ -39,6 +39,7 @@ fn build_recovery_vault_backup_body(
             secret_id: Some("inkson_recovery_vault_payload".to_owned()),
             ..Default::default()
         },
+        None,
     )
 }
 
@@ -84,6 +85,7 @@ fn managed_agent_pcr_binding_is_bound_into_hpke_aad() {
         },
         b"encrypted local MLS snapshot",
         Some(("ak:policy:01964137-0000-7000-8000-000000000077", 1)),
+        None,
     )
     .unwrap();
 
@@ -252,7 +254,7 @@ fn recovery_policy_ref_is_covered_by_signed_fields_when_present() {
 }
 
 #[test]
-fn sign_key_backup_with_active_device_is_noop_helper_signs_directly() {
+fn direct_key_backup_signing_is_self_verifying() {
     // The build-path integration uses the process-wide signer slot, which
     // races with other tests; the signing CORRECTNESS is covered by the
     // round-trip/tamper tests. Here we just confirm the direct signing
@@ -357,6 +359,7 @@ fn did_recovery_backup_uses_separate_domain_and_hpke() {
         b"recovery share",
         "ak:policy:01964137-0000-7000-8000-0000000000aa",
         1,
+        None,
     )
     .unwrap();
 
@@ -490,6 +493,7 @@ fn mls_history_accepts_secret_storage_key() {
             ACTOR,
             DEVICE,
             &crate::mls::runtime::derive_mls_history_backup_key("device-secret").unwrap(),
+            None,
         )
         .unwrap();
     assert_eq!(body["encryption"]["recipient_method"], "secret_storage_key");
@@ -518,6 +522,7 @@ fn recovery_public_key_backup_round_trips_and_validates() {
             ..Default::default()
         },
         b"opaque mls snapshot bytes",
+        None,
         None,
     )
     .unwrap();
@@ -561,6 +566,7 @@ fn mls_history_rejects_obvious_plaintext_fields() {
             "did:web:alice.example",
             "ak:device:01964137-0000-7000-8000-000000000001",
             &crate::mls::runtime::derive_mls_history_backup_key("device-secret").unwrap(),
+            None,
         )
         .unwrap();
     body["serialized_state"] = json!("plaintext sdk bytes");

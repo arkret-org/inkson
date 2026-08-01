@@ -86,33 +86,49 @@ pub fn sign_key_backup_auth_data(
     Ok(())
 }
 
-/// Sign `body`'s `auth_data` with the active device signer. This requires a
-/// signer that can produce raw Ed25519 signatures over canonical JSON bytes.
+/// The device signer a key-backup body is signed with.
 ///
-/// Returns `Ok(true)` when signed, `Ok(false)` when NO signer is installed (the
+/// Passed explicitly rather than read from the process-wide active-signer slot.
+/// Every builder below used to consult that slot, which made the *shape of a
+/// built body* depend on whether some unrelated concurrently-running code had
+/// installed a signer: with one installed the body gained `auth_data`, without
+/// one it did not. In `cargo test --lib`, where the whole binary shares one
+/// process, that turned body-shape assertions into a race whose failing set
+/// changed from run to run — and the process-global mutex added to serialize it
+/// only moved the race, because a second builder in the same payload still read
+/// the same slot. A parameter has no such coupling.
+pub type KeyBackupSigner<'a> = Option<&'a std::sync::Arc<crate::event_signer::InksonEventSigner>>;
+
+/// Sign `body`'s `auth_data` with `signer`. This requires a signer that can
+/// produce raw Ed25519 signatures over canonical JSON bytes.
+///
+/// Returns `Ok(true)` when signed, `Ok(false)` when `signer` is `None` (the
 /// legitimate unsigned case — e.g. tests, or pre-bootstrap), and `Err` when a
-/// signer IS present but signing failed. Crucially this no longer silently
-/// downgrades a present-but-unsuitable signer to unsigned: a present signer
+/// signer IS present but signing failed. Crucially this does not silently
+/// downgrade a present-but-unsuitable signer to unsigned: a present signer
 /// always signs or errors, so callers never ship an unsigned backup by accident.
-pub fn sign_key_backup_with_active_device(
+pub fn sign_key_backup_with_device(
     body: &mut Value,
     device_id: &str,
+    signer: KeyBackupSigner<'_>,
 ) -> anyhow::Result<bool> {
-    sign_key_backup_with_active_device_and_trust_anchor(
+    sign_key_backup_with_device_and_trust_anchor(
         body,
         device_id,
+        signer,
         Some(KeyBackupDeviceTrustAnchor::SskGeneration(
             DEFAULT_SSK_GENERATION,
         )),
     )
 }
 
-pub fn sign_key_backup_with_active_device_and_trust_anchor(
+pub fn sign_key_backup_with_device_and_trust_anchor(
     body: &mut Value,
     device_id: &str,
+    signer: KeyBackupSigner<'_>,
     trust_anchor: Option<KeyBackupDeviceTrustAnchor>,
 ) -> anyhow::Result<bool> {
-    let Some(signer) = crate::event_signer::active_signer() else {
+    let Some(signer) = signer else {
         return Ok(false);
     };
     // Build auth_data WITHOUT the signature, then sign canonical(body) over it.
@@ -258,16 +274,17 @@ fn apply_key_backup_trust_anchor(
 // establishes it a few lines earlier. Rewriting them as `?` would add
 // error paths no caller can reach.
 #[allow(clippy::expect_used)]
-pub fn build_key_backup_unlock_proof_active(
+pub fn build_key_backup_unlock_proof(
     backup: &Value,
     principal_id: &str,
     requesting_device_id: &str,
     recovery_session: Option<&Value>,
     recovery_key: Option<(&[u8; 32], &str)>,
+    signer: KeyBackupSigner<'_>,
 ) -> anyhow::Result<Value> {
     let active_signer = if recovery_key.is_none() {
-        Some(crate::event_signer::active_signer().ok_or_else(|| {
-            anyhow::anyhow!("active signer is required for key backup unlock proof")
+        Some(signer.ok_or_else(|| {
+            anyhow::anyhow!("device signer is required for key backup unlock proof")
         })?)
     } else {
         None
@@ -357,11 +374,12 @@ pub fn build_key_backup_unlock_proof_active(
     Ok(proof)
 }
 
-pub async fn fetch_key_backup_with_active_unlock_proof(
+pub async fn fetch_key_backup_with_device_unlock_proof(
     api: &crate::transport::TransportClient,
     backup_metadata: &Value,
     principal_id: &str,
     requesting_device_id: &str,
+    signer: KeyBackupSigner<'_>,
 ) -> anyhow::Result<Value> {
     fetch_key_backup_with_unlock_proof(
         api,
@@ -370,6 +388,7 @@ pub async fn fetch_key_backup_with_active_unlock_proof(
         requesting_device_id,
         None,
         None,
+        signer,
     )
     .await
 }
@@ -412,6 +431,7 @@ pub async fn fetch_key_backup_with_recovery_session_unlock_proof(
                 })?
                 .as_str(),
         )),
+        None,
     )
     .await
 }
@@ -423,6 +443,7 @@ async fn fetch_key_backup_with_unlock_proof(
     requesting_device_id: &str,
     recovery_session: Option<&Value>,
     recovery_key: Option<(&[u8; 32], &str)>,
+    signer: KeyBackupSigner<'_>,
 ) -> anyhow::Result<Value> {
     let backoff_scope = key_backup_unlock_backoff_scope(api, principal_id)?;
     if let Some(retry_after_ms) = key_backup_unlock_backoff_remaining_ms(&backoff_scope) {
@@ -441,12 +462,13 @@ async fn fetch_key_backup_with_unlock_proof(
         return Ok(cached);
     }
     let backup_id = required_str_anyhow(backup_metadata, "backup_id")?.to_owned();
-    let proof = build_key_backup_unlock_proof_active(
+    let proof = build_key_backup_unlock_proof(
         backup_metadata,
         principal_id,
         requesting_device_id,
         recovery_session,
         recovery_key,
+        signer,
     )?;
     let backup = match api
         .get_key_backup_with_unlock_proof(&backup_id, &proof)
@@ -471,6 +493,7 @@ pub async fn fetch_key_backup_for_verified_recovery_session(
     api: &crate::transport::TransportClient,
     backup_metadata: &Value,
     session: &arkret_models_crypto::RecoverySessionState,
+    signer: KeyBackupSigner<'_>,
 ) -> anyhow::Result<Value> {
     session.validate()?;
     if session.state != arkret_models_crypto::SessionState::Verified {
@@ -478,12 +501,13 @@ pub async fn fetch_key_backup_for_verified_recovery_session(
     }
     let session_value = serde_json::to_value(session)?;
     let backup_id = required_str_anyhow(backup_metadata, "backup_id")?.to_owned();
-    let proof = build_key_backup_unlock_proof_active(
+    let proof = build_key_backup_unlock_proof(
         backup_metadata,
         session.principal_id.as_str(),
         session.requesting_device_id.as_str(),
         Some(&session_value),
         None,
+        signer,
     )?;
     let backup = api
         .get_key_backup_with_unlock_proof(&backup_id, &proof)
@@ -577,17 +601,11 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::event_signer::{ActiveSignerTestGuard, build_ed25519_signer, replace_active_signer};
-
-    fn reset_signer() -> impl Drop {
-        ActiveSignerTestGuard::replace(None)
-    }
+    use crate::event_signer::build_ed25519_signer;
 
     #[test]
     fn unlock_proof_auth_data_matches_sdk_schema() {
-        let _guard = reset_signer();
         let signer = Arc::new(build_ed25519_signer([11u8; 32], "did:web:alice.example"));
-        let _ = replace_active_signer(Some(signer));
         let backup = json!({
             "backup_id": "ak:backup:0196419b-0000-7000-8000-000000000001",
             "backup_kind": "mls_history",
@@ -595,12 +613,13 @@ mod tests {
             "ciphertext_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         });
 
-        let proof = build_key_backup_unlock_proof_active(
+        let proof = build_key_backup_unlock_proof(
             &backup,
             "did:web:alice.example",
             "ak:device:0196419b-0000-7000-8000-000000000003",
             None,
             None,
+            Some(&signer),
         )
         .expect("unlock proof builds");
 

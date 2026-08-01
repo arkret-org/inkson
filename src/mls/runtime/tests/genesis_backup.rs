@@ -226,6 +226,7 @@ fn mls_history_backup_body_decodes_to_snapshot_envelope() {
             "did:web:alice.example",
             "ak:device:01904100-0000-7000-8000-000000000001",
             &derive_mls_history_backup_key("device-secret").unwrap(),
+            None,
         )
         .unwrap();
 
@@ -257,6 +258,7 @@ fn mls_history_backup_decode_rejects_metadata_mismatch() {
             "did:web:alice.example",
             "ak:device:01904100-0000-7000-8000-000000000001",
             &derive_mls_history_backup_key("device-secret").unwrap(),
+            None,
         )
         .unwrap();
     body["contents"][0]["epoch"] = json!(7);
@@ -301,6 +303,7 @@ fn restore_mls_history_backup_saves_snapshot_when_fresh() {
             actor,
             device,
             &derive_mls_history_backup_key(&secret).unwrap(),
+            None,
         )
         .unwrap();
     let mut state = temp_state_store("restore-fresh");
@@ -357,6 +360,7 @@ fn restore_mls_history_backup_rejects_epoch_rollback() {
             actor,
             device,
             &derive_mls_history_backup_key(&secret).unwrap(),
+            None,
         )
         .unwrap();
     let mut state = temp_state_store("restore-rollback");
@@ -416,7 +420,8 @@ fn cross_device_recovery_restores_history_without_local_secret() {
         b"deterministic-salt",
     );
     let (_history_backup_id, history_body) =
-        build_mls_history_backup_body_with_secret(&envelope, actor, device_a, &secret_a).unwrap();
+        build_mls_history_backup_body_with_secret(&envelope, actor, device_a, &secret_a, None)
+            .unwrap();
 
     // Device A wraps the account secret behind the recovery PASSPHRASE
     // (KEK derived from the passphrase, exactly like the recovery setup
@@ -428,6 +433,7 @@ fn cross_device_recovery_restores_history_without_local_secret() {
         device_a,
         &setup_kek,
         &secret_a,
+        None,
     )
     .unwrap();
 

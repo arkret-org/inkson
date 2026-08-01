@@ -5,8 +5,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde_json::{Value, json};
 
 use super::{
-    BackupKind, attach_key_backup_domain_separation, attach_key_backup_genesis_series,
-    is_protocol_device_id, sign_key_backup_with_active_device,
+    BackupKind, KeyBackupSigner, attach_key_backup_domain_separation,
+    attach_key_backup_genesis_series, is_protocol_device_id, sign_key_backup_with_device,
 };
 use crate::recovery_crypto::VaultKek;
 
@@ -36,6 +36,7 @@ pub fn build_passphrase_kdf_backup_body(
     class: BackupKind,
     subdomain: &str,
     item: &KeyBackupContentItem,
+    signer: KeyBackupSigner<'_>,
 ) -> anyhow::Result<Value> {
     let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
         .map_err(|error| anyhow::anyhow!("backup_id: {error}"))?;
@@ -60,7 +61,7 @@ pub fn build_passphrase_kdf_backup_body(
     envelope.contents = vec![item.clone()];
     let mut body = serde_json::to_value(envelope)
         .map_err(|error| anyhow::anyhow!("serialize key backup: {error}"))?;
-    sign_key_backup_with_active_device(&mut body, device_id)?;
+    sign_key_backup_with_device(&mut body, device_id, signer)?;
     Ok(body)
 }
 
@@ -91,6 +92,7 @@ pub fn build_did_recovery_backup_body(
     // did_recovery backups MUST bind the active recovery policy.
     policy_id: &str,
     policy_version: u64,
+    signer: KeyBackupSigner<'_>,
 ) -> anyhow::Result<Value> {
     build_recovery_public_key_backup_body(
         backup_id,
@@ -107,6 +109,7 @@ pub fn build_did_recovery_backup_body(
         },
         plaintext,
         Some((policy_id, policy_version)),
+        signer,
     )
 }
 
@@ -169,6 +172,7 @@ pub fn build_recovery_public_key_backup_body(
     // hint for other classes. The server cross-checks it against the actor's
     // currently accepted recovery policy and rejects on mismatch.
     recovery_policy_ref: Option<(&str, u64)>,
+    signer: KeyBackupSigner<'_>,
 ) -> anyhow::Result<Value> {
     build_recovery_public_key_backup_body_in_series(
         backup_id,
@@ -183,6 +187,7 @@ pub fn build_recovery_public_key_backup_body(
         recovery_policy_ref,
         None,
         None,
+        signer,
     )
 }
 
@@ -203,6 +208,7 @@ pub fn build_recovery_public_key_backup_body_in_series(
     recovery_policy_ref: Option<(&str, u64)>,
     series_id: Option<&str>,
     previous_series_tail: Option<&Value>,
+    signer: KeyBackupSigner<'_>,
 ) -> anyhow::Result<Value> {
     build_recovery_public_key_backup_body_for_items_in_series(
         backup_id,
@@ -217,6 +223,7 @@ pub fn build_recovery_public_key_backup_body_in_series(
         recovery_policy_ref,
         series_id,
         previous_series_tail,
+        signer,
     )
 }
 
@@ -236,6 +243,7 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
     recovery_policy_ref: Option<(&str, u64)>,
     series_id: Option<&str>,
     previous_series_tail: Option<&Value>,
+    signer: KeyBackupSigner<'_>,
 ) -> anyhow::Result<Value> {
     if items.is_empty() {
         anyhow::bail!("recovery_public_key backup requires at least one content item");
@@ -303,7 +311,7 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
             .strip_prefix("sha256:")
             .unwrap_or_default()
     ));
-    sign_key_backup_with_active_device(&mut body, device_id)?;
+    sign_key_backup_with_device(&mut body, device_id, signer)?;
     Ok(body)
 }
 

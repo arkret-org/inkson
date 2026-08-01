@@ -862,8 +862,13 @@ async fn hydrate_mls_restore_payload_with_unlock_proof(
                 .await
             }
             None => {
-                crate::key_backup::fetch_key_backup_with_active_unlock_proof(
-                    api, &entry, actor_id, device_id,
+                let signer = crate::event_signer::active_signer();
+                crate::key_backup::fetch_key_backup_with_device_unlock_proof(
+                    api,
+                    &entry,
+                    actor_id,
+                    device_id,
+                    signer.as_ref(),
                 )
                 .await
             }
@@ -923,8 +928,13 @@ pub async fn fetch_mls_history_restore_payload_with_unlock_proof(
             backups.push(entry);
             continue;
         }
-        let full = crate::key_backup::fetch_key_backup_with_active_unlock_proof(
-            api, &entry, actor_id, device_id,
+        let signer = crate::event_signer::active_signer();
+        let full = crate::key_backup::fetch_key_backup_with_device_unlock_proof(
+            api,
+            &entry,
+            actor_id,
+            device_id,
+            signer.as_ref(),
         )
         .await
         .map_err(|err| anyhow!("fetch MLS history backup {backup_id} with unlock proof: {err}"))?;

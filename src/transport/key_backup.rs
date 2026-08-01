@@ -100,9 +100,10 @@ impl crate::transport::TransportClient {
         &self,
         backup_id: &str,
         payload: serde_json::Value,
+        signer: crate::key_backup::KeyBackupSigner<'_>,
     ) -> anyhow::Result<arkret_sdk::KeysBackupsReplaceOutcome> {
         let (record, _) = self
-            .prepare_key_backup_put_payload(backup_id, payload)
+            .prepare_key_backup_put_payload(backup_id, payload, signer)
             .await?;
         let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid key backup id: {err}"))?;
@@ -117,9 +118,10 @@ impl crate::transport::TransportClient {
         &self,
         backup_id: &str,
         payload: serde_json::Value,
+        signer: crate::key_backup::KeyBackupSigner<'_>,
     ) -> anyhow::Result<(arkret_sdk::KeysBackupsReplaceOutcome, serde_json::Value)> {
         let (record, sent_body) = self
-            .prepare_key_backup_put_payload(backup_id, payload)
+            .prepare_key_backup_put_payload(backup_id, payload, signer)
             .await?;
         let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid key backup id: {err}"))?;
@@ -136,12 +138,13 @@ impl crate::transport::TransportClient {
         &self,
         backup_id: &str,
         payload: serde_json::Value,
+        signer: crate::key_backup::KeyBackupSigner<'_>,
     ) -> anyhow::Result<(arkret_sdk::KeyBackup, serde_json::Value)> {
         crate::key_backup::validate_key_backup_put_request(backup_id, &payload)
             .map_err(|err| anyhow::anyhow!("invalid key backup envelope: {err}"))?;
         let record: arkret_sdk::KeyBackup = serde_json::from_value(payload)?;
         let mut payload = serde_json::to_value(&record)?;
-        self.attach_key_backup_current_device_trust_anchor(&mut payload)
+        self.attach_key_backup_current_device_trust_anchor(&mut payload, signer)
             .await?;
         crate::key_backup::validate_key_backup_put_request(backup_id, &payload)
             .map_err(|err| anyhow::anyhow!("invalid key backup envelope: {err}"))?;
@@ -153,6 +156,7 @@ impl crate::transport::TransportClient {
     async fn attach_key_backup_current_device_trust_anchor(
         &self,
         payload: &mut Value,
+        signer: crate::key_backup::KeyBackupSigner<'_>,
     ) -> anyhow::Result<()> {
         let Some(device_id) = payload
             .get("device_id")
@@ -202,9 +206,10 @@ impl crate::transport::TransportClient {
         let Some(event_id) = viewer_event_id.or(query_event_id) else {
             return Ok(());
         };
-        let signed = crate::key_backup::sign_key_backup_with_active_device_and_trust_anchor(
+        let signed = crate::key_backup::sign_key_backup_with_device_and_trust_anchor(
             payload,
             &device_id,
+            signer,
             Some(crate::key_backup::KeyBackupDeviceTrustAnchor::DeviceAuthorizeEventId(event_id)),
         )?;
         if !signed {

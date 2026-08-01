@@ -338,6 +338,7 @@ impl MlsSnapshotEnvelope {
         actor_id: &str,
         device_id: &str,
         secret_storage_key: &[u8; 32],
+        signer: crate::key_backup::KeyBackupSigner<'_>,
     ) -> anyhow::Result<Value> {
         let envelope_bytes = serde_json::to_vec(self).unwrap_or_default();
         let mut body = json!({
@@ -408,7 +409,7 @@ impl MlsSnapshotEnvelope {
         body["encryption"]["aead"]["nonce"] = Value::String(sealed.nonce_b64);
         body["ciphertext"] = Value::String(sealed.ciphertext_b64);
         body["ciphertext_digest"] = Value::String(sealed.digest_sha256);
-        crate::key_backup::sign_key_backup_with_active_device(&mut body, device_id)?;
+        crate::key_backup::sign_key_backup_with_device(&mut body, device_id, signer)?;
         Ok(body)
     }
 
@@ -634,6 +635,7 @@ mod tests {
                 "did:web:alice.example",
                 "ak:device:01964137-0000-7000-8000-000000000001",
                 &crate::mls::runtime::derive_mls_history_backup_key("passw").unwrap(),
+                None,
             )
             .unwrap();
         assert_eq!(

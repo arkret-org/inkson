@@ -28,11 +28,18 @@ pub fn build_mls_history_backup_body(
     snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,
     actor_id: &str,
     device_id: &str,
+    signer: crate::key_backup::KeyBackupSigner<'_>,
 ) -> Result<(String, Value), MlsRuntimeError> {
     let store = crate::secure_key_store::default_secure_key_store("inkson");
     let account_secret = load_device_snapshot_secret(store.as_ref(), actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    build_mls_history_backup_body_with_secret(snapshot, actor_id, device_id, &account_secret)
+    build_mls_history_backup_body_with_secret(
+        snapshot,
+        actor_id,
+        device_id,
+        &account_secret,
+        signer,
+    )
 }
 
 pub fn build_mls_history_backup_body_with_secret(
@@ -40,11 +47,12 @@ pub fn build_mls_history_backup_body_with_secret(
     actor_id: &str,
     device_id: &str,
     account_secret: &str,
+    signer: crate::key_backup::KeyBackupSigner<'_>,
 ) -> Result<(String, Value), MlsRuntimeError> {
     let backup_id = format!("ak:backup:{}", crate::operation::uuid_v7());
     let wrap_key = derive_mls_history_backup_key(account_secret)?;
     let body = snapshot
-        .to_key_backup_body(&backup_id, actor_id, device_id, &wrap_key)
+        .to_key_backup_body(&backup_id, actor_id, device_id, &wrap_key, signer)
         .map_err(|error| MlsRuntimeError::Backup(error.to_string()))?;
     Ok((backup_id, body))
 }
@@ -55,8 +63,10 @@ pub async fn upload_mls_snapshot_backup(
     actor_id: &str,
     device_id: &str,
 ) -> Result<String, MlsRuntimeError> {
-    let (backup_id, body) = build_mls_history_backup_body(snapshot, actor_id, device_id)?;
-    api.put_key_backup(&backup_id, body)
+    let signer = crate::event_signer::active_signer();
+    let (backup_id, body) =
+        build_mls_history_backup_body(snapshot, actor_id, device_id, signer.as_ref())?;
+    api.put_key_backup(&backup_id, body, signer.as_ref())
         .await
         .map_err(|err| MlsRuntimeError::Backup(err.to_string()))?;
     Ok(backup_id)

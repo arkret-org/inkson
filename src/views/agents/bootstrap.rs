@@ -449,11 +449,13 @@ async fn resolve_mls_history_series_target(
     {
         tail_metadata.clone()
     } else {
-        crate::key_backup::fetch_key_backup_with_active_unlock_proof(
+        let signer = crate::event_signer::active_signer();
+        crate::key_backup::fetch_key_backup_with_device_unlock_proof(
             api,
             tail_metadata,
             controller_id,
             device_id,
+            signer.as_ref(),
         )
         .await?
     };
@@ -484,6 +486,7 @@ fn build_managed_pcr_backup_body(
     series_seq: u64,
     previous_series_tail: Option<&Value>,
     trust_anchor: &ControllerBackupTrustAnchor,
+    signer: crate::key_backup::KeyBackupSigner<'_>,
 ) -> anyhow::Result<Value> {
     if items.is_empty() {
         anyhow::bail!("managed Agent PCR backup requires at least one current Agent item");
@@ -540,6 +543,7 @@ fn build_managed_pcr_backup_body(
         Some(recovery_policy_ref),
         Some(series_id),
         previous_series_tail,
+        None,
     )?;
     body["frontier_ref"] = json!({
         "frontier_digest": envelope_frontier.frontier_digest,
@@ -562,9 +566,10 @@ fn build_managed_pcr_backup_body(
     };
     crate::key_backup::validate_key_backup_plaintext_binding(&body, &plaintext)
         .map_err(anyhow::Error::msg)?;
-    crate::key_backup::sign_key_backup_with_active_device_and_trust_anchor(
+    crate::key_backup::sign_key_backup_with_device_and_trust_anchor(
         &mut body,
         device_id,
+        signer,
         Some(auth_anchor),
     )?;
     Ok(body)
@@ -1375,8 +1380,10 @@ pub(crate) async fn bootstrap_provisioned_agent(
         series_target.series_seq,
         series_target.previous_tail.as_ref(),
         &trust_anchor,
+        Some(&signer),
     )?;
-    api.put_key_backup(&backup_id, backup).await?;
+    api.put_key_backup(&backup_id, backup, Some(&signer))
+        .await?;
 
     if let Some((pointer_version, previous_series_ids)) = series_target.publish_pointer {
         let controller_realm_id = arkret_sdk::principal_control_realm_id(&controller_did);
@@ -1787,6 +1794,7 @@ mod tests {
             0,
             None,
             &ControllerBackupTrustAnchor::SskGeneration(1),
+            None,
         )
         .unwrap();
 
@@ -1841,6 +1849,7 @@ mod tests {
             1,
             Some(&body),
             &ControllerBackupTrustAnchor::SskGeneration(1),
+            None,
         )
         .unwrap();
         assert_eq!(successor["series_seq"], 1);
@@ -1947,6 +1956,7 @@ mod tests {
             0,
             None,
             &ControllerBackupTrustAnchor::SskGeneration(1),
+            None,
         )
         .unwrap();
         let account =
@@ -1959,6 +1969,7 @@ mod tests {
                 "restored controller account secret",
                 crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION,
                 ("ak:recovery_policy:01964137-0000-7000-8000-000000000095", 3),
+                None,
             )
             .unwrap();
         let account_series_id = account["series_id"].as_str().unwrap();

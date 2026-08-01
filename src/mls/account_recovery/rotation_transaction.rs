@@ -59,6 +59,7 @@ pub(crate) fn prepare_rotation_backup_material(
     recovery_words: &str,
     snapshots: &std::collections::BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
     list_payload: &Value,
+    signer: crate::key_backup::KeyBackupSigner<'_>,
 ) -> Result<PreparedRotationBackupMaterial> {
     let normalized = crate::recovery_crypto::normalize_recovery_key_input(recovery_words)
         .ok_or_else(|| anyhow!("a valid 24-word Recovery Key is required"))?;
@@ -84,6 +85,7 @@ pub(crate) fn prepare_rotation_backup_material(
         &kek,
         &rotation.new_secret,
         rotation.new_version,
+        signer,
     )?;
     let secret_storage = prepare_class(
         list_payload,
@@ -106,10 +108,11 @@ pub(crate) fn prepare_rotation_backup_material(
             actor_id,
             device_id,
             &rotation.new_secret,
+            signer,
         )
         .map_err(|error| anyhow!(error.user_message()))?;
         body["series_id"] = Value::String(history_series_id.as_str().to_owned());
-        crate::key_backup::sign_key_backup_with_active_device(&mut body, device_id)
+        crate::key_backup::sign_key_backup_with_device(&mut body, device_id, signer)
             .context("sign replacement MLS history backup")?;
         history_bodies.push(body);
     }
@@ -175,6 +178,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let submitter = api.event_submitter()?;
     let coordinator_service_id = Did::new(submitter.service_id().await?)?;
     let list_payload = super::restore::fetch_mls_restore_payload(api, actor_id).await?;
+    let signer = crate::event_signer::active_signer();
     let prepared = prepare_rotation_backup_material(
         secure_store.as_ref(),
         actor_id,
@@ -182,6 +186,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         recovery_words,
         snapshots,
         &list_payload,
+        signer.as_ref(),
     )?;
 
     let principal = Did::new(actor_id.to_owned())?;

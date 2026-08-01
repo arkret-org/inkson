@@ -62,6 +62,7 @@ pub fn build_mls_account_secret_backup_body_with_kek(
     device_id: &str,
     kek: &VaultKek,
     account_secret: &str,
+    signer: crate::key_backup::KeyBackupSigner<'_>,
 ) -> Result<Value> {
     build_mls_account_secret_backup_body_with_kek_and_version(
         backup_id,
@@ -70,6 +71,7 @@ pub fn build_mls_account_secret_backup_body_with_kek(
         kek,
         account_secret,
         crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION,
+        signer,
     )
 }
 
@@ -82,6 +84,7 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
     kek: &VaultKek,
     account_secret: &str,
     account_secret_version: u32,
+    signer: crate::key_backup::KeyBackupSigner<'_>,
 ) -> Result<Value> {
     // Spec §7.5: the item identifiers are set BEFORE sealing so the AEAD AAD
     // (`domain_separation.aead_aad.item_kinds`) binds the real
@@ -101,6 +104,7 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
             secret_version: Some(account_secret_version),
             ..Default::default()
         },
+        signer,
     )
 }
 
@@ -166,6 +170,7 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
     device_id: &str,
     kek: &VaultKek,
     sidecar_json: &[u8],
+    signer: crate::key_backup::KeyBackupSigner<'_>,
 ) -> Result<Value> {
     build_passphrase_kdf_backup_body(
         backup_id,
@@ -180,6 +185,7 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
             secret_id: Some(MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned()),
             ..Default::default()
         },
+        signer,
     )
 }
 
@@ -229,6 +235,7 @@ pub fn build_mls_account_secret_recovery_public_key_backup(
     // compromised server can't replay an old-policy / non-frontier account-secret
     // backup sealed to the same recovery public key.
     recovery_policy_ref: (&str, u64),
+    signer: crate::key_backup::KeyBackupSigner<'_>,
 ) -> Result<Value> {
     build_mls_account_secret_recovery_public_key_backup_in_series(
         backup_id,
@@ -240,6 +247,7 @@ pub fn build_mls_account_secret_recovery_public_key_backup(
         account_secret_version,
         recovery_policy_ref,
         None,
+        signer,
     )
 }
 
@@ -259,6 +267,7 @@ pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
     account_secret_version: u32,
     recovery_policy_ref: (&str, u64),
     previous_series_tail: Option<&Value>,
+    signer: crate::key_backup::KeyBackupSigner<'_>,
 ) -> Result<Value> {
     crate::key_backup::build_recovery_public_key_backup_body_in_series(
         backup_id,
@@ -278,6 +287,7 @@ pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
         Some(recovery_policy_ref),
         None,
         previous_series_tail,
+        signer,
     )
 }
 

@@ -37,8 +37,15 @@ const STALE_MLS_HISTORY_SERIES: &str = "ak:backup_series:01964137-1000-7000-8000
 
 fn wrap() -> Value {
     let kek = derive_vault_kek(PASSPHRASE).unwrap();
-    build_mls_account_secret_backup_body_with_kek(BACKUP_ID, ACTOR, DEVICE, &kek, ACCOUNT_SECRET)
-        .unwrap()
+    build_mls_account_secret_backup_body_with_kek(
+        BACKUP_ID,
+        ACTOR,
+        DEVICE,
+        &kek,
+        ACCOUNT_SECRET,
+        None,
+    )
+    .unwrap()
 }
 
 /// Build the HPKE `recovery_public_key` account-secret backup that the
@@ -57,6 +64,7 @@ fn recovery_hpke_backup() -> Value {
         ACCOUNT_SECRET,
         1,
         ("ak:recovery_policy:P1", 3),
+        None,
     )
     .unwrap()
 }
@@ -125,6 +133,7 @@ fn history_body(envelope: &crate::mls::persistence::MlsSnapshotEnvelope) -> Valu
             ACTOR,
             DEVICE,
             &crate::mls::runtime::derive_mls_history_backup_key(ACCOUNT_SECRET).unwrap(),
+            None,
         )
         .unwrap()
 }
@@ -219,9 +228,10 @@ fn round_trips_even_when_random_bytes_would_need_url_safe_alphabet() {
     for i in 0..32u32 {
         let secret = format!("account-secret-payload-with-entropy-{i:08x}-padding++//");
         let kek = derive_vault_kek(PASSPHRASE).unwrap();
-        let body =
-            build_mls_account_secret_backup_body_with_kek(BACKUP_ID, ACTOR, DEVICE, &kek, &secret)
-                .unwrap();
+        let body = build_mls_account_secret_backup_body_with_kek(
+            BACKUP_ID, ACTOR, DEVICE, &kek, &secret, None,
+        )
+        .unwrap();
 
         for field in [
             body["ciphertext"].as_str().unwrap(),
@@ -282,6 +292,7 @@ fn preferred_account_secret_requires_recovery_public_key() {
         ACCOUNT_SECRET,
         1,
         ("ak:recovery_policy:P1", 3),
+        None,
     )
     .unwrap();
     let payload = serde_json::json!({
@@ -466,6 +477,7 @@ fn fresh_device_restores_via_recovery_key_no_passphrase() {
         ACCOUNT_SECRET,
         crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION,
         ("ak:recovery_policy:P1", 3),
+        None,
     )
     .unwrap();
     let history_body_value = history_body(&history);
@@ -541,6 +553,7 @@ fn recovery_public_key_backup_policy_ref_is_enforced_on_open() {
         ACCOUNT_SECRET,
         1,
         ("ak:recovery_policy:P1", 3),
+        None,
     )
     .unwrap();
 
@@ -592,6 +605,7 @@ fn recovery_public_key_successor_is_sealed_with_final_series_metadata() {
         ACCOUNT_SECRET,
         1,
         recovery_policy_ref,
+        None,
     )
     .unwrap();
     let successor = build_mls_account_secret_recovery_public_key_backup_in_series(
@@ -604,6 +618,7 @@ fn recovery_public_key_successor_is_sealed_with_final_series_metadata() {
         2,
         recovery_policy_ref,
         Some(&genesis),
+        None,
     )
     .unwrap();
 
@@ -635,6 +650,7 @@ fn recovery_public_key_backup_without_policy_ref_rejected_when_policy_expected()
         ACCOUNT_SECRET,
         1,
         ("ak:recovery_policy:P1", 3),
+        None,
     )
     .unwrap();
     body.as_object_mut().unwrap().remove("recovery_policy_ref");
@@ -753,6 +769,7 @@ fn mls_history_successor_chains_onto_previous_tail() {
             ACTOR,
             DEVICE,
             &crate::mls::runtime::derive_mls_history_backup_key(ACCOUNT_SECRET).unwrap(),
+            None,
         )
         .unwrap();
     apply_next_series(Some(&genesis), &mut successor).unwrap();
@@ -975,9 +992,10 @@ fn wrap_sidecar() -> (Vec<u8>, Value) {
     let sidecar = sample_sidecar();
     let json = serde_json::to_vec(&sidecar).unwrap();
     let kek = derive_vault_kek(ACCOUNT_SECRET.as_bytes()).unwrap();
-    let body =
-        build_mls_private_plaintext_backup_body_with_kek(BACKUP_ID, ACTOR, DEVICE, &kek, &json)
-            .unwrap();
+    let body = build_mls_private_plaintext_backup_body_with_kek(
+        BACKUP_ID, ACTOR, DEVICE, &kek, &json, None,
+    )
+    .unwrap();
     (json, body)
 }
 

@@ -149,9 +149,14 @@ fn account_secret_rotation_rewraps_backups_old_secret_cannot_decrypt() {
         .rewrapped_snapshots
         .get(realm)
         .expect("rewrapped snapshot");
-    let (_backup_id, body) =
-        build_mls_history_backup_body_with_secret(rotated, actor, device, &rotation.new_secret)
-            .unwrap();
+    let (_backup_id, body) = build_mls_history_backup_body_with_secret(
+        rotated,
+        actor,
+        device,
+        &rotation.new_secret,
+        None,
+    )
+    .unwrap();
     let decoded = decode_mls_history_backup_envelope(&body, &rotation.new_secret).unwrap();
     assert!(
         crate::mls::persistence::decrypt_envelope(&decoded, old_secret).is_err(),

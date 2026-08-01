@@ -130,9 +130,14 @@ pub async fn recover_cross_signing_publication_authority(
             matches.len()
         );
     };
-    let unlocked =
-        crate::key_backup::fetch_key_backup_for_verified_recovery_session(api, metadata, session)
-            .await?;
+    let signer = crate::event_signer::active_signer();
+    let unlocked = crate::key_backup::fetch_key_backup_for_verified_recovery_session(
+        api,
+        metadata,
+        session,
+        signer.as_ref(),
+    )
+    .await?;
     let recovered = crate::recovery_strand::open_recovery_directed_ssk_backup(
         &unlocked,
         &material.backup_hpke_derived_private_key,
