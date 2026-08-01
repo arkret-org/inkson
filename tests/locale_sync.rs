@@ -2,10 +2,10 @@
 //!
 //! Two tiers carry a language choice off this device:
 //!
-//! * `client.language` account data — the user's other inkson devices, via
-//!   the principal server. Actor-private, so it is not on `ActorProfile`.
-//! * the OIDC `ui_locales` parameter — coauth, on the next sign-in, built
-//!   from the same device preference this module resolves.
+//! * `client.language` account data — the user's other inkson devices, via the principal server.
+//!   Actor-private, so it is not on `ActorProfile`.
+//! * the OIDC `ui_locales` parameter — coauth, on the next sign-in, built from the same device
+//!   preference this module resolves.
 //!
 //! An integration test rather than a unit test: the lib test target does not
 //! currently compile (pre-existing SDK drift in `did_binding` / `did_resolver`
@@ -44,7 +44,10 @@ fn the_declared_account_data_key_round_trips() {
 #[test]
 fn a_choice_made_on_another_device_switches_this_one() {
     let published = build_client_language_body(Locale::Zh);
-    assert_eq!(merge_client_language(Locale::En, &published), Some(Locale::Zh));
+    assert_eq!(
+        merge_client_language(Locale::En, &published),
+        Some(Locale::Zh)
+    );
 }
 
 #[test]
@@ -94,7 +97,10 @@ fn the_code_sent_as_ui_locales_is_one_coauth_accepts() {
     // same crate, so anything this produces must parse back identically —
     // otherwise the hand-off silently degrades to the browser's language.
     for locale in arkret_locale::SUPPORTED {
-        assert_eq!(arkret_locale::UiLocale::from_tag(locale.code()), Some(locale));
+        assert_eq!(
+            arkret_locale::UiLocale::from_tag(locale.code()),
+            Some(locale)
+        );
         assert_eq!(
             arkret_locale::UiLocale::from_tag_list(locale.code()),
             Some(locale)

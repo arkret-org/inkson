@@ -89,7 +89,10 @@ mod tests {
             let body = serde_json::json!({ "locale": tag });
             assert_eq!(merge_client_language(Locale::En, &body), None, "{tag}");
         }
-        assert_eq!(merge_client_language(Locale::En, &serde_json::json!({})), None);
+        assert_eq!(
+            merge_client_language(Locale::En, &serde_json::json!({})),
+            None
+        );
     }
 
     #[test]

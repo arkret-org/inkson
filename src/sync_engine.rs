@@ -113,6 +113,9 @@ pub struct SyncEngineContext {
     /// login form state, so the revoked id cannot be resurrected on re-login.
     pub live_device_id: crate::runtime::input::ValueCell<String>,
     pub selected_realm_id: crate::runtime::input::ValueReader<String>,
+    /// The session's optional WebSocket. A live rail supplies the account
+    /// channel; otherwise this engine stays on the canonical NDJSON binding.
+    pub websocket_rail: crate::transport::websocket_rail::WebSocketRail,
     /// Monotonic UI projection revision for Realm-backed views. Account-sync
     /// ingestion bumps this even when cursor checkpointing is deliberately
     /// deferred by unacknowledged to-device key material.
@@ -265,14 +268,24 @@ struct AccountTransportProvider {
 }
 
 impl TransportProvider for AccountTransportProvider {
-    type Transport = crate::client_core::InksonAccountTransport;
+    type Transport =
+        crate::transport::websocket_rail::StreamRail<crate::client_core::InksonAccountTransport>;
 
+    /// §6.1 — the account channel keeps canonical cursor semantics on either
+    /// transport, so the resume point survives a switch and the choice is made
+    /// per connection attempt rather than per session.
     async fn provide(&self) -> garth::Result<Self::Transport> {
         let session_generation = self.ctx.session.generation();
         let transport =
             crate::identity::session_refresh::provide_authenticated_sdk_client(&self.ctx.base_url)
                 .await
                 .map(crate::client_core::InksonAccountTransport::new)
+                .map(|http| {
+                    crate::transport::websocket_rail::StreamRail::select(
+                        &self.ctx.websocket_rail,
+                        http,
+                    )
+                })
                 .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         if self.ctx.session.generation() != session_generation || !self.is_active() {
             return Err(garth::Error::Protocol(
@@ -588,13 +601,22 @@ impl InksonAccountPostCommit {
     }
 }
 
-impl AccountPostCommitHook<crate::client_core::InksonAccountTransport> for InksonAccountPostCommit {
+/// The hook runs against whichever transport carried the step, but its own work
+/// — invite refresh, MLS, calls, to-device acknowledgement — is not a covered
+/// operation (§1), so it always uses the canonical HTTPS client the rail keeps.
+impl
+    AccountPostCommitHook<
+        crate::transport::websocket_rail::StreamRail<crate::client_core::InksonAccountTransport>,
+    > for InksonAccountPostCommit
+{
     async fn post_commit(
         &self,
-        transport: &crate::client_core::InksonAccountTransport,
+        transport: &crate::transport::websocket_rail::StreamRail<
+            crate::client_core::InksonAccountTransport,
+        >,
         step: &AccountStreamStep,
     ) -> garth::Result<AccountPostCommitOutcome> {
-        let http = transport.http();
+        let http = transport.http().http();
         if !self.active() {
             return Ok(AccountPostCommitOutcome::Continue);
         }

@@ -1362,8 +1362,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 // before any session exists) starts in the
                                 // right language instead of guessing from the
                                 // platform.
-                                if account_data_key
-                                    == crate::account_data::CLIENT_LANGUAGE_WIRE_KEY
+                                if account_data_key == crate::account_data::CLIENT_LANGUAGE_WIRE_KEY
                                 {
                                     match crate::account_data::decrypt_account_data_entry(
                                         &account_did(),

@@ -11,6 +11,9 @@ pub struct RuntimeServices {
     /// Product routes for the encrypted Signal receive rail. Installed by the
     /// app shell once the Signal hubs are mounted.
     pub signal_product_sink: SignalProductRouter,
+    /// The session's single optional WebSocket. Empty until the rail engine
+    /// completes a handshake; every stream engine reads HTTP while it is.
+    pub websocket_rail: crate::transport::websocket_rail::WebSocketRail,
 }
 
 impl RuntimeServices {
@@ -24,6 +27,7 @@ impl RuntimeServices {
             effects: EffectRegistry::default(),
             projection_sink: ProjectionRouter::default(),
             signal_product_sink: SignalProductRouter::default(),
+            websocket_rail: crate::transport::websocket_rail::WebSocketRail::default(),
         }
     }
 }

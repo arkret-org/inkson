@@ -11,9 +11,6 @@
 //! working on canonical HTTP/JSON + bounded NDJSON, and the socket is an
 //! optimisation the client takes only when the service says it may.
 
-use arkret_sdk::signatures::websocket_auth::{
-    WebSocketAuthProofRequest, build_websocket_auth_proof,
-};
 use arkret_wire::websocket_binding::{WEBSOCKET_HARD_MAX_FRAME_BYTES, WebSocketCloseCode};
 use garth::websocket::socket::{
     AuthProofRequest, BoxSocketFuture, WebSocketConnector, WebSocketInbound, WebSocketSocket,
@@ -115,17 +112,30 @@ impl WebSocketTransportSelector {
 
 /// Signs `challenge_dpop_session_v1` with the session's holder key and opens
 /// the platform socket.
+///
+/// The key stays inside the DPoP handle: this connector asks it for a proof
+/// rather than holding private bytes of its own, so the WebSocket context adds
+/// no second place a holder key can leak from.
 pub struct InksonWebSocketConnector {
     session_grant: String,
-    holder_key: ed25519_dalek::SigningKey,
+    holder: crate::identity::account_auth::grant_dpop::DpopHandle,
 }
 
 impl InksonWebSocketConnector {
-    pub fn new(session_grant: String, holder_key: ed25519_dalek::SigningKey) -> Self {
+    pub fn new(
+        session_grant: String,
+        holder: crate::identity::account_auth::grant_dpop::DpopHandle,
+    ) -> Self {
         Self {
             session_grant,
-            holder_key,
+            holder,
         }
+    }
+
+    /// The grant this connector authenticates with, for a reauth that needs to
+    /// bind `ath` to the same value.
+    pub fn grant(&self) -> String {
+        self.session_grant.clone()
     }
 }
 
@@ -143,19 +153,15 @@ impl WebSocketConnector for InksonWebSocketConnector {
 
     fn sign_auth_proof<'a>(&'a self, request: &'a AuthProofRequest) -> BoxSocketFuture<'a, String> {
         Box::pin(async move {
-            // The SDK owns the transcript; the key never leaves this process.
-            build_websocket_auth_proof(
-                &WebSocketAuthProofRequest {
-                    base_url: &request.base_url,
-                    session_grant: &request.session_grant,
-                    nonce: &request.nonce,
-                    issued_at: chrono::Utc::now(),
-                    jti: &request.jti,
-                },
-                &self.holder_key,
-            )
-            .map(|proof| proof.compact_jws)
-            .map_err(|error| garth::Error::Protocol(error.to_string()))
+            self.holder
+                .mint_websocket_auth_proof(
+                    &request.base_url,
+                    &request.session_grant,
+                    &request.nonce,
+                    &request.jti,
+                    crate::clock::now_utc(),
+                )
+                .map_err(|error| garth::Error::Protocol(error.to_string()))
         })
     }
 }
@@ -430,11 +436,32 @@ mod browser {
     }
 }
 
+/// Describe fixtures shared with the rail tests: the selector's behaviour is
+/// only meaningful against a real `ServiceDescribe`, and both modules need the
+/// advertised and the unadvertised shape.
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests_support {
+    pub(crate) fn describe_without_websocket() -> arkret_sdk::ServiceDescribe {
+        super::tests::describe_with(vec![arkret_sdk::SupportedBinding::new("http_json")])
+    }
+
+    pub(crate) fn describe_with_websocket() -> arkret_sdk::ServiceDescribe {
+        let descriptor = super::WebSocketBindingDescriptor::new(
+            "wss://server.example/_arkret/ws",
+            super::CLIENT_MAX_FRAME_BYTES,
+            16,
+        );
+        super::tests::describe_with(vec![descriptor.to_supported_binding().unwrap()])
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
     use super::*;
 
-    fn describe_with(bindings: Vec<arkret_sdk::SupportedBinding>) -> arkret_sdk::ServiceDescribe {
+    pub(crate) fn describe_with(
+        bindings: Vec<arkret_sdk::SupportedBinding>,
+    ) -> arkret_sdk::ServiceDescribe {
         let mut describe = arkret_sdk::ServiceDescribe::development(
             arkret_sdk::Did::new("did:web:server.example").unwrap(),
             arkret_sdk::TypedTrustDomainId::new("ak:trust_domain:server.example").unwrap(),

@@ -60,6 +60,9 @@ pub struct RealmEventsEngineContext {
     /// Whether the current route actually consumes a Realm stream. This lets a
     /// stream spawned on Board/Chat exit when navigation returns to Home.
     pub route_enabled: crate::runtime::input::ValueReader<bool>,
+    /// The session's optional WebSocket. A live rail supplies the events
+    /// channel; a scan always stays on HTTPS.
+    pub websocket_rail: crate::transport::websocket_rail::WebSocketRail,
     /// Bumped once per iteration that folded ≥1 new operation into the local
     /// store, so the kanban panel can re-project off a signal that is NOT the
     /// (cross-member-lossy) account `sync_cursor`.
@@ -194,14 +197,21 @@ struct RealmTransportProvider {
 }
 
 impl TransportProvider for RealmTransportProvider {
-    type Transport = crate::client_core::InksonRealmEventsTransport;
+    type Transport = crate::transport::websocket_rail::StreamRail<
+        crate::client_core::InksonRealmEventsTransport,
+    >;
 
+    /// A scan is not a covered operation (§1), so it stays on HTTPS even while
+    /// the rail is live; only the subscribe half moves.
     async fn provide(&self) -> garth::Result<Self::Transport> {
         let base = self.ctx.base_url.get();
         let http = crate::identity::session_refresh::provide_authenticated_sdk_client(&base)
             .await
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-        Ok(crate::client_core::InksonRealmEventsTransport::new(http))
+        Ok(crate::transport::websocket_rail::StreamRail::select(
+            &self.ctx.websocket_rail,
+            crate::client_core::InksonRealmEventsTransport::new(http),
+        ))
     }
 
     async fn recover_unauthorized(&self) -> garth::Result<bool> {

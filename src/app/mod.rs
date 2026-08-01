@@ -238,10 +238,8 @@ fn AppBootstrap() -> Element {
     // is not restored yet at this point in boot. `AccountLocaleSync` applies
     // it as soon as it lands, so a stale device cache is corrected within the
     // first session refresh rather than persisting for the whole session.
-    let initial_locale = crate::i18n::resolve_locale(
-        None,
-        initial_state_store.device_pref("locale").as_deref(),
-    );
+    let initial_locale =
+        crate::i18n::resolve_locale(None, initial_state_store.device_pref("locale").as_deref());
     let initial_theme = initial_state_store
         .load_private_data(&initial_config.account_did, "theme")
         .filter(|theme| matches!(theme.as_str(), "light" | "night" | "system"))
@@ -616,6 +614,7 @@ fn AppBootstrap() -> Element {
     // The Signal receive rail takes no selector, so one loop per generation is
     // the whole lifecycle.
     let signal_receive_engine_active_generation = use_signal(|| Option::<u64>::None);
+    let websocket_rail_active_generation = use_signal(|| Option::<u64>::None);
     let bootstrap_pending = use_signal(|| true);
 
     // AKP-0007 P3B.4.3 — active multi-profile snapshot, threaded into
@@ -1361,6 +1360,7 @@ fn AppBootstrap() -> Element {
                 sync_engine_active_generation,
                 realm_events_engine_active_key,
                 signal_receive_engine_active_generation,
+                websocket_rail_active_generation,
                 sync_bootstrap_complete,
                 token,
                 account_did,

@@ -65,6 +65,9 @@ pub struct SignalReceiveEngineContext {
     pub client_runtime: crate::client_core::InksonClientRuntime,
     pub effect: crate::runtime::effects::EffectHandle,
     pub products: SignalProductRouter,
+    /// The session's optional WebSocket. A live rail supplies the Signal
+    /// channel; otherwise this engine stays on the canonical NDJSON rail.
+    pub websocket_rail: crate::transport::websocket_rail::WebSocketRail,
 }
 
 /// Fail-closed [`garth::SignalSenderKeyResolver`] over the accepted device
@@ -513,12 +516,21 @@ struct SignalTransportProvider {
 }
 
 impl TransportProvider for SignalTransportProvider {
-    type Transport = arkret_sdk::http_client::Client;
+    type Transport = crate::transport::websocket_rail::StreamRail<arkret_sdk::http_client::Client>;
 
+    /// §6.2 — the Signal channel has no cursor, no catch-up and no receipt on
+    /// either transport, so choosing between them is purely a transport
+    /// decision and needs no state to carry across.
     async fn provide(&self) -> garth::Result<Self::Transport> {
-        crate::identity::session_refresh::provide_authenticated_sdk_client(&self.ctx.base_url.get())
-            .await
-            .map_err(|error| garth::Error::Protocol(error.to_string()))
+        let http = crate::identity::session_refresh::provide_authenticated_sdk_client(
+            &self.ctx.base_url.get(),
+        )
+        .await
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        Ok(crate::transport::websocket_rail::StreamRail::select(
+            &self.ctx.websocket_rail,
+            http,
+        ))
     }
 
     async fn recover_unauthorized(&self) -> garth::Result<bool> {

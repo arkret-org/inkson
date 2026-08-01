@@ -152,6 +152,36 @@ impl DpopHandle {
             .map_err(|error| AuthDpopError::Mint(error.to_string()))
     }
 
+    /// Sign one `challenge_dpop_session_v1` proof for
+    /// `ak.profile.binding.websocket.v1`.
+    ///
+    /// The transcript is the SDK's — the same holder key backs the HTTP DPoP
+    /// proofs above, and it never leaves this handle. `zh/sync/websocket-binding.md`
+    /// §3.1 is explicit that this is a distinct validator context from the HTTP
+    /// one, which is why it is a separate method rather than a `mint_proof`
+    /// call with a `wss` target.
+    pub fn mint_websocket_auth_proof(
+        &self,
+        base_url: &str,
+        session_grant: &str,
+        nonce: &str,
+        jti: &str,
+        issued_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<String, AuthDpopError> {
+        arkret_sdk::signatures::websocket_auth::build_websocket_auth_proof(
+            &arkret_sdk::signatures::websocket_auth::WebSocketAuthProofRequest {
+                base_url,
+                session_grant,
+                nonce,
+                issued_at,
+                jti,
+            },
+            &self.signing_key,
+        )
+        .map(|proof| proof.compact_jws)
+        .map_err(|error| AuthDpopError::Mint(error.to_string()))
+    }
+
     /// Build SDK http-client DPoP auth for requests protected by the
     /// current session grant.
     pub fn sdk_dpop_auth_for_access_token(

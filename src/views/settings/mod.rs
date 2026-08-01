@@ -116,12 +116,11 @@ fn locale_display_name(locale: Locale) -> &'static str {
 /// Three writes, none of them optional:
 ///
 /// 1. the live signal, so the UI switches now;
-/// 2. the device preference, which is what seeds the *next* launch before a
-///    session exists — and what the OIDC `ui_locales` parameter is built from,
-///    so coauth follows on the next sign-in;
-/// 3. the `client.language` account-data entry, which is how the user's other
-///    devices find out. This is the tier that was declared in the protocol but
-///    never written, which is why the choice used to stay on one device.
+/// 2. the device preference, which is what seeds the *next* launch before a session exists — and
+///    what the OIDC `ui_locales` parameter is built from, so coauth follows on the next sign-in;
+/// 3. the `client.language` account-data entry, which is how the user's other devices find out.
+///    This is the tier that was declared in the protocol but never written, which is why the choice
+///    used to stay on one device.
 fn select_locale(
     choice: Locale,
     mut locale: Signal<Locale>,

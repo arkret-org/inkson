@@ -1,9 +1,5 @@
 use std::collections::HashMap;
 
-use chrono::{DateTime, Utc};
-use dioxus::prelude::*;
-use serde::{Deserialize, Serialize};
-
 /// The locale the client renders in.
 ///
 /// This is [`arkret_locale::UiLocale`] — the same closed set coauth's server
@@ -19,6 +15,9 @@ use serde::{Deserialize, Serialize};
 /// right-to-left locale stays a change in one crate rather than an audit of
 /// every layout.
 pub use arkret_locale::{TextDirection, UiLocale as Locale};
+use chrono::{DateTime, Utc};
+use dioxus::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// Where this device's UI locale came from, resolved once at boot.
 ///
@@ -26,10 +25,10 @@ pub use arkret_locale::{TextDirection, UiLocale as Locale};
 /// this helper only contributes the platform observation, which is the one
 /// piece that needs `web_sys`.
 ///
-/// * `account` — the signed-in account's `preferred_locale`, the cross-device
-///   source of truth. `None` before sign-in.
-/// * `device_cache` — this device's remembered choice. A cache: it seeds the
-///   pre-login experience and never outranks the account.
+/// * `account` — the signed-in account's `preferred_locale`, the cross-device source of truth.
+///   `None` before sign-in.
+/// * `device_cache` — this device's remembered choice. A cache: it seeds the pre-login experience
+///   and never outranks the account.
 #[must_use]
 pub fn resolve_locale(account: Option<&str>, device_cache: Option<&str>) -> Locale {
     let platform = platform_language();
