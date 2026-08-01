@@ -11,7 +11,9 @@
 //! working on canonical HTTP/JSON + bounded NDJSON, and the socket is an
 //! optimisation the client takes only when the service says it may.
 
-use arkret_wire::websocket_binding::{WEBSOCKET_HARD_MAX_FRAME_BYTES, WebSocketCloseCode};
+#[cfg(not(target_arch = "wasm32"))]
+use arkret_wire::websocket_binding::WEBSOCKET_HARD_MAX_FRAME_BYTES;
+use arkret_wire::websocket_binding::WebSocketCloseCode;
 use garth::websocket::socket::{
     AuthProofRequest, BoxSocketFuture, WebSocketConnector, WebSocketInbound, WebSocketSocket,
 };

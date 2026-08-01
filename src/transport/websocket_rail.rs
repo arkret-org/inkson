@@ -245,7 +245,6 @@ where
 impl<H> RealmEventsTransport for StreamRail<H>
 where
     H: RealmEventsTransport + Sync,
-    H::Source: Send,
 {
     type Source = RealmEventsSource<H::Source>;
 
@@ -307,7 +306,6 @@ where
 impl<H> SignalStreamTransport for StreamRail<H>
 where
     H: SignalStreamTransport + Sync,
-    H::Source: Send,
 {
     type Source = SignalSource<H::Source>;
 
