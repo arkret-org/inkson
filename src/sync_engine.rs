@@ -1413,7 +1413,7 @@ async fn run_idle_self_update_pass(
             .map_err(|err| err.user_message())
             .and_then(|maybe| match maybe {
                 None => Ok(None),
-                Some((commit_envelope, snapshot)) => {
+                Some((commit_envelope, snapshot, previous_governance_binding)) => {
                     let schedule_hash = commit_envelope.commit_digest.clone();
                     crate::mls::group_events::mls_commit_event_from_store(
                         store,
@@ -1421,6 +1421,7 @@ async fn run_idle_self_update_pass(
                         &actor_id,
                         &schedule_hash,
                         &commit_envelope,
+                        &previous_governance_binding,
                     )
                     .map(|event| Some((event, commit_envelope.epoch, snapshot)))
                 }

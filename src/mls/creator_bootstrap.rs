@@ -220,8 +220,11 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
 
 /// Poll `ak.self.events.query.frontier` until the Realm has an accepted Seal.
 ///
-/// A Realm accepted moments ago may not be sealed yet; `404` / "no accepted
-/// Seal" is the expected transient answer during that window.
+/// A Realm accepted moments ago may not be sealed yet. During that window the
+/// registered frontier surface can report either `not_found` before a Seal
+/// exists or `frontier_unavailable` while accepted Control Events are still
+/// being materialized. Both are transient for this creator-only post-create
+/// poll; every other protocol or transport error still fails closed.
 pub(crate) async fn wait_for_realm_seal_view(
     submitter: &crate::event_submit::EventSubmitter,
     realm_id: &str,
@@ -232,17 +235,21 @@ pub(crate) async fn wait_for_realm_seal_view(
     for attempt in 0..ATTEMPTS {
         match submitter.events_frontier_realm_seal_view(realm_id).await {
             Ok(view) => return Ok(view),
-            Err(error)
-                if attempt + 1 < ATTEMPTS
-                    && (error.to_string().contains("404")
-                        || error.to_string().contains("no accepted Seal")) =>
-            {
+            Err(error) if realm_seal_view_retry_is_allowed(&error, attempt, ATTEMPTS) => {
                 crate::runtime_helpers::sleep_for(DELAY).await;
             }
             Err(error) => return Err(error),
         }
     }
     unreachable!("realm Seal retry loop returns on its final attempt")
+}
+
+fn realm_seal_view_retry_is_allowed(
+    error: &anyhow::Error,
+    attempt: usize,
+    attempts: usize,
+) -> bool {
+    attempt + 1 < attempts && crate::api_error::is_realm_seal_frontier_pending_error(error)
 }
 
 #[cfg(test)]
@@ -337,5 +344,48 @@ mod tests {
     fn an_unprojected_realm_is_never_pending() {
         let store = temp_store("unknown");
         assert!(!creator_mls_bootstrap_pending(&store, REALM, ACTOR));
+    }
+
+    fn frontier_error(status: u16, code: &str) -> anyhow::Error {
+        anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status,
+            error: Box::new(arkret_sdk::ErrorEnvelope::new(
+                code,
+                "frontier is not ready",
+            )),
+        })
+    }
+
+    #[test]
+    fn creator_seal_poll_retries_normative_frontier_pending_responses() {
+        for error in [
+            frontier_error(404, "not_found"),
+            frontier_error(503, "frontier_unavailable"),
+        ] {
+            assert!(realm_seal_view_retry_is_allowed(&error, 0, 20));
+        }
+
+        let wrapped = frontier_error(503, "frontier_unavailable")
+            .context("refreshing the accepted Realm Seal view");
+        assert!(realm_seal_view_retry_is_allowed(&wrapped, 0, 20));
+    }
+
+    #[test]
+    fn creator_seal_poll_does_not_retry_permanent_or_exhausted_responses() {
+        assert!(!realm_seal_view_retry_is_allowed(
+            &frontier_error(409, "state_mismatch"),
+            0,
+            20,
+        ));
+        assert!(!realm_seal_view_retry_is_allowed(
+            &frontier_error(409, "frontier_unavailable"),
+            0,
+            20,
+        ));
+        assert!(!realm_seal_view_retry_is_allowed(
+            &frontier_error(503, "frontier_unavailable"),
+            19,
+            20,
+        ));
     }
 }

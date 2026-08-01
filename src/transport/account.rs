@@ -956,8 +956,7 @@ async fn refresh_direct_conversation_seal(
             }
             Err(error)
                 if attempt + 1 < ATTEMPTS
-                    && (error.to_string().contains("404")
-                        || error.to_string().contains("no accepted Seal")) =>
+                    && crate::api_error::is_realm_seal_frontier_pending_error(&error) =>
             {
                 crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(250)).await;
             }

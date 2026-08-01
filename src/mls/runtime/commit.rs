@@ -3,6 +3,19 @@
 use super::{MlsRuntimeError, load_device_snapshot_secret};
 use crate::secure_key_store::SecureKeyStore;
 
+fn current_governance_binding_predecessor(
+    group: &arkret_sdk::ArkretMlsGroup,
+) -> Result<arkret_sdk::MlsGovernanceBindingPayload, MlsRuntimeError> {
+    group
+        .current_governance_binding()
+        .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?
+        .ok_or_else(|| {
+            MlsRuntimeError::Commit(
+                "MLS commit requires the current governance binding predecessor".to_owned(),
+            )
+        })
+}
+
 /// YOU-01-009 — operator-forced MLS epoch rotation via a real
 /// `self_update_commit`, replacing the former non-spec
 /// `POST /_arkret/self/mls/rotate` HTTP shim. Restores the Realm group
@@ -21,6 +34,7 @@ pub fn force_epoch_rotation_commit(
     (
         arkret_sdk::MlsCommitEnvelope,
         crate::mls::persistence::MlsSnapshotEnvelope,
+        arkret_sdk::MlsGovernanceBindingPayload,
     ),
     MlsRuntimeError,
 > {
@@ -45,6 +59,7 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
     (
         arkret_sdk::MlsCommitEnvelope,
         crate::mls::persistence::MlsSnapshotEnvelope,
+        arkret_sdk::MlsGovernanceBindingPayload,
     ),
     MlsRuntimeError,
 > {
@@ -61,6 +76,7 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+    let previous_governance_binding = current_governance_binding_predecessor(&group)?;
     let proof_request = crate::mls::governance_proof::proof_request(
         state_store,
         realm_id,
@@ -91,7 +107,7 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
         &secret,
         &salt,
     );
-    Ok((commit_envelope, new_envelope))
+    Ok((commit_envelope, new_envelope, previous_governance_binding))
 }
 
 pub fn build_mls_remove_commit_for_effective_scope(
@@ -107,6 +123,7 @@ pub fn build_mls_remove_commit_for_effective_scope(
     (
         arkret_sdk::MlsRemoveMemberResult,
         crate::mls::persistence::MlsSnapshotEnvelope,
+        arkret_sdk::MlsGovernanceBindingPayload,
     ),
     MlsRuntimeError,
 > {
@@ -137,6 +154,7 @@ pub fn build_mls_remove_commit_for_effective_scope_with_sidecar_binding(
     (
         arkret_sdk::MlsRemoveMemberResult,
         crate::mls::persistence::MlsSnapshotEnvelope,
+        arkret_sdk::MlsGovernanceBindingPayload,
     ),
     MlsRuntimeError,
 > {
@@ -166,6 +184,7 @@ pub fn build_mls_remove_members_commit_for_effective_scope(
     (
         arkret_sdk::MlsRemoveMemberResult,
         crate::mls::persistence::MlsSnapshotEnvelope,
+        arkret_sdk::MlsGovernanceBindingPayload,
     ),
     MlsRuntimeError,
 > {
@@ -196,6 +215,7 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
     (
         arkret_sdk::MlsRemoveMemberResult,
         crate::mls::persistence::MlsSnapshotEnvelope,
+        arkret_sdk::MlsGovernanceBindingPayload,
     ),
     MlsRuntimeError,
 > {
@@ -225,6 +245,7 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+    let previous_governance_binding = current_governance_binding_predecessor(&group)?;
     let proof_request = crate::mls::governance_proof::proof_request(
         state_store,
         realm_id,
@@ -260,7 +281,7 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
         &secret,
         &salt,
     );
-    Ok((remove, new_envelope))
+    Ok((remove, new_envelope, previous_governance_binding))
 }
 
 /// Canonicalize the governance frontier required for an MLS Remove commit.
@@ -298,6 +319,7 @@ pub fn build_add_member_commit_for_effective_scope(
     (
         arkret_sdk::MlsAddMemberResult,
         crate::mls::persistence::MlsSnapshotEnvelope,
+        arkret_sdk::MlsGovernanceBindingPayload,
     ),
     MlsRuntimeError,
 > {
@@ -327,6 +349,7 @@ pub fn build_add_member_commit_for_effective_scope_with_binding(
     (
         arkret_sdk::MlsAddMemberResult,
         crate::mls::persistence::MlsSnapshotEnvelope,
+        arkret_sdk::MlsGovernanceBindingPayload,
     ),
     MlsRuntimeError,
 > {
@@ -343,6 +366,7 @@ pub fn build_add_member_commit_for_effective_scope_with_binding(
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+    let previous_governance_binding = current_governance_binding_predecessor(&group)?;
     let proof_request = crate::mls::governance_proof::proof_request(
         state_store,
         realm_id,
@@ -379,7 +403,7 @@ pub fn build_add_member_commit_for_effective_scope_with_binding(
         &secret,
         &salt,
     );
-    Ok((add, new_envelope))
+    Ok((add, new_envelope, previous_governance_binding))
 }
 
 pub fn build_add_members_commit_for_effective_scope(
@@ -394,6 +418,7 @@ pub fn build_add_members_commit_for_effective_scope(
     (
         arkret_sdk::MlsAddMembersResult,
         crate::mls::persistence::MlsSnapshotEnvelope,
+        arkret_sdk::MlsGovernanceBindingPayload,
     ),
     MlsRuntimeError,
 > {
@@ -423,6 +448,7 @@ pub fn build_add_members_commit_for_effective_scope_with_binding(
     (
         arkret_sdk::MlsAddMembersResult,
         crate::mls::persistence::MlsSnapshotEnvelope,
+        arkret_sdk::MlsGovernanceBindingPayload,
     ),
     MlsRuntimeError,
 > {
@@ -444,6 +470,7 @@ pub fn build_add_members_commit_for_effective_scope_with_binding(
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+    let previous_governance_binding = current_governance_binding_predecessor(&group)?;
     let proof_request = crate::mls::governance_proof::proof_request(
         state_store,
         realm_id,
@@ -480,7 +507,7 @@ pub fn build_add_members_commit_for_effective_scope_with_binding(
         &secret,
         &salt,
     );
-    Ok((add, new_envelope))
+    Ok((add, new_envelope, previous_governance_binding))
 }
 
 /// YOU-02-004 (`encryption-and-audit.md` §5.6, normative) — decrypt a remote
@@ -578,6 +605,7 @@ pub fn build_idle_self_update_commit(
     Option<(
         arkret_sdk::MlsCommitEnvelope,
         crate::mls::persistence::MlsSnapshotEnvelope,
+        arkret_sdk::MlsGovernanceBindingPayload,
     )>,
     MlsRuntimeError,
 > {
@@ -616,6 +644,7 @@ pub fn build_idle_self_update_commit(
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+    let previous_governance_binding = current_governance_binding_predecessor(&group)?;
     let commit_envelope = group
         .self_update_commit()
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
@@ -639,7 +668,11 @@ pub fn build_idle_self_update_commit(
         &salt,
     )
     .with_app_messages_observed(0);
-    Ok(Some((commit_envelope, new_envelope)))
+    Ok(Some((
+        commit_envelope,
+        new_envelope,
+        previous_governance_binding,
+    )))
 }
 
 /// `encryption-and-audit.md` §5.6 — normal-Realm self-preservation commit

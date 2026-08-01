@@ -264,3 +264,44 @@
 - Prevention dimension: these cases share durable state (snapshot store / secure key store) across
   the default parallel test threads, so an unrelated change appears to break MLS backup at random.
   Each case needs its own isolated store rather than a shared default path.
+
+## 2026-08-01 — creator MLS bootstrap treated a normative pending frontier as terminal
+
+- Severity: P1 encrypted-Realm liveness regression.
+- Status: resolved in the shared Realm Seal frontier classifier and every bounded bootstrap poll.
+- Evidence: the first `ak.self.events.query.frontier` request was issued at
+  `2026-08-01T03:51:41.221Z`; the Realm genesis Seal was signed at
+  `2026-08-01T03:51:41.230Z` and committed at `2026-08-01T03:51:41.321Z`. Soland therefore
+  correctly returned `frontier_unavailable`, but Inkson retried only a string-matched 404 / "no
+  accepted Seal" response and terminated the short post-create poll.
+- Resolution: classify `not_found` and the registered `frontier_unavailable` code through the
+  structured SDK HTTP error chain, reuse that predicate in creator, direct-conversation and managed
+  Agent Seal bootstrap, retry only inside their bounded workflows, and keep all other errors
+  fail-closed.
+- Prevention dimension: every client poll that waits for an accepted Seal must cover both phases
+  of the durable transition — no Seal yet and accepted Control Events awaiting materialization —
+  with structured-code tests. Message-text matching is not a protocol contract.
+
+## 2026-08-01 — MLS Commit construction dropped its CAS predecessor preconditions
+
+- **Surface:** `src/mls/group_events.rs` built every `ak.mls.commit` through the
+  typed payload and operation builder, but never attached the canonical
+  `mls_epoch.head_eq(previous_epoch)`,
+  `key_schedule.head_eq(previous_governance_binding)`, and trusted-anchor
+  `covered_seals.contains` preconditions. The registered reducer advances both
+  epoch and key-schedule as `cas_register` cells; omitting either exact predecessor
+  lets the projector materialize sibling heads and correctly returns
+  `state_mismatch` with a governance cell in Bottom state. Direct conversations
+  stopped after Realm/MLS bootstrap instead of opening the chat.
+- **Regression:** the full MLS admission fixture now compares the produced
+  Commit preconditions with `mls_commit_preconditions(...)`, including the exact
+  group, previous epoch, exact prior governance binding recovered from the live
+  MLS group, and locally pinned trusted anchor. The key-schedule unit test asserts
+  the whole-value predecessor rather than only the cell name.
+- **Correction:** the shared Commit Event construction path now requires the
+  already-pinned governance anchor plus the pre-commit MLS governance binding and
+  attaches the canonical precondition set before the Event is prepared and signed.
+  The two message-send paths that previously assembled Commit Events independently
+  now delegate to that shared builder. Direct-conversation, member add/remove,
+  sidecar, idle/forced self-update, encrypted card, message, and reaction commit
+  preparation therefore retain the same exact predecessor evidence.

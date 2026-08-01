@@ -7,6 +7,21 @@ use reqwest::StatusCode;
 
 use super::api_error_status_and_envelope;
 
+/// True only while the authoritative Realm Seal frontier is not readable yet.
+///
+/// The frontier binding uses 404 before any accepted Seal exists and the
+/// registered `frontier_unavailable` code while already-accepted Control
+/// Events are waiting for durable Seal materialization. Callers may retry this
+/// predicate only in a bounded workflow that is already entitled to wait for
+/// that Seal; all other errors remain terminal.
+pub(crate) fn is_realm_seal_frontier_pending_error(error: &anyhow::Error) -> bool {
+    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
+        status == StatusCode::NOT_FOUND
+            || (status == StatusCode::SERVICE_UNAVAILABLE
+                && envelope.code() == arkret_sdk::error::ErrorCode::FRONTIER_UNAVAILABLE)
+    })
+}
+
 pub fn is_mls_keypackage_not_found_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
         envelope.code() == "mls_keypackage_not_found"

@@ -1,7 +1,7 @@
 //! §2.9 E2EE reaction sealing and routing-tag derivation.
 
 use super::{
-    MlsRuntimeError, assert_minimal_metadata_aad, load_device_snapshot_secret,
+    MlsRuntimeError, PreparedMlsCommit, assert_minimal_metadata_aad, load_device_snapshot_secret,
     should_force_epoch_advance,
 };
 use crate::secure_key_store::SecureKeyStore;
@@ -31,7 +31,7 @@ pub struct EncryptedReaction {
     /// [`Self::forced_commit_snapshot`] (X14 persist-on-accept). When `None`
     /// the reaction rode the current epoch and its snapshot was already
     /// persisted internally (epoch unchanged ⇒ no epoch-skew risk).
-    pub forced_commit: Option<arkret_sdk::MlsCommitEnvelope>,
+    pub forced_commit: Option<PreparedMlsCommit>,
     /// Post-forced-commit snapshot the caller persists on server-accept. Set
     /// iff [`Self::forced_commit`] is `Some`.
     pub forced_commit_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
@@ -148,11 +148,20 @@ pub fn encrypt_reaction_with_device_snapshot(
         snapshot.app_messages_observed,
         state_store.realm_has_pending_mls_binding(realm_id),
     ) {
-        Some(
-            group
+        let previous_governance_binding = group
+            .current_governance_binding()
+            .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?
+            .ok_or_else(|| {
+                MlsRuntimeError::Commit(
+                    "MLS commit requires the current governance binding predecessor".to_owned(),
+                )
+            })?;
+        Some(PreparedMlsCommit {
+            envelope: group
                 .self_update_commit()
                 .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?,
-        )
+            previous_governance_binding,
+        })
     } else {
         None
     };

@@ -1067,6 +1067,7 @@ fn AppBootstrap() -> Element {
                                 account_primary_handle,
                                 personal_handles,
                                 personal_handles_status,
+                                locale,
                                 auto_capture_callback: true,
                                 on_login: move |_| {
                                     callback_bootstrap_pending.set(true);
@@ -1123,6 +1124,7 @@ fn AppBootstrap() -> Element {
                                 account_primary_handle,
                                 personal_handles,
                                 personal_handles_status,
+                                locale,
                                 auto_capture_callback: false,
                                 on_login: move |_| {
                                     login_bootstrap_pending.set(true);

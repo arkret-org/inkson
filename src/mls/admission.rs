@@ -37,22 +37,24 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
 ) -> Result<RealmMlsAdmissionEvents, String> {
     let member_key_package = crate::mls_api_helpers::keypackage_claim_record_to_mls_record(claim)
         .map_err(|err| format!("MLS KeyPackage claim decode failed: {err}"))?;
-    let (add, snapshot) = crate::mls::runtime::build_add_member_commit_for_effective_scope(
-        state_store,
-        secure_store,
-        realm_id,
-        None,
-        actor_id,
-        device_id,
-        &member_key_package,
-    )
-    .map_err(|err| err.user_message())?;
+    let (add, snapshot, previous_governance_binding) =
+        crate::mls::runtime::build_add_member_commit_for_effective_scope(
+            state_store,
+            secure_store,
+            realm_id,
+            None,
+            actor_id,
+            device_id,
+            &member_key_package,
+        )
+        .map_err(|err| err.user_message())?;
     let commit = crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
         state_store,
         realm_id,
         None,
         actor_id,
         &add.commit,
+        &previous_governance_binding,
     )?;
     let governance_binding = commit
         .payload
@@ -157,7 +159,7 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
                 .map_err(|err| format!("MLS KeyPackage claim decode failed: {err}"))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let (add, snapshot) =
+    let (add, snapshot, previous_governance_binding) =
         crate::mls::runtime::build_add_members_commit_for_effective_scope_with_binding(
             state_store,
             secure_store,
@@ -177,6 +179,7 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
                 circle_id,
                 actor_id,
                 &add.commit,
+                &previous_governance_binding,
                 binding,
             )?
         }
@@ -186,6 +189,7 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
             circle_id,
             actor_id,
             &add.commit,
+            &previous_governance_binding,
         )?,
     };
     let governance_binding = commit
@@ -938,6 +942,26 @@ mod tests {
         assert_eq!(
             admission.commit.payload["base_epoch_ref"],
             json!(genesis_event.event_id.as_str())
+        );
+        assert_eq!(
+            admission.commit.preconditions,
+            crate::mls::governance::mls_commit_preconditions(
+                admission.commit.payload["mls_group_id"]
+                    .as_str()
+                    .expect("commit carries its MLS group id"),
+                admission.commit.payload["base_epoch"]
+                    .as_u64()
+                    .expect("commit carries its base epoch"),
+                &serde_json::from_value::<arkret_sdk::MlsGovernanceBindingPayload>(
+                    genesis_event.payload["governance_binding"].clone(),
+                )
+                .expect("genesis carries the exact key-schedule predecessor"),
+                &alice_state
+                    .trusted_mls_governance_anchor(realm)
+                    .expect("test fixture pins the governance anchor"),
+            )
+            .expect("canonical commit preconditions"),
+            "the admission path must retain both CAS predecessors and the trusted-anchor coverage precondition"
         );
         assert_eq!(admission.welcome.kind.as_str(), "ak.mls.welcome");
         assert_eq!(

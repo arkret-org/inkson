@@ -959,7 +959,7 @@ pub fn RealmAdminPanel(
                                         &device,
                                     )
                                     .map_err(|err| err.user_message())
-                                    .and_then(|(commit_envelope, snapshot)| {
+                                    .and_then(|(commit_envelope, snapshot, previous_governance_binding)| {
                                         let schedule_hash = commit_envelope.commit_digest.clone();
                                         crate::mls::group_events::mls_commit_event_from_store(
                                             &store,
@@ -967,6 +967,7 @@ pub fn RealmAdminPanel(
                                             &actor_id,
                                             &schedule_hash,
                                             &commit_envelope,
+                                            &previous_governance_binding,
                                         )
                                         .map(|event| (event, commit_envelope.epoch, snapshot))
                                     })

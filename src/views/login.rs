@@ -35,6 +35,10 @@ struct CompletedLogin {
     device_id: String,
     dpop_device_key: crate::state::DpopDeviceKeyRecord,
     session_credential: String,
+    /// Account-private preference returned by the authenticated, DPoP-bound
+    /// account handoff. This is the value the user selected in coauth during
+    /// the just-completed login/registration flow.
+    preferred_locale: Option<crate::i18n::Locale>,
     /// Persisted principal session grant. This is the live credential for
     /// `/_arkret/self/*`; refresh rotates this grant before its own expiry.
     session_grant: Option<PersistedSessionGrant>,
@@ -42,7 +46,9 @@ struct CompletedLogin {
 
 enum OidcCallbackOutcome {
     Login(Box<CompletedLogin>),
-    Onboarding,
+    Onboarding {
+        preferred_locale: Option<crate::i18n::Locale>,
+    },
 }
 
 // Process-global OIDC-callback completion guard. `callback_started` below is a
@@ -69,6 +75,7 @@ pub fn LoginPanel(
     account_primary_handle: Signal<String>,
     personal_handles: Signal<Vec<String>>,
     personal_handles_status: Signal<String>,
+    mut locale: Signal<crate::i18n::Locale>,
     auto_capture_callback: bool,
     on_login: EventHandler<()>,
     on_onboarding: EventHandler<()>,
@@ -115,7 +122,12 @@ pub fn LoginPanel(
         let callback_device = device_id();
         let result = finish_oidc_callback(callback_device, state_store_write).await;
         match result {
-            Ok(OidcCallbackOutcome::Onboarding) => {
+            Ok(OidcCallbackOutcome::Onboarding { preferred_locale }) => {
+                apply_authenticated_account_locale(
+                    preferred_locale,
+                    state_store_write,
+                    &mut locale,
+                );
                 auth_status.set(
                     "Account authenticated. Continue identity custody and binding.".to_owned(),
                 );
@@ -212,6 +224,11 @@ pub fn LoginPanel(
                     }
                     store.register_known_account(&completed.actor);
                 }
+                apply_authenticated_account_locale(
+                    completed.preferred_locale,
+                    state_store_write,
+                    &mut locale,
+                );
                 persist_config(
                     config_store,
                     principal_server_url,
@@ -904,7 +921,9 @@ async fn finish_oidc_callback(
                 .map_err(|error| format!("Persist public handoff checkpoint failed: {error}"))?;
         }
         let _ = clear_persisted_oidc_scaffold();
-        return Ok(OidcCallbackOutcome::Onboarding);
+        return Ok(OidcCallbackOutcome::Onboarding {
+            preferred_locale: handoff.preferred_locale,
+        });
     }
     if let AccountHandoffDisposition::IdentityCreationBusy { retry_after_ms } = disposition {
         crate::identity::account_auth::persist_account_handoff_grant(
@@ -935,7 +954,9 @@ async fn finish_oidc_callback(
                 .map_err(|error| format!("Persist busy handoff checkpoint failed: {error}"))?;
         }
         let _ = clear_persisted_oidc_scaffold();
-        return Ok(OidcCallbackOutcome::Onboarding);
+        return Ok(OidcCallbackOutcome::Onboarding {
+            preferred_locale: handoff.preferred_locale,
+        });
     }
     let AccountHandoffDisposition::Bound { principal_id } = disposition else {
         unreachable!("active and busy handoff outcomes returned above")
@@ -1071,8 +1092,25 @@ async fn finish_oidc_callback(
         dpop_device_key,
         // The grant JWT is now the live credential carried in the `token` signal.
         session_credential: session_grant.grant_jwt.clone(),
+        preferred_locale: handoff.preferred_locale,
         session_grant: Some(persisted_session_grant),
     })))
+}
+
+fn apply_authenticated_account_locale(
+    preferred_locale: Option<crate::i18n::Locale>,
+    mut state_store: SyncSignal<LocalStateStore>,
+    locale: &mut Signal<crate::i18n::Locale>,
+) {
+    let Some(preferred_locale) = preferred_locale else {
+        return;
+    };
+    state_store
+        .write()
+        .set_device_pref("locale", preferred_locale.code());
+    if *locale.peek() != preferred_locale {
+        locale.set(preferred_locale);
+    }
 }
 
 fn persist_pending_account_handoff(

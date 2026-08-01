@@ -89,7 +89,7 @@ fn build_remove_scope_rotate_draft(
     revocation_membership_frontier: &[arkret_sdk::EventId],
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<CircleScopeRotateDraft, String> {
-    let (remove, post_commit_snapshot) =
+    let (remove, post_commit_snapshot, previous_governance_binding) =
         crate::mls::runtime::build_mls_remove_members_commit_for_effective_scope_with_sidecar_binding(
             state_store,
             secure_store,
@@ -158,6 +158,7 @@ fn build_remove_scope_rotate_draft(
             circle_id,
             actor_id,
             &remove.commit,
+            &previous_governance_binding,
             proposal_refs,
             revocation_membership_frontier,
             sidecar_binding,
@@ -169,6 +170,7 @@ fn build_remove_scope_rotate_draft(
             circle_id,
             actor_id,
             &remove.commit,
+            &previous_governance_binding,
             proposal_refs,
             revocation_membership_frontier,
         )?

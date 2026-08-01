@@ -24,7 +24,7 @@
 
 use dioxus::prelude::*;
 
-use crate::operation::{OperationBuilder, sdk_event_local_operation_id, uuid_v7};
+use crate::operation::{OperationBuilder, sdk_event_local_operation_id};
 use crate::state::{LocalSealView, LocalStateStore, MoveSubmissionState};
 
 /// The structured MLS payload + the canonical AAD it was bound to.
@@ -47,7 +47,7 @@ pub(crate) type LocalMlsEncryptResult = (
     Vec<arkret_sdk::Did>,
     Option<LocalEncryptedMessage>,
     Option<LocalEncryptedMessage>,
-    Option<arkret_sdk::MlsCommitEnvelope>,
+    Option<crate::mls::runtime::PreparedMlsCommit>,
     Option<crate::mls::persistence::MlsSnapshotEnvelope>,
     Option<crate::state::PendingHistorySecrets>,
     Option<Vec<u8>>,
@@ -255,61 +255,34 @@ pub(crate) fn build_secure_send(
             .epoch
             .saturating_sub(u64::from(real_commit_envelope.is_some())),
     )?;
-    let (group_state_ref, commit_envelope) =
-        if let Some(real_commit_envelope) = real_commit_envelope.as_ref() {
-            let mls_commit_epoch = real_commit_envelope.epoch;
-            // base_epoch MUST be the SDK group's PRE-commit epoch so
-            // next_epoch == base_epoch + 1 holds by construction.
-            // `real_commit_envelope.epoch` is the POST-commit epoch.
-            let prev_epoch = mls_commit_epoch.saturating_sub(1);
-            let commit_event_id = format!("ak:event:{}", uuid_v7());
-            let commit_event_id_typed = arkret_sdk::EventId::new(commit_event_id.clone())
-                .map_err(|err| format!("MLS commit event id invalid: {err:?}"))?;
-            let proof_request = crate::mls::governance_proof::proof_request(
-                &state_store.read(),
-                realm_id,
-                circle_id,
-                real_commit_envelope.group_id.clone(),
-                prev_epoch,
-                mls_commit_epoch,
-            )?;
-            let mut governance_binding = crate::mls::governance_proof::cached_verified_binding(
-                &state_store.read(),
-                &proof_request,
-            )?;
-            if let Some(sidecar_binding) = sidecar_binding.as_ref() {
-                governance_binding = governance_binding
-                    .with_sidecar_binding(sidecar_binding.clone())
-                    .map_err(|error| error.to_string())?;
-            }
-            let mls_commit_payload = arkret_sdk::MlsCommitPayload::new(
-                real_commit_envelope.group_id.clone(),
-                prev_epoch,
-                base_group_state_ref.clone(),
-                Vec::new(),
-                mls_commit_epoch,
-                real_commit_envelope.commit_digest.clone(),
-                governance_binding,
-            )
-            .map_err(|err| format!("MLS commit payload failed: {err}"))?;
-            // Spec-canonical write path: ak.mls.commit event via ak.events.submit.
-            let commit_builder = crate::operation::ak_ops::mls_commit_with_governance(
-                realm_id,
-                actor,
-                &mls_commit_payload,
-            )
-            .map_err(|err| format!("MLS commit payload failed: {err}"))?;
-            let mut commit_event = commit_builder
-                .build_sdk_event("inkson")
-                .map_err(|err| format!("MLS commit SDK Event conversion failed: {err}"))?;
-            commit_event.event_id = commit_event_id_typed;
-            if let Some(circle_id) = circle_id {
-                commit_event.scope_ref = circle_effective_scope(realm_id, circle_id)?;
-            }
-            (commit_event_id, Some(commit_event))
-        } else {
-            (base_group_state_ref, None)
-        };
+    let (group_state_ref, commit_envelope) = if let Some(prepared_commit) =
+        real_commit_envelope.as_ref()
+    {
+        let commit_event = match (circle_id, sidecar_binding.as_ref()) {
+                (Some(circle_id), Some(binding)) => {
+                    crate::mls::group_events::mls_commit_event_from_store_for_effective_scope_with_sidecar_binding(
+                        &state_store.read(),
+                        realm_id,
+                        circle_id,
+                        actor,
+                        &prepared_commit.envelope,
+                        &prepared_commit.previous_governance_binding,
+                        binding.clone(),
+                    )?
+                }
+                _ => crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
+                    &state_store.read(),
+                    realm_id,
+                    circle_id,
+                    actor,
+                    &prepared_commit.envelope,
+                    &prepared_commit.previous_governance_binding,
+                )?,
+            };
+        (commit_event.event_id.to_string(), Some(commit_event))
+    } else {
+        (base_group_state_ref, None)
+    };
 
     // Wrap the MLS payload in the spec-canonical
     // `ak.schema.encrypted_envelope.v1` wire shape, binding
@@ -455,48 +428,22 @@ pub(crate) fn build_sidecar_exchange_control_send(
             .epoch
             .saturating_sub(u64::from(real_commit_envelope.is_some())),
     )?;
-    let (group_state_ref, commit_event) =
-        if let Some(real_commit_envelope) = real_commit_envelope.as_ref() {
-            let mls_commit_epoch = real_commit_envelope.epoch;
-            let prev_epoch = mls_commit_epoch.saturating_sub(1);
-            let commit_event_id = format!("ak:event:{}", uuid_v7());
-            let commit_event_id_typed = arkret_sdk::EventId::new(commit_event_id.clone())
-                .map_err(|error| format!("MLS commit event id invalid: {error:?}"))?;
-            let proof_request = crate::mls::governance_proof::proof_request(
+    let (group_state_ref, commit_event) = if let Some(prepared_commit) =
+        real_commit_envelope.as_ref()
+    {
+        let event = crate::mls::group_events::mls_commit_event_from_store_for_effective_scope_with_sidecar_binding(
                 &state_store.read(),
                 realm_id,
-                Some(circle_id),
-                real_commit_envelope.group_id.clone(),
-                prev_epoch,
-                mls_commit_epoch,
+                circle_id,
+                actor,
+                &prepared_commit.envelope,
+                &prepared_commit.previous_governance_binding,
+                sidecar_binding,
             )?;
-            let governance_binding = crate::mls::governance_proof::cached_verified_binding(
-                &state_store.read(),
-                &proof_request,
-            )?
-            .with_sidecar_binding(sidecar_binding)
-            .map_err(|error| error.to_string())?;
-            let payload = arkret_sdk::MlsCommitPayload::new(
-                real_commit_envelope.group_id.clone(),
-                prev_epoch,
-                base_group_state_ref.clone(),
-                Vec::new(),
-                mls_commit_epoch,
-                real_commit_envelope.commit_digest.clone(),
-                governance_binding,
-            )
-            .map_err(|error| format!("MLS commit payload failed: {error}"))?;
-            let mut event =
-                crate::operation::ak_ops::mls_commit_with_governance(realm_id, actor, &payload)
-                    .map_err(|error| format!("MLS commit payload failed: {error}"))?
-                    .build_sdk_event("inkson")
-                    .map_err(|error| format!("MLS commit SDK Event conversion failed: {error}"))?;
-            event.event_id = commit_event_id_typed;
-            event.scope_ref = circle_effective_scope(realm_id, circle_id)?;
-            (commit_event_id, Some(event))
-        } else {
-            (base_group_state_ref, None)
-        };
+        (event.event_id.to_string(), Some(event))
+    } else {
+        (base_group_state_ref, None)
+    };
 
     let encrypted_envelope = arkret_sdk::mls::encrypted_envelope_from_payload(
         &encrypted_payload,

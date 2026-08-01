@@ -214,7 +214,7 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
         schedule_hash,
         _member_dids,
         mut encrypted_values,
-        commit_envelope,
+        prepared_commit,
         new_snapshot,
         pending_history_secrets,
     ) = crate::mls::runtime::encrypt_values_with_device_snapshot_for_effective_scope(
@@ -230,14 +230,15 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
         sidecar.and_then(|context| context.binding.as_ref()),
     )
     .map_err(|err| err.user_message())?;
-    let commit_event = match commit_envelope.as_ref() {
-        Some(commit_envelope) => Some(if let Some(sidecar) = sidecar {
+    let commit_event = match prepared_commit.as_ref() {
+        Some(prepared_commit) => Some(if let Some(sidecar) = sidecar {
             crate::mls::group_events::mls_commit_event_from_store_for_effective_scope_with_sidecar_binding(
                 state_store,
                 realm_id,
                 &sidecar.circle_id,
                 actor_id,
-                commit_envelope,
+                &prepared_commit.envelope,
+                &prepared_commit.previous_governance_binding,
                 sidecar.binding.clone().ok_or_else(|| {
                     "Private Sidecar MLS governance binding is unavailable".to_owned()
                 })?,
@@ -248,7 +249,8 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
                 realm_id,
                 actor_id,
                 &schedule_hash,
-                commit_envelope,
+                &prepared_commit.envelope,
+                &prepared_commit.previous_governance_binding,
             )?
         }),
         None => None,

@@ -142,25 +142,7 @@ pub(crate) fn controller_signer_device_id(
 }
 
 fn managed_agent_initial_seal_required(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        if let Some(error) = cause.downcast_ref::<arkret_sdk::http_client::Error>() {
-            return match error {
-                arkret_sdk::http_client::Error::Api { status: 404, .. } => true,
-                arkret_sdk::http_client::Error::Api { status: 503, error } => {
-                    error.code() == "frontier_unavailable"
-                }
-                _ => false,
-            };
-        }
-        matches!(
-            cause.downcast_ref::<arkret_sdk::Error>(),
-            Some(arkret_sdk::Error::Api { status: 404, .. })
-        ) || matches!(
-            cause.downcast_ref::<arkret_sdk::Error>(),
-            Some(arkret_sdk::Error::Api { status: 503, error })
-                if error.code() == "frontier_unavailable"
-        )
-    })
+    crate::api_error::is_realm_seal_frontier_pending_error(error)
 }
 
 /// True when an Agent provably has nothing to contribute to the shared managed

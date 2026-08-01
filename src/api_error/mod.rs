@@ -17,18 +17,20 @@ pub struct TransportClientError {
 pub(crate) fn api_error_status_and_envelope(
     error: &anyhow::Error,
 ) -> Option<(StatusCode, &ErrorEnvelope)> {
-    if let Some(api_error) = error.downcast_ref::<TransportClientError>() {
-        return Some((api_error.status, &api_error.error));
-    }
-    if let Some(arkret_sdk::Error::Api { status, error }) =
-        error.downcast_ref::<arkret_sdk::Error>()
-    {
-        return Some((StatusCode::from_u16(*status).ok()?, error.as_ref()));
-    }
-    if let Some(arkret_sdk::http_client::Error::Api { status, error }) =
-        error.downcast_ref::<arkret_sdk::http_client::Error>()
-    {
-        return Some((StatusCode::from_u16(*status).ok()?, error.as_ref()));
+    for cause in error.chain() {
+        if let Some(api_error) = cause.downcast_ref::<TransportClientError>() {
+            return Some((api_error.status, &api_error.error));
+        }
+        if let Some(arkret_sdk::Error::Api { status, error }) =
+            cause.downcast_ref::<arkret_sdk::Error>()
+        {
+            return Some((StatusCode::from_u16(*status).ok()?, error.as_ref()));
+        }
+        if let Some(arkret_sdk::http_client::Error::Api { status, error }) =
+            cause.downcast_ref::<arkret_sdk::http_client::Error>()
+        {
+            return Some((StatusCode::from_u16(*status).ok()?, error.as_ref()));
+        }
     }
     None
 }

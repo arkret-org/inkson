@@ -7,6 +7,20 @@ use super::{
 };
 use crate::secure_key_store::SecureKeyStore;
 
+#[derive(Clone, Debug)]
+pub struct PreparedMlsCommit {
+    pub envelope: arkret_sdk::MlsCommitEnvelope,
+    pub previous_governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
+}
+
+impl std::ops::Deref for PreparedMlsCommit {
+    type Target = arkret_sdk::MlsCommitEnvelope;
+
+    fn deref(&self) -> &Self::Target {
+        &self.envelope
+    }
+}
+
 fn warn_mls_decrypt_once(
     realm_id: &str,
     digest: &str,
@@ -1568,7 +1582,7 @@ pub(crate) fn encrypt_values_with_device_snapshot(
         arkret_sdk::Hash,
         Vec<arkret_sdk::Did>,
         Vec<serde_json::Value>,
-        Option<arkret_sdk::MlsCommitEnvelope>,
+        Option<PreparedMlsCommit>,
         Option<crate::mls::persistence::MlsSnapshotEnvelope>,
         Option<crate::state::PendingHistorySecrets>,
     ),
@@ -1609,7 +1623,7 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
         arkret_sdk::Hash,
         Vec<arkret_sdk::Did>,
         Vec<serde_json::Value>,
-        Option<arkret_sdk::MlsCommitEnvelope>,
+        Option<PreparedMlsCommit>,
         Option<crate::mls::persistence::MlsSnapshotEnvelope>,
         Option<crate::state::PendingHistorySecrets>,
     ),
@@ -1770,7 +1784,7 @@ type DeviceSnapshotEncryption = (
     Vec<arkret_sdk::Did>,
     arkret_sdk::EncryptedPayload,
     Option<arkret_sdk::EncryptedPayload>,
-    Option<arkret_sdk::MlsCommitEnvelope>,
+    Option<PreparedMlsCommit>,
     Option<crate::mls::persistence::MlsSnapshotEnvelope>,
     Option<crate::state::PendingHistorySecrets>,
     Option<Vec<u8>>,
@@ -1992,7 +2006,15 @@ fn self_update_with_verified_governance_binding(
     circle_id: Option<&str>,
     sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
     group: &mut arkret_sdk::ArkretMlsGroup,
-) -> Result<arkret_sdk::MlsCommitEnvelope, MlsRuntimeError> {
+) -> Result<PreparedMlsCommit, MlsRuntimeError> {
+    let previous_governance_binding = group
+        .current_governance_binding()
+        .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?
+        .ok_or_else(|| {
+            MlsRuntimeError::Commit(
+                "MLS commit requires the current governance binding predecessor".to_owned(),
+            )
+        })?;
     let request = crate::mls::governance_proof::proof_request(
         state_store,
         realm_id,
@@ -2009,9 +2031,13 @@ fn self_update_with_verified_governance_binding(
             .with_sidecar_binding(sidecar_binding.clone())
             .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
     }
-    group
+    let envelope = group
         .update_governance_binding(&binding)
-        .map_err(|error| MlsRuntimeError::Commit(error.to_string()))
+        .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
+    Ok(PreparedMlsCommit {
+        envelope,
+        previous_governance_binding,
+    })
 }
 
 /// SEC-08 — fail-closed committer-side assertion that a `minimal_metadata_realm`

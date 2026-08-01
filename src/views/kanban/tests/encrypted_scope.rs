@@ -417,7 +417,22 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
         DeviceId::new(device.to_owned()).unwrap(),
     )
     .unwrap();
-    let group = identity.create_group(realm.as_bytes()).unwrap();
+    let group_id = arkret_sdk::base64url_encode(realm.as_bytes());
+    crate::mls::governance_proof::seed_test_governance_proof(
+        &mut state,
+        realm,
+        None,
+        group_id.clone(),
+        0,
+        0,
+    );
+    let proof_request =
+        crate::mls::governance_proof::proof_request(&state, realm, None, group_id, 0, 0).unwrap();
+    let governance_binding =
+        crate::mls::governance_proof::cached_verified_binding(&state, &proof_request).unwrap();
+    let group = identity
+        .create_group_with_governance_binding(realm.as_bytes(), &governance_binding)
+        .unwrap();
     let record = group.export_state_record().unwrap();
     let mut envelope = crate::mls::persistence::encrypt_state(
         realm,
@@ -566,6 +581,24 @@ fn mls_remove_commit_uses_explicit_revocation_membership_frontier() {
         ratchet_tree: None,
         app_state_ref: None,
     };
+    let root = arkret_sdk::Hash::new(
+        "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    )
+    .unwrap();
+    let previous_governance_binding = arkret_sdk::MlsGovernanceBindingPayload::realm(
+        arkret_sdk::RealmId::new(TEST_REALM_ID.to_owned()).unwrap(),
+        "mls-remove-group",
+        7,
+        7,
+        vec![revoke_frontier.clone()],
+        vec![arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "b".repeat(64))).unwrap()],
+        root.clone(),
+        root.clone(),
+        root,
+        arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
+        arkret_sdk::CORE_REDUCER_PROFILE,
+    )
+    .unwrap();
 
     let blocked = crate::mls::group_events::mls_remove_commit_event_from_store_for_effective_scope_with_proposal_refs(
         &state,
@@ -573,6 +606,7 @@ fn mls_remove_commit_uses_explicit_revocation_membership_frontier() {
         None,
         "did:web:alice.example",
         &commit,
+        &previous_governance_binding,
         vec![proposal_ref],
         std::slice::from_ref(&revoke_frontier),
     );

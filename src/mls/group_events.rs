@@ -379,6 +379,7 @@ pub(crate) fn mls_commit_event_from_store(
     actor_id: &str,
     _schedule_hash: &arkret_sdk::Hash,
     commit_envelope: &arkret_sdk::MlsCommitEnvelope,
+    previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
 ) -> Result<arkret_sdk::Event, String> {
     mls_commit_event_from_store_for_effective_scope(
         state_store,
@@ -386,6 +387,7 @@ pub(crate) fn mls_commit_event_from_store(
         None,
         actor_id,
         commit_envelope,
+        previous_governance_binding,
     )
 }
 
@@ -395,6 +397,7 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope(
     circle_id: Option<&str>,
     actor_id: &str,
     commit_envelope: &arkret_sdk::MlsCommitEnvelope,
+    previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
 ) -> Result<arkret_sdk::Event, String> {
     mls_commit_event_from_store_for_effective_scope_with_proposal_refs(
         state_store,
@@ -402,6 +405,7 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope(
         circle_id,
         actor_id,
         commit_envelope,
+        previous_governance_binding,
         Vec::new(),
     )
 }
@@ -412,6 +416,7 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_proposal_refs
     circle_id: Option<&str>,
     actor_id: &str,
     commit_envelope: &arkret_sdk::MlsCommitEnvelope,
+    previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
     proposal_refs: Vec<arkret_sdk::EventId>,
 ) -> Result<arkret_sdk::Event, String> {
     mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
@@ -420,6 +425,7 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_proposal_refs
         circle_id,
         actor_id,
         commit_envelope,
+        previous_governance_binding,
         proposal_refs,
         None,
         None,
@@ -432,6 +438,7 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_sidecar_bindi
     circle_id: &str,
     actor_id: &str,
     commit_envelope: &arkret_sdk::MlsCommitEnvelope,
+    previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
     sidecar_binding: arkret_sdk::SidecarMlsBinding,
 ) -> Result<arkret_sdk::Event, String> {
     mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
@@ -440,6 +447,7 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_sidecar_bindi
         Some(circle_id),
         actor_id,
         commit_envelope,
+        previous_governance_binding,
         Vec::new(),
         None,
         Some(sidecar_binding),
@@ -452,6 +460,7 @@ pub(crate) fn mls_remove_commit_event_from_store_for_effective_scope_with_propos
     circle_id: Option<&str>,
     actor_id: &str,
     commit_envelope: &arkret_sdk::MlsCommitEnvelope,
+    previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
     proposal_refs: Vec<arkret_sdk::EventId>,
     revocation_membership_frontier: &[arkret_sdk::EventId],
 ) -> Result<arkret_sdk::Event, String> {
@@ -465,6 +474,7 @@ pub(crate) fn mls_remove_commit_event_from_store_for_effective_scope_with_propos
         circle_id,
         actor_id,
         commit_envelope,
+        previous_governance_binding,
         proposal_refs,
         Some(membership_frontier),
         None,
@@ -477,6 +487,7 @@ pub(crate) fn mls_remove_commit_event_from_store_for_effective_scope_with_sideca
     circle_id: &str,
     actor_id: &str,
     commit_envelope: &arkret_sdk::MlsCommitEnvelope,
+    previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
     proposal_refs: Vec<arkret_sdk::EventId>,
     revocation_membership_frontier: &[arkret_sdk::EventId],
     sidecar_binding: arkret_sdk::SidecarMlsBinding,
@@ -491,6 +502,7 @@ pub(crate) fn mls_remove_commit_event_from_store_for_effective_scope_with_sideca
         Some(circle_id),
         actor_id,
         commit_envelope,
+        previous_governance_binding,
         proposal_refs,
         Some(membership_frontier),
         Some(sidecar_binding),
@@ -503,6 +515,7 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
     circle_id: Option<&str>,
     actor_id: &str,
     commit_envelope: &arkret_sdk::MlsCommitEnvelope,
+    previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
     proposal_refs: Vec<arkret_sdk::EventId>,
     explicit_membership_frontier: Option<Vec<arkret_sdk::EventId>>,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
@@ -580,6 +593,16 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
             .map_err(|err| format!("MLS commit payload failed: {err}"))?
             .build_sdk_event("inkson")
             .map_err(|err| format!("MLS commit SDK Event conversion failed: {err}"))?;
+    let trusted_anchor = state_store
+        .trusted_mls_governance_anchor(realm_id)
+        .ok_or_else(|| "MLS commit requires a pinned governance anchor".to_owned())?;
+    event.preconditions = crate::mls::governance::mls_commit_preconditions(
+        commit_envelope.group_id.as_str(),
+        prev_epoch,
+        previous_governance_binding,
+        &trusted_anchor,
+    )
+    .map_err(|err| format!("MLS commit preconditions failed: {err}"))?;
     event.event_id = event_id_typed;
     if let Some(circle_id) = circle {
         event.scope_ref = circle_effective_scope(realm_id, circle_id)?;
