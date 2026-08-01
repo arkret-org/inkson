@@ -5,7 +5,7 @@ use super::*;
 /// order in which these effects were registered.
 #[component]
 pub(super) fn GlobalEffects(
-    locale: Signal<Locale>,
+    mut locale: Signal<Locale>,
     mut i18n_signal: crate::i18n::I18nSignal,
     base_url: Signal<String>,
     token: Signal<String>,
@@ -21,6 +21,25 @@ pub(super) fn GlobalEffects(
 
     use_effect(move || {
         crate::i18n::set_locale(&mut i18n_signal, locale());
+    });
+
+    // The `client.language` account-data entry lands in the device preference
+    // (see `connect.rs`), which is the one place both the running shell and a
+    // cold boot read. Observing it here is what turns "another device changed
+    // the language" into a live switch rather than something the user sees
+    // only after a restart.
+    use_effect(move || {
+        let Some(synced) = state_store
+            .read()
+            .device_pref("locale")
+            .as_deref()
+            .and_then(Locale::from_tag)
+        else {
+            return;
+        };
+        if *locale.peek() != synced {
+            locale.set(synced);
+        }
     });
 
     let viewer_admin = use_resource(move || {

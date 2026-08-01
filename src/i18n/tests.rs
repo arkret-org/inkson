@@ -1,6 +1,10 @@
-//! Unit tests for the i18n module. Moved verbatim out of the former
-//! inline `mod tests` block; `use super::*` brings the locale builders
+//! Unit tests for the i18n module. `use super::*` brings the locale builders
 //! and helpers re-exported by `mod.rs` into scope.
+//!
+//! Tag parsing and the resolution order are `arkret-locale`'s contract and are
+//! tested there. What is asserted here is inkson's side of the seam: that the
+//! dictionaries cover the shipped locales, that the lookup chain falls back the
+//! way the UI depends on, and that the formatters agree with the enum.
 
 use std::collections::HashMap;
 
@@ -9,84 +13,106 @@ use chrono::{DateTime, Utc};
 use super::*;
 
 #[test]
-fn locale_from_code() {
-    assert_eq!(Locale::from_code("en"), Locale::En);
-    assert_eq!(Locale::from_code("zh"), Locale::Zh);
-    assert_eq!(Locale::from_code("zh-CN"), Locale::Zh);
-    assert_eq!(Locale::from_code("ar"), Locale::Ar);
-    // Phase D.2 #8: `fr`, `es`, `ja` are first-class now.
-    assert_eq!(Locale::from_code("fr"), Locale::Fr);
-    assert_eq!(Locale::from_code("fr-CA"), Locale::Fr);
-    assert_eq!(Locale::from_code("es"), Locale::Es);
-    assert_eq!(Locale::from_code("es-MX"), Locale::Es);
-    assert_eq!(Locale::from_code("ja"), Locale::Ja);
-    assert_eq!(Locale::from_code("ja-JP"), Locale::Ja);
-    // ar-SA collapses to ar (entry point of the
-    // `ar-SA → ar → en` chain in `translate_chain`).
-    assert_eq!(Locale::from_code("ar-SA"), Locale::Ar);
-    // Unknown locale still falls back to English.
-    assert_eq!(Locale::from_code("xx"), Locale::En);
+fn every_shipped_locale_has_a_dictionary() {
+    // A locale the shared crate advertises but this client cannot render would
+    // show raw keys, so the two sets must not drift apart.
+    let signal_dicts = {
+        let mut dicts = HashMap::new();
+        dicts.insert(Locale::En.code().to_owned(), english_translations());
+        dicts.insert(Locale::Zh.code().to_owned(), chinese_translations());
+        dicts
+    };
+    for locale in arkret_locale::SUPPORTED {
+        assert!(
+            signal_dicts.contains_key(locale.code()),
+            "no dictionary for {}",
+            locale.code()
+        );
+    }
+    assert_eq!(signal_dicts.len(), arkret_locale::SUPPORTED.len());
 }
 
 #[test]
 fn translate_chain_walks_region_then_base_then_english() {
-    // Phase D.2 #8: `ar-SA → ar → en` lookup chain.
+    // Region-tagged dictionaries are not shipped, but the chain still has to
+    // handle a raw BCP 47 tag: `set_locale` stores a `Locale`, while a caller
+    // holding a tag from the wire can reach `translate_chain` directly.
     let mut dicts = HashMap::new();
-    let mut ar_sa = TranslationDict::new(Locale::Ar);
-    ar_sa.set("region.specific", "ar-SA value");
-    let mut ar = TranslationDict::new(Locale::Ar);
-    ar.set("base.value", "ar value");
+    let mut zh_cn = TranslationDict::new(Locale::Zh);
+    zh_cn.set("region.specific", "zh-CN value");
+    let mut zh = TranslationDict::new(Locale::Zh);
+    zh.set("base.value", "zh value");
     let mut en = TranslationDict::new(Locale::En);
     en.set("english.only", "en value");
-    dicts.insert("ar-SA".to_owned(), ar_sa);
-    dicts.insert("ar".to_owned(), ar);
+    dicts.insert("zh-CN".to_owned(), zh_cn);
+    dicts.insert("zh".to_owned(), zh);
     dicts.insert("en".to_owned(), en);
-    // Region-specific value wins.
+
     assert_eq!(
-        translate_chain("ar-SA", &dicts, "region.specific"),
-        "ar-SA value"
+        translate_chain("zh-CN", &dicts, "region.specific"),
+        "zh-CN value"
     );
-    // Base value picked up via `ar-SA → ar`.
-    assert_eq!(translate_chain("ar-SA", &dicts, "base.value"), "ar value");
-    // English fallback via `ar-SA → ar → en`.
-    assert_eq!(translate_chain("ar-SA", &dicts, "english.only"), "en value");
-    // Missing everywhere → returns the key itself + records the miss.
-    let _ = missing_translation_snapshot(); // ensure helper compiles
+    assert_eq!(translate_chain("zh-CN", &dicts, "base.value"), "zh value");
+    assert_eq!(translate_chain("zh-CN", &dicts, "english.only"), "en value");
+
+    // Missing everywhere → returns the key itself and records the miss.
     assert_eq!(
-        translate_chain("ar-SA", &dicts, "nothing.here"),
+        translate_chain("zh-CN", &dicts, "nothing.here"),
         "nothing.here"
+    );
+    assert!(
+        missing_translation_snapshot()
+            .iter()
+            .any(|(tag, key)| tag == "zh-CN" && key == "nothing.here"),
+        "the miss should be reported so QA can grow the dictionaries"
     );
 }
 
 #[test]
 fn locale_direction_matches_layout_expectations() {
+    // Both shipped locales are left-to-right. `TextDirection` is kept so the
+    // shell's mirrored-layout branch stays wired up for a future RTL locale.
     assert_eq!(Locale::En.direction(), TextDirection::Ltr);
     assert_eq!(Locale::Zh.direction(), TextDirection::Ltr);
-    assert_eq!(Locale::Ar.direction(), TextDirection::Rtl);
-    assert_eq!(Locale::Ar.direction().as_str(), "rtl");
+    assert_eq!(TextDirection::Ltr.as_str(), "ltr");
+    assert_eq!(TextDirection::Rtl.as_str(), "rtl");
 }
 
 #[test]
-fn product_ui_locale_is_limited_to_english_and_chinese() {
-    assert_eq!(Locale::En.product_ui(), Locale::En);
-    assert_eq!(Locale::Zh.product_ui(), Locale::Zh);
-    for locale in [Locale::Ar, Locale::Es, Locale::Ja, Locale::Fr] {
-        assert_eq!(locale.product_ui(), Locale::En);
+fn a_stored_device_preference_survives_a_restart() {
+    // The device cache is the only tier available before sign-in, so a user
+    // who picked Chinese must still get Chinese on the next launch.
+    assert_eq!(resolve_locale(None, Some("zh")), Locale::Zh);
+    assert_eq!(resolve_locale(None, Some("en")), Locale::En);
+}
+
+#[test]
+fn the_account_preference_overrides_a_stale_device_cache() {
+    // This is the whole point of the account tier: signing in on a device that
+    // was left in English must switch to the account's language.
+    assert_eq!(resolve_locale(Some("zh"), Some("en")), Locale::Zh);
+    assert_eq!(resolve_locale(Some("en"), Some("zh")), Locale::En);
+}
+
+#[test]
+fn an_unrenderable_stored_value_does_not_pin_the_ui() {
+    // A device cache written by an older build (which persisted `ar` / `ja`)
+    // must fall through instead of selecting a dictionary that no longer
+    // exists.
+    for stale in ["ar", "ja-JP", "fr", "", "garbage"] {
+        assert_eq!(resolve_locale(None, Some(stale)), Locale::En, "{stale}");
     }
 }
 
 #[test]
 fn translation_lookup_fallback() {
     let mut dicts = HashMap::new();
-    let en = english_translations();
-    let zh = chinese_translations();
-    dicts.insert("en".to_owned(), en);
-    dicts.insert("zh".to_owned(), zh);
+    dicts.insert("en".to_owned(), english_translations());
+    dicts.insert("zh".to_owned(), chinese_translations());
 
-    // Chinese translation exists
     assert_eq!(translate(Locale::Zh, &dicts, "login.server"), "服务器");
 
-    // Fallback to English for missing Chinese key
+    // Fallback to English for a key the Chinese dictionary is missing.
     let partial_dicts = {
         let mut partial = HashMap::new();
         let mut zh_partial = TranslationDict::new(Locale::Zh);
@@ -100,7 +126,7 @@ fn translation_lookup_fallback() {
         "Passkey Login"
     );
 
-    // Fallback to key itself when not found anywhere
+    // Fallback to the key itself when it is nowhere.
     assert_eq!(
         translate(Locale::En, &HashMap::new(), "nonexistent.key"),
         "nonexistent.key"
@@ -120,10 +146,6 @@ fn locale_formatters_are_stable() {
     assert_eq!(
         format_datetime(Locale::Zh, timestamp),
         "2026年04月29日 07:08 UTC"
-    );
-    assert_eq!(
-        format_datetime(Locale::Ar, timestamp),
-        "2026/04/29 07:08 UTC"
     );
     assert_eq!(format_number(Locale::En, 1234567), "1,234,567");
     assert_eq!(format_number(Locale::Zh, 1234567), "1 234 567");

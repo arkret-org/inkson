@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 mod blocklist;
+mod client_language;
 mod client_ui;
 mod crypto;
 mod keys;
@@ -20,6 +21,7 @@ mod productivity;
 mod remark;
 
 pub use blocklist::*;
+pub use client_language::*;
 pub use client_ui::*;
 pub use crypto::*;
 pub use keys::*;
@@ -55,7 +57,37 @@ pub enum AccountDataKey {
     Custom(String),
 }
 
+/// Wire key for the actor-private locale preference.
+///
+/// `discovery/client-preferences.md` §2 declares it, but the SDK's generated
+/// `arkret_wire::AccountDataKey` registry does not carry a constant for it yet,
+/// so the literal lives here as the single local definition.
+pub const CLIENT_LANGUAGE_WIRE_KEY: &str = "client.language";
+
 impl AccountDataKey {
+    /// The wire key for a variant that carries no owned data.
+    ///
+    /// [`Self::as_wire`] borrows from `self` because [`Self::Custom`] holds a
+    /// `String`. Callers that hold one of the fixed variants need the
+    /// `'static` literal instead — passing it to a spawned task, for example —
+    /// and this spares them cloning a constant.
+    ///
+    /// Returns `None` for [`Self::Custom`], whose key is owned by the value.
+    #[must_use]
+    pub fn as_wire_static(&self) -> Option<&'static str> {
+        match self {
+            Self::ClientUi => Some(WireAccountDataKey::CLIENT_UI_STATE),
+            Self::ClientReadReceipts => Some(WireAccountDataKey::READ_RECEIPT_PREFERENCES),
+            Self::ClientPresence => Some(WireAccountDataKey::PRESENCE_VISIBILITY),
+            Self::ClientPresencePreference => Some(WireAccountDataKey::PRESENCE_PREFERENCE),
+            Self::ClientBlocklist => Some(WireAccountDataKey::ACCOUNT_BLOCKLIST),
+            Self::ClientNotifications => Some(WireAccountDataKey::PUSH_RULES),
+            Self::ClientDndSchedule => Some(WireAccountDataKey::DND_SCHEDULE),
+            Self::ClientLanguage => Some(CLIENT_LANGUAGE_WIRE_KEY),
+            Self::Custom(_) => None,
+        }
+    }
+
     pub fn as_wire(&self) -> &str {
         match self {
             Self::ClientUi => WireAccountDataKey::CLIENT_UI_STATE,
@@ -65,7 +97,7 @@ impl AccountDataKey {
             Self::ClientBlocklist => WireAccountDataKey::ACCOUNT_BLOCKLIST,
             Self::ClientNotifications => WireAccountDataKey::PUSH_RULES,
             Self::ClientDndSchedule => WireAccountDataKey::DND_SCHEDULE,
-            Self::ClientLanguage => "client.language",
+            Self::ClientLanguage => CLIENT_LANGUAGE_WIRE_KEY,
             Self::Custom(s) => s,
         }
     }
@@ -79,7 +111,7 @@ impl AccountDataKey {
             WireAccountDataKey::ACCOUNT_BLOCKLIST => Self::ClientBlocklist,
             WireAccountDataKey::PUSH_RULES => Self::ClientNotifications,
             WireAccountDataKey::DND_SCHEDULE => Self::ClientDndSchedule,
-            "client.language" => Self::ClientLanguage,
+            CLIENT_LANGUAGE_WIRE_KEY => Self::ClientLanguage,
             other => Self::Custom(other.to_owned()),
         }
     }

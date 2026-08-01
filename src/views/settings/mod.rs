@@ -102,6 +102,82 @@ pub(crate) fn push_client_ui_account_data(
     push_client_ui_account_data_with_avatar(base_url, api_token, local_theme, None);
 }
 
+/// A locale's name written in that locale, so a user who cannot read the
+/// current UI language can still find their own.
+fn locale_display_name(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "English",
+        Locale::Zh => "中文",
+    }
+}
+
+/// Apply a language choice and persist it everywhere it needs to go.
+///
+/// Three writes, none of them optional:
+///
+/// 1. the live signal, so the UI switches now;
+/// 2. the device preference, which is what seeds the *next* launch before a
+///    session exists — and what the OIDC `ui_locales` parameter is built from,
+///    so coauth follows on the next sign-in;
+/// 3. the `client.language` account-data entry, which is how the user's other
+///    devices find out. This is the tier that was declared in the protocol but
+///    never written, which is why the choice used to stay on one device.
+fn select_locale(
+    choice: Locale,
+    mut locale: Signal<Locale>,
+    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    base_url: String,
+    api_token: String,
+) {
+    if locale() == choice {
+        return;
+    }
+    locale.set(choice);
+    state_store.write().set_device_pref("locale", choice.code());
+    push_client_language_account_data(base_url, api_token, choice);
+}
+
+/// Best-effort cross-device sync of the language choice.
+///
+/// Mirrors [`push_client_ui_account_data_with_avatar`]: signed-out is a no-op
+/// (the device preference already holds the choice and the next sign-in
+/// republishes it), and a failed write is logged rather than surfaced — the
+/// user can see the language changed, and telling them the sync failed gives
+/// them nothing to act on.
+pub(crate) fn push_client_language_account_data(
+    base_url: String,
+    api_token: String,
+    locale: Locale,
+) {
+    if api_token.trim().is_empty() {
+        return;
+    }
+    let body = crate::account_data::build_client_language_body(locale);
+    // inkson's own key enum: `client.language` is declared in the spec's
+    // client-preference registry but has no generated `arkret_wire` constant
+    // yet, so the literal comes from the local mapping.
+    let key = crate::account_data::CLIENT_LANGUAGE_WIRE_KEY;
+    let body = match encrypted_account_data_value(key, &body) {
+        Ok(body) => body,
+        Err(error) => {
+            tracing::warn!(%error, "client.language encryption failed");
+            return;
+        }
+    };
+    spawn(async move {
+        if let Err(err) = with_event_submitter(&base_url, api_token, |sub| async move {
+            crate::transport::account::set_account_data(&sub, key, body).await
+        })
+        .await
+        {
+            tracing::warn!(
+                "ak.account_data.set for client.language failed: {}",
+                err.display()
+            );
+        }
+    });
+}
+
 /// A4b — variant of [`push_client_ui_account_data`] that also carries
 /// the most-recently uploaded `avatar_blob_ref`. The avatar itself is
 /// also published via `ak.self.account.command.update_profile` so other actors see
@@ -3269,23 +3345,19 @@ pub fn SettingsPanel(
                         span { "data-testid": "text-direction", "{active_direction}" }
                     }
                     div { class: "actions",
-                        Button {
-                            variant: if active_locale == Locale::En { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                            "data-testid": "language-en",
-                            onclick: move |_| {
-                                locale.set(Locale::En);
-                                state_store.write().set_device_pref("locale", Locale::En.code());
-                            },
-                            "English"
-                        }
-                        Button {
-                            variant: if active_locale == Locale::Zh { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                            "data-testid": "language-zh",
-                            onclick: move |_| {
-                                locale.set(Locale::Zh);
-                                state_store.write().set_device_pref("locale", Locale::Zh.code());
-                            },
-                            "中文"
+                        for choice in arkret_locale::SUPPORTED {
+                            Button {
+                                variant: if active_locale == choice { ButtonVariant::Primary } else { ButtonVariant::Secondary },
+                                "data-testid": "language-{choice.code()}",
+                                onclick: move |_| select_locale(
+                                    choice,
+                                    locale,
+                                    state_store,
+                                    base_url(),
+                                    token(),
+                                ),
+                                {locale_display_name(choice)}
+                            }
                         }
                     }
                 }

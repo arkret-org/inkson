@@ -4,104 +4,54 @@ use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// Supported locales.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Locale {
-    #[default]
-    En,
-    Zh,
-    Ar,
-    /// Phase D.2 #8: Spanish.
-    Es,
-    /// Phase D.2 #8: Japanese.
-    Ja,
-    /// Phase D.2 #8: French.
-    Fr,
+/// The locale the client renders in.
+///
+/// This is [`arkret_locale::UiLocale`] — the same closed set coauth's server
+/// and its SPA use — re-exported under the name this client already uses.
+/// Sharing the type is what makes "the two apps must change together" a
+/// compile-time property rather than a convention: neither side can invent a
+/// locale the other cannot render.
+///
+/// The enum used to carry `Ar`/`Es`/`Ja`/`Fr` alongside deliberately partial
+/// dictionaries, but `product_ui()` clamped every one of them back to `En`
+/// before the shell ever saw it, so they were unreachable. They are gone,
+/// along with the clamp. [`TextDirection`] survives so that adding a
+/// right-to-left locale stays a change in one crate rather than an audit of
+/// every layout.
+pub use arkret_locale::{TextDirection, UiLocale as Locale};
+
+/// Where this device's UI locale came from, resolved once at boot.
+///
+/// The shell owns the account and device-cache tiers, so it passes them in;
+/// this helper only contributes the platform observation, which is the one
+/// piece that needs `web_sys`.
+///
+/// * `account` — the signed-in account's `preferred_locale`, the cross-device
+///   source of truth. `None` before sign-in.
+/// * `device_cache` — this device's remembered choice. A cache: it seeds the
+///   pre-login experience and never outranks the account.
+#[must_use]
+pub fn resolve_locale(account: Option<&str>, device_cache: Option<&str>) -> Locale {
+    let platform = platform_language();
+    arkret_locale::resolve(&arkret_locale::LocaleSources {
+        account,
+        // Inkson is the client that *sends* `ui_locales`; nothing hands one
+        // back to it, so this tier is always empty here.
+        requested: None,
+        device_cache,
+        platform: platform.as_deref(),
+    })
 }
 
-impl Locale {
-    pub fn code(&self) -> &'static str {
-        match self {
-            Locale::En => "en",
-            Locale::Zh => "zh",
-            Locale::Ar => "ar",
-            Locale::Es => "es",
-            Locale::Ja => "ja",
-            Locale::Fr => "fr",
-        }
+/// The operating system / browser language preference, if observable.
+fn platform_language() -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        return web_sys::window().and_then(|window| window.navigator().language());
     }
 
-    /// Parse a BCP 47 locale string. The match recognises both the base
-    /// tag (e.g. `"ar"`) and common region variants (`"ar-SA"`, `"ar-EG"`,
-    /// `"zh-CN"`, `"zh-TW"`, `"es-MX"`, `"fr-CA"`, `"ja-JP"`). Region
-    /// variants always fall through to the base locale dictionary.
-    pub fn from_code(code: &str) -> Self {
-        // Normalise on the base subtag so `ar-SA` and `ar-EG` both pick
-        // the Arabic dictionary, which is the entry-point of the
-        // ar-SA → ar → en fallback chain defined in [`translate`].
-        let base = code
-            .split(['-', '_'])
-            .next()
-            .unwrap_or(code)
-            .to_ascii_lowercase();
-        match base.as_str() {
-            "zh" => Locale::Zh,
-            "ar" => Locale::Ar,
-            "es" => Locale::Es,
-            "ja" => Locale::Ja,
-            "fr" => Locale::Fr,
-            _ => Locale::En,
-        }
-    }
-
-    /// Resolve the platform UI locale for first launch. A persisted Inkson
-    /// preference takes precedence at the app-shell layer; this is only the
-    /// fallback used when the user has not selected a language yet.
-    pub fn platform_preferred() -> Self {
-        #[cfg(target_arch = "wasm32")]
-        {
-            return web_sys::window()
-                .and_then(|window| window.navigator().language())
-                .map(|language| Self::from_code(&language))
-                .unwrap_or_default();
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        Self::default()
-    }
-
-    /// Languages exposed by the product UI are intentionally limited to
-    /// English and Chinese. Keep the secondary locale variants available to
-    /// protocol/formatting callers, but never restore an old secondary-locale
-    /// preference into the interactive shell.
-    pub fn product_ui(self) -> Self {
-        match self {
-            Self::Zh => Self::Zh,
-            Self::En | Self::Ar | Self::Es | Self::Ja | Self::Fr => Self::En,
-        }
-    }
-
-    pub fn direction(&self) -> TextDirection {
-        match self {
-            Locale::Ar => TextDirection::Rtl,
-            Locale::En | Locale::Zh | Locale::Es | Locale::Ja | Locale::Fr => TextDirection::Ltr,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TextDirection {
-    Ltr,
-    Rtl,
-}
-
-impl TextDirection {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Ltr => "ltr",
-            Self::Rtl => "rtl",
-        }
-    }
+    #[cfg(not(target_arch = "wasm32"))]
+    None
 }
 
 /// Translation dictionary for a single locale.
@@ -228,14 +178,6 @@ pub fn format_datetime(locale: Locale, timestamp: DateTime<Utc>) -> String {
     match locale {
         Locale::En => timestamp.format("%b %d, %Y %H:%M UTC").to_string(),
         Locale::Zh => timestamp.format("%Y年%m月%d日 %H:%M UTC").to_string(),
-        Locale::Ar => timestamp.format("%Y/%m/%d %H:%M UTC").to_string(),
-        // Phase D.2 #8 locale extensions:
-        //   * Spanish uses day-first DD/MM/YYYY (DM ordering matches ES/MX/AR conventions).
-        //   * Japanese uses year/month/day separators like Chinese.
-        //   * French uses DD/MM/YYYY (matches FR/CA conventions).
-        Locale::Es => timestamp.format("%d/%m/%Y %H:%M UTC").to_string(),
-        Locale::Ja => timestamp.format("%Y年%m月%d日 %H:%M UTC").to_string(),
-        Locale::Fr => timestamp.format("%d/%m/%Y %H:%M UTC").to_string(),
     }
 }
 
@@ -243,16 +185,11 @@ pub fn format_datetime(locale: Locale, timestamp: DateTime<Utc>) -> String {
 pub fn format_number(locale: Locale, value: u64) -> String {
     let grouped = group_decimal(value);
     match locale {
-        // English / Arabic / Japanese: comma-grouped thousands.
-        Locale::En | Locale::Ar | Locale::Ja => grouped,
-        // Chinese: Eastern convention uses non-breaking space as a soft
-        // separator since the thousands grouping is not native to the
-        // language; we keep this for parity with the pre-D.2 behaviour.
+        // Comma-grouped thousands.
+        Locale::En => grouped,
+        // Eastern convention uses a space as a soft separator, since
+        // thousands grouping is not native to the language.
         Locale::Zh => grouped.replace(',', " "),
-        // Spanish / French: dot grouping (es-ES / fr-FR style). Newer
-        // ISO 31 recommends thin-space grouping but the existing
-        // tooling consumes ASCII, so the dot is the pragmatic choice.
-        Locale::Es | Locale::Fr => grouped.replace(',', "."),
     }
 }
 
@@ -305,7 +242,6 @@ fn group_decimal(value: u64) -> String {
 }
 
 mod en;
-mod other_locales;
 mod zh;
 
 #[cfg(test)]
@@ -314,9 +250,6 @@ mod tests;
 // Re-export the per-locale dictionary builders so existing
 // `crate::i18n::<locale>_translations` paths keep resolving unchanged.
 pub use en::english_translations;
-pub use other_locales::{
-    arabic_translations, french_translations, japanese_translations, spanish_translations,
-};
 pub use zh::chinese_translations;
 
 /// Initialize the i18n system with default translations.
@@ -325,18 +258,16 @@ pub fn init_i18n() -> I18nSignal {
 }
 
 /// Initialize i18n preloaded with a specific locale.
+///
+/// One dictionary per shipped locale, keyed by [`Locale::code`]. There used to
+/// be four more slots (`ar` / `es` / `ja` / `fr`) holding deliberately partial
+/// catalogues, but no code path could ever select them — the shell clamped the
+/// active locale to English or Chinese before this ran — so every one of their
+/// keys resolved through the English fallback anyway.
 pub fn init_i18n_with_locale(locale: Locale) -> I18nSignal {
     let mut dicts = HashMap::new();
-    dicts.insert("en".to_owned(), english_translations());
-    dicts.insert("zh".to_owned(), chinese_translations());
-    dicts.insert("ar".to_owned(), arabic_translations());
-    // Phase D.2 #8: new locale slots — coverage is intentionally a
-    // subset (nav / common / login) so missing keys fall through the
-    // `xx → en` chain and surface in `missing_translation_snapshot()`
-    // for QA to grow as needed.
-    dicts.insert("es".to_owned(), spanish_translations());
-    dicts.insert("ja".to_owned(), japanese_translations());
-    dicts.insert("fr".to_owned(), french_translations());
+    dicts.insert(Locale::En.code().to_owned(), english_translations());
+    dicts.insert(Locale::Zh.code().to_owned(), chinese_translations());
     Signal::new((locale, dicts))
 }
 

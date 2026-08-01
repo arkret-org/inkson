@@ -232,11 +232,16 @@ fn AppBootstrap() -> Element {
     );
     let initial_realm_tree_owner_did = initial_state_store.active_account_did().unwrap_or_default();
     let initial_sidebar_width = load_sidebar_width_preference(&initial_state_store);
-    let initial_locale = initial_state_store
-        .device_pref("locale")
-        .map(|code| Locale::from_code(&code))
-        .unwrap_or_else(Locale::platform_preferred)
-        .product_ui();
+    // Boot locale: the device cache plus the platform default, through the
+    // shared resolver. The account tier is deliberately absent here — the
+    // signed-in account's `preferred_locale` arrives with the session, which
+    // is not restored yet at this point in boot. `AccountLocaleSync` applies
+    // it as soon as it lands, so a stale device cache is corrected within the
+    // first session refresh rather than persisting for the whole session.
+    let initial_locale = crate::i18n::resolve_locale(
+        None,
+        initial_state_store.device_pref("locale").as_deref(),
+    );
     let initial_theme = initial_state_store
         .load_private_data(&initial_config.account_did, "theme")
         .filter(|theme| matches!(theme.as_str(), "light" | "night" | "system"))
