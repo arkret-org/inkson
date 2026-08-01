@@ -39,6 +39,44 @@ fn spec_artifact(path: &str) -> PathBuf {
         .join(path)
 }
 
+#[test]
+fn realm_event_paths_do_not_fall_back_to_default_sha256_helpers() {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut pending = vec![manifest.join("src")];
+    let forbidden = [
+        "arkret_sdk::signatures::sign_event(",
+        "arkret_signatures::sign_event(",
+        "arkret_sdk::event_proof_verification_context(",
+    ];
+    let mut violations = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("read {}: {error}", directory.display()))
+        {
+            let path = entry.expect("read source entry").path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if path.extension().and_then(|extension| extension.to_str()) != Some("rs") {
+                continue;
+            }
+            let source = fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+            for needle in forbidden {
+                if source.contains(needle) {
+                    violations.push(format!("{} contains {needle}", path.display()));
+                }
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "Realm signing and verification must use a trusted explicit digest suite:\n{}",
+        violations.join("\n")
+    );
+}
+
 // ----------------------------------------------------------------------
 // J1 — Event-schema validation gate
 // ----------------------------------------------------------------------

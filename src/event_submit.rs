@@ -1337,11 +1337,25 @@ impl EventSubmitter {
 
     pub(crate) async fn event_proof_context(
         &self,
+        event: &arkret_sdk::Event,
     ) -> anyhow::Result<crate::event_signer::EventProofContext> {
         // Durable Event envelopes are portable Realm facts. Binding their
         // proof to the authoring Principal Server would make the original
         // signature unverifiable after federation to another Realm host.
-        Ok(crate::event_signer::EventProofContext::new())
+        let digest_suite = if event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE {
+            serde_json::from_value::<arkret_sdk::RealmCreatePayload>(serde_json::to_value(
+                &event.payload,
+            )?)
+            .map_err(|error| anyhow::anyhow!("decode Realm genesis digest suite: {error}"))?
+            .object
+            .digest_algorithm
+        } else {
+            let frontier = self
+                .events_frontier_realm_seal_view(event.realm_id.as_str())
+                .await?;
+            crate::event_signer::digest_suite_from_trusted_hash(&frontier.state_root)?
+        };
+        Ok(crate::event_signer::EventProofContext::new().with_digest_suite(digest_suite))
     }
 
     /// Wire-submit a fully-prepared, already-signed SDK [`arkret_sdk::Event`].
@@ -1940,7 +1954,7 @@ impl EventSubmitter {
         self.stamp_cba_basis_for_sdk_event_inner(&mut signed, authoring)
             .await?;
         if signed.proofs.is_empty() {
-            let proof_context = self.event_proof_context().await?;
+            let proof_context = self.event_proof_context(&signed).await?;
             crate::event_signer::sign_sdk_event_with_active_context(&mut signed, proof_context)
                 .map_err(|err| {
                     anyhow::anyhow!(
@@ -2293,12 +2307,30 @@ impl EventSubmitter {
                 self.stamp_cba_basis_for_sdk_event(event).await?;
             }
         }
-        let proof_context = self.event_proof_context().await?;
+        let mut batch_digest_suites = BTreeMap::new();
+        for event in &events {
+            if event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE {
+                let payload = serde_json::from_value::<arkret_sdk::RealmCreatePayload>(
+                    serde_json::to_value(&event.payload)?,
+                )
+                .map_err(|error| anyhow::anyhow!("decode Realm genesis digest suite: {error}"))?;
+                batch_digest_suites.insert(event.realm_id.clone(), payload.object.digest_algorithm);
+            }
+        }
         for event in &mut events {
             if event.proofs.is_empty() {
+                let proof_context = if let Some(digest_suite) =
+                    batch_digest_suites.get(&event.realm_id).copied()
+                {
+                    crate::event_signer::EventProofContext::new().with_digest_suite(digest_suite)
+                } else if is_genesis_unit {
+                    crate::event_signer::EventProofContext::new()
+                } else {
+                    self.event_proof_context(event).await?
+                };
                 crate::event_signer::sign_sdk_event_with_active_context(
                     event,
-                    proof_context.clone(),
+                    proof_context,
                 )
                 .map_err(|err| {
                     anyhow::anyhow!(

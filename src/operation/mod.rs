@@ -32,10 +32,17 @@ use serde_json::Value;
 pub fn project_registered_cell_writes(
     event: &Event,
 ) -> Result<Vec<ProjectedCellWrite>, EventCellProjectionError> {
-    arkret_sdk::schema::project_registered_cell_writes(
+    project_registered_cell_writes_with_digest_suite(
         event,
         arkret_sdk::canonical::DigestSuite::Sha256,
     )
+}
+
+pub fn project_registered_cell_writes_with_digest_suite(
+    event: &Event,
+    digest_suite: arkret_sdk::canonical::DigestSuite,
+) -> Result<Vec<ProjectedCellWrite>, EventCellProjectionError> {
+    arkret_sdk::schema::project_registered_cell_writes(event, digest_suite)
 }
 
 pub type EventCellProjectionError = arkret_sdk::schema::EventCellContractError;

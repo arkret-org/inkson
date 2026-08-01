@@ -90,6 +90,7 @@ pub enum EventSignerError {
 pub struct EventProofContext {
     pub domain: Option<String>,
     pub audience: Option<EventProofAudience>,
+    pub digest_suite: arkret_sdk::canonical::DigestSuite,
 }
 
 impl EventProofContext {
@@ -106,6 +107,27 @@ impl EventProofContext {
         self.audience = Some(audience);
         self
     }
+
+    pub fn with_digest_suite(mut self, digest_suite: arkret_sdk::canonical::DigestSuite) -> Self {
+        self.digest_suite = digest_suite;
+        self
+    }
+}
+
+/// Resolve a digest suite from a hash authenticated by trusted Realm state.
+pub fn digest_suite_from_trusted_hash(
+    hash: &arkret_sdk::Hash,
+) -> Result<arkret_sdk::canonical::DigestSuite, EventSignerError> {
+    let suite_name = hash
+        .as_str()
+        .split_once(':')
+        .map(|(suite, _)| suite)
+        .ok_or_else(|| EventSignerError::Encoding("trusted hash has no suite prefix".to_owned()))?;
+    arkret_sdk::canonical::digest_suite(suite_name).map_err(|error| {
+        EventSignerError::Encoding(format!(
+            "trusted hash carries unsupported digest suite {suite_name:?}: {error}"
+        ))
+    })
 }
 
 /// Opaque handle wrapping an SDK [`SdkEventSigner`] trait object plus
@@ -376,10 +398,11 @@ impl InksonEventSigner {
                 .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
             verification_method: verification_method.clone(),
         };
-        arkret_sdk::signatures::sign_event(
+        arkret_sdk::signatures::sign_event_with_digest_suite(
             event,
             &signer,
             &verification_method,
+            context.digest_suite,
             arkret_sdk::signatures::SignEventOptions {
                 domain: context.domain,
                 audience: proof_audience,
@@ -1452,7 +1475,8 @@ mod tests {
             .with_domain("did:web:server.example")
             .with_audience(EventProofAudience::Single(
                 "did:web:server.example".to_owned(),
-            ));
+            ))
+            .with_digest_suite(arkret_sdk::canonical::DigestSuite::Blake3);
 
         signer
             .sign_sdk_event_with_context(&mut event, context)
@@ -1460,6 +1484,7 @@ mod tests {
 
         let proof = event.proofs.first().expect("proof");
         assert_eq!(proof.kind, "detached_jws");
+        assert!(proof.event_digest.as_str().starts_with("blake3:"));
         assert_eq!(
             proof.verification_method,
             format!("did:web:sdk.example#{TEST_DEVICE_ID}")
@@ -1467,7 +1492,7 @@ mod tests {
         assert_eq!(proof.domain.as_deref(), Some("did:web:server.example"));
         assert!(proof.audience.is_some());
         event
-            .validate_proof_bindings()
+            .validate_proof_bindings_with_digest_suite(arkret_sdk::canonical::DigestSuite::Blake3)
             .expect("proof digest matches");
     }
 

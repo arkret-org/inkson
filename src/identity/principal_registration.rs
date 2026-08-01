@@ -305,10 +305,17 @@ pub async fn bootstrap_principal(
         root_did,
         root_verification_method.clone(),
     );
-    arkret_sdk::signatures::sign_event(
+    let digest_suite = serde_json::from_value::<arkret_sdk::RealmCreatePayload>(
+        serde_json::to_value(&create.payload)?,
+    )
+    .context("decode Principal Control Realm genesis digest suite")?
+    .object
+    .digest_algorithm;
+    arkret_sdk::signatures::sign_event_with_digest_suite(
         &mut create,
         &root_signer,
         &root_verification_method,
+        digest_suite,
         arkret_sdk::signatures::SignEventOptions::new().with_created_at(created_at),
     )?;
 

@@ -291,11 +291,17 @@ pub fn build_cross_signing_recovery_events(
         replacement_device_signer.payload_signer_adapter_for_principal(&session.principal_id)?;
     let verification_method =
         replacement_device_signer.verification_method_for_principal(&session.principal_id)?;
+    let accepted_basis = session.accepted_seal_frontier.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("verified recovery session has no accepted Seal frontier")
+    })?;
+    let digest_suite =
+        crate::event_signer::digest_suite_from_trusted_hash(&accepted_basis.state_root)?;
     for event in [&mut authorize, &mut list_update] {
-        arkret_sdk::signatures::sign_event(
+        arkret_sdk::signatures::sign_event_with_digest_suite(
             event,
             &device_signer,
             &verification_method,
+            digest_suite,
             arkret_sdk::signatures::SignEventOptions::new().with_created_at(now),
         )?;
     }

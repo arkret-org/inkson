@@ -703,6 +703,17 @@ where
     verify_request_binding(request, &bundle.governance_binding)?;
     let notary = target_notary_value(bundle)?;
     let delegated_controller = managed_agent_pcr_delegated_controller(bundle, &notary)?;
+    // `verify_mls_governance_proof_bundle` validates the complete Seal path
+    // before it invokes the Event verifier below. The final Seal's state-root
+    // prefix is therefore the trusted Realm suite for every frontier Event in
+    // this materialization; the Event payload is never consulted.
+    let accepted_state_root = &bundle
+        .seal_path
+        .last()
+        .ok_or_else(|| "MLS governance proof seal_path is empty".to_owned())?
+        .state_root;
+    let digest_suite = crate::event_signer::digest_suite_from_trusted_hash(accepted_state_root)
+        .map_err(|error| format!("resolve MLS governance digest suite: {error}"))?;
     arkret_sdk::verify_mls_governance_proof_bundle(
         bundle,
         &bundle.governance_binding,
@@ -743,12 +754,13 @@ where
                             "serialize MLS governance frontier Event proof: {error}"
                         ))
                     })?;
-                    crate::identity::device_directory::verify_proof_value_for_signer_result(
+                    crate::identity::device_directory::verify_proof_value_for_signer_result_with_digest_suite(
                         &envelope,
                         &proof_value,
                         &actor,
                         event.actor_id.as_str(),
                         &key,
+                        digest_suite,
                     )
                     .map_err(|error| {
                         arkret_sdk::Error::Protocol(format!(
@@ -761,7 +773,11 @@ where
                     // the Event was submitted; re-verification here must keep validating the
                     // immutable signature after the transient five-minute presentation window.
                     // Device proofs above intentionally have the same durable semantics.
-                    let mut context = arkret_sdk::event_proof_verification_context(event)?;
+                    let mut context =
+                        arkret_sdk::event_proof_verification_context_with_digest_suite(
+                            event,
+                            digest_suite,
+                        )?;
                     context.replay_window = chrono::Duration::MAX;
                     let verified = arkret_sdk::verify_event_proof_with_did_resolver_context(
                         event, proof, resolver, context,
@@ -780,7 +796,10 @@ where
         // through the one client evaluator keeps the cells the bundle is checked
         // against identical to the cells the receiver derives.
         |event| {
-            crate::operation::project_registered_cell_writes(event)
+            crate::operation::project_registered_cell_writes_with_digest_suite(
+                event,
+                digest_suite,
+            )
                 .map(|writes| writes.into_iter().map(|write| write.cell).collect())
                 .map_err(|error| {
                     arkret_sdk::Error::Protocol(format!(

@@ -577,6 +577,14 @@ pub(crate) async fn prepare_enrollment_authority_recovery(
         cba_proof_bundles: Vec::new(),
     };
 
+    let accepted_basis = verified_session
+        .accepted_seal_frontier
+        .as_ref()
+        .ok_or_else(|| {
+            anyhow::anyhow!("verified recovery session has no accepted Seal frontier")
+        })?;
+    let digest_suite =
+        crate::event_signer::digest_suite_from_trusted_hash(&accepted_basis.state_root)?;
     let reanchor_payload =
         arkret_models_collaboration::events_payloads::device_identity::DeviceReanchorPayload {
             principal_id: verified_session.principal_id.clone(),
@@ -588,7 +596,9 @@ pub(crate) async fn prepare_enrollment_authority_recovery(
                 .map_err(anyhow::Error::msg)?,
             pre_fence_basis: verified_session.accepted_seal_frontier.clone(),
             replacement_authorize_event_id: authorize_event_id.clone(),
-            replacement_authorize_digest: Hash::new(authorize_event.event_digest()?)?,
+            replacement_authorize_digest: Hash::new(
+                authorize_event.event_digest_with_digest_suite(digest_suite)?,
+            )?,
         };
     let mut reanchor_event = Event::new_with_id_at(
         reanchor_event_id.clone(),
@@ -625,10 +635,11 @@ pub(crate) async fn prepare_enrollment_authority_recovery(
         root_did,
         root_verification_method.clone(),
     );
-    arkret_signatures::sign_event(
+    arkret_signatures::sign_event_with_digest_suite(
         &mut reanchor_event,
         &root_signer,
         &root_verification_method,
+        digest_suite,
         arkret_signatures::SignEventOptions::new().with_created_at(not_before),
     )?;
     let reanchor_lease = crate::fresh_device_recovery::sign_recovery_session_lease(

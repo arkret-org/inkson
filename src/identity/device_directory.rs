@@ -630,6 +630,24 @@ pub fn verify_proof_value_for_signer_result(
     binding_actor_id: &str,
     public_key: &PublicKeyMaterial,
 ) -> Result<(), String> {
+    verify_proof_value_for_signer_result_with_digest_suite(
+        envelope_without_proof,
+        proof_value,
+        signer_id,
+        binding_actor_id,
+        public_key,
+        arkret_sdk::canonical::DigestSuite::Sha256,
+    )
+}
+
+pub fn verify_proof_value_for_signer_result_with_digest_suite(
+    envelope_without_proof: &serde_json::Value,
+    proof_value: &serde_json::Value,
+    signer_id: &str,
+    binding_actor_id: &str,
+    public_key: &PublicKeyMaterial,
+    digest_suite: arkret_sdk::canonical::DigestSuite,
+) -> Result<(), String> {
     let proof: arkret_sdk::Proof = serde_json::from_value(proof_value.clone())
         .map_err(|error| format!("decode Event proof: {error}"))?;
     if verification_method_controller(&proof.verification_method) != signer_id {
@@ -639,11 +657,12 @@ pub fn verify_proof_value_for_signer_result(
         .map_err(|error| format!("invalid Event binding actor DID: {error}"))?;
     let canonical_bytes = crate::canonical::canonical_json_bytes(envelope_without_proof)
         .map_err(|error| format!("canonicalize Event proof envelope: {error}"))?;
-    arkret_sdk::signatures::verify_eddsa_detached_jws_proof(
+    arkret_sdk::signatures::verify_eddsa_detached_jws_proof_with_digest_suite(
         &proof,
         &canonical_bytes,
         &did,
         public_key,
+        digest_suite,
     )
     .map_err(|error| error.to_string())
 }
