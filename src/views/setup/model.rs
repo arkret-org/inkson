@@ -48,21 +48,24 @@ pub(super) const NEW_REALM_STEPS: [NewRealmStep; 4] = [
 ];
 
 impl NewRealmStep {
-    pub(super) fn label(self) -> &'static str {
+    /// i18n key for the step's short name. Call sites resolve it through
+    /// [`crate::i18n::tr`]; this enum stays runtime-free.
+    pub(super) fn label_key(self) -> &'static str {
         match self {
-            Self::Basics => "Basics",
-            Self::Boundary => "Boundary",
-            Self::Seed => "Seed",
-            Self::Done => "Done",
+            Self::Basics => "setup.step.basics.label",
+            Self::Boundary => "setup.step.boundary.label",
+            Self::Seed => "setup.step.seed.label",
+            Self::Done => "setup.step.done.label",
         }
     }
 
-    pub(super) fn subtitle(self) -> &'static str {
+    /// i18n key for the step's one-line subtitle.
+    pub(super) fn subtitle_key(self) -> &'static str {
         match self {
-            Self::Basics => "name and intent",
-            Self::Boundary => "three policy axes",
-            Self::Seed => "initial members and create",
-            Self::Done => "open created realm",
+            Self::Basics => "setup.step.basics.subtitle",
+            Self::Boundary => "setup.step.boundary.subtitle",
+            Self::Seed => "setup.step.seed.subtitle",
+            Self::Done => "setup.step.done.subtitle",
         }
     }
 

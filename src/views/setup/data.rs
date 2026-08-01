@@ -1,86 +1,92 @@
 //! Static option tables for the Realm / Space create forms.
+//!
+//! Each entry is `(wire_value, label_key, hint_key)`. The second and third
+//! fields are i18n keys, not display text — call sites resolve them through
+//! [`crate::i18n::tr`] so the create forms follow the active locale like the
+//! rest of the shell. The key shape is `setup.opt.<axis>.<value>[.hint]`,
+//! which keeps the table mechanically checkable against the dictionaries.
 
 pub(super) const DISCOVERABILITY_OPTIONS: [(&str, &str, &str); 6] = [
     (
         "public",
-        "Public",
-        "Findable in Search. Existence and join surface can be broadly disclosed.",
+        "setup.opt.discoverability.public",
+        "setup.opt.discoverability.public.hint",
     ),
     (
         "listed",
-        "Listed",
-        "Visible in Search, but still separate from how people join or what history they see.",
+        "setup.opt.discoverability.listed",
+        "setup.opt.discoverability.listed.hint",
     ),
     (
         "restricted",
-        "Restricted",
-        "Directory presence is limited to principals that already satisfy server-side policy.",
+        "setup.opt.discoverability.restricted",
+        "setup.opt.discoverability.restricted.hint",
     ),
     (
         "unlisted",
-        "Unlisted",
-        "Not browseable in Search. Entry depends on a direct link or explicit reference.",
+        "setup.opt.discoverability.unlisted",
+        "setup.opt.discoverability.unlisted.hint",
     ),
     (
         "invite_only",
-        "Invite only",
-        "Existence is disclosed only to specifically invited principals.",
+        "setup.opt.discoverability.invite_only",
+        "setup.opt.discoverability.invite_only.hint",
     ),
     (
         "secret",
-        "Secret",
-        "The Realm should not disclose that it exists to unauthorized viewers.",
+        "setup.opt.discoverability.secret",
+        "setup.opt.discoverability.secret.hint",
     ),
 ];
 
 pub(super) const JOIN_RULE_OPTIONS: [(&str, &str, &str); 4] = [
     (
         "public",
-        "Public",
-        "Anyone who can see the Realm can join without a separate approval step.",
+        "setup.opt.join_rule.public",
+        "setup.opt.join_rule.public.hint",
     ),
     (
         "invite",
-        "Invite",
-        "Joining requires a member or admin to grant admission explicitly.",
+        "setup.opt.join_rule.invite",
+        "setup.opt.join_rule.invite.hint",
     ),
     (
         "knock",
-        "Knock",
-        "Applicants can request entry and wait for review.",
+        "setup.opt.join_rule.knock",
+        "setup.opt.join_rule.knock.hint",
     ),
     (
         "restricted",
-        "Restricted",
-        "Joining depends on policy or claims, even if the Realm is discoverable.",
+        "setup.opt.join_rule.restricted",
+        "setup.opt.join_rule.restricted.hint",
     ),
 ];
 
 pub(super) const HISTORY_VISIBILITY_OPTIONS: [(&str, &str, &str); 5] = [
     (
         "world_readable",
-        "World readable",
-        "Past history is readable without joining. Use only with intentionally open Realms.",
+        "setup.opt.history_visibility.world_readable",
+        "setup.opt.history_visibility.world_readable.hint",
     ),
     (
         "shared",
-        "Shared",
-        "New members can read the pre-join history that is meant to be shared with the whole Realm.",
+        "setup.opt.history_visibility.shared",
+        "setup.opt.history_visibility.shared.hint",
     ),
     (
         "invited",
-        "Invited",
-        "History is visible only from the point an invite made the principal eligible.",
+        "setup.opt.history_visibility.invited",
+        "setup.opt.history_visibility.invited.hint",
     ),
     (
         "joined",
-        "Joined",
-        "History starts when the principal actually becomes a member.",
+        "setup.opt.history_visibility.joined",
+        "setup.opt.history_visibility.joined.hint",
     ),
     (
         "restricted",
-        "Restricted",
-        "Past history stays tightly scoped; new members see only what policy re-discloses.",
+        "setup.opt.history_visibility.restricted",
+        "setup.opt.history_visibility.restricted.hint",
     ),
 ];
 
@@ -90,13 +96,13 @@ pub(super) const HISTORY_VISIBILITY_OPTIONS: [(&str, &str, &str); 5] = [
 pub(super) const ENCRYPTION_PROFILE_OPTIONS: [(&str, &str, &str); 2] = [
     (
         "mls_rfc9420",
-        "Encrypted",
-        "Recommended. Metadata and content use MLS E2EE.",
+        "setup.opt.encryption_profile.mls_rfc9420",
+        "setup.opt.encryption_profile.mls_rfc9420.hint",
     ),
     (
         "none",
-        "No encryption",
-        "Plaintext is visible to the server. Use only for public Realms.",
+        "setup.opt.encryption_profile.none",
+        "setup.opt.encryption_profile.none.hint",
     ),
 ];
 
@@ -109,13 +115,13 @@ pub(super) const ENCRYPTION_PROFILE_OPTIONS: [(&str, &str, &str); 2] = [
 pub(super) const CONTENT_SCHEME_OPTIONS: [(&str, &str, &str); 2] = [
     (
         "mls_exporter_aead_v1",
-        "MLS exporter AEAD",
-        "content_scheme=mls_exporter_aead_v1. New members can be granted history from before they joined. Forward secrecy is per-epoch.",
+        "setup.opt.content_scheme.mls_exporter_aead_v1",
+        "setup.opt.content_scheme.mls_exporter_aead_v1.hint",
     ),
     (
         "mls_rfc9420",
-        "MLS PrivateMessage",
-        "content_scheme=mls_rfc9420. Pre-join history can never be shared with late joiners. Per-message forward secrecy.",
+        "setup.opt.content_scheme.mls_rfc9420",
+        "setup.opt.content_scheme.mls_rfc9420.hint",
     ),
 ];
 
@@ -125,13 +131,13 @@ pub(super) const CONTENT_SCHEME_OPTIONS: [(&str, &str, &str); 2] = [
 pub(super) const SECURITY_CLASS_OPTIONS: [(&str, &str, &str); 2] = [
     (
         "standard",
-        "Standard",
-        "Default posture. Federation policy can be open or restricted per Realm settings.",
+        "setup.opt.security_class.standard",
+        "setup.opt.security_class.standard.hint",
     ),
     (
         "high_assurance",
-        "High assurance",
-        "Tightened defaults: federation is forced to restricted/closed/quarantine, audit signals are recorded.",
+        "setup.opt.security_class.high_assurance",
+        "setup.opt.security_class.high_assurance.hint",
     ),
 ];
 
@@ -141,23 +147,23 @@ pub(super) const SECURITY_CLASS_OPTIONS: [(&str, &str, &str); 2] = [
 pub(super) const FEDERATION_POLICY_OPTIONS: [(&str, &str, &str); 4] = [
     (
         "open",
-        "Open",
-        "Any peer can interact. Not allowed when security_class=high_assurance.",
+        "setup.opt.federation_policy.open",
+        "setup.opt.federation_policy.open.hint",
     ),
     (
         "restricted",
-        "Restricted",
-        "Allow-list of peers (governance / org-vetted). Default for high_assurance.",
+        "setup.opt.federation_policy.restricted",
+        "setup.opt.federation_policy.restricted.hint",
     ),
     (
         "closed",
-        "Closed",
-        "No federation at all. Use for fully internal Realms.",
+        "setup.opt.federation_policy.closed",
+        "setup.opt.federation_policy.closed.hint",
     ),
     (
         "quarantine",
-        "Quarantine",
-        "Inbound is accepted but held for review. Outbound is blocked.",
+        "setup.opt.federation_policy.quarantine",
+        "setup.opt.federation_policy.quarantine.hint",
     ),
 ];
 
@@ -167,23 +173,23 @@ pub(super) const FEDERATION_POLICY_OPTIONS: [(&str, &str, &str); 4] = [
 pub(super) const ANCHOR_PROFILE_OPTIONS: [(&str, &str, &str); 4] = [
     (
         "single_did",
-        "Single DID",
-        "One principal signs seals. Simplest setup; default.",
+        "setup.opt.anchor_profile.single_did",
+        "setup.opt.anchor_profile.single_did.hint",
     ),
     (
         "threshold",
-        "Threshold",
-        "k-of-n signature; configure the participating DIDs in policy.",
+        "setup.opt.anchor_profile.threshold",
+        "setup.opt.anchor_profile.threshold.hint",
     ),
     (
         "open_set",
-        "Open set",
-        "Any holder of the notary capability may sign.",
+        "setup.opt.anchor_profile.open_set",
+        "setup.opt.anchor_profile.open_set.hint",
     ),
     (
         "mixed",
-        "Mixed",
-        "Combination of the above — configure via policy.",
+        "setup.opt.anchor_profile.mixed",
+        "setup.opt.anchor_profile.mixed.hint",
     ),
 ];
 
@@ -191,21 +197,25 @@ pub(super) const ANCHOR_PROFILE_OPTIONS: [(&str, &str, &str); 4] = [
 // `sha256` is the universal default; other choices target hardened
 // or interop-with-other-hash-systems deployments.
 pub(super) const HASH_PROFILE_OPTIONS: [(&str, &str, &str); 4] = [
-    ("sha256", "SHA-256", "Default. Interoperable everywhere."),
+    (
+        "sha256",
+        "setup.opt.hash_profile.sha256",
+        "setup.opt.hash_profile.sha256.hint",
+    ),
     (
         "sha512",
-        "SHA-512",
-        "Wider digest. Choose only if your deployment policy requires it.",
+        "setup.opt.hash_profile.sha512",
+        "setup.opt.hash_profile.sha512.hint",
     ),
     (
         "sha3_256",
-        "SHA3-256",
-        "Keccak family. Use for FIPS-compatible deployments that mandate SHA-3.",
+        "setup.opt.hash_profile.sha3_256",
+        "setup.opt.hash_profile.sha3_256.hint",
     ),
     (
         "blake3",
-        "BLAKE3",
-        "Faster on modern CPUs. Use only when all peers support BLAKE3.",
+        "setup.opt.hash_profile.blake3",
+        "setup.opt.hash_profile.blake3.hint",
     ),
 ];
 
@@ -213,25 +223,42 @@ pub(super) const HASH_PROFILE_OPTIONS: [(&str, &str, &str); 4] = [
 // is `space` (generic) / `project` / `folder` / `board` / `list`;
 // profiles may register additional kinds.
 pub(super) const SPACE_KIND_OPTIONS: [(&str, &str, &str); 5] = [
-    ("space", "Space (generic)", ""),
+    (
+        "space",
+        "setup.opt.space_kind.space",
+        "setup.opt.space_kind.space.hint",
+    ),
     (
         "project",
-        "Project",
-        "Top-level scope for a piece of work; usually contains boards / lists.",
+        "setup.opt.space_kind.project",
+        "setup.opt.space_kind.project.hint",
     ),
     (
         "folder",
-        "Folder",
-        "Pure navigation container. Holds child Spaces / Strands but isn't a workflow.",
+        "setup.opt.space_kind.folder",
+        "setup.opt.space_kind.folder.hint",
     ),
     (
         "board",
-        "Board",
-        "Kanban / pipeline view. Cells track strand placement (rank cas-register).",
+        "setup.opt.space_kind.board",
+        "setup.opt.space_kind.board.hint",
     ),
     (
         "list",
-        "List",
-        "Ordered list view. Useful for backlog / triage / queue surfaces.",
+        "setup.opt.space_kind.list",
+        "setup.opt.space_kind.list.hint",
     ),
 ];
+
+/// Resolve `(label, hint)` for the currently-selected value of an option
+/// table, falling back to `unset_key` when the value matches no row.
+///
+/// Every axis card in the create forms needs exactly this lookup, so it
+/// lives here next to the tables instead of being repeated per call site.
+pub(super) fn option_hint(options: &[(&str, &str, &str)], value: &str, unset_key: &str) -> String {
+    let key = options
+        .iter()
+        .find(|(option_value, ..)| *option_value == value)
+        .map_or(unset_key, |(_, _, hint_key)| *hint_key);
+    crate::i18n::tr(key)
+}

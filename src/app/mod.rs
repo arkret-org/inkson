@@ -977,7 +977,7 @@ fn AppBootstrap() -> Element {
             Route::Dashboard => crate::i18n::tr("nav.dashboard"),
             Route::FileTransfer => crate::i18n::tr("nav.files"),
             Route::Settings | Route::SettingsSection { .. } => crate::i18n::tr("nav.settings"),
-            _ => route_label(&route).to_owned(),
+            _ => crate::i18n::tr(route_label_key(&route)),
         });
     let topbar_context_title = selected_preview
         .as_ref()

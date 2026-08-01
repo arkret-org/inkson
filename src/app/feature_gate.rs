@@ -51,7 +51,7 @@ pub(super) fn ProfileGateNotice(profile: &'static str) -> Element {
                     if *show_details.read() {
                         div { class: "muted profile-gate-technical", "data-testid": "profile-gate-technical",
                             div { strong { "{dev_label}: " } code { "{profile}" } }
-                            div { "Write controls for this surface are hidden until /server/describe advertises the matching profile requirements." }
+                            div { {crate::i18n::tr("profile_gate.technical_detail")} }
                         }
                     }
                 }
@@ -71,77 +71,86 @@ pub(super) fn DeferredFeatureGate(feature: &'static str) -> Element {
     }
 }
 
-pub(super) fn route_label(route: &Route) -> &'static str {
+/// i18n key for a route's breadcrumb label.
+///
+/// Returns a key rather than display text so the context bar follows the
+/// active locale. Callers resolve it with [`crate::i18n::tr`]; keeping the
+/// mapping key-only leaves this function free of the Dioxus runtime and
+/// directly unit-testable.
+pub(super) fn route_label_key(route: &Route) -> &'static str {
     match route {
-        Route::Dashboard => "Home",
-        Route::Login | Route::AuthCallback => "Login",
-        Route::Register => "Create identity",
-        Route::RealmsManage => "Manage Realms",
-        Route::Realm { .. } => "Realm",
-        Route::Chat { .. } => "Discussion",
-        Route::DirectConversation { .. } => "Direct",
-        Route::ContactsManage => "Manage Contacts",
-        Route::Contacts => "Contacts",
-        Route::FileTransfer => "Files",
-        Route::Directory => "Search",
-        Route::Setup => "New Realm",
+        Route::Dashboard => "route.dashboard",
+        Route::Login | Route::AuthCallback => "route.login",
+        Route::Register => "route.register",
+        Route::RealmsManage => "route.realms_manage",
+        Route::Realm { .. } => "route.realm",
+        Route::Chat { .. } => "route.chat",
+        Route::DirectConversation { .. } => "route.direct",
+        Route::ContactsManage => "route.contacts_manage",
+        Route::Contacts => "route.contacts",
+        Route::FileTransfer => "route.files",
+        Route::Directory => "route.directory",
+        Route::Setup => "route.setup_realms",
         Route::SetupSection { section } => match section.as_str() {
-            "realms" => "New Realm",
-            "new-space" => "New Space",
-            _ => "Setup",
+            "realms" => "route.setup_realms",
+            "new-space" => "route.setup_new_space",
+            _ => "route.setup",
         },
-        Route::Settings => "Settings",
-        Route::SettingsSection { section, .. } => settings_route_label(section),
-        Route::NotificationsSettings => "Notifications",
-        Route::VerifyDevice => "Verify Device",
-        Route::RealmMembers { .. } => "Members",
-        Route::Circles { .. } | Route::CircleDetail { .. } => "Circles",
-        Route::RealmAdmin { .. } => "Realm Settings",
+        Route::Settings => "route.settings",
+        Route::SettingsSection { section, .. } => settings_route_label_key(section),
+        Route::NotificationsSettings => "route.notifications",
+        Route::VerifyDevice => "route.verify_device",
+        Route::RealmMembers { .. } => "route.realm_members",
+        Route::Circles { .. } | Route::CircleDetail { .. } => "route.circles",
+        Route::RealmAdmin { .. } => "route.realm_admin",
         Route::RealmAdminSection { section, .. } => match section.as_str() {
-            "profile" => "Profile",
-            "access" => "Access Policy",
-            "security" => "Security & MLS",
-            "federation" => "Federation Trust",
-            "repair" => "Repair & Danger",
-            _ => "Realm Settings",
+            "profile" => "route.realm_admin.profile",
+            "access" => "route.realm_admin.access",
+            "security" => "route.realm_admin.security",
+            "federation" => "route.realm_admin.federation",
+            "repair" => "route.realm_admin.repair",
+            _ => "route.realm_admin",
         },
-        Route::Audit => "Audit log",
-        Route::Developer => "Developer tools",
+        Route::Audit => "route.audit",
+        Route::Developer => "route.developer",
         Route::Kanban
         | Route::KanbanRealm { .. }
         | Route::KanbanBoard { .. }
         | Route::KanbanBoardTask { .. }
-        | Route::KanbanTask { .. } => "Board View",
-        Route::Notifications => "Notifications",
-        Route::Call { .. } => "Call",
-        Route::Recovery => "Recovery",
-        Route::SettingsDevices => "Devices",
-        Route::SettingsDevicesPair => "Add a device",
-        Route::SettingsRecovery => "Recovery",
-        Route::Onboarding => "Onboarding",
-        Route::Quarantine => "Invite Quarantine",
-        Route::Applets => "Applets",
-        Route::Search => "Search",
+        | Route::KanbanTask { .. } => "route.board",
+        Route::Notifications => "route.notifications",
+        Route::Call { .. } => "route.call",
+        Route::Recovery => "route.recovery",
+        Route::SettingsDevices => "route.devices",
+        Route::SettingsDevicesPair => "route.devices_pair",
+        Route::SettingsRecovery => "route.recovery",
+        Route::Onboarding => "route.onboarding",
+        Route::Quarantine => "route.quarantine",
+        Route::Applets => "route.applets",
+        Route::Search => "route.directory",
     }
 }
 
-pub(super) fn settings_route_label(section: &str) -> &'static str {
+/// i18n key for a settings section's breadcrumb label. Several sections
+/// share a destination (`security` / `key-backup` / `recovery`), so the
+/// mapping collapses onto the same key.
+pub(super) fn settings_route_label_key(section: &str) -> &'static str {
     match section {
-        "server" => "Account & server",
-        "devices" => "Devices",
-        "storage" => "Data & sync",
-        "encryption" => "Security",
-        "security" | "key-backup" | "recovery" => "Recovery",
-        "mimi" => "Integrations",
-        "push" | "notifications" => "Notifications",
-        "privacy" => "Privacy & sharing",
-        "invite-policy" | "invite_policy" => "Who can invite me",
-        "blocklist" | "blocked-users" => "Blocked actors",
-        "capabilities" => "Capabilities",
-        "audit" | "audit-log" => "Audit log",
-        "developer" | "developer-tools" => "Developer tools",
-        "theme" => "Appearance & locale",
-        "release" => "Diagnostics",
-        _ => "Settings",
+        "server" => "route.settings.server",
+        "devices" => "route.devices",
+        "storage" => "route.settings.storage",
+        "encryption" => "route.settings.encryption",
+        "security" | "key-backup" | "recovery" => "route.recovery",
+        "mimi" => "route.settings.mimi",
+        "push" | "notifications" => "route.notifications",
+        "privacy" => "route.settings.privacy",
+        "invite-policy" | "invite_policy" => "route.settings.invite_policy",
+        "blocklist" | "blocked-users" => "route.settings.blocklist",
+        "capabilities" => "route.settings.capabilities",
+        "audit" | "audit-log" => "route.audit",
+        "developer" | "developer-tools" => "route.developer",
+        "theme" => "route.settings.theme",
+        "release" => "route.settings.release",
+        _ => "route.settings",
     }
 }

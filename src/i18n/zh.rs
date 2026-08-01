@@ -1251,6 +1251,10 @@ pub fn chinese_translations() -> TranslationDict {
         "profile_gate.body",
         "当前服务器尚未提供该视图所需的能力。请尝试其他服务器或联系管理员。",
     );
+    dict.set(
+        "profile_gate.technical_detail",
+        "在 /server/describe 公布匹配的 profile 要求之前,该界面的写入控件保持隐藏。",
+    );
     dict.set("profile_gate.friendly.minimal_client", "基础客户端");
     dict.set("profile_gate.friendly.kanban_mvp", "看板");
     dict.set("profile_gate.friendly.chat_mvp", "讨论");
@@ -1283,6 +1287,11 @@ pub fn chinese_translations() -> TranslationDict {
 
     // Unified feedback system (toast host + app banner), Wave 0.
     add_feedback_keys_zh(&mut dict);
+
+    // 设置页面（领域向导 / 空间表单 / 总览）与面包屑路由标签，
+    // 对应 [`super::en`] 的 `setup_strings` / `route_label_strings`。
+    setup_strings(&mut dict);
+    route_label_strings(&mut dict);
 
     dict
 }
@@ -1599,4 +1608,643 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("realm_admin.invite_handle_opt_in", "需对方允许");
     dict.set("realm_admin.invite_target_label", "Handle 或邀请地址");
     dict.set("realm_admin.invite_bad_server", "无效的服务器地址:{error}");
+}
+
+/// 设置页：领域创建向导（`ak.realm.create`）、空间创建表单
+/// （`ak.space.create`）与入口总览。拆分只为让主函数保持可读，
+/// key 仍与其他章节共用扁平的 `setup.*` 命名空间。
+fn setup_strings(dict: &mut TranslationDict) {
+    // 领域向导外壳。
+    dict.set("setup.new_realm", "新建领域");
+    dict.set("setup.realm_title_heading", "创建领域");
+    dict.set(
+        "setup.realm_intro",
+        "领域是安全 / 同步 / 端到端加密的边界。推荐使用 MLS，并设置 metadata_encryption_floor=e2ee_required 与 content_encryption_floor=e2ee_required。",
+    );
+    dict.set("setup.create_steps", "创建步骤");
+    dict.set("setup.step_progress", "{current} / {total}");
+    dict.set("setup.state.draft", "草稿尚未创建");
+    dict.set("setup.state.bootstrap", "引导状态");
+
+    // 向导步骤。
+    dict.set("setup.step.basics.label", "基本信息");
+    dict.set("setup.step.basics.subtitle", "名称与用途");
+    dict.set("setup.step.boundary.label", "边界");
+    dict.set("setup.step.boundary.subtitle", "三条策略轴");
+    dict.set("setup.step.seed.label", "初始成员");
+    dict.set("setup.step.seed.subtitle", "填写初始成员并创建");
+    dict.set("setup.step.done.label", "完成");
+    dict.set("setup.step.done.subtitle", "打开已创建的领域");
+
+    // 基本信息。
+    dict.set("setup.basics.hint", "标题必填");
+    dict.set("setup.field.realm_title", "领域标题");
+    dict.set(
+        "setup.field.realm_title_placeholder",
+        "工程、研究、设计系统…",
+    );
+    dict.set("setup.field.summary", "简介");
+    dict.set(
+        "setup.field.realm_summary_placeholder",
+        "这个领域用来做什么。",
+    );
+    dict.set(
+        "setup.field.realm_alias",
+        "领域别名（暂不可用——协议尚无对应载体）",
+    );
+    dict.set("setup.field.realm_alias_placeholder", "engineering");
+
+    // 边界。
+    dict.set("setup.boundary.hint", "三条相互独立的轴");
+    dict.set("setup.axis.discoverability", "可发现性");
+    dict.set(
+        "setup.axis.discoverability.question",
+        "谁可以发现这个领域的存在？",
+    );
+    dict.set("setup.axis.discoverability.unset", "尚未设置发现策略。");
+    dict.set("setup.axis.join_rule", "加入规则");
+    dict.set("setup.axis.join_rule.question", "主体如何成为成员？");
+    dict.set("setup.axis.join_rule.unset", "尚未设置加入方式。");
+    dict.set("setup.axis.history_visibility", "历史可见性");
+    dict.set(
+        "setup.axis.history_visibility.question",
+        "新成员可以读到哪些历史？",
+    );
+    dict.set("setup.axis.history_visibility.unset", "尚未设置历史范围。");
+    dict.set("setup.axis.encryption", "加密");
+    dict.set("setup.axis.encryption.question", "保护方式");
+    dict.set("setup.axis.encryption.unset", "尚未设置加密配置。");
+    dict.set("setup.axis.encryption.locked", "创建后不可更改。");
+    dict.set("setup.axis.content_scheme", "内容方案");
+    dict.set(
+        "setup.axis.content_scheme.question",
+        "这个领域使用哪种 MLS 内容方案？",
+    );
+    dict.set("setup.axis.content_scheme.unset", "尚未设置内容方案。");
+    dict.set(
+        "setup.axis.content_scheme.prejoin_forced",
+        "加入前历史使用 content_scheme=mls_exporter_aead_v1。",
+    );
+    dict.set(
+        "setup.axis.content_scheme.capability_only",
+        "仅表示能力——实际投递仍取决于历史可见性。",
+    );
+    dict.set("setup.axis.security_class", "安全等级");
+    dict.set(
+        "setup.axis.security_class.question",
+        "联邦与审计默认值的整体姿态。",
+    );
+    dict.set("setup.axis.security_class.unset", "尚未设置安全等级。");
+    dict.set("setup.axis.federation_policy", "联邦策略");
+    dict.set(
+        "setup.axis.federation_policy.question",
+        "这个领域如何与其他部署互通？",
+    );
+    dict.set("setup.axis.federation_policy.unset", "尚未设置联邦策略。");
+    dict.set(
+        "setup.axis.federation_policy.high_assurance",
+        "高保障等级只允许 restricted、closed 或 quarantine 联邦。",
+    );
+    dict.set("setup.axis.seal_profile", "封存配置");
+    dict.set(
+        "setup.axis.seal_profile.question",
+        "由谁为这个领域签署持久封存？",
+    );
+    dict.set("setup.axis.seal_profile.unset", "尚未设置封存配置。");
+    dict.set("setup.axis.hash_profile", "哈希配置");
+    dict.set(
+        "setup.axis.hash_profile.question",
+        "规范化哈希所用的摘要算法。",
+    );
+    dict.set("setup.axis.hash_profile.unset", "尚未设置哈希配置。");
+    dict.set(
+        "setup.boundary.advanced_summary",
+        "高级（联邦策略 / 封存配置 / 哈希配置）",
+    );
+
+    // 初始成员。
+    dict.set("setup.seed.heading", "初始成员");
+    dict.set("setup.seed.hint", "可选");
+    dict.set("setup.field.seed_members", "初始成员");
+    dict.set(
+        "setup.field.seed_members_help",
+        "每行一个 DID，或用逗号分隔。使用 handle 邀请需要目录解析。",
+    );
+    dict.set("setup.seed.preview", "成员预览");
+    dict.set("setup.seed.preview_empty", "没有额外的初始成员。");
+    dict.set(
+        "setup.seed.preview_count",
+        "引导请求将包含 {count} 个主体。",
+    );
+
+    // 创建阻塞与进度。
+    dict.set(
+        "setup.blocker.already_created",
+        "领域已创建，请从“完成”步骤继续。",
+    );
+    dict.set("setup.blocker.sign_in", "创建领域前请先登录。");
+    dict.set(
+        "setup.blocker.secure_store",
+        "设备签名存储仍在启动，请稍后重试。",
+    );
+    dict.set("setup.blocker.creating", "正在创建领域…");
+    dict.set(
+        "setup.error.session_expired",
+        "会话已过期。请刷新或重新登录后再创建领域。",
+    );
+
+    // 引导进度面包屑，创建成功后以 " · " 连接显示在“引导状态”一行。
+    dict.set(
+        "setup.progress.accepted",
+        "领域 {id} 已受理；正在完成加密领域设置",
+    );
+    dict.set("setup.progress.created", "已创建 {id}");
+    dict.set("setup.progress.seeded_owner_only", "仅初始化所有者");
+    dict.set("setup.progress.seeded_members", "已初始化 {count} 位成员");
+    dict.set(
+        "setup.progress.canonical_policy",
+        "规范策略 {discoverability} / {join_rule} / {history_visibility}",
+    );
+    dict.set("setup.progress.plaintext_services", "明文服务 {count} 个");
+    dict.set("setup.progress.mls_ready_backup", "MLS 就绪；历史备份 {id}");
+    dict.set("setup.progress.mls_ready_local", "MLS 已在本地就绪");
+    dict.set(
+        "setup.progress.mls_admission_failed",
+        "MLS 准入失败:{error}",
+    );
+    dict.set(
+        "setup.progress.mls_welcome_queued",
+        "已为 {count} 位排队 MLS Welcome",
+    );
+    dict.set(
+        "setup.progress.floor_required",
+        "元数据/内容底线为 e2ee_required",
+    );
+    dict.set(
+        "setup.error.signer_not_ready",
+        "事件签名器尚未就绪，无法签署 ak.realm.create:{error}",
+    );
+    dict.set("setup.error.create_failed", "创建失败:{error}");
+    dict.set("setup.error.created_then_failed", "已创建 {id};{error}");
+    dict.set("setup.error.invalid_server_url", "无效的服务器地址:{error}");
+
+    // 完成。
+    dict.set("setup.done.hint", "下一个上下文");
+    dict.set("setup.done.created_realm", "已创建的领域");
+    dict.set("setup.done.empty", "请先创建领域，再打开下一个上下文。");
+
+    // 加密领域的恢复软门禁。
+    dict.set("setup.recovery_gate.aria", "创建加密领域前先设置恢复方式");
+    dict.set("setup.recovery_gate.title", "请先设置恢复方式");
+    dict.set("setup.recovery_gate.badge", "加密领域");
+    dict.set(
+        "setup.recovery_gate.body",
+        "这个领域是端到端加密的。如果你丢失本设备且没有配置恢复密钥或备份，其中的内容将永久无法恢复。请先设置 24 词恢复密钥并备份密钥，再创建它。",
+    );
+    dict.set(
+        "setup.recovery_gate.override_hint",
+        "如果不设置恢复方式就继续，请再次点击“创建领域”，风险由你自行承担。",
+    );
+
+    // 操作。
+    dict.set("setup.action.back", "上一步");
+    dict.set("setup.action.next_boundary", "下一步：边界");
+    dict.set("setup.action.next_seed", "下一步：初始成员");
+    dict.set("setup.action.create_realm", "创建领域");
+    dict.set("setup.action.finishing", "正在完成设置…");
+    dict.set("setup.action.open_realm", "打开领域");
+    dict.set("setup.action.setup_recovery_key", "设置恢复密钥");
+    dict.set(
+        "setup.action.continue_without_recovery",
+        "不设置恢复方式并继续",
+    );
+
+    setup_option_strings(dict);
+    setup_policy_hint_strings(dict);
+    setup_space_strings(dict);
+    setup_overview_strings(dict);
+}
+
+/// `views::setup::data` 中创建表单选项表的标签与说明。
+/// key 形状为 `setup.opt.<轴>.<取值>[.hint]`。
+fn setup_option_strings(dict: &mut TranslationDict) {
+    dict.set("setup.opt.discoverability.public", "公开");
+    dict.set(
+        "setup.opt.discoverability.public.hint",
+        "可在搜索中找到。存在性与加入入口可以被广泛披露。",
+    );
+    dict.set("setup.opt.discoverability.listed", "列出");
+    dict.set(
+        "setup.opt.discoverability.listed.hint",
+        "在搜索中可见，但与如何加入、能看到哪些历史仍然相互独立。",
+    );
+    dict.set("setup.opt.discoverability.restricted", "受限");
+    dict.set(
+        "setup.opt.discoverability.restricted.hint",
+        "只有已满足服务端策略的主体才能在目录中看到它。",
+    );
+    dict.set("setup.opt.discoverability.unlisted", "不公开列出");
+    dict.set(
+        "setup.opt.discoverability.unlisted.hint",
+        "无法在搜索中浏览。进入依赖直接链接或明确引用。",
+    );
+    dict.set("setup.opt.discoverability.invite_only", "仅限邀请");
+    dict.set(
+        "setup.opt.discoverability.invite_only.hint",
+        "只向被明确邀请的主体披露存在性。",
+    );
+    dict.set("setup.opt.discoverability.secret", "保密");
+    dict.set(
+        "setup.opt.discoverability.secret.hint",
+        "不应向未授权的查看者披露该领域的存在。",
+    );
+
+    dict.set("setup.opt.join_rule.public", "公开");
+    dict.set(
+        "setup.opt.join_rule.public.hint",
+        "任何能看到该领域的人都可以直接加入，无需单独审批。",
+    );
+    dict.set("setup.opt.join_rule.invite", "邀请");
+    dict.set(
+        "setup.opt.join_rule.invite.hint",
+        "加入需要成员或管理员明确授予准入。",
+    );
+    dict.set("setup.opt.join_rule.knock", "申请");
+    dict.set(
+        "setup.opt.join_rule.knock.hint",
+        "申请者可以请求进入并等待审核。",
+    );
+    dict.set("setup.opt.join_rule.restricted", "受限");
+    dict.set(
+        "setup.opt.join_rule.restricted.hint",
+        "即使领域可被发现，加入仍取决于策略或声明。",
+    );
+
+    dict.set("setup.opt.history_visibility.world_readable", "全网可读");
+    dict.set(
+        "setup.opt.history_visibility.world_readable.hint",
+        "无需加入即可读取过往历史。仅用于有意开放的领域。",
+    );
+    dict.set("setup.opt.history_visibility.shared", "共享");
+    dict.set(
+        "setup.opt.history_visibility.shared.hint",
+        "新成员可以读取那些本就打算对全领域共享的加入前历史。",
+    );
+    dict.set("setup.opt.history_visibility.invited", "受邀起");
+    dict.set(
+        "setup.opt.history_visibility.invited.hint",
+        "历史仅从邀请使该主体具备资格的那一刻起可见。",
+    );
+    dict.set("setup.opt.history_visibility.joined", "加入起");
+    dict.set(
+        "setup.opt.history_visibility.joined.hint",
+        "历史从主体真正成为成员时开始。",
+    );
+    dict.set("setup.opt.history_visibility.restricted", "受限");
+    dict.set(
+        "setup.opt.history_visibility.restricted.hint",
+        "过往历史严格受限；新成员只能看到策略重新披露的部分。",
+    );
+
+    dict.set("setup.opt.encryption_profile.mls_rfc9420", "加密");
+    dict.set(
+        "setup.opt.encryption_profile.mls_rfc9420.hint",
+        "推荐。元数据与内容均使用 MLS 端到端加密。",
+    );
+    dict.set("setup.opt.encryption_profile.none", "不加密");
+    dict.set(
+        "setup.opt.encryption_profile.none.hint",
+        "明文对服务器可见。仅用于公开领域。",
+    );
+
+    dict.set(
+        "setup.opt.content_scheme.mls_exporter_aead_v1",
+        "MLS exporter AEAD",
+    );
+    dict.set(
+        "setup.opt.content_scheme.mls_exporter_aead_v1.hint",
+        "content_scheme=mls_exporter_aead_v1。可以把加入之前的历史授予新成员。前向保密性降为按 epoch 粒度。",
+    );
+    dict.set("setup.opt.content_scheme.mls_rfc9420", "MLS PrivateMessage");
+    dict.set(
+        "setup.opt.content_scheme.mls_rfc9420.hint",
+        "content_scheme=mls_rfc9420。加入前的历史永远无法共享给后加入者。前向保密性为按消息粒度。",
+    );
+
+    dict.set("setup.opt.security_class.standard", "标准");
+    dict.set(
+        "setup.opt.security_class.standard.hint",
+        "默认姿态。联邦策略可按领域设置为开放或受限。",
+    );
+    dict.set("setup.opt.security_class.high_assurance", "高保障");
+    dict.set(
+        "setup.opt.security_class.high_assurance.hint",
+        "收紧的默认值：联邦被强制为 restricted/closed/quarantine，并记录审计信号。",
+    );
+
+    dict.set("setup.opt.federation_policy.open", "开放");
+    dict.set(
+        "setup.opt.federation_policy.open.hint",
+        "任何对端都可交互。security_class=high_assurance 时不允许。",
+    );
+    dict.set("setup.opt.federation_policy.restricted", "受限");
+    dict.set(
+        "setup.opt.federation_policy.restricted.hint",
+        "对端白名单（治理 / 组织审核）。高保障等级的默认值。",
+    );
+    dict.set("setup.opt.federation_policy.closed", "关闭");
+    dict.set(
+        "setup.opt.federation_policy.closed.hint",
+        "完全不联邦。用于纯内部领域。",
+    );
+    dict.set("setup.opt.federation_policy.quarantine", "隔离");
+    dict.set(
+        "setup.opt.federation_policy.quarantine.hint",
+        "接受入站但先扣留待审。出站被阻断。",
+    );
+
+    dict.set("setup.opt.anchor_profile.single_did", "单一 DID");
+    dict.set(
+        "setup.opt.anchor_profile.single_did.hint",
+        "由一个主体签署封存。最简单的配置；默认值。",
+    );
+    dict.set("setup.opt.anchor_profile.threshold", "门限");
+    dict.set(
+        "setup.opt.anchor_profile.threshold.hint",
+        "k-of-n 签名；在策略中配置参与的 DID。",
+    );
+    dict.set("setup.opt.anchor_profile.open_set", "开放集合");
+    dict.set(
+        "setup.opt.anchor_profile.open_set.hint",
+        "任何持有公证能力的人都可以签署。",
+    );
+    dict.set("setup.opt.anchor_profile.mixed", "混合");
+    dict.set(
+        "setup.opt.anchor_profile.mixed.hint",
+        "上述方式的组合——通过策略配置。",
+    );
+
+    dict.set("setup.opt.hash_profile.sha256", "SHA-256");
+    dict.set(
+        "setup.opt.hash_profile.sha256.hint",
+        "默认值。各处都可互操作。",
+    );
+    dict.set("setup.opt.hash_profile.sha512", "SHA-512");
+    dict.set(
+        "setup.opt.hash_profile.sha512.hint",
+        "更长的摘要。仅在部署策略要求时选择。",
+    );
+    dict.set("setup.opt.hash_profile.sha3_256", "SHA3-256");
+    dict.set(
+        "setup.opt.hash_profile.sha3_256.hint",
+        "Keccak 系列。用于强制要求 SHA-3 的 FIPS 兼容部署。",
+    );
+    dict.set("setup.opt.hash_profile.blake3", "BLAKE3");
+    dict.set(
+        "setup.opt.hash_profile.blake3.hint",
+        "在现代 CPU 上更快。仅在所有对端都支持 BLAKE3 时使用。",
+    );
+
+    dict.set("setup.opt.space_kind.space", "空间（通用）");
+    dict.set("setup.opt.space_kind.space.hint", "");
+    dict.set("setup.opt.space_kind.project", "项目");
+    dict.set(
+        "setup.opt.space_kind.project.hint",
+        "一项工作的顶层范围；通常包含看板 / 列表。",
+    );
+    dict.set("setup.opt.space_kind.folder", "文件夹");
+    dict.set(
+        "setup.opt.space_kind.folder.hint",
+        "纯导航容器。承载子空间 / 流程，但本身不是工作流。",
+    );
+    dict.set("setup.opt.space_kind.board", "看板");
+    dict.set(
+        "setup.opt.space_kind.board.hint",
+        "看板 / 流水线视图。单元格跟踪流程的位置（rank cas-register）。",
+    );
+    dict.set("setup.opt.space_kind.list", "列表");
+    dict.set(
+        "setup.opt.space_kind.list.hint",
+        "有序列表视图。适合待办 / 分诊 / 队列类界面。",
+    );
+}
+
+/// `views::setup::helpers` 产生的跨轴策略告警。
+fn setup_policy_hint_strings(dict: &mut TranslationDict) {
+    dict.set("setup.policy_hint.secret_conflict", "组合无效");
+    dict.set(
+        "setup.policy_hint.secret_conflict.body",
+        "保密空间不能同时公开准入或提供全网可读的历史。",
+    );
+    dict.set("setup.policy_hint.invite_public", "组合自相矛盾");
+    dict.set(
+        "setup.policy_hint.invite_public.body",
+        "仅限邀请的发现策略配上公开加入，通常说明发现模型没有想清楚。",
+    );
+    dict.set("setup.policy_hint.history_leak", "历史泄露的比存在性更多");
+    dict.set(
+        "setup.policy_hint.history_leak.body",
+        "如果历史全网可读，该空间的实际开放程度会超过其发现设置所暗示的水平。",
+    );
+    dict.set(
+        "setup.content_scheme.prejoin_requires_exporter",
+        "加入前历史要求 content_scheme=mls_exporter_aead_v1。",
+    );
+}
+
+/// `ak.space.create` 表单与空间生命周期操作。
+fn setup_space_strings(dict: &mut TranslationDict) {
+    dict.set("setup.space.new_space", "新建空间");
+    dict.set("setup.space.hero.hint", "导航容器");
+    dict.set("setup.space.heading", "在领域内创建空间");
+    dict.set(
+        "setup.space.intro",
+        "空间是产品结构上的容器（项目 / 文件夹 / 看板 / 列表）。它位于某个领域之内，并完全继承该领域的安全设置——不需要单独的成员资格、加密或联邦决策。",
+    );
+    dict.set("setup.space.basics", "基本信息");
+    dict.set("setup.space.basics.hint", "标题 + 类型");
+    dict.set("setup.space.parent.root", "（根层级——无父级）");
+    dict.set("setup.space.default_realm.label", "default_realm_id");
+    dict.set(
+        "setup.space.default_realm.inherit",
+        "（继承——使用所属领域）",
+    );
+    dict.set("setup.space.not_created", "尚未创建");
+    dict.set(
+        "setup.space.wire_shape.body",
+        "ak.space.create 事件 + 可选的 parent_space_id / default_realm_id。下方的生命周期操作会派发 ak.space.archive / restore / tombstone。",
+    );
+    dict.set("setup.space.lifecycle.hint", "归档 / 恢复 / 墓碑标记");
+    dict.set(
+        "setup.space.error.create_failed",
+        "create_space 失败:{error}",
+    );
+    dict.set("setup.space.error.archive_failed", "归档失败:{error}");
+    dict.set("setup.space.error.restore_failed", "恢复失败:{error}");
+    dict.set("setup.space.error.tombstone_failed", "墓碑标记失败:{error}");
+    dict.set(
+        "setup.space.error.invalid_base_url",
+        "无效的服务器地址:{error}",
+    );
+    dict.set("setup.space.field.title", "空间标题");
+    dict.set(
+        "setup.space.field.title_placeholder",
+        "待办、路线图、新人引导…",
+    );
+    dict.set("setup.space.field.kind", "类型");
+    dict.set("setup.space.field.summary_placeholder", "可选的描述。");
+    dict.set("setup.space.field.parent", "父空间（可选）");
+    dict.set(
+        "setup.space.parent.no_realm",
+        "请从侧栏的领域或空间行选择“新建空间”，以确定所属领域。",
+    );
+    dict.set(
+        "setup.space.parent.no_siblings",
+        "该领域下还没有同级空间——保留在根层级。",
+    );
+    dict.set(
+        "setup.space.advanced_summary",
+        "高级（新资源的跨领域默认值）",
+    );
+    dict.set(
+        "setup.space.default_realm.empty",
+        "至少需要一个可指向的领域。",
+    );
+    dict.set(
+        "setup.space.default_realm.hint",
+        "从这个空间创建的流程 / 变换 / 视图默认落在该领域。这不授予访问权限——用户仍需要成员资格。",
+    );
+    dict.set("setup.space.action.create", "创建空间");
+    dict.set("setup.space.outcome", "结果");
+    dict.set("setup.space.outcome.hint", "空间创建");
+    dict.set("setup.space.created", "已创建的空间");
+    dict.set("setup.space.status", "状态");
+    dict.set("setup.space.wire_shape", "线上结构");
+    dict.set("setup.space.lifecycle", "生命周期操作");
+    dict.set(
+        "setup.space.lifecycle.empty",
+        "请先在上方创建空间，才能对它执行生命周期操作。",
+    );
+    dict.set("setup.space.action.archive", "归档");
+    dict.set(
+        "setup.space.action.archive.title",
+        "将状态置为已归档；服务端不会级联。",
+    );
+    dict.set("setup.space.action.restore", "恢复");
+    dict.set(
+        "setup.space.action.restore.title",
+        "已归档 → 活跃；仅在已归档状态下有效。",
+    );
+    dict.set("setup.space.action.tombstone", "墓碑标记");
+    dict.set(
+        "setup.space.action.tombstone.title",
+        "不可逆。若仍存在活跃的子空间 / 位置流程，服务端会拒绝。",
+    );
+    dict.set(
+        "setup.space.tombstone_warning",
+        "墓碑标记不可逆——只要还有任何子空间或位置流程处于活跃状态，服务端就会以 space_has_live_dependents 拒绝（规范 §3.4）。",
+    );
+    dict.set(
+        "setup.space.state.submitting_create",
+        "正在提交 ak.space.create…",
+    );
+    dict.set(
+        "setup.space.state.submitting_archive",
+        "正在提交 ak.space.archive…",
+    );
+    dict.set(
+        "setup.space.state.submitting_restore",
+        "正在提交 ak.space.restore…",
+    );
+    dict.set(
+        "setup.space.state.submitting_tombstone",
+        "正在提交 ak.space.tombstone…",
+    );
+    dict.set(
+        "setup.space.state.created",
+        "已在 {realm}{parent} 内创建空间 {id}（kind={kind}）",
+    );
+    dict.set("setup.space.state.archived", "已归档 {id}");
+    dict.set("setup.space.state.restored", "已恢复 {id}");
+    dict.set("setup.space.state.tombstoned", "已墓碑标记 {id}（不可逆）");
+}
+
+/// 设置入口总览。
+fn setup_overview_strings(dict: &mut TranslationDict) {
+    dict.set("setup.overview.surfaces", "设置入口");
+    dict.set("setup.overview.surfaces.hint", "单一职责的入口");
+    dict.set("setup.overview.realm.hint", "安全边界引导");
+    dict.set("setup.overview.realm.open", "打开新建领域");
+    dict.set("setup.overview.space.hint", "领域内的导航容器");
+    dict.set(
+        "setup.overview.space.body",
+        "把鼠标悬停在左侧栏的领域或空间上，点击行内的 + ——这是标准入口，因为它会替你预填父级上下文。下面的链接会打开一个空白表单（你需要自己选择领域）。",
+    );
+    dict.set("setup.overview.space.open", "打开空白表单");
+    dict.set("setup.overview.onboarding", "新人引导");
+    dict.set("setup.overview.onboarding.hint", "身份引导");
+    dict.set("setup.overview.onboarding.open", "打开新人引导");
+    dict.set("setup.overview.search", "搜索");
+    dict.set("setup.overview.search.hint", "参与者 / handle / 领域");
+    dict.set("setup.overview.search.open", "打开搜索");
+    dict.set("setup.overview.board", "看板");
+    dict.set("setup.overview.board.hint", "引导完成之后");
+    dict.set("setup.overview.board.open_current", "打开当前领域");
+    dict.set("setup.overview.board.open", "打开看板");
+    dict.set("setup.overview.moved", "变更说明");
+    dict.set("setup.overview.moved.hint", "信息架构梳理");
+    dict.set("setup.overview.badge.onboarding", "新人引导 = 身份引导");
+    dict.set("setup.overview.badge.search", "搜索 = 发现与人");
+    dict.set("setup.overview.badge.realm", "新建领域 = 安全边界引导");
+    dict.set("setup.overview.badge.settings", "设置 = 恢复与运维");
+}
+
+/// `app::feature_gate` 解析的面包屑 / 上下文栏标签。
+fn route_label_strings(dict: &mut TranslationDict) {
+    dict.set("route.dashboard", "主页");
+    dict.set("route.login", "登录");
+    dict.set("route.register", "创建身份");
+    dict.set("route.realms_manage", "管理领域");
+    dict.set("route.realm", "领域");
+    dict.set("route.chat", "讨论");
+    dict.set("route.direct", "私聊");
+    dict.set("route.contacts_manage", "管理联系人");
+    dict.set("route.contacts", "联系人");
+    dict.set("route.files", "文件");
+    dict.set("route.directory", "搜索");
+    dict.set("route.setup", "设置向导");
+    dict.set("route.setup_realms", "新建领域");
+    dict.set("route.setup_new_space", "新建空间");
+    dict.set("route.settings", "设置");
+    dict.set("route.notifications", "通知");
+    dict.set("route.verify_device", "验证设备");
+    dict.set("route.realm_members", "成员");
+    dict.set("route.circles", "圈子");
+    dict.set("route.realm_admin", "领域设置");
+    dict.set("route.realm_admin.profile", "资料");
+    dict.set("route.realm_admin.access", "访问策略");
+    dict.set("route.realm_admin.security", "安全与 MLS");
+    dict.set("route.realm_admin.federation", "联邦信任");
+    dict.set("route.realm_admin.repair", "修复与危险操作");
+    dict.set("route.audit", "审计日志");
+    dict.set("route.developer", "开发者工具");
+    dict.set("route.board", "看板视图");
+    dict.set("route.call", "通话");
+    dict.set("route.recovery", "恢复");
+    dict.set("route.devices", "设备");
+    dict.set("route.devices_pair", "添加设备");
+    dict.set("route.onboarding", "新人引导");
+    dict.set("route.quarantine", "邀请隔离区");
+    dict.set("route.applets", "小程序");
+
+    dict.set("route.settings.server", "账号与服务器");
+    dict.set("route.settings.storage", "数据与同步");
+    dict.set("route.settings.encryption", "安全");
+    dict.set("route.settings.mimi", "集成");
+    dict.set("route.settings.privacy", "隐私与分享");
+    dict.set("route.settings.invite_policy", "谁可以邀请我");
+    dict.set("route.settings.blocklist", "已屏蔽的参与者");
+    dict.set("route.settings.capabilities", "能力");
+    dict.set("route.settings.theme", "外观与语言");
+    dict.set("route.settings.release", "诊断");
 }

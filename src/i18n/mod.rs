@@ -361,3 +361,23 @@ pub fn tr(key: &str) -> String {
         None => key.to_owned(),
     }
 }
+
+/// Substitute `{placeholder}` args into an already-localized string.
+///
+/// This is the single implementation of the placeholder convention used by
+/// every localized string in the client (toasts, form errors, inline UI).
+/// Callers that already resolved the message themselves — because they need
+/// a dictionary-miss fallback, like the toast host — substitute through here
+/// rather than re-implementing the `replace` loop.
+pub fn substitute_args(mut message: String, args: &[(&'static str, String)]) -> String {
+    for (placeholder, value) in args {
+        message = message.replace(&format!("{{{placeholder}}}"), value);
+    }
+    message
+}
+
+/// [`tr`] plus `{placeholder}` substitution. Use for any UI string that
+/// carries a runtime value (counts, ids, names).
+pub fn tr_args(key: &str, args: &[(&'static str, String)]) -> String {
+    substitute_args(tr(key), args)
+}

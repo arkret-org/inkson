@@ -1262,6 +1262,10 @@ pub fn english_translations() -> TranslationDict {
         "profile_gate.body",
         "This server does not yet support the capabilities needed for this view. Try a different server or contact your administrator.",
     );
+    dict.set(
+        "profile_gate.technical_detail",
+        "Write controls for this surface are hidden until /server/describe advertises the matching profile requirements.",
+    );
     dict.set("profile_gate.friendly.minimal_client", "Basic client");
     dict.set("profile_gate.friendly.kanban_mvp", "Boards");
     dict.set("profile_gate.friendly.chat_mvp", "Discussions");
@@ -1363,6 +1367,11 @@ pub fn english_translations() -> TranslationDict {
 
     // Unified feedback system (toast host + app banner), Wave 0.
     add_feedback_keys(&mut dict);
+
+    // Setup surface (Realm wizard / Space form / overview) and the
+    // breadcrumb route labels. zh follows in `chinese_translations()`.
+    setup_strings(&mut dict);
+    route_label_strings(&mut dict);
 
     dict
 }
@@ -1946,4 +1955,723 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
     dict.set("object_link.opening", "正在打开链接…");
     dict.set("object_link.error.unavailable", "链接不可用或已过期。");
     dict.set("object_link.error.invalid", "无法识别该链接格式。");
+}
+
+/// Setup surface: the `ak.realm.create` wizard, the `ak.space.create` form,
+/// and the surface-map overview. Split out of [`english_translations`] only
+/// to keep that function readable — the keys share the flat `setup.*`
+/// namespace like every other dictionary section.
+fn setup_strings(dict: &mut TranslationDict) {
+    // Realm wizard shell.
+    dict.set("setup.new_realm", "New Realm");
+    dict.set("setup.realm_title_heading", "Create a Realm");
+    dict.set(
+        "setup.realm_intro",
+        "A Realm is the security / sync / E2EE boundary. The recommended mode is MLS with metadata_encryption_floor=e2ee_required and content_encryption_floor=e2ee_required.",
+    );
+    dict.set("setup.create_steps", "Create steps");
+    dict.set("setup.step_progress", "{current} / {total}");
+    dict.set("setup.state.draft", "Draft not created yet");
+    dict.set("setup.state.bootstrap", "Bootstrap state");
+
+    // Wizard steps.
+    dict.set("setup.step.basics.label", "Basics");
+    dict.set("setup.step.basics.subtitle", "name and intent");
+    dict.set("setup.step.boundary.label", "Boundary");
+    dict.set("setup.step.boundary.subtitle", "three policy axes");
+    dict.set("setup.step.seed.label", "Seed");
+    dict.set("setup.step.seed.subtitle", "initial members and create");
+    dict.set("setup.step.done.label", "Done");
+    dict.set("setup.step.done.subtitle", "open created realm");
+
+    // Basics step.
+    dict.set("setup.basics.hint", "required title");
+    dict.set("setup.field.realm_title", "Realm title");
+    dict.set(
+        "setup.field.realm_title_placeholder",
+        "Engineering, Research, Design system...",
+    );
+    dict.set("setup.field.summary", "Summary");
+    dict.set(
+        "setup.field.realm_summary_placeholder",
+        "What this Realm is for.",
+    );
+    dict.set(
+        "setup.field.realm_alias",
+        "Realm alias (unavailable — no protocol carrier yet)",
+    );
+    dict.set("setup.field.realm_alias_placeholder", "engineering");
+
+    // Boundary step.
+    dict.set("setup.boundary.hint", "three independent axes");
+    dict.set("setup.axis.discoverability", "Discoverability");
+    dict.set(
+        "setup.axis.discoverability.question",
+        "Who can discover that this Realm exists?",
+    );
+    dict.set(
+        "setup.axis.discoverability.unset",
+        "Discovery posture is not set.",
+    );
+    dict.set("setup.axis.join_rule", "Join rule");
+    dict.set(
+        "setup.axis.join_rule.question",
+        "How does a principal become a member?",
+    );
+    dict.set("setup.axis.join_rule.unset", "Join path is not set.");
+    dict.set("setup.axis.history_visibility", "History visibility");
+    dict.set(
+        "setup.axis.history_visibility.question",
+        "What history can new members read?",
+    );
+    dict.set(
+        "setup.axis.history_visibility.unset",
+        "History scope is not set.",
+    );
+    dict.set("setup.axis.encryption", "Encryption");
+    dict.set("setup.axis.encryption.question", "Protection");
+    dict.set(
+        "setup.axis.encryption.unset",
+        "Encryption profile is not set.",
+    );
+    dict.set("setup.axis.encryption.locked", "Locked after creation.");
+    dict.set("setup.axis.content_scheme", "Content scheme");
+    dict.set(
+        "setup.axis.content_scheme.question",
+        "Which MLS content scheme should this Realm use?",
+    );
+    dict.set(
+        "setup.axis.content_scheme.unset",
+        "Content scheme is not set.",
+    );
+    dict.set(
+        "setup.axis.content_scheme.prejoin_forced",
+        "Pre-join history uses content_scheme=mls_exporter_aead_v1.",
+    );
+    dict.set(
+        "setup.axis.content_scheme.capability_only",
+        "Capability only — actual delivery still follows History visibility.",
+    );
+    dict.set("setup.axis.security_class", "Security class");
+    dict.set(
+        "setup.axis.security_class.question",
+        "Posture for federation and audit defaults.",
+    );
+    dict.set(
+        "setup.axis.security_class.unset",
+        "Security class is not set.",
+    );
+    dict.set("setup.axis.federation_policy", "Federation policy");
+    dict.set(
+        "setup.axis.federation_policy.question",
+        "How does this Realm interoperate with other deployments?",
+    );
+    dict.set(
+        "setup.axis.federation_policy.unset",
+        "Federation policy is not set.",
+    );
+    dict.set(
+        "setup.axis.federation_policy.high_assurance",
+        "High assurance allows only restricted, closed, or quarantine federation.",
+    );
+    dict.set("setup.axis.seal_profile", "Seal profile");
+    dict.set(
+        "setup.axis.seal_profile.question",
+        "Who signs durable seals for this Realm?",
+    );
+    dict.set("setup.axis.seal_profile.unset", "Seal profile is not set.");
+    dict.set("setup.axis.hash_profile", "Hash profile");
+    dict.set(
+        "setup.axis.hash_profile.question",
+        "Digest algorithm for canonical hashing.",
+    );
+    dict.set("setup.axis.hash_profile.unset", "Hash profile is not set.");
+    dict.set(
+        "setup.boundary.advanced_summary",
+        "Advanced (federation policy / seal profile / hash profile)",
+    );
+
+    // Seed step.
+    dict.set("setup.seed.heading", "Seed members");
+    dict.set("setup.seed.hint", "optional");
+    dict.set("setup.field.seed_members", "Initial members");
+    dict.set(
+        "setup.field.seed_members_help",
+        "One DID per line, or comma-separated. Handle invites require directory resolution.",
+    );
+    dict.set("setup.seed.preview", "Seed preview");
+    dict.set("setup.seed.preview_empty", "No extra seed members.");
+    dict.set(
+        "setup.seed.preview_count",
+        "{count} principal(s) will be included in the bootstrap request.",
+    );
+
+    // Create blockers / progress.
+    dict.set(
+        "setup.blocker.already_created",
+        "Realm created. Continue from the Done step.",
+    );
+    dict.set("setup.blocker.sign_in", "Sign in before creating a Realm.");
+    dict.set(
+        "setup.blocker.secure_store",
+        "Device signing storage is still starting. Try again in a moment.",
+    );
+    dict.set("setup.blocker.creating", "Creating Realm...");
+    dict.set(
+        "setup.error.session_expired",
+        "Session expired. Refresh or sign in again before creating a Realm.",
+    );
+
+    // Bootstrap progress breadcrumbs, joined with " · " into the
+    // "Bootstrap state" line after a successful create.
+    dict.set(
+        "setup.progress.accepted",
+        "Realm {id} accepted; finishing encrypted Realm setup",
+    );
+    dict.set("setup.progress.created", "created {id}");
+    dict.set("setup.progress.seeded_owner_only", "seeded owner only");
+    dict.set("setup.progress.seeded_members", "seeded {count} member(s)");
+    dict.set(
+        "setup.progress.canonical_policy",
+        "canonical policy {discoverability} / {join_rule} / {history_visibility}",
+    );
+    dict.set(
+        "setup.progress.plaintext_services",
+        "plaintext services {count}",
+    );
+    dict.set(
+        "setup.progress.mls_ready_backup",
+        "MLS ready; history backup {id}",
+    );
+    dict.set("setup.progress.mls_ready_local", "MLS ready locally");
+    dict.set(
+        "setup.progress.mls_admission_failed",
+        "MLS admission failed: {error}",
+    );
+    dict.set(
+        "setup.progress.mls_welcome_queued",
+        "MLS Welcome queued for {count}",
+    );
+    dict.set(
+        "setup.progress.floor_required",
+        "metadata/content floor e2ee_required",
+    );
+    dict.set(
+        "setup.error.signer_not_ready",
+        "event signer is not ready; cannot sign ak.realm.create: {error}",
+    );
+    dict.set("setup.error.create_failed", "create failed: {error}");
+    dict.set("setup.error.created_then_failed", "created {id}; {error}");
+    dict.set(
+        "setup.error.invalid_server_url",
+        "invalid server URL: {error}",
+    );
+
+    // Done step.
+    dict.set("setup.done.hint", "next context");
+    dict.set("setup.done.created_realm", "Created Realm");
+    dict.set(
+        "setup.done.empty",
+        "Create a Realm before opening the next context.",
+    );
+
+    // Encrypted-Realm recovery soft-gate.
+    dict.set(
+        "setup.recovery_gate.aria",
+        "Set up recovery before creating an encrypted Realm",
+    );
+    dict.set("setup.recovery_gate.title", "Set up recovery first");
+    dict.set("setup.recovery_gate.badge", "encrypted Realm");
+    dict.set(
+        "setup.recovery_gate.body",
+        "This Realm is end-to-end encrypted. If you lose this device and have no Recovery Key or backup configured, its contents are permanently unrecoverable. Set up your 24-word Recovery Key and back up your keys before creating it.",
+    );
+    dict.set(
+        "setup.recovery_gate.override_hint",
+        "If you continue without recovery, press Create realm again to proceed at your own risk.",
+    );
+
+    // Actions.
+    dict.set("setup.action.back", "Back");
+    dict.set("setup.action.next_boundary", "Next: Boundary");
+    dict.set("setup.action.next_seed", "Next: Seed");
+    dict.set("setup.action.create_realm", "Create Realm");
+    dict.set("setup.action.finishing", "Finishing setup...");
+    dict.set("setup.action.open_realm", "Open Realm");
+    dict.set("setup.action.setup_recovery_key", "Set up Recovery Key");
+    dict.set(
+        "setup.action.continue_without_recovery",
+        "Continue without recovery",
+    );
+
+    setup_option_strings(dict);
+    setup_policy_hint_strings(dict);
+    setup_space_strings(dict);
+    setup_overview_strings(dict);
+}
+
+/// Labels + hints for the create-form option tables in
+/// `views::setup::data`. Key shape is `setup.opt.<axis>.<value>[.hint]`.
+fn setup_option_strings(dict: &mut TranslationDict) {
+    dict.set("setup.opt.discoverability.public", "Public");
+    dict.set(
+        "setup.opt.discoverability.public.hint",
+        "Findable in Search. Existence and join surface can be broadly disclosed.",
+    );
+    dict.set("setup.opt.discoverability.listed", "Listed");
+    dict.set(
+        "setup.opt.discoverability.listed.hint",
+        "Visible in Search, but still separate from how people join or what history they see.",
+    );
+    dict.set("setup.opt.discoverability.restricted", "Restricted");
+    dict.set(
+        "setup.opt.discoverability.restricted.hint",
+        "Directory presence is limited to principals that already satisfy server-side policy.",
+    );
+    dict.set("setup.opt.discoverability.unlisted", "Unlisted");
+    dict.set(
+        "setup.opt.discoverability.unlisted.hint",
+        "Not browseable in Search. Entry depends on a direct link or explicit reference.",
+    );
+    dict.set("setup.opt.discoverability.invite_only", "Invite only");
+    dict.set(
+        "setup.opt.discoverability.invite_only.hint",
+        "Existence is disclosed only to specifically invited principals.",
+    );
+    dict.set("setup.opt.discoverability.secret", "Secret");
+    dict.set(
+        "setup.opt.discoverability.secret.hint",
+        "The Realm should not disclose that it exists to unauthorized viewers.",
+    );
+
+    dict.set("setup.opt.join_rule.public", "Public");
+    dict.set(
+        "setup.opt.join_rule.public.hint",
+        "Anyone who can see the Realm can join without a separate approval step.",
+    );
+    dict.set("setup.opt.join_rule.invite", "Invite");
+    dict.set(
+        "setup.opt.join_rule.invite.hint",
+        "Joining requires a member or admin to grant admission explicitly.",
+    );
+    dict.set("setup.opt.join_rule.knock", "Knock");
+    dict.set(
+        "setup.opt.join_rule.knock.hint",
+        "Applicants can request entry and wait for review.",
+    );
+    dict.set("setup.opt.join_rule.restricted", "Restricted");
+    dict.set(
+        "setup.opt.join_rule.restricted.hint",
+        "Joining depends on policy or claims, even if the Realm is discoverable.",
+    );
+
+    dict.set(
+        "setup.opt.history_visibility.world_readable",
+        "World readable",
+    );
+    dict.set(
+        "setup.opt.history_visibility.world_readable.hint",
+        "Past history is readable without joining. Use only with intentionally open Realms.",
+    );
+    dict.set("setup.opt.history_visibility.shared", "Shared");
+    dict.set(
+        "setup.opt.history_visibility.shared.hint",
+        "New members can read the pre-join history that is meant to be shared with the whole Realm.",
+    );
+    dict.set("setup.opt.history_visibility.invited", "Invited");
+    dict.set(
+        "setup.opt.history_visibility.invited.hint",
+        "History is visible only from the point an invite made the principal eligible.",
+    );
+    dict.set("setup.opt.history_visibility.joined", "Joined");
+    dict.set(
+        "setup.opt.history_visibility.joined.hint",
+        "History starts when the principal actually becomes a member.",
+    );
+    dict.set("setup.opt.history_visibility.restricted", "Restricted");
+    dict.set(
+        "setup.opt.history_visibility.restricted.hint",
+        "Past history stays tightly scoped; new members see only what policy re-discloses.",
+    );
+
+    dict.set("setup.opt.encryption_profile.mls_rfc9420", "Encrypted");
+    dict.set(
+        "setup.opt.encryption_profile.mls_rfc9420.hint",
+        "Recommended. Metadata and content use MLS E2EE.",
+    );
+    dict.set("setup.opt.encryption_profile.none", "No encryption");
+    dict.set(
+        "setup.opt.encryption_profile.none.hint",
+        "Plaintext is visible to the server. Use only for public Realms.",
+    );
+
+    dict.set(
+        "setup.opt.content_scheme.mls_exporter_aead_v1",
+        "MLS exporter AEAD",
+    );
+    dict.set(
+        "setup.opt.content_scheme.mls_exporter_aead_v1.hint",
+        "content_scheme=mls_exporter_aead_v1. New members can be granted history from before they joined. Forward secrecy is per-epoch.",
+    );
+    dict.set("setup.opt.content_scheme.mls_rfc9420", "MLS PrivateMessage");
+    dict.set(
+        "setup.opt.content_scheme.mls_rfc9420.hint",
+        "content_scheme=mls_rfc9420. Pre-join history can never be shared with late joiners. Per-message forward secrecy.",
+    );
+
+    dict.set("setup.opt.security_class.standard", "Standard");
+    dict.set(
+        "setup.opt.security_class.standard.hint",
+        "Default posture. Federation policy can be open or restricted per Realm settings.",
+    );
+    dict.set("setup.opt.security_class.high_assurance", "High assurance");
+    dict.set(
+        "setup.opt.security_class.high_assurance.hint",
+        "Tightened defaults: federation is forced to restricted/closed/quarantine, audit signals are recorded.",
+    );
+
+    dict.set("setup.opt.federation_policy.open", "Open");
+    dict.set(
+        "setup.opt.federation_policy.open.hint",
+        "Any peer can interact. Not allowed when security_class=high_assurance.",
+    );
+    dict.set("setup.opt.federation_policy.restricted", "Restricted");
+    dict.set(
+        "setup.opt.federation_policy.restricted.hint",
+        "Allow-list of peers (governance / org-vetted). Default for high_assurance.",
+    );
+    dict.set("setup.opt.federation_policy.closed", "Closed");
+    dict.set(
+        "setup.opt.federation_policy.closed.hint",
+        "No federation at all. Use for fully internal Realms.",
+    );
+    dict.set("setup.opt.federation_policy.quarantine", "Quarantine");
+    dict.set(
+        "setup.opt.federation_policy.quarantine.hint",
+        "Inbound is accepted but held for review. Outbound is blocked.",
+    );
+
+    dict.set("setup.opt.anchor_profile.single_did", "Single DID");
+    dict.set(
+        "setup.opt.anchor_profile.single_did.hint",
+        "One principal signs seals. Simplest setup; default.",
+    );
+    dict.set("setup.opt.anchor_profile.threshold", "Threshold");
+    dict.set(
+        "setup.opt.anchor_profile.threshold.hint",
+        "k-of-n signature; configure the participating DIDs in policy.",
+    );
+    dict.set("setup.opt.anchor_profile.open_set", "Open set");
+    dict.set(
+        "setup.opt.anchor_profile.open_set.hint",
+        "Any holder of the notary capability may sign.",
+    );
+    dict.set("setup.opt.anchor_profile.mixed", "Mixed");
+    dict.set(
+        "setup.opt.anchor_profile.mixed.hint",
+        "Combination of the above — configure via policy.",
+    );
+
+    dict.set("setup.opt.hash_profile.sha256", "SHA-256");
+    dict.set(
+        "setup.opt.hash_profile.sha256.hint",
+        "Default. Interoperable everywhere.",
+    );
+    dict.set("setup.opt.hash_profile.sha512", "SHA-512");
+    dict.set(
+        "setup.opt.hash_profile.sha512.hint",
+        "Wider digest. Choose only if your deployment policy requires it.",
+    );
+    dict.set("setup.opt.hash_profile.sha3_256", "SHA3-256");
+    dict.set(
+        "setup.opt.hash_profile.sha3_256.hint",
+        "Keccak family. Use for FIPS-compatible deployments that mandate SHA-3.",
+    );
+    dict.set("setup.opt.hash_profile.blake3", "BLAKE3");
+    dict.set(
+        "setup.opt.hash_profile.blake3.hint",
+        "Faster on modern CPUs. Use only when all peers support BLAKE3.",
+    );
+
+    dict.set("setup.opt.space_kind.space", "Space (generic)");
+    dict.set("setup.opt.space_kind.space.hint", "");
+    dict.set("setup.opt.space_kind.project", "Project");
+    dict.set(
+        "setup.opt.space_kind.project.hint",
+        "Top-level scope for a piece of work; usually contains boards / lists.",
+    );
+    dict.set("setup.opt.space_kind.folder", "Folder");
+    dict.set(
+        "setup.opt.space_kind.folder.hint",
+        "Pure navigation container. Holds child Spaces / Strands but isn't a workflow.",
+    );
+    dict.set("setup.opt.space_kind.board", "Board");
+    dict.set(
+        "setup.opt.space_kind.board.hint",
+        "Kanban / pipeline view. Cells track strand placement (rank cas-register).",
+    );
+    dict.set("setup.opt.space_kind.list", "List");
+    dict.set(
+        "setup.opt.space_kind.list.hint",
+        "Ordered list view. Useful for backlog / triage / queue surfaces.",
+    );
+}
+
+/// Cross-axis policy warnings emitted by `views::setup::helpers`.
+fn setup_policy_hint_strings(dict: &mut TranslationDict) {
+    dict.set("setup.policy_hint.secret_conflict", "Combination invalid");
+    dict.set(
+        "setup.policy_hint.secret_conflict.body",
+        "A secret Space cannot also advertise public admission or world-readable history.",
+    );
+    dict.set(
+        "setup.policy_hint.invite_public",
+        "Combination is contradictory",
+    );
+    dict.set(
+        "setup.policy_hint.invite_public.body",
+        "Invite-only discovery paired with public join usually means the discovery model is underspecified.",
+    );
+    dict.set(
+        "setup.policy_hint.history_leak",
+        "History leaks more than existence",
+    );
+    dict.set(
+        "setup.policy_hint.history_leak.body",
+        "If history is world-readable, the Space behaves more openly than its discovery setting suggests.",
+    );
+    dict.set(
+        "setup.content_scheme.prejoin_requires_exporter",
+        "Pre-join history requires content_scheme=mls_exporter_aead_v1.",
+    );
+}
+
+/// `ak.space.create` form + Space lifecycle actions.
+fn setup_space_strings(dict: &mut TranslationDict) {
+    dict.set("setup.space.new_space", "New Space");
+    dict.set("setup.space.hero.hint", "navigation container");
+    dict.set("setup.space.heading", "Create a Space inside a Realm");
+    dict.set(
+        "setup.space.intro",
+        "A Space is a product-structure container (project / folder / board / list). It lives inside a Realm and inherits all security from it — no separate membership, encryption, or federation decisions.",
+    );
+    dict.set("setup.space.basics", "Basics");
+    dict.set("setup.space.basics.hint", "title + kind");
+    dict.set("setup.space.parent.root", "(root — no parent)");
+    dict.set("setup.space.default_realm.label", "default_realm_id");
+    dict.set(
+        "setup.space.default_realm.inherit",
+        "(inherit — use home Realm)",
+    );
+    dict.set("setup.space.not_created", "not created yet");
+    dict.set(
+        "setup.space.wire_shape.body",
+        "ak.space.create event + optional parent_space_id / default_realm_id. Lifecycle actions below dispatch ak.space.archive / restore / tombstone.",
+    );
+    dict.set(
+        "setup.space.lifecycle.hint",
+        "archive / restore / tombstone",
+    );
+    dict.set(
+        "setup.space.error.create_failed",
+        "create_space failed: {error}",
+    );
+    dict.set(
+        "setup.space.error.archive_failed",
+        "archive failed: {error}",
+    );
+    dict.set(
+        "setup.space.error.restore_failed",
+        "restore failed: {error}",
+    );
+    dict.set(
+        "setup.space.error.tombstone_failed",
+        "tombstone failed: {error}",
+    );
+    dict.set(
+        "setup.space.error.invalid_base_url",
+        "invalid base URL: {error}",
+    );
+    dict.set("setup.space.field.title", "Space title");
+    dict.set(
+        "setup.space.field.title_placeholder",
+        "Backlog, Roadmap, Onboarding...",
+    );
+    dict.set("setup.space.field.kind", "Kind");
+    dict.set(
+        "setup.space.field.summary_placeholder",
+        "Optional description.",
+    );
+    dict.set("setup.space.field.parent", "Parent Space (optional)");
+    dict.set(
+        "setup.space.parent.no_realm",
+        "Choose New Space from a Realm or Space row in the sidebar to set the home Realm.",
+    );
+    dict.set(
+        "setup.space.parent.no_siblings",
+        "No sibling Spaces in this Realm yet — leave at root.",
+    );
+    dict.set(
+        "setup.space.advanced_summary",
+        "Advanced (cross-Realm default for new resources)",
+    );
+    dict.set(
+        "setup.space.default_realm.empty",
+        "Need at least one Realm to point at.",
+    );
+    dict.set(
+        "setup.space.default_realm.hint",
+        "New Strands / Morphs / Views created from this Space land in this Realm by default. Doesn't grant access — the user still needs membership.",
+    );
+    dict.set("setup.space.action.create", "Create Space");
+    dict.set("setup.space.outcome", "Outcome");
+    dict.set("setup.space.outcome.hint", "Space create");
+    dict.set("setup.space.created", "Created Space");
+    dict.set("setup.space.status", "Status");
+    dict.set("setup.space.wire_shape", "Wire shape");
+    dict.set("setup.space.lifecycle", "Lifecycle actions");
+    dict.set(
+        "setup.space.lifecycle.empty",
+        "Create a Space above to enable lifecycle actions on it.",
+    );
+    dict.set("setup.space.action.archive", "Archive");
+    dict.set(
+        "setup.space.action.archive.title",
+        "Set state to archived; server doesn't cascade.",
+    );
+    dict.set("setup.space.action.restore", "Restore");
+    dict.set(
+        "setup.space.action.restore.title",
+        "Move archived → active; only valid from archived.",
+    );
+    dict.set("setup.space.action.tombstone", "Tombstone");
+    dict.set(
+        "setup.space.action.tombstone.title",
+        "Irreversible. Server rejects if live child Spaces / placement Strands exist.",
+    );
+    dict.set(
+        "setup.space.tombstone_warning",
+        "Tombstone is irreversible — server rejects with space_has_live_dependents if any child Space or placement Strand is still live (spec §3.4).",
+    );
+    dict.set(
+        "setup.space.state.submitting_create",
+        "Submitting ak.space.create...",
+    );
+    dict.set(
+        "setup.space.state.submitting_archive",
+        "Submitting ak.space.archive...",
+    );
+    dict.set(
+        "setup.space.state.submitting_restore",
+        "Submitting ak.space.restore...",
+    );
+    dict.set(
+        "setup.space.state.submitting_tombstone",
+        "Submitting ak.space.tombstone...",
+    );
+    dict.set(
+        "setup.space.state.created",
+        "Created Space {id} (kind={kind}) inside {realm}{parent}",
+    );
+    dict.set("setup.space.state.archived", "Archived {id}");
+    dict.set("setup.space.state.restored", "Restored {id}");
+    dict.set(
+        "setup.space.state.tombstoned",
+        "Tombstoned {id} (irreversible)",
+    );
+}
+
+/// Setup surface map (the overview section).
+fn setup_overview_strings(dict: &mut TranslationDict) {
+    dict.set("setup.overview.surfaces", "Setup Surfaces");
+    dict.set("setup.overview.surfaces.hint", "single-purpose entrypoints");
+    dict.set("setup.overview.realm.hint", "security-boundary bootstrap");
+    dict.set("setup.overview.realm.open", "Open New Realm");
+    dict.set(
+        "setup.overview.space.hint",
+        "navigation container inside a Realm",
+    );
+    dict.set(
+        "setup.overview.space.body",
+        "Hover a Realm or Space in the left sidebar and click the inline + — that's the canonical entry, because it pre-fills the parent context for you. The link below opens the form blank (you'll have to pick a Realm manually).",
+    );
+    dict.set("setup.overview.space.open", "Open blank form");
+    dict.set("setup.overview.onboarding", "Onboarding");
+    dict.set("setup.overview.onboarding.hint", "identity bootstrap");
+    dict.set("setup.overview.onboarding.open", "Open Onboarding");
+    dict.set("setup.overview.search", "Search");
+    dict.set("setup.overview.search.hint", "actors / handles / realms");
+    dict.set("setup.overview.search.open", "Open Search");
+    dict.set("setup.overview.board", "Board");
+    dict.set("setup.overview.board.hint", "after bootstrap");
+    dict.set("setup.overview.board.open_current", "Open Current Realm");
+    dict.set("setup.overview.board.open", "Open Board");
+    dict.set("setup.overview.moved", "What Moved");
+    dict.set("setup.overview.moved.hint", "IA cleanup");
+    dict.set(
+        "setup.overview.badge.onboarding",
+        "Onboarding = identity bootstrap",
+    );
+    dict.set(
+        "setup.overview.badge.search",
+        "Search = discovery and people",
+    );
+    dict.set(
+        "setup.overview.badge.realm",
+        "New Realm = security-boundary bootstrap",
+    );
+    dict.set(
+        "setup.overview.badge.settings",
+        "Settings = recovery and operations",
+    );
+}
+
+/// Breadcrumb / context-bar labels resolved by `app::feature_gate`.
+fn route_label_strings(dict: &mut TranslationDict) {
+    dict.set("route.dashboard", "Home");
+    dict.set("route.login", "Login");
+    dict.set("route.register", "Create identity");
+    dict.set("route.realms_manage", "Manage Realms");
+    dict.set("route.realm", "Realm");
+    dict.set("route.chat", "Discussion");
+    dict.set("route.direct", "Direct");
+    dict.set("route.contacts_manage", "Manage Contacts");
+    dict.set("route.contacts", "Contacts");
+    dict.set("route.files", "Files");
+    dict.set("route.directory", "Search");
+    dict.set("route.setup", "Setup");
+    dict.set("route.setup_realms", "New Realm");
+    dict.set("route.setup_new_space", "New Space");
+    dict.set("route.settings", "Settings");
+    dict.set("route.notifications", "Notifications");
+    dict.set("route.verify_device", "Verify Device");
+    dict.set("route.realm_members", "Members");
+    dict.set("route.circles", "Circles");
+    dict.set("route.realm_admin", "Realm Settings");
+    dict.set("route.realm_admin.profile", "Profile");
+    dict.set("route.realm_admin.access", "Access Policy");
+    dict.set("route.realm_admin.security", "Security & MLS");
+    dict.set("route.realm_admin.federation", "Federation Trust");
+    dict.set("route.realm_admin.repair", "Repair & Danger");
+    dict.set("route.audit", "Audit log");
+    dict.set("route.developer", "Developer tools");
+    dict.set("route.board", "Board View");
+    dict.set("route.call", "Call");
+    dict.set("route.recovery", "Recovery");
+    dict.set("route.devices", "Devices");
+    dict.set("route.devices_pair", "Add a device");
+    dict.set("route.onboarding", "Onboarding");
+    dict.set("route.quarantine", "Invite Quarantine");
+    dict.set("route.applets", "Applets");
+
+    dict.set("route.settings.server", "Account & server");
+    dict.set("route.settings.storage", "Data & sync");
+    dict.set("route.settings.encryption", "Security");
+    dict.set("route.settings.mimi", "Integrations");
+    dict.set("route.settings.privacy", "Privacy & sharing");
+    dict.set("route.settings.invite_policy", "Who can invite me");
+    dict.set("route.settings.blocklist", "Blocked actors");
+    dict.set("route.settings.capabilities", "Capabilities");
+    dict.set("route.settings.theme", "Appearance & locale");
+    dict.set("route.settings.release", "Diagnostics");
 }

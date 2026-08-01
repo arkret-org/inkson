@@ -264,15 +264,7 @@ fn localize_toast_message(toast: &Toast) -> String {
     } else {
         translated
     };
-    substitute_args(message, &toast.args)
-}
-
-/// Substitute `{placeholder}` args into an already-localized string.
-fn substitute_args(mut message: String, args: &[(&'static str, String)]) -> String {
-    for (placeholder, value) in args {
-        message = message.replace(&format!("{{{placeholder}}}"), value);
-    }
-    message
+    crate::i18n::substitute_args(message, &toast.args)
 }
 
 /// The stacked toast host. Mount ONCE near the top of the app shell.
@@ -332,10 +324,8 @@ pub fn ToastHost() -> Element {
         list[..TOAST_VISIBLE_MAX].to_vec()
     };
     let hidden = total - visible.len();
-    let overflow_label = substitute_args(
-        tr("feedback.toast_overflow"),
-        &[("count", hidden.to_string())],
-    );
+    let overflow_label =
+        crate::i18n::tr_args("feedback.toast_overflow", &[("count", hidden.to_string())]);
 
     rsx! {
         div {
@@ -572,7 +562,7 @@ mod tests {
 
     #[test]
     fn substitute_args_replaces_placeholders() {
-        let out = substitute_args(
+        let out = crate::i18n::substitute_args(
             "blocked: {code} — {message}".to_owned(),
             &[
                 ("code", "policy_denied".to_owned()),

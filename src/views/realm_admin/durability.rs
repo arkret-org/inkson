@@ -47,11 +47,7 @@ impl FormError {
     /// Resolve the i18n key and apply placeholder substitutions. Must be
     /// called from inside the Dioxus runtime (component/event scope).
     fn localize(&self) -> String {
-        let mut message = tr(self.key);
-        for (placeholder, value) in &self.args {
-            message = message.replace(&format!("{{{placeholder}}}"), value);
-        }
-        message
+        crate::i18n::tr_args(self.key, &self.args)
     }
 }
 

@@ -31,6 +31,12 @@ pub(super) fn parse_seed_members(seed_members: &str) -> Vec<String> {
     members
 }
 
+/// Cross-axis policy warning for the current Discoverability / Join rule /
+/// History visibility combination.
+///
+/// Returns `(tone, heading_key, body_key)`. The two string fields are i18n
+/// keys, not display text — this is a pure helper with unit tests, so it
+/// stays out of the Dioxus runtime and the caller resolves the keys.
 pub(super) fn policy_combination_hint(
     discoverability: &str,
     join_rule: &str,
@@ -41,16 +47,16 @@ pub(super) fn policy_combination_hint(
     {
         return Some((
             "error",
-            "Combination invalid",
-            "A secret Space cannot also advertise public admission or world-readable history.",
+            "setup.policy_hint.secret_conflict",
+            "setup.policy_hint.secret_conflict.body",
         ));
     }
 
     if discoverability == "invite_only" && join_rule == "public" {
         return Some((
             "warning",
-            "Combination is contradictory",
-            "Invite-only discovery paired with public join usually means the discovery model is underspecified.",
+            "setup.policy_hint.invite_public",
+            "setup.policy_hint.invite_public.body",
         ));
     }
 
@@ -58,8 +64,8 @@ pub(super) fn policy_combination_hint(
     {
         return Some((
             "warning",
-            "History leaks more than existence",
-            "If history is world-readable, the Space behaves more openly than its discovery setting suggests.",
+            "setup.policy_hint.history_leak",
+            "setup.policy_hint.history_leak.body",
         ));
     }
 
@@ -85,6 +91,9 @@ pub(super) fn normalize_content_scheme(
     }
 }
 
+/// i18n key for the content-scheme constraint violation, or `None` when the
+/// current combination is valid. Key, not display text — see
+/// [`policy_combination_hint`].
 pub(super) fn content_scheme_constraint_hint(
     encryption_is_e2ee: bool,
     history_visibility: &str,
@@ -94,7 +103,7 @@ pub(super) fn content_scheme_constraint_hint(
         && history_visibility_admits_prejoin(history_visibility)
         && content_scheme.trim() == "mls_rfc9420"
     {
-        Some("Pre-join history requires content_scheme=mls_exporter_aead_v1.")
+        Some("setup.content_scheme.prejoin_requires_exporter")
     } else {
         None
     }

@@ -5,6 +5,7 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use super::data::SPACE_KIND_OPTIONS;
+use crate::i18n::tr;
 use crate::models::{RealmTreeNode, RealmTreeNodeKind};
 use crate::transport::auth::authed_api;
 use crate::ui::button::{Button, ButtonVariant};
@@ -13,6 +14,42 @@ use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::short_protocol_id;
+
+/// Space lifecycle status templates resolved before the submit tasks are
+/// spawned — same constraint as `realms::BootstrapProgressStrings`: `tr()`
+/// needs Dioxus context, which a spawned task does not have.
+#[derive(Clone)]
+struct SpaceStatusStrings {
+    created: String,
+    archived: String,
+    restored: String,
+    tombstoned: String,
+    create_failed: String,
+    archive_failed: String,
+    restore_failed: String,
+    tombstone_failed: String,
+    invalid_base_url: String,
+}
+
+impl SpaceStatusStrings {
+    fn resolve() -> Self {
+        Self {
+            created: tr("setup.space.state.created"),
+            archived: tr("setup.space.state.archived"),
+            restored: tr("setup.space.state.restored"),
+            tombstoned: tr("setup.space.state.tombstoned"),
+            create_failed: tr("setup.space.error.create_failed"),
+            archive_failed: tr("setup.space.error.archive_failed"),
+            restore_failed: tr("setup.space.error.restore_failed"),
+            tombstone_failed: tr("setup.space.error.tombstone_failed"),
+            invalid_base_url: tr("setup.space.error.invalid_base_url"),
+        }
+    }
+
+    fn fill(template: &str, args: &[(&'static str, String)]) -> String {
+        crate::i18n::substitute_args(template.to_owned(), args)
+    }
+}
 
 #[component]
 pub(super) fn NewSpaceSection(
@@ -39,6 +76,8 @@ pub(super) fn NewSpaceSection(
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
     let has_session = !token().trim().is_empty();
+    let draft_state_label = tr("setup.state.draft");
+    let status_strings = SpaceStatusStrings::resolve();
 
     let new_space_kind_selected = use_memo(move || Some(new_space_kind()));
     let new_space_parent_id_selected = use_memo(move || Some(new_space_parent_id()));
@@ -66,7 +105,7 @@ pub(super) fn NewSpaceSection(
             {
                 new_space_context_seen.set(context_key);
                 new_space_created_id.set(String::new());
-                new_space_state.set("Draft not created yet".to_owned());
+                new_space_state.set(draft_state_label.clone());
 
                 match node.kind {
                     RealmTreeNodeKind::Realm => {
@@ -87,7 +126,7 @@ pub(super) fn NewSpaceSection(
             {
                 new_space_context_seen.set(context_key.clone());
                 new_space_created_id.set(String::new());
-                new_space_state.set("Draft not created yet".to_owned());
+                new_space_state.set(draft_state_label.clone());
 
                 let kind = match body
                     .get("__kind")
@@ -115,13 +154,13 @@ pub(super) fn NewSpaceSection(
             } else if context_key.starts_with("ak:realm:") {
                 new_space_context_seen.set(context_key.clone());
                 new_space_created_id.set(String::new());
-                new_space_state.set("Draft not created yet".to_owned());
+                new_space_state.set(draft_state_label.clone());
                 new_space_realm_id.set(context_key);
                 new_space_parent_id.set(String::new());
             } else if context_key.starts_with("ak:space:") && !selected_fallback.is_empty() {
                 new_space_context_seen.set(context_key.clone());
                 new_space_created_id.set(String::new());
-                new_space_state.set("Draft not created yet".to_owned());
+                new_space_state.set(draft_state_label.clone());
                 new_space_realm_id.set(selected_fallback);
                 new_space_parent_id.set(context_key);
             }
@@ -195,35 +234,35 @@ pub(super) fn NewSpaceSection(
             div { class: "setup-column",
                 div { class: "event new-space-hero",
                     div { class: "event-head",
-                        span { "New Space" }
-                        span { "navigation container" }
+                        span { {tr("setup.space.new_space")} }
+                        span { {tr("setup.space.hero.hint")} }
                     }
-                    h2 { class: "settings-content-title", "Create a Space inside a Realm" }
+                    h2 { class: "settings-content-title", {tr("setup.space.heading")} }
                     div { class: "muted",
-                        "A Space is a product-structure container (project / folder / board / list). It lives inside a Realm and inherits all security from it — no separate membership, encryption, or federation decisions."
+                        {tr("setup.space.intro")}
                     }
                 }
 
                 div { class: "event",
                     div { class: "event-head",
-                        span { "Basics" }
-                        span { "title + kind" }
+                        span { {tr("setup.space.basics")} }
+                        span { {tr("setup.space.basics.hint")} }
                     }
                     div { class: "workflow-form setup-form-grid",
                         div { class: "setup-field",
-                            Label { html_for: "new-space-title-input-input", "Space title" }
+                            Label { html_for: "new-space-title-input-input", {tr("setup.space.field.title")} }
                             Input {
                                 id: "new-space-title-input-input",
                                 "data-testid": "new-space-title-input",
                                 required: true,
                                 "aria-required": "true",
                                 value: "{new_space_title_value}",
-                                placeholder: "Backlog, Roadmap, Onboarding...",
+                                placeholder: tr("setup.space.field.title_placeholder"),
                                 oninput: move |event: FormEvent| new_space_title.set(event.value())
                             }
                         }
                         div { class: "setup-field",
-                            label { "Kind" }
+                            label { {tr("setup.space.field.kind")} }
                             Select::<String> {
                                 "data-testid": "new-space-kind-input",
                                 value: Some(new_space_kind_selected.into()),
@@ -232,32 +271,32 @@ pub(super) fn NewSpaceSection(
                                         new_space_kind.set(v);
                                     }
                                 },
-                                for (i, (option_value, label, _)) in SPACE_KIND_OPTIONS.iter().enumerate() {
+                                for (i, (option_value, label_key, _)) in SPACE_KIND_OPTIONS.iter().enumerate() {
                                     SelectOption::<String> {
                                         index: i,
                                         value: option_value.to_string(),
-                                        text_value: "{label}",
-                                        "{label}"
+                                        text_value: tr(label_key),
+                                        {tr(label_key)}
                                     }
                                 }
                             }
                             if let Some(kind_hint) = SPACE_KIND_OPTIONS
                                 .iter()
                                 .find(|(value, _, _)| *value == new_space_kind_value)
-                                .map(|(_, _, hint)| *hint)
+                                .map(|(_, _, hint_key)| tr(hint_key))
                                 .filter(|hint| !hint.is_empty())
                             {
                                 div { class: "muted", "{kind_hint}" }
                             }
                         }
                         div { class: "setup-field setup-field-span-2",
-                            Label { html_for: "new-space-summary-input-input", "Summary" }
+                            Label { html_for: "new-space-summary-input-input", {tr("setup.field.summary")} }
                             Textarea {
                                 id: "new-space-summary-input-input",
                                 "data-testid": "new-space-summary-input",
                                 value: "{new_space_summary_value}",
                                 rows: "3",
-                                placeholder: "Optional description.",
+                                placeholder: tr("setup.space.field.summary_placeholder"),
                                 oninput: move |event: FormEvent| new_space_summary.set(event.value())
                             }
                         }
@@ -267,11 +306,11 @@ pub(super) fn NewSpaceSection(
                         // cross-Realm parents are valid but live
                         // under `default_realm_id`).
                         div { class: "setup-field setup-field-span-2",
-                            label { "Parent Space (optional)" }
+                            label { {tr("setup.space.field.parent")} }
                             if new_space_realm_id_value.trim().is_empty() {
-                                div { class: "muted", "Choose New Space from a Realm or Space row in the sidebar to set the home Realm." }
+                                div { class: "muted", {tr("setup.space.parent.no_realm")} }
                             } else if parent_candidates.is_empty() {
-                                div { class: "muted", "No sibling Spaces in this Realm yet — leave at root." }
+                                div { class: "muted", {tr("setup.space.parent.no_siblings")} }
                             } else {
                                 Select::<String> {
                                     "data-testid": "new-space-parent-input",
@@ -284,8 +323,8 @@ pub(super) fn NewSpaceSection(
                                     SelectOption::<String> {
                                         index: 0usize,
                                         value: "".to_string(),
-                                        text_value: "(root — no parent)",
-                                        "(root — no parent)"
+                                        text_value: tr("setup.space.parent.root"),
+                                        {tr("setup.space.parent.root")}
                                     }
                                     for (i, (id, title)) in parent_candidates.iter().enumerate() {
                                         {
@@ -312,13 +351,13 @@ pub(super) fn NewSpaceSection(
                     details { class: "setup-advanced",
                         "data-testid": "new-space-advanced",
                         summary { class: "setup-advanced-summary",
-                            "Advanced (cross-Realm default for new resources)"
+                            {tr("setup.space.advanced_summary")}
                         }
                         div { class: "workflow-form setup-form-grid",
                             div { class: "setup-field setup-field-span-2",
-                                label { "default_realm_id" }
+                                label { {tr("setup.space.default_realm.label")} }
                                 if available_realms.is_empty() {
-                                    div { class: "muted", "Need at least one Realm to point at." }
+                                    div { class: "muted", {tr("setup.space.default_realm.empty")} }
                                 } else {
                                     Select::<String> {
                                         "data-testid": "new-space-default-realm-ref-input",
@@ -331,8 +370,8 @@ pub(super) fn NewSpaceSection(
                                         SelectOption::<String> {
                                             index: 0usize,
                                             value: "".to_string(),
-                                            text_value: "(inherit — use home Realm)",
-                                            "(inherit — use home Realm)"
+                                            text_value: tr("setup.space.default_realm.inherit"),
+                                            {tr("setup.space.default_realm.inherit")}
                                         }
                                         for (i, (id, title)) in available_realms.iter().enumerate() {
                                             {
@@ -350,7 +389,7 @@ pub(super) fn NewSpaceSection(
                                     }
                                 }
                                 div { class: "muted",
-                                    "New Strands / Morphs / Views created from this Space land in this Realm by default. Doesn't grant access — the user still needs membership."
+                                    {tr("setup.space.default_realm.hint")}
                                 }
                             }
                         }
@@ -362,7 +401,9 @@ pub(super) fn NewSpaceSection(
                             disabled: !new_space_can_submit,
                             onclick: {
                                 let base_url = base_url.clone();
+                                let strings = status_strings.clone();
                                 move |_| {
+                                let strings = strings.clone();
                                 let api_token = token();
                                 let base = base_url.clone();
                                 let realm_id = new_space_realm_id();
@@ -372,7 +413,7 @@ pub(super) fn NewSpaceSection(
                                 let parent_id = new_space_parent_id();
                                 let default_realm_id = new_space_default_realm_id();
                                 let actor = account_did();
-                                new_space_state.set("Submitting ak.space.create...".to_owned());
+                                new_space_state.set(tr("setup.space.state.submitting_create"));
                                 spawn(async move {
                                     match authed_api(&base, api_token).and_then(|api| api.event_submitter()) {
                                         Ok(submitter) => {
@@ -427,27 +468,40 @@ pub(super) fn NewSpaceSection(
                                                         projection_body,
                                                     );
                                                     new_space_created_id.set(space.space_id.clone());
-                                                    new_space_state.set(format!(
-                                                        "Created Space {} (kind={}) inside {}{}",
-                                                        space.space_id,
-                                                        kind,
-                                                        realm_id,
-                                                        parent_opt.map(|p| format!(" under {p}")).unwrap_or_default(),
+                                                    new_space_state.set(SpaceStatusStrings::fill(
+                                                        &strings.created,
+                                                        &[
+                                                            ("id", space.space_id.clone()),
+                                                            ("kind", kind.clone()),
+                                                            ("realm", realm_id.clone()),
+                                                            (
+                                                                "parent",
+                                                                parent_opt
+                                                                    .map(|p| format!(" under {p}"))
+                                                                    .unwrap_or_default(),
+                                                            ),
+                                                        ],
                                                     ));
                                                 }
                                                 Err(error) => {
-                                                    new_space_state.set(format!("create_space failed: {error}"));
+                                                    new_space_state.set(SpaceStatusStrings::fill(
+                                                        &strings.create_failed,
+                                                        &[("error", error.to_string())],
+                                                    ));
                                                 }
                                             }
                                         }
                                         Err(error) => {
-                                            new_space_state.set(format!("invalid base URL: {error}"));
+                                            new_space_state.set(SpaceStatusStrings::fill(
+                                                &strings.invalid_base_url,
+                                                &[("error", error.to_string())],
+                                            ));
                                         }
                                     }
                                 });
                                 }
                             },
-                            "Create Space"
+                            {tr("setup.space.action.create")}
                         }
                     }
                 }
@@ -456,27 +510,27 @@ pub(super) fn NewSpaceSection(
             div { class: "setup-column setup-summary-column",
                 div { class: "event new-space-summary",
                     div { class: "event-head",
-                        span { "Outcome" }
-                        span { "Space create" }
+                        span { {tr("setup.space.outcome")} }
+                        span { {tr("setup.space.outcome.hint")} }
                     }
                     div { class: "setup-summary-row",
-                        strong { "Created Space" }
+                        strong { {tr("setup.space.created")} }
                         span { class: "mono", "data-testid": "new-space-created-id",
                             if !new_space_created_id_value.trim().is_empty() {
                                 "{new_space_created_id_label}"
                             } else {
-                                "not created yet"
+                                {tr("setup.space.not_created")}
                             }
                         }
                     }
                     div { class: "setup-summary-row setup-summary-row-stack",
-                        strong { "Status" }
+                        strong { {tr("setup.space.status")} }
                         span { class: "muted", "{new_space_state_value}" }
                     }
                     div { class: "setup-summary-row setup-summary-row-stack",
-                        strong { "Wire shape" }
+                        strong { {tr("setup.space.wire_shape")} }
                         span { class: "muted",
-                            "ak.space.create event + optional parent_space_id / default_realm_id. Lifecycle actions below dispatch ak.space.archive / restore / tombstone."
+                            {tr("setup.space.wire_shape.body")}
                         }
                     }
                 }
@@ -488,111 +542,135 @@ pub(super) fn NewSpaceSection(
                 div { class: "event",
                     "data-testid": "space-lifecycle-panel",
                     div { class: "event-head",
-                        span { "Lifecycle actions" }
-                        span { "archive / restore / tombstone" }
+                        span { {tr("setup.space.lifecycle")} }
+                        span { {tr("setup.space.lifecycle.hint")} }
                     }
                     if new_space_created_id_value.trim().is_empty() {
                         div { class: "muted",
-                            "Create a Space above to enable lifecycle actions on it."
+                            {tr("setup.space.lifecycle.empty")}
                         }
                     } else {
                         div { class: "actions",
                             Button {
                                 variant: ButtonVariant::Secondary,
                                 "data-testid": "space-lifecycle-archive",
-                                title: "Set state to archived; server doesn't cascade.",
+                                title: tr("setup.space.action.archive.title"),
                                 onclick: {
                                     let base = base_url.clone();
+                                    let strings = status_strings.clone();
                                     move |_| {
+                                        let strings = strings.clone();
                                         let api_token = token();
                                         let base = base.clone();
                                         let actor = account_did();
                                         let space_id = new_space_created_id();
                                         let realm_id = new_space_realm_id();
-                                        new_space_state.set("Submitting ak.space.archive...".to_owned());
+                                        new_space_state.set(tr("setup.space.state.submitting_archive"));
                                         spawn(async move {
                                             match authed_api(&base, api_token).and_then(|api| api.event_submitter()) {
                                                 Ok(submitter) => match crate::transport::realm_write::change_space_lifecycle(
                                                     &submitter, &space_id, &realm_id, &actor, EventKind::SpaceArchive,
                                                 ).await {
-                                                    Ok(()) => new_space_state.set(format!(
-                                                        "Archived {}",
-                                                        short_protocol_id(&space_id)
+                                                    Ok(()) => new_space_state.set(SpaceStatusStrings::fill(
+                                                        &strings.archived,
+                                                        &[("id", short_protocol_id(&space_id))],
                                                     )),
-                                                    Err(error) => new_space_state.set(format!("archive failed: {error}")),
+                                                    Err(error) => new_space_state.set(SpaceStatusStrings::fill(
+                                                        &strings.archive_failed,
+                                                        &[("error", error.to_string())],
+                                                    )),
                                                 },
-                                                Err(error) => new_space_state.set(format!("invalid base URL: {error}")),
+                                                Err(error) => new_space_state.set(SpaceStatusStrings::fill(
+                                                    &strings.invalid_base_url,
+                                                    &[("error", error.to_string())],
+                                                )),
                                             }
                                         });
                                     }
                                 },
-                                "Archive"
+                                {tr("setup.space.action.archive")}
                             }
                             Button {
                                 variant: ButtonVariant::Secondary,
                                 "data-testid": "space-lifecycle-restore",
-                                title: "Move archived → active; only valid from archived.",
+                                title: tr("setup.space.action.restore.title"),
                                 onclick: {
                                     let base = base_url.clone();
+                                    let strings = status_strings.clone();
                                     move |_| {
+                                        let strings = strings.clone();
                                         let api_token = token();
                                         let base = base.clone();
                                         let actor = account_did();
                                         let space_id = new_space_created_id();
                                         let realm_id = new_space_realm_id();
-                                        new_space_state.set("Submitting ak.space.restore...".to_owned());
+                                        new_space_state.set(tr("setup.space.state.submitting_restore"));
                                         spawn(async move {
                                             match authed_api(&base, api_token).and_then(|api| api.event_submitter()) {
                                                 Ok(submitter) => match crate::transport::realm_write::change_space_lifecycle(
                                                     &submitter, &space_id, &realm_id, &actor, EventKind::SpaceRestore,
                                                 ).await {
-                                                    Ok(()) => new_space_state.set(format!(
-                                                        "Restored {}",
-                                                        short_protocol_id(&space_id)
+                                                    Ok(()) => new_space_state.set(SpaceStatusStrings::fill(
+                                                        &strings.restored,
+                                                        &[("id", short_protocol_id(&space_id))],
                                                     )),
-                                                    Err(error) => new_space_state.set(format!("restore failed: {error}")),
+                                                    Err(error) => new_space_state.set(SpaceStatusStrings::fill(
+                                                        &strings.restore_failed,
+                                                        &[("error", error.to_string())],
+                                                    )),
                                                 },
-                                                Err(error) => new_space_state.set(format!("invalid base URL: {error}")),
+                                                Err(error) => new_space_state.set(SpaceStatusStrings::fill(
+                                                    &strings.invalid_base_url,
+                                                    &[("error", error.to_string())],
+                                                )),
                                             }
                                         });
                                     }
                                 },
-                                "Restore"
+                                {tr("setup.space.action.restore")}
                             }
                             Button {
                                 variant: ButtonVariant::Destructive,
                                 "data-testid": "space-lifecycle-tombstone",
-                                title: "Irreversible. Server rejects if live child Spaces / placement Strands exist.",
+                                title: tr("setup.space.action.tombstone.title"),
                                 onclick: {
                                     let base = base_url.clone();
+                                    let strings = status_strings.clone();
                                     move |_| {
+                                        let strings = strings.clone();
                                         let api_token = token();
                                         let base = base.clone();
                                         let actor = account_did();
                                         let space_id = new_space_created_id();
                                         let realm_id = new_space_realm_id();
-                                        new_space_state.set("Submitting ak.space.tombstone...".to_owned());
+                                        new_space_state.set(tr("setup.space.state.submitting_tombstone"));
                                         spawn(async move {
                                             match authed_api(&base, api_token).and_then(|api| api.event_submitter()) {
                                                 Ok(submitter) => match crate::transport::realm_write::change_space_lifecycle(
                                                     &submitter, &space_id, &realm_id, &actor, EventKind::SpaceTombstone,
                                                 ).await {
-                                                    Ok(()) => new_space_state.set(format!(
-                                                        "Tombstoned {} (irreversible)",
-                                                        short_protocol_id(&space_id)
+                                                    Ok(()) => new_space_state.set(SpaceStatusStrings::fill(
+                                                        &strings.tombstoned,
+                                                        &[("id", short_protocol_id(&space_id))],
                                                     )),
-                                                    Err(error) => new_space_state.set(format!("tombstone failed: {error}")),
+                                                    Err(error) => new_space_state.set(SpaceStatusStrings::fill(
+                                                        &strings.tombstone_failed,
+                                                        &[("error", error.to_string())],
+                                                    )),
                                                 },
-                                                Err(error) => new_space_state.set(format!("invalid base URL: {error}")),
+                                                Err(error) => new_space_state.set(SpaceStatusStrings::fill(
+                                                    &strings.invalid_base_url,
+                                                    &[("error", error.to_string())],
+                                                )),
                                             }
                                         });
                                     }
                                 },
-                                "Tombstone"
+                                {tr("setup.space.action.tombstone")}
                             }
                         }
                         div { class: "muted",
-                            "Tombstone is irreversible — server rejects with space_has_live_dependents if any child Space or placement Strand is still live (spec §3.4)."
+                            {tr("setup.space.tombstone_warning")}
                         }
                     }
                 }

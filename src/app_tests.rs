@@ -766,18 +766,20 @@ fn realm_top_nav_is_board_only() {
 
 #[test]
 fn setup_section_route_labels_match_realm_and_space_forms() {
-    assert_eq!(route_label(&Route::Setup), "New Realm");
+    // `route_label_key` returns i18n keys; the dictionaries carry the display
+    // text (`route.setup_realms` = "New Realm" / "新建领域").
+    assert_eq!(route_label_key(&Route::Setup), "route.setup_realms");
     assert_eq!(
-        route_label(&Route::SetupSection {
+        route_label_key(&Route::SetupSection {
             section: "realms".to_owned()
         }),
-        "New Realm"
+        "route.setup_realms"
     );
     assert_eq!(
-        route_label(&Route::SetupSection {
+        route_label_key(&Route::SetupSection {
             section: "new-space".to_owned()
         }),
-        "New Space"
+        "route.setup_new_space"
     );
 }
 

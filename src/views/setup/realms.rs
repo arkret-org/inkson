@@ -6,7 +6,7 @@ use dioxus_router::Link;
 use super::data::{
     ANCHOR_PROFILE_OPTIONS, CONTENT_SCHEME_OPTIONS, DISCOVERABILITY_OPTIONS,
     ENCRYPTION_PROFILE_OPTIONS, FEDERATION_POLICY_OPTIONS, HASH_PROFILE_OPTIONS,
-    HISTORY_VISIBILITY_OPTIONS, JOIN_RULE_OPTIONS, SECURITY_CLASS_OPTIONS,
+    HISTORY_VISIBILITY_OPTIONS, JOIN_RULE_OPTIONS, SECURITY_CLASS_OPTIONS, option_hint,
 };
 use super::helpers::{
     content_scheme_constraint_hint, history_visibility_admits_prejoin, normalize_content_scheme,
@@ -15,6 +15,7 @@ use super::helpers::{
 use super::model::{NEW_REALM_STEPS, NewRealmStep};
 use crate::api_error::is_auth_expired_error;
 use crate::config::LocalConfigStore;
+use crate::i18n::{tr, tr_args};
 use crate::routes::Route;
 use crate::transport::auth::authed_api_ready;
 use crate::ui::button::{Button, ButtonVariant};
@@ -23,6 +24,63 @@ use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::{actor_display_label, short_protocol_id};
+
+/// Bootstrap-progress templates resolved *before* the create task is
+/// spawned.
+///
+/// `tr()` reads the i18n signal out of Dioxus context, which is not
+/// available inside a spawned task — the same constraint that makes
+/// `components::feedback` carry keys + args across the boundary instead of
+/// resolved text. Here the messages are consumed by `realm_state` rather
+/// than the toast host, so the component resolves the templates on render
+/// and moves this struct into the task, then fills `{placeholder}`s with
+/// [`crate::i18n::substitute_args`] — the one substitution implementation.
+#[derive(Clone)]
+struct BootstrapProgressStrings {
+    accepted: String,
+    created: String,
+    seeded_owner_only: String,
+    seeded_members: String,
+    canonical_policy: String,
+    plaintext_services: String,
+    mls_ready_backup: String,
+    mls_ready_local: String,
+    mls_admission_failed: String,
+    mls_welcome_queued: String,
+    floor_required: String,
+    signer_not_ready: String,
+    create_failed: String,
+    created_then_failed: String,
+    invalid_server_url: String,
+    session_expired: String,
+}
+
+impl BootstrapProgressStrings {
+    fn resolve() -> Self {
+        Self {
+            accepted: tr("setup.progress.accepted"),
+            created: tr("setup.progress.created"),
+            seeded_owner_only: tr("setup.progress.seeded_owner_only"),
+            seeded_members: tr("setup.progress.seeded_members"),
+            canonical_policy: tr("setup.progress.canonical_policy"),
+            plaintext_services: tr("setup.progress.plaintext_services"),
+            mls_ready_backup: tr("setup.progress.mls_ready_backup"),
+            mls_ready_local: tr("setup.progress.mls_ready_local"),
+            mls_admission_failed: tr("setup.progress.mls_admission_failed"),
+            mls_welcome_queued: tr("setup.progress.mls_welcome_queued"),
+            floor_required: tr("setup.progress.floor_required"),
+            signer_not_ready: tr("setup.error.signer_not_ready"),
+            create_failed: tr("setup.error.create_failed"),
+            created_then_failed: tr("setup.error.created_then_failed"),
+            invalid_server_url: tr("setup.error.invalid_server_url"),
+            session_expired: tr("setup.error.session_expired"),
+        }
+    }
+
+    fn fill(template: &str, args: &[(&'static str, String)]) -> String {
+        crate::i18n::substitute_args(template.to_owned(), args)
+    }
+}
 
 #[component]
 pub(super) fn RealmsSection(
@@ -114,16 +172,18 @@ pub(super) fn RealmsSection(
     let basics_ready = !title_value.trim().is_empty();
     let boundary_ready = !current_policy_error && content_scheme_warning.is_none();
     let create_blocker = if has_created_realm {
-        Some("Realm created. Continue from the Done step.")
+        Some(tr("setup.blocker.already_created"))
     } else if !has_session {
-        Some("Sign in before creating a Realm.")
+        Some(tr("setup.blocker.sign_in"))
     } else if !secure_store_ready {
-        Some("Device signing storage is still starting. Try again in a moment.")
+        Some(tr("setup.blocker.secure_store"))
     } else if realm_create_busy_value {
-        Some("Creating Realm...")
+        Some(tr("setup.blocker.creating"))
     } else {
         None
     };
+    let draft_state_label = tr("setup.state.draft");
+    let progress_strings = BootstrapProgressStrings::resolve();
     let can_advance_step = match active_create_step {
         NewRealmStep::Basics => basics_ready,
         NewRealmStep::Boundary => boundary_ready,
@@ -147,19 +207,19 @@ pub(super) fn RealmsSection(
                     }
                 },
                 "data-testid": "encrypted-realm-recovery-gate",
-                "aria-label": "Set up recovery before creating an encrypted Realm",
+                "aria-label": tr("setup.recovery_gate.aria"),
                 div { class: "modal event",
                     div { class: "modal-head event-head",
-                        h3 { "Set up recovery first" }
-                        span { class: "muted", "encrypted Realm" }
+                        h3 { {tr("setup.recovery_gate.title")} }
+                        span { class: "muted", {tr("setup.recovery_gate.badge")} }
                     }
                     div { class: "modal-body",
                         div { class: "muted",
-                            "This Realm is end-to-end encrypted. If you lose this device and have no Recovery Key or backup configured, its contents are permanently unrecoverable. Set up your 24-word Recovery Key and back up your keys before creating it."
+                            {tr("setup.recovery_gate.body")}
                         }
                         div { class: "muted",
                             "data-testid": "encrypted-realm-recovery-gate-override-hint",
-                            "If you continue without recovery, press Create realm again to proceed at your own risk."
+                            {tr("setup.recovery_gate.override_hint")}
                         }
                     }
                     div { class: "modal-foot actions",
@@ -168,7 +228,7 @@ pub(super) fn RealmsSection(
                             "data-testid": "encrypted-realm-recovery-gate-setup",
                             to: Route::SettingsRecovery,
                             onclick: move |_| pending_recovery_gate.set(false),
-                            "Set up Recovery Key"
+                            {tr("setup.action.setup_recovery_key")}
                         }
                         Button {
                             variant: ButtonVariant::Secondary,
@@ -179,7 +239,7 @@ pub(super) fn RealmsSection(
                                 recovery_gate_acknowledged.set(true);
                                 pending_recovery_gate.set(false);
                             },
-                            "Continue without recovery"
+                            {tr("setup.action.continue_without_recovery")}
                         }
                     }
                 }
@@ -189,18 +249,26 @@ pub(super) fn RealmsSection(
             div { class: "setup-column",
                 div { class: "event new-realm-hero", "data-testid": "realm-setup-guide",
                     div { class: "event-head",
-                        span { "New Realm" }
+                        span { {tr("setup.new_realm")} }
                     }
-                    h2 { class: "settings-content-title", "Create a Realm" }
+                    h2 { class: "settings-content-title", {tr("setup.realm_title_heading")} }
                     div { class: "muted",
-                        "A Realm is the security / sync / E2EE boundary. The recommended mode is MLS with metadata_encryption_floor=e2ee_required and content_encryption_floor=e2ee_required."
+                        {tr("setup.realm_intro")}
                     }
                 }
 
                 div { class: "event new-realm-stepper",
                     div { class: "event-head",
-                        span { "Create steps" }
-                        span { "{active_create_step.number()} / 4" }
+                        span { {tr("setup.create_steps")} }
+                        span {
+                            {tr_args(
+                                "setup.step_progress",
+                                &[
+                                    ("current", active_create_step.number().to_owned()),
+                                    ("total", NEW_REALM_STEPS.len().to_string()),
+                                ],
+                            )}
+                        }
                     }
                     div { class: "setup-step-list",
                         for step in NEW_REALM_STEPS {
@@ -210,8 +278,8 @@ pub(super) fn RealmsSection(
                                 onclick: move |_| create_step.set(step),
                                 span { class: "setup-step-index", "{step.number()}" }
                                 span { class: "setup-step-label",
-                                    strong { "{step.label()}" }
-                                    small { "{step.subtitle()}" }
+                                    strong { {tr(step.label_key())} }
+                                    small { {tr(step.subtitle_key())} }
                                 }
                             }
                         }
@@ -220,28 +288,28 @@ pub(super) fn RealmsSection(
                 if active_create_step == NewRealmStep::Basics {
                     div { class: "setup-step-panel",
                         div { class: "event-head",
-                            span { "Basics" }
-                            span { "required title" }
+                            span { {tr("setup.step.basics.label")} }
+                            span { {tr("setup.basics.hint")} }
                         }
                         div { class: "workflow-form setup-form-grid",
                             div { class: "setup-field",
-                                Label { html_for: "realm-title-input-input", "Realm title" }
+                                Label { html_for: "realm-title-input-input", {tr("setup.field.realm_title")} }
                                 Input {
                                     id: "realm-title-input-input",
                                     "data-testid": "realm-title-input",
                                     value: "{title_value}",
-                                    placeholder: "Engineering, Research, Design system...",
+                                    placeholder: tr("setup.field.realm_title_placeholder"),
                                     oninput: move |event: FormEvent| realm_title.set(event.value())
                                 }
                             }
                             div { class: "setup-field setup-field-span-2",
-                                Label { html_for: "realm-summary-input-input", "Summary" }
+                                Label { html_for: "realm-summary-input-input", {tr("setup.field.summary")} }
                                 Textarea {
                                     id: "realm-summary-input-input",
                                     "data-testid": "realm-summary-input",
                                     value: "{summary_value}",
                                     rows: "3",
-                                    placeholder: "What this Realm is for.",
+                                    placeholder: tr("setup.field.realm_summary_placeholder"),
                                     oninput: move |event: FormEvent| realm_summary.set(event.value())
                                 }
                             }
@@ -259,13 +327,13 @@ pub(super) fn RealmsSection(
                             div { class: "setup-field",
                                 Label {
                                     html_for: "realm-alias-input-input",
-                                    "Realm alias (unavailable — no protocol carrier yet)"
+                                    {tr("setup.field.realm_alias")}
                                 }
                                 Input {
                                     id: "realm-alias-input-input",
                                     "data-testid": "realm-alias-input",
                                     value: "{alias_value}",
-                                    placeholder: "engineering",
+                                    placeholder: tr("setup.field.realm_alias_placeholder"),
                                     disabled: true,
                                     oninput: move |event: FormEvent| realm_alias.set(event.value())
                                 }
@@ -277,7 +345,7 @@ pub(super) fn RealmsSection(
                                 "data-testid": "new-realm-next-button",
                                 disabled: !can_advance_step,
                                 onclick: move |_| create_step.set(active_create_step.next()),
-                                "Next: Boundary"
+                                {tr("setup.action.next_boundary")}
                             }
                         }
                     }
@@ -286,14 +354,14 @@ pub(super) fn RealmsSection(
                 if active_create_step == NewRealmStep::Boundary {
                     div { class: "setup-step-panel",
                         div { class: "event-head",
-                            span { "Boundary" }
-                            span { "three independent axes" }
+                            span { {tr("setup.step.boundary.label")} }
+                            span { {tr("setup.boundary.hint")} }
                         }
                         div { class: "setup-axis-grid",
                             div { class: "metric directory-axis-card",
-                                strong { "Discoverability" }
+                                strong { {tr("setup.axis.discoverability")} }
                                 div { class: "workflow-form setup-field",
-                                    label { "Who can discover that this Realm exists?" }
+                                    label { {tr("setup.axis.discoverability.question")} }
                                     Select::<String> {
                                         "data-testid": "realm-discoverability-input",
                                         value: Some(realm_discoverability_selected.into()),
@@ -306,20 +374,20 @@ pub(super) fn RealmsSection(
                                             SelectOption::<String> {
                                                 index: i,
                                                 value: option_value.to_string(),
-                                                text_value: "{label}",
-                                                "{label}"
+                                                text_value: tr(label),
+                                                {tr(label)}
                                             }
                                         }
                                     }
                                     div { class: "muted",
-                                        "{DISCOVERABILITY_OPTIONS.iter().find(|(value, _, _)| *value == discoverability_value).map(|(_, _, hint)| *hint).unwrap_or(\"Discovery posture is not set.\")}"
+                                        {option_hint(&DISCOVERABILITY_OPTIONS, &discoverability_value, "setup.axis.discoverability.unset")}
                                     }
                                 }
                             }
                             div { class: "metric directory-axis-card",
-                                strong { "Join rule" }
+                                strong { {tr("setup.axis.join_rule")} }
                                 div { class: "workflow-form setup-field",
-                                    label { "How does a principal become a member?" }
+                                    label { {tr("setup.axis.join_rule.question")} }
                                     Select::<String> {
                                         "data-testid": "realm-policy-join-rule-input",
                                         value: Some(realm_policy_join_rule_selected.into()),
@@ -332,20 +400,20 @@ pub(super) fn RealmsSection(
                                             SelectOption::<String> {
                                                 index: i,
                                                 value: option_value.to_string(),
-                                                text_value: "{label}",
-                                                "{label}"
+                                                text_value: tr(label),
+                                                {tr(label)}
                                             }
                                         }
                                     }
                                     div { class: "muted",
-                                        "{JOIN_RULE_OPTIONS.iter().find(|(value, _, _)| *value == join_rule_value).map(|(_, _, hint)| *hint).unwrap_or(\"Join path is not set.\")}"
+                                        {option_hint(&JOIN_RULE_OPTIONS, &join_rule_value, "setup.axis.join_rule.unset")}
                                     }
                                 }
                             }
                             div { class: "metric directory-axis-card",
-                                strong { "History visibility" }
+                                strong { {tr("setup.axis.history_visibility")} }
                                 div { class: "workflow-form setup-field",
-                                    label { "What history can new members read?" }
+                                    label { {tr("setup.axis.history_visibility.question")} }
                                     Select::<String> {
                                         "data-testid": "realm-policy-history-visibility-input",
                                         value: Some(realm_policy_history_visibility_selected.into()),
@@ -367,22 +435,22 @@ pub(super) fn RealmsSection(
                                             SelectOption::<String> {
                                                 index: i,
                                                 value: option_value.to_string(),
-                                                text_value: "{label}",
-                                                "{label}"
+                                                text_value: tr(label),
+                                                {tr(label)}
                                             }
                                         }
                                     }
                                     div { class: "muted",
-                                        "{HISTORY_VISIBILITY_OPTIONS.iter().find(|(value, _, _)| *value == history_visibility_value).map(|(_, _, hint)| *hint).unwrap_or(\"History scope is not set.\")}"
+                                        {option_hint(&HISTORY_VISIBILITY_OPTIONS, &history_visibility_value, "setup.axis.history_visibility.unset")}
                                     }
                                 }
                             }
                             // These create-locked Realm fields are shown here so the user
                             // makes the permanent choice intentionally.
                             div { class: "metric directory-axis-card",
-                                strong { "Encryption" }
+                                strong { {tr("setup.axis.encryption")} }
                                 div { class: "workflow-form setup-field",
-                                    label { "Protection" }
+                                    label { {tr("setup.axis.encryption.question")} }
                                     Select::<String> {
                                         "data-testid": "realm-encryption-profile-input",
                                         value: Some(realm_encryption_profile_selected.into()),
@@ -406,16 +474,16 @@ pub(super) fn RealmsSection(
                                             SelectOption::<String> {
                                                 index: i,
                                                 value: option_value.to_string(),
-                                                text_value: "{label}",
-                                                "{label}"
+                                                text_value: tr(label),
+                                                {tr(label)}
                                             }
                                         }
                                     }
                                     div { class: "muted",
-                                        "{ENCRYPTION_PROFILE_OPTIONS.iter().find(|(value, _, _)| *value == encryption_profile_value).map(|(_, _, hint)| *hint).unwrap_or(\"Encryption profile is not set.\")}"
+                                        {option_hint(&ENCRYPTION_PROFILE_OPTIONS, &encryption_profile_value, "setup.axis.encryption.unset")}
                                     }
                                     div { class: "muted",
-                                        "Locked after creation."
+                                        {tr("setup.axis.encryption.locked")}
                                     }
                                 }
                             }
@@ -425,9 +493,9 @@ pub(super) fn RealmsSection(
                             // delivery toggle). Default exporter-AEAD.
                             if encryption_is_e2ee {
                                 div { class: "metric directory-axis-card",
-                                    strong { "Content scheme" }
+                                    strong { {tr("setup.axis.content_scheme")} }
                                     div { class: "workflow-form setup-field",
-                                        label { "Which MLS content scheme should this Realm use?" }
+                                        label { {tr("setup.axis.content_scheme.question")} }
                                         Select::<String> {
                                             "data-testid": "realm-content-scheme-input",
                                             value: Some(realm_content_scheme_selected.into()),
@@ -448,19 +516,19 @@ pub(super) fn RealmsSection(
                                                 SelectOption::<String> {
                                                     index: i,
                                                     value: option_value.to_string(),
-                                                    text_value: "{label}",
+                                                    text_value: tr(label),
                                                     disabled: history_requires_exporter_aead
                                                         && *option_value == "mls_rfc9420",
-                                                    "{label}"
+                                                    {tr(label)}
                                                 }
                                             }
                                         }
                                         div { class: "muted",
-                                            "{CONTENT_SCHEME_OPTIONS.iter().find(|(value, _, _)| *value == content_scheme_value).map(|(_, _, hint)| *hint).unwrap_or(\"Content scheme is not set.\")}"
+                                            {option_hint(&CONTENT_SCHEME_OPTIONS, &content_scheme_value, "setup.axis.content_scheme.unset")}
                                         }
                                         if history_requires_exporter_aead {
                                             div { class: "muted",
-                                                "Pre-join history uses content_scheme=mls_exporter_aead_v1."
+                                                {tr("setup.axis.content_scheme.prejoin_forced")}
                                             }
                                         }
                                         if let Some(hint) = content_scheme_warning {
@@ -469,15 +537,15 @@ pub(super) fn RealmsSection(
                                             }
                                         }
                                         div { class: "muted",
-                                            "Capability only — actual delivery still follows History visibility."
+                                            {tr("setup.axis.content_scheme.capability_only")}
                                         }
                                     }
                                 }
                             }
                             div { class: "metric directory-axis-card",
-                                strong { "Security class" }
+                                strong { {tr("setup.axis.security_class")} }
                                 div { class: "workflow-form setup-field",
-                                    label { "Posture for federation and audit defaults." }
+                                    label { {tr("setup.axis.security_class.question")} }
                                     Select::<String> {
                                         "data-testid": "realm-security-class-input",
                                         value: Some(realm_security_class_selected.into()),
@@ -490,13 +558,13 @@ pub(super) fn RealmsSection(
                                             SelectOption::<String> {
                                                 index: i,
                                                 value: option_value.to_string(),
-                                                text_value: "{label}",
-                                                "{label}"
+                                                text_value: tr(label),
+                                                {tr(label)}
                                             }
                                         }
                                     }
                                     div { class: "muted",
-                                        "{SECURITY_CLASS_OPTIONS.iter().find(|(value, _, _)| *value == security_class_value).map(|(_, _, hint)| *hint).unwrap_or(\"Security class is not set.\")}"
+                                        {option_hint(&SECURITY_CLASS_OPTIONS, &security_class_value, "setup.axis.security_class.unset")}
                                     }
                                 }
                             }
@@ -511,13 +579,13 @@ pub(super) fn RealmsSection(
                         details { class: "setup-advanced",
                             "data-testid": "realm-advanced-config",
                             summary { class: "setup-advanced-summary",
-                                "Advanced (federation policy / seal profile / hash profile)"
+                                {tr("setup.boundary.advanced_summary")}
                             }
                             div { class: "setup-axis-grid setup-advanced-grid",
                                 div { class: "metric directory-axis-card",
-                                    strong { "Federation policy" }
+                                    strong { {tr("setup.axis.federation_policy")} }
                                     div { class: "workflow-form setup-field",
-                                        label { "How does this Realm interoperate with other deployments?" }
+                                        label { {tr("setup.axis.federation_policy.question")} }
                                         Select::<String> {
                                             "data-testid": "realm-federation-policy-input",
                                             value: Some(realm_federation_policy_selected.into()),
@@ -530,26 +598,26 @@ pub(super) fn RealmsSection(
                                                 SelectOption::<String> {
                                                     index: i,
                                                     value: option_value.to_string(),
-                                                    text_value: "{label}",
+                                                    text_value: tr(label),
                                                     disabled: federation_policy_open_forbidden && *option_value == "open",
-                                                    "{label}"
+                                                    {tr(label)}
                                                 }
                                             }
                                         }
                                         div { class: "muted",
-                                            "{FEDERATION_POLICY_OPTIONS.iter().find(|(value, _, _)| *value == federation_policy_value).map(|(_, _, hint)| *hint).unwrap_or(\"Federation policy is not set.\")}"
+                                            {option_hint(&FEDERATION_POLICY_OPTIONS, &federation_policy_value, "setup.axis.federation_policy.unset")}
                                         }
                                         if federation_policy_open_forbidden {
                                             div { class: "muted",
-                                                "High assurance allows only restricted, closed, or quarantine federation."
+                                                {tr("setup.axis.federation_policy.high_assurance")}
                                             }
                                         }
                                     }
                                 }
                                 div { class: "metric directory-axis-card",
-                                    strong { "Seal profile" }
+                                    strong { {tr("setup.axis.seal_profile")} }
                                     div { class: "workflow-form setup-field",
-                                        label { "Who signs durable seals for this Realm?" }
+                                        label { {tr("setup.axis.seal_profile.question")} }
                                         Select::<String> {
                                             "data-testid": "realm-seal-profile-input",
                                             value: Some(realm_notary_profile_selected.into()),
@@ -562,20 +630,20 @@ pub(super) fn RealmsSection(
                                                 SelectOption::<String> {
                                                     index: i,
                                                     value: option_value.to_string(),
-                                                    text_value: "{label}",
-                                                    "{label}"
+                                                    text_value: tr(label),
+                                                    {tr(label)}
                                                 }
                                             }
                                         }
                                         div { class: "muted",
-                                            "{ANCHOR_PROFILE_OPTIONS.iter().find(|(value, _, _)| *value == notary_profile_value).map(|(_, _, hint)| *hint).unwrap_or(\"Seal profile is not set.\")}"
+                                            {option_hint(&ANCHOR_PROFILE_OPTIONS, &notary_profile_value, "setup.axis.seal_profile.unset")}
                                         }
                                     }
                                 }
                                 div { class: "metric directory-axis-card",
-                                    strong { "Hash profile" }
+                                    strong { {tr("setup.axis.hash_profile")} }
                                     div { class: "workflow-form setup-field",
-                                        label { "Digest algorithm for canonical hashing." }
+                                        label { {tr("setup.axis.hash_profile.question")} }
                                         Select::<String> {
                                             "data-testid": "realm-hash-profile-input",
                                             value: Some(realm_digest_algorithm_selected.into()),
@@ -588,24 +656,25 @@ pub(super) fn RealmsSection(
                                                 SelectOption::<String> {
                                                     index: i,
                                                     value: option_value.to_string(),
-                                                    text_value: "{label}",
-                                                    "{label}"
+                                                    text_value: tr(label),
+                                                    {tr(label)}
                                                 }
                                             }
                                         }
                                         div { class: "muted",
-                                            "{HASH_PROFILE_OPTIONS.iter().find(|(value, _, _)| *value == digest_algorithm_value).map(|(_, _, hint)| *hint).unwrap_or(\"Hash profile is not set.\")}"
+                                            {option_hint(&HASH_PROFILE_OPTIONS, &digest_algorithm_value, "setup.axis.hash_profile.unset")}
                                         }
                                     }
                                 }
                             }
                         }
 
-                        if let Some((tone, heading, body)) = current_visibility_hint {
+                        if let Some((tone, heading_key, body_key)) = current_visibility_hint {
                             div { class: if tone == "error" { "inline-error" } else { "inline-warn" },
                                 span { class: "body",
-                                    strong { "{heading}" }
-                                    " {body}"
+                                    strong { {tr(heading_key)} }
+                                    " "
+                                    {tr(body_key)}
                                 }
                             }
                         }
@@ -615,14 +684,14 @@ pub(super) fn RealmsSection(
                                 variant: ButtonVariant::Secondary,
                                 "data-testid": "new-realm-back-button",
                                 onclick: move |_| create_step.set(active_create_step.previous()),
-                                "Back"
+                                {tr("setup.action.back")}
                             }
                             Button {
                                 variant: ButtonVariant::Primary,
                                 "data-testid": "new-realm-next-button",
                                 disabled: !can_advance_step,
                                 onclick: move |_| create_step.set(active_create_step.next()),
-                                "Next: Seed"
+                                {tr("setup.action.next_seed")}
                             }
                         }
                     }
@@ -631,12 +700,12 @@ pub(super) fn RealmsSection(
                 if active_create_step == NewRealmStep::Seed {
                     div { class: "setup-step-panel",
                         div { class: "event-head",
-                            span { "Seed members" }
-                            span { "optional" }
+                            span { {tr("setup.seed.heading")} }
+                            span { {tr("setup.seed.hint")} }
                         }
                         div { class: "workflow-form setup-form-grid",
                             div { class: "setup-field setup-field-span-2",
-                                Label { html_for: "seed-members-input-input", "Initial members" }
+                                Label { html_for: "seed-members-input-input", {tr("setup.field.seed_members")} }
                                 Textarea {
                                     id: "seed-members-input-input",
                                     "data-testid": "seed-members-input",
@@ -645,12 +714,12 @@ pub(super) fn RealmsSection(
                                     placeholder: "did:webvh:<scid>:alice.example\ndid:webvh:<scid>:bob.example",
                                     oninput: move |event: FormEvent| seed_members.set(event.value())
                                 }
-                                div { class: "muted", "One DID per line, or comma-separated. Handle invites require directory resolution." }
+                                div { class: "muted", {tr("setup.field.seed_members_help")} }
                             }
                             div { class: "setup-field setup-field-span-2",
-                                label { "Seed preview" }
+                                label { {tr("setup.seed.preview")} }
                                 if seed_member_count == 0 {
-                                    div { class: "muted", "No extra seed members." }
+                                    div { class: "muted", {tr("setup.seed.preview_empty")} }
                                 } else {
                                     div { class: "setup-chip-wrap",
                                         for member in parsed_seed_members.iter().take(8) {
@@ -664,7 +733,12 @@ pub(super) fn RealmsSection(
                                         }
                                     }
                                 }
-                                div { class: "muted", "{seed_member_count} principal(s) will be included in the bootstrap request." }
+                                div { class: "muted",
+                                    {tr_args(
+                                        "setup.seed.preview_count",
+                                        &[("count", seed_member_count.to_string())],
+                                    )}
+                                }
                             }
                         }
                         if let Some(blocker) = create_blocker {
@@ -672,10 +746,10 @@ pub(super) fn RealmsSection(
                                 span { class: "body", "{blocker}" }
                             }
                         }
-                        if realm_state_value != "Draft not created yet" {
+                        if realm_state_value != draft_state_label {
                             div { class: "setup-summary-list", "data-testid": "realm-create-status",
                                 div { class: "setup-summary-row setup-summary-row-stack",
-                                    strong { "Bootstrap state" }
+                                    strong { {tr("setup.state.bootstrap")} }
                                     span { class: "muted", "{realm_state_value}" }
                                 }
                             }
@@ -685,7 +759,7 @@ pub(super) fn RealmsSection(
                                 variant: ButtonVariant::Secondary,
                                 "data-testid": "new-realm-back-button",
                                 onclick: move |_| create_step.set(active_create_step.previous()),
-                                "Back"
+                                {tr("setup.action.back")}
                             }
                             Button {
                                 variant: ButtonVariant::Primary,
@@ -693,7 +767,9 @@ pub(super) fn RealmsSection(
                                 disabled: !can_create_realm,
                                 onclick: {
                                     let base = base_url.clone();
+                                    let strings = progress_strings.clone();
                                     move |_| {
+                                        let strings = strings.clone();
                                         let history_visibility = realm_policy_history_visibility();
                                         let encryption_profile = realm_encryption_profile();
                                         let content_scheme = normalize_content_scheme(
@@ -741,7 +817,7 @@ pub(super) fn RealmsSection(
                                             }
                                         }
                                         realm_create_busy.set(true);
-                                        realm_state.set("Creating Realm...".to_owned());
+                                        realm_state.set(tr("setup.blocker.creating"));
                                         let api_token = token();
                                         let base = base.clone();
                                         let backup_trigger_signal =
@@ -765,8 +841,9 @@ pub(super) fn RealmsSection(
                                                 match crate::event_signer::bootstrap_default_signer("inkson") {
                                                     Ok(_) => {}
                                                     Err(error) => {
-                                                        let message = format!(
-                                                            "event signer is not ready; cannot sign ak.realm.create: {error}"
+                                                        let message = BootstrapProgressStrings::fill(
+                                                            &strings.signer_not_ready,
+                                                            &[("error", error.to_string())],
                                                         );
                                                         realm_create_busy.set(false);
                                                         realm_state.set(message.clone());
@@ -818,7 +895,10 @@ pub(super) fn RealmsSection(
                                                     let submitter = match api.event_submitter() {
                                                         Ok(submitter) => submitter,
                                                         Err(error) => {
-                                                            let message = format!("create failed: {error}");
+                                                            let message = BootstrapProgressStrings::fill(
+                                                                &strings.create_failed,
+                                                                &[("error", error.to_string())],
+                                                            );
                                                             realm_create_busy.set(false);
                                                             realm_state.set(message.clone());
                                                             crate::components::feedback::toast_error(
@@ -915,9 +995,9 @@ pub(super) fn RealmsSection(
                                                         // and backup below are post-create setup
                                                         // and must not leave a successfully created
                                                         // Realm looking like a retryable Seed draft.
-                                                        realm_state.set(format!(
-                                                            "Realm {} accepted; finishing encrypted Realm setup",
-                                                            realm_id
+                                                        realm_state.set(BootstrapProgressStrings::fill(
+                                                            &strings.accepted,
+                                                            &[("id", realm_id.clone())],
                                                         ));
                                                         create_step.set(NewRealmStep::Done);
 
@@ -943,7 +1023,13 @@ pub(super) fn RealmsSection(
                                                                 {
                                                                     Ok(outcome) => outcome,
                                                                     Err(err) => {
-                                                                        let message = format!("created {realm_id}; {err}");
+                                                                        let message = BootstrapProgressStrings::fill(
+                                                                            &strings.created_then_failed,
+                                                                            &[
+                                                                                ("id", realm_id.clone()),
+                                                                                ("error", err.to_string()),
+                                                                            ],
+                                                                        );
                                                                         realm_create_busy.set(false);
                                                                         realm_state.set(message.clone());
                                                                         crate::components::feedback::toast_error(
@@ -1003,47 +1089,67 @@ pub(super) fn RealmsSection(
                                                             }
                                                         }
 
-                                                        let mut steps = vec![format!("created {}", realm_id)];
+                                                        let fill = BootstrapProgressStrings::fill;
+                                                        let mut steps = vec![fill(
+                                                            &strings.created,
+                                                            &[("id", realm_id.clone())],
+                                                        )];
                                                         if invitees.is_empty() {
-                                                            steps.push("seeded owner only".to_owned());
+                                                            steps.push(strings.seeded_owner_only.clone());
                                                         } else {
-                                                            steps.push(format!("seeded {} member(s)", invitees.len()));
+                                                            steps.push(fill(
+                                                                &strings.seeded_members,
+                                                                &[("count", invitees.len().to_string())],
+                                                            ));
                                                         }
-                                                        steps.push(format!(
-                                                            "canonical policy {} / {} / {}",
-                                                            discoverability,
-                                                            join_rule,
-                                                            history_visibility
+                                                        steps.push(fill(
+                                                            &strings.canonical_policy,
+                                                            &[
+                                                                ("discoverability", discoverability.clone()),
+                                                                ("join_rule", join_rule.clone()),
+                                                                (
+                                                                    "history_visibility",
+                                                                    history_visibility.clone(),
+                                                                ),
+                                                            ],
                                                         ));
                                                         if !plaintext_services.is_empty() {
-                                                            steps.push(format!(
-                                                                "plaintext services {}",
-                                                                plaintext_services.len()
+                                                            steps.push(fill(
+                                                                &strings.plaintext_services,
+                                                                &[(
+                                                                    "count",
+                                                                    plaintext_services.len().to_string(),
+                                                                )],
                                                             ));
                                                         }
                                                         if let Some(backup_id) = initial_mls_backup_id {
-                                                            steps.push(format!(
-                                                                "MLS ready; history backup {}",
-                                                                short_protocol_id(&backup_id)
+                                                            steps.push(fill(
+                                                                &strings.mls_ready_backup,
+                                                                &[(
+                                                                    "id",
+                                                                    short_protocol_id(&backup_id),
+                                                                )],
                                                             ));
                                                         } else if crate::security_state::encryption_profile_is_encrypted(
                                                             &encryption_profile,
                                                         ) {
-                                                            steps.push("MLS ready locally".to_owned());
+                                                            steps.push(strings.mls_ready_local.clone());
                                                         }
                                                         if !seeded_mls_err.is_empty() {
-                                                            steps.push(format!(
-                                                                "MLS admission failed: {seeded_mls_err}"
+                                                            steps.push(fill(
+                                                                &strings.mls_admission_failed,
+                                                                &[("error", seeded_mls_err.clone())],
                                                             ));
                                                         } else if seeded_mls_ok > 0 {
-                                                            steps.push(format!(
-                                                                "MLS Welcome queued for {seeded_mls_ok}"
+                                                            steps.push(fill(
+                                                                &strings.mls_welcome_queued,
+                                                                &[("count", seeded_mls_ok.to_string())],
                                                             ));
                                                         }
                                                         if crate::event_builders::encryption_profile_uses_recommended_floor(
                                                             &encryption_profile,
                                                         ) {
-                                                            steps.push("metadata/content floor e2ee_required".to_owned());
+                                                            steps.push(strings.floor_required.clone());
                                                         }
 
                                                         let message = steps.join(" · ");
@@ -1069,9 +1175,12 @@ pub(super) fn RealmsSection(
                                                     }
                                                     Err(error) => {
                                                         let message = if is_auth_expired_error(&error) {
-                                                            "Session expired. Refresh or sign in again before creating a Realm.".to_owned()
+                                                            strings.session_expired.clone()
                                                         } else {
-                                                            format!("create failed: {error}")
+                                                            BootstrapProgressStrings::fill(
+                                                                &strings.create_failed,
+                                                                &[("error", error.to_string())],
+                                                            )
                                                         };
                                                         realm_create_busy.set(false);
                                                         realm_state.set(message.clone());
@@ -1084,7 +1193,10 @@ pub(super) fn RealmsSection(
                                                 }
                                                 }
                                                 Err(error) => {
-                                                    let message = format!("invalid server URL: {error}");
+                                                    let message = BootstrapProgressStrings::fill(
+                                                        &strings.invalid_server_url,
+                                                        &[("error", error.to_string())],
+                                                    );
                                                     realm_create_busy.set(false);
                                                     realm_state.set(message.clone());
                                                     crate::components::feedback::toast_error(
@@ -1097,7 +1209,7 @@ pub(super) fn RealmsSection(
                                         });
                                     }
                                 },
-                                "Create Realm"
+                                {tr("setup.action.create_realm")}
                             }
                         }
                     }
@@ -1106,17 +1218,17 @@ pub(super) fn RealmsSection(
                 if active_create_step == NewRealmStep::Done {
                     div { class: "setup-step-panel", "data-testid": "realm-setup-done",
                         div { class: "event-head",
-                            span { "Done" }
-                            span { "next context" }
+                            span { {tr("setup.step.done.label")} }
+                            span { {tr("setup.done.hint")} }
                         }
                         if has_created_realm {
                             div { class: "setup-summary-list",
                                 div { class: "setup-summary-row",
-                                    strong { "Created Realm" }
+                                    strong { {tr("setup.done.created_realm")} }
                                     span { class: "mono", title: "{created_realm_id_value}", "data-testid": "selected-realm-id", "{created_realm_id_label}" }
                                 }
                                 div { class: "setup-summary-row setup-summary-row-stack",
-                                    strong { "Bootstrap state" }
+                                    strong { {tr("setup.state.bootstrap")} }
                                     span { class: "muted", "{realm_state_value}" }
                                 }
                             }
@@ -1125,18 +1237,18 @@ pub(super) fn RealmsSection(
                                     Button {
                                         variant: ButtonVariant::Primary,
                                         disabled: true,
-                                        "Finishing setup..."
+                                        {tr("setup.action.finishing")}
                                     }
                                 } else {
                                     Link {
                                         class: "primary",
                                         to: Route::Realm { realm_id: created_realm_id_value.clone() },
-                                        "Open Realm"
+                                        {tr("setup.action.open_realm")}
                                     }
                                 }
                             }
                         } else {
-                            div { class: "muted", "Create a Realm before opening the next context." }
+                            div { class: "muted", {tr("setup.done.empty")} }
                         }
                     }
                 }

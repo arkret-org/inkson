@@ -12,6 +12,7 @@
 use dioxus::prelude::*;
 
 use crate::config::LocalConfigStore;
+use crate::i18n::tr;
 use crate::models::RealmTreeNode;
 
 mod data;
@@ -66,7 +67,7 @@ pub fn SetupPanel(
     let realm_federation_policy = use_signal(|| "restricted".to_owned());
     let realm_notary_profile = use_signal(|| "single_did".to_owned());
     let realm_digest_algorithm = use_signal(|| "sha256".to_owned());
-    let realm_state = use_signal(|| "Draft not created yet".to_owned());
+    let realm_state = use_signal(|| tr("setup.state.draft"));
     let realm_create_busy = use_signal(|| false);
     let created_realm_id = use_signal(String::new);
     // S6 recovery soft-gate for encrypted-Realm creation.
@@ -81,7 +82,7 @@ pub fn SetupPanel(
     let new_space_parent_id = use_signal(String::new);
     let new_space_default_realm_id = use_signal(String::new);
     let new_space_context_seen = use_signal(String::new);
-    let new_space_state = use_signal(|| "Draft not created yet".to_owned());
+    let new_space_state = use_signal(|| tr("setup.state.draft"));
     let new_space_created_id = use_signal(String::new);
 
     rsx! {
