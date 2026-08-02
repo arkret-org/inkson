@@ -343,16 +343,9 @@ pub async fn bootstrap_principal(
         .sign_self_principal_bootstrap_seal(&create, &authorize, seal_hlc)
         .map_err(|error| anyhow!(error.to_string()))?;
     let expected_digests = seal.delta.clone();
-    // The closed bootstrap pair travels as two `EventInitialSubmission`s: the
-    // lease bounds the revocation window and is not derivable from the Events.
-    crate::authorization_lease::ensure_for_events(
-        principal_client,
-        &[create.clone(), authorize.clone()],
-    )
-    .await?;
     let batch = arkret_bootstrap::self_principal_bootstrap_submit_request(
-        crate::authorization_lease::initial_submission(&create)?,
-        crate::authorization_lease::initial_submission(&authorize)?,
+        arkret_wire::EventInitialSubmission::online(create),
+        arkret_wire::EventInitialSubmission::online(authorize),
         &crate::operation::cell_write_projector,
     )?;
     let arkret_sdk::EventsSubmitRequestBody::Batch(batch) = batch else {

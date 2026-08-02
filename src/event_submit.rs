@@ -1382,8 +1382,6 @@ impl EventSubmitter {
         idempotency_key: String,
     ) -> anyhow::Result<SubmitEventResult> {
         validate_signed_sdk_event_for_submit(signed)?;
-        crate::authorization_lease::ensure_for_events(&self.http, std::slice::from_ref(signed))
-            .await?;
         let submission =
             crate::authorization_lease::standard_initial_submission(&self.http, signed).await?;
         let response: arkret_sdk::EventsSubmitOutcome = self
@@ -1417,8 +1415,6 @@ impl EventSubmitter {
         // permanently rejected (`offline-publication.md` §2). Replaying a
         // stale wrapper would hide that from the user instead of prompting a
         // re-authorization.
-        crate::authorization_lease::ensure_for_events(&self.http, std::slice::from_ref(signed))
-            .await?;
         let submission =
             crate::authorization_lease::standard_initial_submission(&self.http, signed).await?;
         let response: arkret_sdk::EventsSubmitOutcome = self
@@ -2193,14 +2189,13 @@ impl EventSubmitter {
         for sdk_event in sdk_events {
             validate_signed_sdk_event_for_submit(sdk_event)?;
         }
-        crate::authorization_lease::ensure_for_events(&self.http, sdk_events).await?;
         // `idempotency_key` is not a body field in v1: it travels only in the
         // `Idempotency-Key` header.
         let anchor_unit = first_event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE;
         let mut submissions = Vec::with_capacity(sdk_events.len());
         for event in sdk_events {
             let submission = if anchor_unit {
-                let submission = crate::authorization_lease::initial_submission(event)?;
+                let submission = arkret_wire::EventInitialSubmission::online(event.clone());
                 submission
                     .validate_structural_in_context(arkret_wire::EventSubmitContext::AnchorUnit)
                     .map_err(anyhow::Error::from)?;
@@ -2371,8 +2366,6 @@ impl EventSubmitter {
         events: Vec<arkret_sdk::Event>,
     ) -> anyhow::Result<Vec<arkret_wire::EventInitialSubmission>> {
         let events = self.prepare_sdk_events_batch(events).await?;
-        crate::authorization_lease::ensure_for_events(&self.http, &events).await?;
-
         let mut submissions = Vec::with_capacity(events.len());
         for event in &events {
             submissions.push(

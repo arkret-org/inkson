@@ -418,21 +418,22 @@ fn ingress_receipts(input: Value) -> Result<Value> {
     let signer = inkson::event_signer::build_ed25519_signer([2_u8; 32], "did:web:server.local");
     let mut receipts = Vec::with_capacity(input.submissions.len());
     for submission in input.submissions {
+        let authorization_lease = submission
+            .authorization_lease
+            .as_ref()
+            .context("ingress receipt fixture requires a delayed authorization lease")?;
         let event_digest = arkret_sdk::Hash::new(submission.event.event_digest()?)
             .context("construct ingress Event digest")?;
-        let received_at = submission.authorization_lease.issued_at;
+        let received_at = authorization_lease.issued_at;
         let mut receipt = arkret_wire::IngressReceipt {
             receipt_id: arkret_wire::ReceiptId::new(arkret_wire::new_prefixed_uuid7("ak:receipt:"))
                 .context("construct ingress receipt id")?,
             event_digest: event_digest.clone(),
-            authorization_lease_id: submission
-                .authorization_lease
-                .authorization_lease_id
-                .clone(),
+            authorization_lease_id: authorization_lease.authorization_lease_id.clone(),
             received_at,
             service_id: arkret_wire::Did::new("did:web:server.local".to_owned())
                 .context("construct ingress service id")?,
-            authority_set_ref: submission.authorization_lease.authority_set_ref.clone(),
+            authority_set_ref: authorization_lease.authority_set_ref.clone(),
             proofs: Vec::new(),
         };
         let mut proof = arkret_wire::PayloadProof {
@@ -466,7 +467,7 @@ fn ingress_receipts(input: Value) -> Result<Value> {
             .validate_structural()
             .context("validate ingress receipt")?;
         receipt
-            .validate_against_lease(&submission.authorization_lease, &event_digest)
+            .validate_against_lease(authorization_lease, &event_digest)
             .context("validate ingress receipt binding")?;
         receipts.push(receipt);
     }

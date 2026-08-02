@@ -1,10 +1,9 @@
 //! Client-held [`AuthorizationLease`](arkret_wire::AuthorizationLease) store.
 //!
-//! `zh/authz/offline-publication.md`: an Event never travels alone on
-//! `POST /_arkret/self/events`. Every initial publication is an
-//! `EventInitialSubmission {event, authorization_lease, cba_proof_bundles?}`,
-//! and the lease — not `created_at`, and not when a verifier first sees the
-//! Event — is what bounds the revocation window.
+//! `zh/authz/offline-publication.md`: authorization leases are used only for
+//! an explicitly delayed/offline publication window. Ordinary online Event
+//! submission carries the complete signed Event and is admitted atomically
+//! against current accepted state.
 //!
 //! The authenticated Principal Server issues leases through the standard
 //! `ak.self.authorization_leases.command.issue` operation after a read-only
@@ -291,7 +290,7 @@ pub fn initial_submission(
     let authorization_lease = lease_for_event(event, crate::clock::now_utc())?;
     Ok(arkret_wire::EventInitialSubmission {
         event: event.clone(),
-        authorization_lease,
+        authorization_lease: Some(authorization_lease),
         // The submit gate attaches basis closure only when the receiver reports
         // a shortfall; a bounded superset is always acceptable, so nothing is
         // guessed here.
@@ -313,6 +312,40 @@ pub async fn standard_initial_submission(
     http: &arkret_sdk::http_client::Client,
     event: &arkret_sdk::Event,
 ) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
+    let mut submission = arkret_wire::EventInitialSubmission::online(event.clone());
+    if event.seal_basis.is_some() {
+        let member_receipt = match resolve_proposal_authority_route(http, event).await? {
+            ProposalAuthorityRoute::LocalPrincipal(local) => {
+                let signer = crate::event_signer::active_signer().ok_or_else(|| {
+                    anyhow::anyhow!("PCR proposal receipt requires an active device signer")
+                })?;
+                Some(local.issue_member_receipt(event, &signer)?)
+            }
+            ProposalAuthorityRoute::RemoteCurrentAuthority => None,
+        };
+        if let Some(member_receipt) = member_receipt {
+            submission.control_proposal_receipt = Some(
+                arkret_wire::ControlProposalReceipt::from_member_receipts_protocol_bounds(vec![
+                    member_receipt,
+                ])?,
+            );
+        }
+    }
+    submission
+        .validate_structural_in_context(arkret_wire::EventSubmitContext::Standard)
+        .map_err(anyhow::Error::from)?;
+    Ok(submission)
+}
+
+/// Build an explicitly delayed/offline submission from a held lease.
+///
+/// Unlike [`standard_initial_submission`], this preserves the fixed lease
+/// window and obtains any external Control Move proposal receipt before the
+/// Event can be queued for later delivery.
+pub async fn delayed_initial_submission(
+    http: &arkret_sdk::http_client::Client,
+    event: &arkret_sdk::Event,
+) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
     let mut submission = initial_submission(event)?;
     if event.seal_basis.is_some() {
         let member_receipt = match resolve_proposal_authority_route(http, event).await? {
@@ -325,7 +358,10 @@ pub async fn standard_initial_submission(
             ProposalAuthorityRoute::RemoteCurrentAuthority => {
                 http.issue_control_proposal_receipt(&arkret_wire::ProposalReceiptIssueRequest {
                     event: event.clone(),
-                    authorization_lease: submission.authorization_lease.clone(),
+                    authorization_lease: submission
+                        .authorization_lease
+                        .clone()
+                        .expect("delayed submission was constructed with a lease"),
                     cba_proof_bundles: submission.cba_proof_bundles.clone(),
                 })
                 .await

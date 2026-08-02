@@ -500,10 +500,12 @@ async fn publish_recovery_policy(
     let (event, _) = submitter.prepare_sdk_event_for_submit(&event).await?;
     let http = api.sdk_http_client()?;
     crate::authorization_lease::ensure_for_events(&http, std::slice::from_ref(&event)).await?;
-    let submission = crate::authorization_lease::standard_initial_submission(&http, &event).await?;
+    let submission = crate::authorization_lease::delayed_initial_submission(&http, &event).await?;
     let request = arkret_sdk::RecoveryPolicyPublishRequest {
         event: submission.event,
-        authorization_lease: submission.authorization_lease,
+        authorization_lease: submission
+            .authorization_lease
+            .expect("recovery policy publication uses an explicit authorization lease"),
         cba_proof_bundles: submission.cba_proof_bundles,
         control_proposal_receipt: submission.control_proposal_receipt,
     };

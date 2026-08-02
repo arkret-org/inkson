@@ -270,9 +270,9 @@ pub(crate) async fn prepare_cross_signing_recovery(
     crate::authorization_lease::install_lease(authorize_lease)?;
     crate::authorization_lease::install_lease(list_lease)?;
     let authorize_submission =
-        crate::authorization_lease::standard_initial_submission(&api.sdk_http_client()?, authorize)
+        crate::authorization_lease::delayed_initial_submission(&api.sdk_http_client()?, authorize)
             .await?;
-    let list_submission = crate::authorization_lease::standard_initial_submission(
+    let list_submission = crate::authorization_lease::delayed_initial_submission(
         &api.sdk_http_client()?,
         list_update,
     )

@@ -669,7 +669,7 @@ pub fn author_recovery_publication_submission(
         .transpose()?;
     let submission = EventInitialSubmission {
         event,
-        authorization_lease: lease,
+        authorization_lease: Some(lease),
         cba_proof_bundles: Vec::new(),
         control_proposal_receipt,
     };

@@ -225,7 +225,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let mut submissions = Vec::with_capacity(signed_events.len());
     for event in signed_events {
         submissions
-            .push(crate::authorization_lease::standard_initial_submission(&http, &event).await?);
+            .push(crate::authorization_lease::delayed_initial_submission(&http, &event).await?);
     }
     let revoke_submission = EventsSubmitBatchRequestBody {
         events: vec![submissions.remove(0)],
