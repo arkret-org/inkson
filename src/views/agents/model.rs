@@ -541,9 +541,8 @@ pub fn summarize_runtime_key_approval_request(
     let request = parse_runtime_key_approval_request(raw)?;
     let public_key_fingerprint =
         arkret_signatures::agent::agent_runtime_public_key_digest(&request.public_key)?;
-    let proof_expires_at = arkret_sdk::canonical::format_timestamp_canonical(
-        request.proof_of_possession.expires_at,
-    );
+    let proof_expires_at =
+        arkret_sdk::canonical::format_timestamp_canonical(request.proof_of_possession.expires_at);
     Ok(RuntimeKeyApprovalSummary {
         pairing_request_id: request.pairing_request_id,
         agent_id: request.agent_id,
@@ -626,17 +625,18 @@ pub fn build_agent_key_authorization_for_pairing(
             "runtime verification_method fragment must be the stable Agent endpoint device_id: {error}"
         )
     })?;
-    let pairing_digest = arkret_models_collaboration::agent_operations::agent_key_pairing_request_binding_digest(
-        "ak.gate.account.command.pair_agent_key",
-        &controller,
-        &request.agent_id,
-        &request.pairing_request_id,
-        pairing_code,
-        pairing_expires_at,
-        &Did::new(service_id.trim().to_owned())?,
-        &request.proof_of_possession.runtime_key_binding_digest,
-        &request.proof_of_possession,
-    )?;
+    let pairing_digest =
+        arkret_models_collaboration::agent_operations::agent_key_pairing_request_binding_digest(
+            arkret_wire::ServiceOperationId::GATE_ACCOUNT_COMMAND_PAIR_AGENT_KEY,
+            &controller,
+            &request.agent_id,
+            &request.pairing_request_id,
+            pairing_code,
+            pairing_expires_at,
+            &Did::new(service_id.trim().to_owned())?,
+            &request.proof_of_possession.runtime_key_binding_digest,
+            &request.proof_of_possession,
+        )?;
     let issued_at = Utc::now();
     let runtime_attestation = request.runtime_attestation.clone();
     // Runtime replacement re-pairing (key-management §3.6.1): the new key

@@ -48,8 +48,10 @@ fn head_eq_precondition(cell: &str, value: Value) -> anyhow::Result<Precondition
 
 fn event_requirements_with_schema(schema_ref: &str) -> EventRequirements {
     EventRequirements {
-        schema_profile_refs: vec![arkret_sdk::ProfileRef::new(schema_ref.to_owned())
-            .expect("event builder schema profile ref must be valid")],
+        schema_profile_refs: vec![
+            arkret_sdk::ProfileRef::new(schema_ref.to_owned())
+                .expect("event builder schema profile ref must be valid"),
+        ],
         reducer_profile_ref: None,
         required_features: Vec::new(),
         critical_extensions: Vec::new(),

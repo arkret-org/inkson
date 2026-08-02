@@ -716,13 +716,19 @@ mod tests {
         managed.actor_id = arkret_sdk::Did::new("did:web:agent.example").unwrap();
         let controller = arkret_sdk::Did::new("did:web:alice.example").unwrap();
         managed.executed_by = Some(controller.clone());
-        managed.authorization_ref = Some("did:web:agent.example#managed-controller".to_owned());
+        managed.authorization_ref = Some(
+            arkret_sdk::AuthorizationRef::new("did:web:agent.example#managed-controller").unwrap(),
+        );
         assert!(is_managed_agent_pcr_control(&managed));
 
-        managed.authorization_ref = Some("did:web:agent.example#other-delegation".to_owned());
+        managed.authorization_ref = Some(
+            arkret_sdk::AuthorizationRef::new("did:web:agent.example#other-delegation").unwrap(),
+        );
         assert!(!is_managed_agent_pcr_control(&managed));
 
-        managed.authorization_ref = Some("did:web:agent.example#managed-controller".to_owned());
+        managed.authorization_ref = Some(
+            arkret_sdk::AuthorizationRef::new("did:web:agent.example#managed-controller").unwrap(),
+        );
         managed.executed_by = Some(managed.actor_id.clone());
         assert!(!is_managed_agent_pcr_control(&managed));
     }
@@ -753,7 +759,9 @@ mod tests {
         let mut managed = event();
         managed.actor_id = arkret_sdk::Did::new("did:web:agent.example").unwrap();
         managed.executed_by = Some(arkret_sdk::Did::new("did:web:alice.example").unwrap());
-        managed.authorization_ref = Some("did:web:agent.example#managed-controller".to_owned());
+        managed.authorization_ref = Some(
+            arkret_sdk::AuthorizationRef::new("did:web:agent.example#managed-controller").unwrap(),
+        );
         assert_eq!(
             classify_proposal_authority_route(&managed).unwrap(),
             ProposalAuthorityRouteKind::ManagedAgentPcr
@@ -762,8 +770,9 @@ mod tests {
         // A delegation fragment that is not the managed-controller binding is
         // an ordinary Realm write, not a locally signable one.
         let mut foreign_delegation = managed.clone();
-        foreign_delegation.authorization_ref =
-            Some("did:web:agent.example#other-delegation".to_owned());
+        foreign_delegation.authorization_ref = Some(
+            arkret_sdk::AuthorizationRef::new("did:web:agent.example#other-delegation").unwrap(),
+        );
         assert_eq!(
             classify_proposal_authority_route(&foreign_delegation).unwrap(),
             ProposalAuthorityRouteKind::RemoteCurrentAuthority
@@ -816,7 +825,9 @@ mod tests {
         };
         target.actor_id = arkret_sdk::Did::new(agent_id).unwrap();
         target.executed_by = Some(arkret_sdk::Did::new(controller_id).unwrap());
-        target.authorization_ref = Some("did:web:agent.example#managed-controller".to_owned());
+        target.authorization_ref = Some(
+            arkret_sdk::AuthorizationRef::new("did:web:agent.example#managed-controller").unwrap(),
+        );
 
         let authority =
             managed_agent_pcr_authority_set_ref_from_events(&target, &accepted).unwrap();
@@ -871,7 +882,9 @@ mod tests {
         target.scope_ref = arkret_sdk::ScopeRef::Realm { realm_id };
         target.actor_id = agent_id;
         target.executed_by = Some(controller_id);
-        target.authorization_ref = Some("did:web:agent.example#managed-controller".to_owned());
+        target.authorization_ref = Some(
+            arkret_sdk::AuthorizationRef::new("did:web:agent.example#managed-controller").unwrap(),
+        );
 
         managed_agent_pcr_authority_set_ref_from_events(&target, &accepted)
             .expect("later frozen-pre-state writes must not redefine the genesis authority");

@@ -529,9 +529,8 @@ pub(crate) async fn prepare_enrollment_authority_recovery(
     )?;
     authorize_event.prev_refs = vec![reanchor_event_id.clone()];
     authorize_event.executed_by = Some(enrollment_authority_did.clone());
-    authorize_event.authorization_ref = Some(
-        arkret_sdk::AuthorizationRef::new(authorization_ref).map_err(anyhow::Error::msg)?,
-    );
+    authorize_event.authorization_ref =
+        Some(arkret_sdk::AuthorizationRef::new(authorization_ref).map_err(anyhow::Error::msg)?);
     let authorize_event_preimage =
         CanonicalPublicMaterial::canonical_json(serde_json::to_value(&authorize_event)?)?;
 

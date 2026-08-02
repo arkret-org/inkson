@@ -2454,6 +2454,7 @@ pub(crate) fn attach_capability_grant_payload_proof(
     validate_capability_grant_payload(event)
 }
 
+#[cfg(test)]
 pub(crate) fn attach_capability_grant_payload_proof_with_signer(
     event: &mut arkret_sdk::Event,
     _signer: &crate::event_signer::InksonEventSigner,
@@ -2469,7 +2470,7 @@ fn validate_capability_grant_payload(event: &arkret_sdk::Event) -> anyhow::Resul
         serde_json::to_value(&event.payload)
             .map_err(|error| anyhow::anyhow!("encode capability grant payload: {error}"))?,
     )
-        .map_err(|error| anyhow::anyhow!("decode capability grant payload: {error}"))?;
+    .map_err(|error| anyhow::anyhow!("decode capability grant payload: {error}"))?;
     if payload.grant.id != payload.grant_id {
         anyhow::bail!("capability grant id must equal payload grant_id");
     }
@@ -2836,6 +2837,7 @@ mod tests {
             None,
             Value::Null,
         )
+        .unwrap()
         .build_sdk_event("inkson")
         .unwrap();
         let unsigned_intent = EventIntent::from_event(event.clone());
@@ -3195,7 +3197,9 @@ mod tests {
 
         assert_eq!(
             realm_authority_root_claim(&event(AUTHORITY_CONTROLLER), Some(&root)),
-            Some(arkret_wire::REALM_AUTHORITY_ROOT_CELL.to_owned())
+            Some(
+                arkret_sdk::AuthorizationRef::new(arkret_wire::REALM_AUTHORITY_ROOT_CELL).unwrap()
+            )
         );
         assert_eq!(
             realm_authority_root_claim(&event("did:web:bob.example"), Some(&root)),
@@ -3225,8 +3229,10 @@ mod tests {
             "ak.strand.create",
             AUTHORITY_CONTROLLER,
         );
-        with_grant.authorization_ref =
-            Some("ak:grant:01904100-0000-7000-8000-000000000001".to_owned());
+        with_grant.authorization_ref = Some(
+            arkret_sdk::AuthorizationRef::new("ak:grant:01904100-0000-7000-8000-000000000001")
+                .unwrap(),
+        );
         assert_eq!(realm_authority_root_claim(&with_grant, Some(&root)), None);
 
         let mut executed_by_service = sdk_event_with_kind(
