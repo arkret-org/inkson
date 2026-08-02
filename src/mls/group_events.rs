@@ -9,10 +9,10 @@
 //! intentionally keep their historical `"kanban_mls_*"` kind literals so
 //! derived digests stay byte-identical across the move.
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::operation::{trim_realm_id, uuid_v7};
-use crate::state::{LocalSealView, LocalStateStore};
+use crate::state::LocalStateStore;
 
 /// Restrict a state/seal ref to the canonical `sha256:` digest grammar used
 /// by this MLS surface (`arkret_sdk::Hash::new` also accepts blake3, which is
@@ -53,28 +53,6 @@ pub(crate) fn mls_base_epoch_ref_for_scope(
     state_store
         .mls_group_state_ref_for_effective_scope(realm_id, circle_id, group_id, epoch)
         .map(|event_id| event_id.to_string())
-}
-
-pub(crate) fn mls_policy_root_from_seal_view(
-    seal_view: &LocalSealView,
-    realm_id: &str,
-) -> Result<arkret_sdk::Hash, String> {
-    let hash = seal_view
-        .state_root
-        .as_deref()
-        .and_then(mls_sha256_hash_from_ref)
-        .unwrap_or_else(|| {
-            crate::canonical::canonical_sha256(&json!({
-                "kind": "kanban_mls_policy_root",
-                "realm_id": realm_id,
-                "frontier": seal_view.frontier,
-                "state_root": seal_view.state_root,
-            }))
-            .unwrap_or_else(|_| {
-                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
-            })
-        });
-    arkret_sdk::Hash::new(hash).map_err(|err| format!("invalid MLS policy root hash: {err:?}"))
 }
 
 /// Whether `actor_id` is the creator (authority-root controller) of
@@ -252,7 +230,7 @@ pub(crate) fn creator_scope_bootstrap_blocker(
 /// epoch-0 material is available (the normal create-then-first-write path).
 ///
 /// The genesis governance binding installs epoch `0 -> 0` and mirrors the
-/// commit path's realm_id / membership_frontier / policy_root derivation.
+/// commit path's realm ID and Security Frontier derivation.
 pub(crate) fn build_creator_mls_genesis_event(
     state_store: &mut LocalStateStore,
     realm_id: &str,
@@ -407,7 +385,7 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_proposal_refs
     previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
     proposal_refs: Vec<arkret_sdk::EventId>,
 ) -> Result<arkret_sdk::Event, String> {
-    mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
+    mls_commit_event_from_store_for_effective_scope_with_options(
         state_store,
         realm_id,
         circle_id,
@@ -415,7 +393,6 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_proposal_refs
         commit_envelope,
         previous_governance_binding,
         proposal_refs,
-        None,
         None,
     )
 }
@@ -429,7 +406,7 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_sidecar_bindi
     previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
     sidecar_binding: arkret_sdk::SidecarMlsBinding,
 ) -> Result<arkret_sdk::Event, String> {
-    mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
+    mls_commit_event_from_store_for_effective_scope_with_options(
         state_store,
         realm_id,
         Some(circle_id),
@@ -437,39 +414,11 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_sidecar_bindi
         commit_envelope,
         previous_governance_binding,
         Vec::new(),
-        None,
         Some(sidecar_binding),
     )
 }
 
-pub(crate) fn mls_remove_commit_event_from_store_for_effective_scope_with_proposal_refs(
-    state_store: &LocalStateStore,
-    realm_id: &str,
-    circle_id: Option<&str>,
-    actor_id: &str,
-    commit_envelope: &arkret_sdk::MlsCommitEnvelope,
-    previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
-    proposal_refs: Vec<arkret_sdk::EventId>,
-    revocation_membership_frontier: &[arkret_sdk::EventId],
-) -> Result<arkret_sdk::Event, String> {
-    let membership_frontier = crate::mls::runtime::canonical_mls_remove_membership_frontier(
-        revocation_membership_frontier,
-    )
-    .map_err(|err| err.user_message())?;
-    mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
-        state_store,
-        realm_id,
-        circle_id,
-        actor_id,
-        commit_envelope,
-        previous_governance_binding,
-        proposal_refs,
-        Some(membership_frontier),
-        None,
-    )
-}
-
-pub(crate) fn mls_remove_commit_event_from_store_for_effective_scope_with_sidecar_binding(
+pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_proposal_refs_and_sidecar_binding(
     state_store: &LocalStateStore,
     realm_id: &str,
     circle_id: &str,
@@ -477,14 +426,9 @@ pub(crate) fn mls_remove_commit_event_from_store_for_effective_scope_with_sideca
     commit_envelope: &arkret_sdk::MlsCommitEnvelope,
     previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
     proposal_refs: Vec<arkret_sdk::EventId>,
-    revocation_membership_frontier: &[arkret_sdk::EventId],
     sidecar_binding: arkret_sdk::SidecarMlsBinding,
 ) -> Result<arkret_sdk::Event, String> {
-    let membership_frontier = crate::mls::runtime::canonical_mls_remove_membership_frontier(
-        revocation_membership_frontier,
-    )
-    .map_err(|err| err.user_message())?;
-    mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
+    mls_commit_event_from_store_for_effective_scope_with_options(
         state_store,
         realm_id,
         Some(circle_id),
@@ -492,12 +436,11 @@ pub(crate) fn mls_remove_commit_event_from_store_for_effective_scope_with_sideca
         commit_envelope,
         previous_governance_binding,
         proposal_refs,
-        Some(membership_frontier),
         Some(sidecar_binding),
     )
 }
 
-fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
+fn mls_commit_event_from_store_for_effective_scope_with_options(
     state_store: &LocalStateStore,
     realm_id: &str,
     circle_id: Option<&str>,
@@ -505,7 +448,6 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
     commit_envelope: &arkret_sdk::MlsCommitEnvelope,
     previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
     proposal_refs: Vec<arkret_sdk::EventId>,
-    explicit_membership_frontier: Option<Vec<arkret_sdk::EventId>>,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<arkret_sdk::Event, String> {
     let circle = circle_id
@@ -530,16 +472,6 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
         commit_envelope.group_id.as_str(),
         prev_epoch,
     )?;
-    let explicit_membership_frontier = explicit_membership_frontier.map(|explicit| {
-        explicit
-            .into_iter()
-            .collect::<std::collections::BTreeSet<_>>()
-    });
-    if let Some(requested) = explicit_membership_frontier.as_ref()
-        && requested.is_empty()
-    {
-        return Err("MLS Remove governance frontier must not be empty".to_owned());
-    }
     let request = crate::mls::governance_proof::proof_request(
         state_store,
         realm_id,
@@ -556,7 +488,6 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
             .map_err(|error| format!("invalid Sidecar MLS governance binding: {error}"))?,
         None => governance_binding,
     };
-    let _ = explicit_membership_frontier;
     let payload = arkret_sdk::MlsCommitPayload::new(
         prev_epoch,
         base_group_state_ref,
@@ -570,14 +501,10 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
             .map_err(|err| format!("MLS commit payload failed: {err}"))?
             .build_sdk_event("inkson")
             .map_err(|err| format!("MLS commit SDK Event conversion failed: {err}"))?;
-    let trusted_anchor = state_store
-        .trusted_mls_governance_anchor(realm_id)
-        .ok_or_else(|| "MLS commit requires a pinned governance anchor".to_owned())?;
     event.preconditions = crate::mls::governance::mls_commit_preconditions(
         commit_envelope.group_id.as_str(),
         prev_epoch,
         previous_governance_binding,
-        &trusted_anchor,
     )
     .map_err(|err| format!("MLS commit preconditions failed: {err}"))?;
     event.event_id = event_id_typed;

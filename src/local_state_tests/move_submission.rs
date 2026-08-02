@@ -50,7 +50,7 @@ fn move_submission_state_maps_failure_reasons() {
         MoveSubmissionState::FailedBottom
     );
     assert_eq!(
-        MoveSubmissionState::from_submit_state("rejected", Some("covered_seals mismatch")),
+        MoveSubmissionState::from_submit_state("rejected", Some("security_frontier mismatch")),
         MoveSubmissionState::PendingMlsBinding
     );
     assert_eq!(
@@ -113,7 +113,7 @@ fn move_submission_pending_mls_binding_drives_toast() {
         realm,
         "ak.message.create",
         MoveSubmissionState::PendingMlsBinding,
-        Some("covered_seals missing".to_owned()),
+        Some("security_frontier missing".to_owned()),
         None,
     );
     assert!(store.realm_has_pending_mls_binding(realm));

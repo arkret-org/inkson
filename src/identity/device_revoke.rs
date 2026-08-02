@@ -200,8 +200,8 @@ impl DeviceRevokePlan {
 //
 // 1. an MLS commit Move that removes the device's leaf (`ak.mls.commit` via the
 //    `ak.component.mls.epoch.v1` cas-register), and
-// 2. an epoch-advance Move that bumps `covered_seals` so subsequent message Events can reference
-//    the post-revocation MLS state.
+// 2. an epoch-advance Move that binds the new Security Frontier so subsequent message Events can
+//    reference the post-revocation MLS state.
 //
 // Each chain entry tracks the lifecycle of those Moves
 // individually — both must reach `Effective` before the device is

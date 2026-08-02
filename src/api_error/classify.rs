@@ -240,23 +240,15 @@ pub fn is_stale_frontier_error(error: &anyhow::Error) -> bool {
     })
 }
 
-/// `true` for `encryption-and-audit.md` §2.5.2's governance-binding coverage
-/// refusal — the receiver rebuilt `M` at the DataEvent's `seal_ref` and the
-/// effective epoch's `covered_seals_cell` does not cover all of it.
+/// `true` for a typed MLS Security Frontier refusal: the submitted binding does
+/// not match the frontier projected from accepted control state and active MLS
+/// leaves.
 ///
 /// §2.4.1 makes this `epoch_update_required`: the scope MUST stop sending new
-/// encrypted application messages until a Commit attests the missing governance
-/// Seals. Until this classifier existed, the refusal arrived as an untyped
-/// submit failure, so the send just failed and nothing ever advanced the epoch —
-/// the scope stayed unsendable for as long as the app ran.
+/// encrypted application messages until a Commit binds the current frontier.
 pub(crate) fn is_mls_governance_binding_stale_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
-        let compatible_outer_code = envelope.code()
-            == arkret_sdk::error::ErrorCode::FAILED_PRECONDITION
-            // Older publication-lease endpoints flattened every validator
-            // refusal to policy_violation while retaining the validator's
-            // HTTP status and stable reason in the message.
-            || envelope.code() == arkret_sdk::error::ErrorCode::POLICY_VIOLATION;
+        let outer_code = envelope.code() == arkret_sdk::error::ErrorCode::FAILED_PRECONDITION;
         let stable_reason = envelope
             .details()
             .get("reason_code")
@@ -265,7 +257,7 @@ pub(crate) fn is_mls_governance_binding_stale_error(error: &anyhow::Error) -> bo
             || envelope
                 .message()
                 .contains(arkret_sdk::error::ReasonCode::MLS_GOVERNANCE_BINDING_STALE);
-        status == StatusCode::CONFLICT && compatible_outer_code && stable_reason
+        status == StatusCode::CONFLICT && outer_code && stable_reason
     })
 }
 

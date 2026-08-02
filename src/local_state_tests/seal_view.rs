@@ -34,8 +34,6 @@ fn seal_view_set_persists_and_picks_lex_min_frontier() {
                 state_root: Some("ak:state:sha256:abc".to_owned()),
                 bottom_cells: BTreeMap::new(),
                 mls_epoch: None,
-                covered_seals: None,
-                covered_seals_lag: None,
                 key_schedule_hash: None,
             },
         );
@@ -277,7 +275,7 @@ fn seal_view_from_sync_body_parses_structured_bottoms() {
 }
 
 #[test]
-fn seal_view_from_sync_body_extracts_mls_epoch_and_covered_seals() {
+fn seal_view_from_sync_body_extracts_mls_epoch() {
     let body = serde_json::json!({
         "seal_view": {
             "frontier": ["ak:seal:sha256:aaa"],
@@ -285,16 +283,12 @@ fn seal_view_from_sync_body_extracts_mls_epoch_and_covered_seals() {
             "cells": {
                 "ak:cell:ak.component.mls.epoch.v1:ak:realm:demo": {
                     "value": 7
-                },
-                "ak:cell:ak.component.governance.covered_seals.v1:ak:realm:demo": {
-                    "register": { "value": "ak:state:sha256:abcd" }
                 }
             }
         }
     });
     let view = LocalSealView::from_sync_body(&body);
     assert_eq!(view.mls_epoch, Some(7));
-    assert_eq!(view.covered_seals.as_deref(), Some("ak:state:sha256:abcd"));
 }
 
 #[test]
@@ -313,30 +307,6 @@ fn seal_view_mls_epoch_supports_object_value_with_epoch_field() {
     });
     let view = LocalSealView::from_sync_body(&body);
     assert_eq!(view.mls_epoch, Some(42));
-}
-
-#[test]
-fn seal_view_from_sync_body_extracts_covered_seals_lag() {
-    let body = serde_json::json!({
-        "seal_view": {
-            "frontier": ["ak:seal:sha256:aaa"],
-            "leaves": [],
-            "covered_seals_lag": 12,
-            "cells": {}
-        }
-    });
-    let view = LocalSealView::from_sync_body(&body);
-    assert_eq!(view.covered_seals_lag, Some(12));
-    // default threshold is 5 -> 12 > 5
-    assert!(view.covered_seals_lag_above(5));
-    assert!(!view.covered_seals_lag_above(20));
-}
-
-#[test]
-fn seal_view_lag_above_returns_false_when_lag_unknown() {
-    let view = LocalSealView::default();
-    assert!(!view.covered_seals_lag_above(5));
-    assert!(!view.covered_seals_lag_above(0));
 }
 
 #[test]

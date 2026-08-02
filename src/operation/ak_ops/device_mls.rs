@@ -81,7 +81,7 @@ pub fn mls_proposal_with_governance(
 
 /// `ak.mls.genesis` event installing an MLS group at epoch 0. Emitted
 /// once when a creator's local group is first observed by the server so
-/// the canonical audit record + creator/covered_seals seed exist and
+/// the canonical audit record and creator Security Frontier binding exist and
 /// the server epoch starts in lockstep with the local snapshot before
 /// the first `ak.mls.commit` bumps it to 1.
 ///

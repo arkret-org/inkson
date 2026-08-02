@@ -71,22 +71,6 @@ pub struct LocalSealView {
     /// E2EE group or pre-genesis state).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mls_epoch: Option<u64>,
-    /// The current `governance.covered_seals` cell value - the lattice
-    /// frontier cell that governance Moves require predecessor coverage of
-    /// before they're accepted. Surfaced as a string so the UI can render
-    /// whatever shape soland publishes (typically a `ak:state:sha256:...`
-    /// ref). `None` means the governance cell hasn't been observed yet.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub covered_seals: Option<String>,
-    /// The per-Realm MLS `covered_seals_lag` count - how many
-    /// governance Moves the MLS group has yet to acknowledge. Soland
-    /// publishes this as `seal_view.covered_seals_lag` (a bare
-    /// integer) when it knows the lag; clients combine it with a
-    /// configurable warn threshold (default 5) to render an alert banner
-    /// in `realm_admin`. `None` means soland hasn't surfaced a lag value -
-    /// UI treats that as "no alert".
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub covered_seals_lag: Option<u64>,
     /// MLS key-schedule content hash (`sha256:<hex>`) from the
     /// `ak.component.key_schedule.v1` cas-register cell. The MLS commit
     /// path uses this as `prev_schedule`; the new commit computes a
@@ -119,15 +103,6 @@ impl LocalSealView {
     /// status — the UI should surface a banner.
     pub fn has_bottom_cells(&self) -> bool {
         !self.bottom_cells.is_empty()
-    }
-
-    /// True when soland has surfaced a covered_seals_lag strictly
-    /// greater than `threshold`. Used by the realm_admin covered_seals
-    /// alert banner to decide whether to render. Returns `false` when no
-    /// lag has been published yet (the field is `None`) - the UI treats
-    /// that as "no signal, no alert".
-    pub fn covered_seals_lag_above(&self, threshold: u64) -> bool {
-        self.covered_seals_lag.is_some_and(|lag| lag > threshold)
     }
 
     /// For security-relevant cell families (member.state, capability.grant),
@@ -254,12 +229,6 @@ impl LocalSealView {
         if let Some(s) = seal.get("state_root").and_then(|v| v.as_str()) {
             view.state_root = Some(s.to_owned());
         }
-        // Top-level `covered_seals_lag`: soland publishes this directly
-        // on the seal view (sibling of `frontier` / `leaves`) so clients
-        // don't have to compute it from cell maps.
-        if let Some(lag) = seal.get("covered_seals_lag").and_then(|v| v.as_u64()) {
-            view.covered_seals_lag = Some(lag);
-        }
         if let Some(cells) = seal.get("cells").and_then(|v| v.as_object()) {
             for (cell_ref, status) in cells {
                 let bottom = status.get("bottom").and_then(|v| v.as_str());
@@ -305,16 +274,6 @@ impl LocalSealView {
                     view.mls_epoch = value
                         .as_u64()
                         .or_else(|| value.get("epoch").and_then(|v| v.as_u64()));
-                }
-                if cell_ref.starts_with("ak:cell:ak.component.governance.covered_seals.v1")
-                    && let Some(value) = value_for(status)
-                {
-                    view.covered_seals = value.as_str().map(str::to_owned).or_else(|| {
-                        value
-                            .get("frontier")
-                            .and_then(|v| v.as_str())
-                            .map(str::to_owned)
-                    });
                 }
                 // B3c: surface the MLS key schedule hash so the next
                 // commit's SDK MLS governance binding can carry the

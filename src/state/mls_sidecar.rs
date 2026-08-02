@@ -991,48 +991,6 @@ impl LocalStateStore {
         }
     }
 
-    /// The genesis-locked MLS `policy_root` for this Realm's group, if recorded.
-    ///
-    /// See [`crate::state::types::PersistedState::mls_genesis_policy_root`]:
-    /// every `ak.mls.commit` MUST declare the exact `policy_root` that
-    /// `ak.mls.genesis` locked, or soland rejects it with
-    /// `governance_binding_mismatch`. Commit builders read this so they reuse the
-    /// locked bytes instead of recomputing from the moving Seal `state_root`.
-    pub fn genesis_policy_root_for_effective_scope(
-        &self,
-        realm_id: &str,
-        circle_id: Option<&str>,
-    ) -> Option<String> {
-        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
-        self.load().mls_genesis_policy_root.get(&key).cloned()
-    }
-
-    /// Record the genesis-locked MLS `policy_root` for this Realm's group.
-    ///
-    /// First-writer-wins: the value is locked at genesis and never changes for
-    /// the life of the group (soland carries it forward unchanged), so a later
-    /// call with a drifted root MUST NOT overwrite the genuine genesis value.
-    pub fn record_genesis_policy_root_for_effective_scope(
-        &mut self,
-        realm_id: impl Into<String>,
-        circle_id: Option<&str>,
-        policy_root: &str,
-    ) {
-        let policy_root = policy_root.trim();
-        if policy_root.is_empty() {
-            return;
-        }
-        self.ensure_cached_loaded();
-        let key = mls_effective_scope_snapshot_key(&realm_id.into(), circle_id);
-        if self.cached.mls_genesis_policy_root.contains_key(&key) {
-            return;
-        }
-        self.cached
-            .mls_genesis_policy_root
-            .insert(key, policy_root.to_owned());
-        let _ = self.flush();
-    }
-
     /// The receiver's `mls_governance_binding_stale` message for this effective
     /// scope, when its last E2EE application DataEvent was refused for
     /// governance-Seal coverage (`encryption-and-audit.md` §2.4.1
@@ -1092,8 +1050,8 @@ impl LocalStateStore {
     /// verified governance binding was accepted.
     ///
     /// Cleared on acceptance rather than on a successful resend: the accepted
-    /// commit is what writes the missing Seals into `covered_seals_cell`. If it
-    /// still was not enough, the next send is refused again and re-arms the
+    /// commit binds the latest projected Security Frontier. If it still was not
+    /// enough, the next send is refused again and re-arms the
     /// flag with the receiver's new message — the repair never silently
     /// declares itself finished.
     pub fn clear_mls_coverage_stale(&mut self, realm_id: &str, circle_id: Option<&str>) {

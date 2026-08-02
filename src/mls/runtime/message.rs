@@ -1278,11 +1278,10 @@ fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Re
 /// clients MUST independently verify the referenced Seal view and state_root
 /// before accepting an MLS epoch).
 ///
-/// This upgrades the old "record policy_root only" behavior into an independent
-/// check that the MLS group's embedded governance-binding extension exactly
-/// matches the durable payload forwarded by the server. The Welcome-declared
-/// `mls_group_id`, epochs, `policy_root`, `binding_profile` and
-/// `reducer_profile` build the expected context passed to
+/// The MLS group's embedded governance-binding extension must exactly match the
+/// durable payload forwarded by the server. The Welcome-declared group, epochs,
+/// binding/reducer profiles, Security Frontier digest, and active leaf set build
+/// the expected context passed to
 /// `ArkretMlsGroup::verify_current_governance_binding`. Any field mismatch or
 /// missing MLS binding extension returns `Err` and rejects the Welcome.
 ///
@@ -1452,12 +1451,6 @@ pub fn apply_welcome_messages_with_device_snapshot(
             outcome.record_failure(format!("welcome claim envelope authz: {reason}"));
             continue;
         }
-        // The admission's Welcome carries the same `governance_binding` as its
-        // `ak.mls.commit`, so the joining member records the genesis-locked
-        // `policy_root` here. Without it, a later self-update commit by this
-        // member would recompute `policy_root` from its own moving Seal
-        // `state_root` and be rejected `governance_binding_mismatch`.
-        //
         // YGN-SEC-01 gate (2) runs after join because it needs the MLS group
         // object. It independently verifies this governance_binding against the
         // MLS GroupContext; keep the raw JSON for that check.
@@ -1536,9 +1529,8 @@ pub fn apply_welcome_messages_with_device_snapshot(
         // YGN-SEC-01 gate (2): independently verify that the MLS group's
         // embedded governance_binding matches the durable payload forwarded by
         // the server (`encryption-and-audit.md`:438). Missing binding or
-        // profile/epoch/policy_root mismatch rejects the Welcome before
-        // snapshot persistence. The declared policy_root feeds the genesis
-        // record below.
+        // profile, epoch, Security Frontier, or leaf-set mismatch rejects the
+        // Welcome before snapshot persistence.
         if let Err(reason) = verify_welcome_governance_binding(
             state_store,
             realm_id,

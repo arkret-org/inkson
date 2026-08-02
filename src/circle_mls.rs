@@ -152,7 +152,7 @@ fn build_remove_scope_rotate_draft(
         let circle_id = circle_id.ok_or_else(|| {
             "Sidecar MLS removal requires the backing Circle effective scope".to_owned()
         })?;
-        crate::mls::group_events::mls_remove_commit_event_from_store_for_effective_scope_with_sidecar_binding(
+        crate::mls::group_events::mls_commit_event_from_store_for_effective_scope_with_proposal_refs_and_sidecar_binding(
             state_store,
             realm_id,
             circle_id,
@@ -160,11 +160,10 @@ fn build_remove_scope_rotate_draft(
             &remove.commit,
             &previous_governance_binding,
             proposal_refs,
-            revocation_membership_frontier,
             sidecar_binding,
         )?
     } else {
-        crate::mls::group_events::mls_remove_commit_event_from_store_for_effective_scope_with_proposal_refs(
+        crate::mls::group_events::mls_commit_event_from_store_for_effective_scope_with_proposal_refs(
             state_store,
             realm_id,
             circle_id,
@@ -172,7 +171,6 @@ fn build_remove_scope_rotate_draft(
             &remove.commit,
             &previous_governance_binding,
             proposal_refs,
-            revocation_membership_frontier,
         )?
     };
     events.push(commit_event);

@@ -2017,21 +2017,11 @@ pub(crate) async fn share_history_to_requester(
         let source_authorization_ref =
             realm_history_share_source_authorization_ref(&store, &realm_id);
         let authorization_grant_ref = realm_key_share_capability_ref(&store, &realm_id, &actor_id);
-        let policy_digest = match store.genesis_policy_root_for_effective_scope(&realm_id, None) {
-            Some(stored) => {
-                arkret_sdk::Hash::new(stored.clone()).map_err(|err| {
-                    anyhow::anyhow!("stored MLS genesis policy_root invalid: {err:?}")
-                })?;
-                stored
-            }
-            None => crate::mls::group_events::mls_policy_root_from_seal_view(
-                &store.seal_view_for_realm(&realm_id),
-                &realm_id,
-            )
-            .map_err(|err| anyhow::anyhow!(err))?
-            .as_str()
-            .to_owned(),
-        };
+        let policy_digest = store
+            .seal_view_for_realm(&realm_id)
+            .state_root
+            .and_then(|value| crate::mls::group_events::mls_sha256_hash_from_ref(&value))
+            .ok_or_else(|| anyhow::anyhow!("realm key share requires a current state_root"))?;
         (
             store.history_secrets_for(&realm_id),
             policy_digest,

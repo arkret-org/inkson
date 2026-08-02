@@ -1,12 +1,5 @@
 use crate::routes::Route;
 
-/// Default `covered_seals_lag` warning threshold used by the
-/// realm_admin alert banner. Mirrors sodmin's
-/// `DEFAULT_LAG_WARN_THRESHOLD` so a member moving between the two
-/// surfaces sees the same alert ceiling. Read from the user preference
-/// signal in [`super::RealmAdminPanel`].
-pub(crate) const DEFAULT_COVERED_SEALS_LAG_THRESHOLD: u64 = 5;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RealmAdminSection {
     Overview,

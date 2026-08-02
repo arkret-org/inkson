@@ -5,9 +5,7 @@ use serde_json::{Value, json};
 
 use super::metadata::{metadata_subject_for, projected_members_for_realm};
 use super::policy::build_principal_admission_join_policy;
-use super::section::{
-    DEFAULT_COVERED_SEALS_LAG_THRESHOLD, REALM_ADMIN_NAV_GROUPS, RealmAdminSection,
-};
+use super::section::{REALM_ADMIN_NAV_GROUPS, RealmAdminSection};
 use crate::components::encryption_floor_prompt::projection_has_recommended_encryption_floor;
 use crate::models::RealmTreeNodeKind;
 use crate::routes::Route;
@@ -73,10 +71,6 @@ pub fn RealmAdminPanel(
     let cap_constraint_kind_selected = use_memo(move || Some(cap_constraint_kind()));
     let mut cap_temporal_not_before = use_signal(String::new);
     let mut cap_temporal_expires_at = use_signal(String::new);
-    // Covered_frontier alert threshold. Default 5 (mirrors sodmin's
-    // `DEFAULT_LAG_WARN_THRESHOLD`); user can override via the numeric
-    // input next to the banner.
-    let mut covered_seals_threshold = use_signal(|| DEFAULT_COVERED_SEALS_LAG_THRESHOLD);
     // Read-only notary cell value. The Arkret HTTP catalog does not expose
     // this as a spec endpoint yet, so surface that inline rather than
     // pretending a private path exists.
@@ -109,29 +103,11 @@ pub fn RealmAdminPanel(
         .state_root
         .clone()
         .unwrap_or_else(|| "(not published)".to_owned());
-    // MLS epoch + governance covered_seals for the read-only widget.
-    // `mls_epoch` is the cas-register value of ak.component.mls.epoch.v1;
-    // `covered_seals` is the
-    // ak.component.governance.covered_seals.v1 cell value. Both come
-    // from the same seal view the bottom-cells banner reads.
+    // MLS epoch from the cas-register value of ak.component.mls.epoch.v1.
     let mls_epoch_label = seal_view
         .mls_epoch
         .map(|epoch| epoch.to_string())
         .unwrap_or_else(|| "(no MLS epoch published)".to_owned());
-    let covered_seals_label = seal_view
-        .covered_seals
-        .clone()
-        .unwrap_or_else(|| "(no governance covered_seals published)".to_owned());
-    // Covered_frontier_lag value + threshold check for the alert banner.
-    // We render only when a lag value has actually been surfaced AND it
-    // exceeds the (user-configurable) warning threshold - matches the
-    // sodmin admin page UX.
-    let covered_seals_lag_value = seal_view.covered_seals_lag;
-    let covered_seals_lag_threshold = covered_seals_threshold();
-    let covered_seals_alert = seal_view.covered_seals_lag_above(covered_seals_lag_threshold);
-    let covered_seals_lag_label = covered_seals_lag_value
-        .map(|lag| lag.to_string())
-        .unwrap_or_else(|| "-".to_owned());
     // per-Realm Move submission tracker. Drives the state-pill list +
     // the Realm-wide notary_paused banner.
     let move_submissions = state_store
@@ -148,12 +124,6 @@ pub fn RealmAdminPanel(
             "Writes paused",
             "badge red",
             "Rotate or recover the notary before asking members to retry writes.",
-        )
-    } else if covered_seals_alert {
-        (
-            "Needs attention",
-            "badge amber",
-            "Review covered_seals lag and wait for governance frontier catch-up.",
         )
     } else if realm_pending_mls_binding {
         (
@@ -192,8 +162,7 @@ pub fn RealmAdminPanel(
     };
     let alert_count = usize::from(realm_paused)
         + usize::from(realm_pending_mls_binding)
-        + usize::from(!bottom_cells.is_empty())
-        + usize::from(covered_seals_alert);
+        + usize::from(!bottom_cells.is_empty());
     let projected_member_count =
         projected_members_for_realm(&state_store.read(), &selected_realm_id).len();
     // RRK durability active (mode != none + mls_exporter_aead_v1) gates the
@@ -324,15 +293,15 @@ pub fn RealmAdminPanel(
                 }
             }
             // Pending MLS binding toast — when a recent E2EE message Event
-            // asserts a covered_seals the local
-            // MLS view has not yet acknowledged. Stays up until the
+            // references a Security Frontier the local MLS view has not yet
+            // acknowledged. Stays up until the
             // user clears the underlying Move record.
             if realm_pending_mls_binding {
                 div {
                     class: "event",
                     "data-testid": "pending-mls-binding-toast",
                     div { class: "event-head",
-                        span { "covered_seals has not yet caught up to the required governance frontier" }
+                        span { "Security Frontier binding has not yet been acknowledged" }
                         span { class: "badge amber", "pending_mls_binding" }
                     }
                     div { class: "muted",
@@ -487,10 +456,6 @@ pub fn RealmAdminPanel(
                             span { if realm_pending_mls_binding { "Pending governance acknowledgement" } else { "No pending binding alert" } }
                         }
                         div { class: "metric",
-                            strong { "Covered seals" }
-                            span { "lag {covered_seals_lag_label} / threshold {covered_seals_lag_threshold}" }
-                        }
-                        div { class: "metric",
                             strong { "Next step" }
                             span { "{security_next_step}" }
                         }
@@ -511,70 +476,17 @@ pub fn RealmAdminPanel(
                         realm_id: selected_realm_id.clone(),
                     }
                 }
-                // Covered_frontier_lag alert banner. Mirrors sodmin's admin
-                // page banner but stays client-side - it reads the lag from
-                // the LocalSealView populated on /sync, compares to a
-                // user-configurable threshold (default 5, see
-                // DEFAULT_COVERED_SEALS_LAG_THRESHOLD), and only renders
-                // when soland has surfaced a lag AND it exceeds threshold.
-                // Operators see the same urgency cue here that sodmin shows
-                // on the dedicated covered_seals page.
-                div { class: "event", "data-testid": "covered-frontier-threshold-row",
-                    div { class: "event-head",
-                        span { "covered_seals alert threshold" }
-                        span { "client-side" }
-                    }
-                    div { class: "muted",
-                        "Surface a banner when soland's published covered_seals_lag exceeds this value. Default 5 (mirrors sodmin)."
-                    }
-                    Label { html_for: "covered-frontier-threshold-input", "Threshold (Moves)" }
-                    input {
-                        id: "covered-frontier-threshold-input",
-                        "data-testid": "covered-frontier-threshold-input",
-                        r#type: "number",
-                        min: "0",
-                        value: "{covered_seals_lag_threshold}",
-                        oninput: move |evt| {
-                            if let Ok(parsed) = evt.value().parse::<u64>() {
-                                covered_seals_threshold.set(parsed);
-                            }
-                        },
-                    }
-                    div { class: "muted", "data-testid": "covered-frontier-lag-value",
-                        "current covered_seals_lag: {covered_seals_lag_label}"
-                    }
-                }
-                if covered_seals_alert {
-                    div { class: "event", "data-testid": "covered-frontier-alert-banner",
-                        div { class: "event-head",
-                            span { "covered_seals lag alert" }
-                            span { class: "badge red", "above threshold" }
-                        }
-                        div { class: "muted", "data-testid": "covered-frontier-alert-message",
-                            "Lag of {covered_seals_lag_label} Moves is above the warn threshold {covered_seals_lag_threshold}; investigate MLS group health (member offline, KeyPackage stale). Admin tools live on the sodmin covered_seals page."
-                        }
-                    }
-                }
-                // MLS epoch + governance frontier read-only widget. Reads
-                // from the same LocalSealView the bottom-cells banner
-                // uses, so it costs no extra fetch - just surfaces two
-                // well-known cells (mls.epoch.v1,
-                // governance.covered_seals.v1) for admin visibility into
-                // E2EE rotation status and governance gating without leaving
-                // the page.
+                // Read-only MLS epoch widget from the current Seal view.
                 div { class: "event", "data-testid": "mls-epoch-widget",
                     div { class: "event-head",
-                        span { "MLS epoch & governance frontier" }
-                        span { "ak.component.mls.epoch.v1 · governance.covered_seals.v1" }
+                        span { "MLS epoch" }
+                        span { "ak.component.mls.epoch.v1" }
                     }
                     div { class: "muted",
-                        "Read-only view of the most recent MLS epoch published in the cell map and the governance covered_seals value Move acceptance gates against. Updates as soon as sync surfaces a new seal view — no fetch button needed."
+                        "Read-only view of the most recent MLS epoch published in the cell map."
                     }
                     div { class: "muted", "data-testid": "mls-epoch-value",
                         "MLS epoch: {mls_epoch_label}"
-                    }
-                    div { class: "muted", "data-testid": "governance-covered-frontier",
-                        "covered_seals: {covered_seals_label}"
                     }
                 }
                 // Seal frontier debug — shows whether sync has surfaced a

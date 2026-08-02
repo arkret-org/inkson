@@ -618,9 +618,15 @@ mod personal_agent_tests {
             event.payload["verification_method"],
             verification_method.as_str()
         );
+        let authorize_public_key_digest =
+            arkret_signatures::agent_evidence::agent_signing_public_key_runtime_digest(
+                &request.verification_method,
+                &signing_key_binding.public_key,
+            )
+            .unwrap();
         assert_eq!(
             event.payload["public_key_digest"],
-            signing_key_binding.public_key_digest.as_str()
+            authorize_public_key_digest.as_str()
         );
         let binding_digest = arkret_signatures::agent_evidence::agent_signing_key_binding_digest(
             &signing_key_binding,
@@ -637,7 +643,7 @@ mod personal_agent_tests {
             &signing_key_binding.controller_id,
             &request.verification_method,
             &event.event_id,
-            &signing_key_binding.public_key_digest,
+            &authorize_public_key_digest,
             &binding_digest,
             &arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
                 bytes: ed25519_dalek::SigningKey::from_bytes(&[41u8; 32])

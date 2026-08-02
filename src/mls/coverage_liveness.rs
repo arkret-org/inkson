@@ -1,12 +1,10 @@
 //! `encryption-and-audit.md` §2.4.1 / §2.5.2 — recover a scope from
 //! `epoch_update_required` by advancing the MLS epoch.
 //!
-//! §2.5.2 gates every E2EE application DataEvent on `M`, the governance Seal
-//! set the message depends on, being covered by the `covered_seals_cell`
-//! resolved at its `seal_ref`. `M` grows whenever a membership / policy /
-//! capability Control Move is sealed, and only an accepted `ak.mls.commit`
-//! carrying a fresh `governance_binding` puts the new Seals back into the
-//! accumulator. §2.4.1 makes the sender MUST pause until that happens.
+//! §2.5.2 gates every E2EE application DataEvent on the accepted MLS Security
+//! Frontier. Membership or key-access control changes require an accepted
+//! `ak.mls.commit` whose governance binding projects the new control state and
+//! active leaf set. §2.4.1 makes the sender MUST pause until that happens.
 //!
 //! Every commit inkson emitted before this module was bound to a membership
 //! frontier change (`sync_engine`'s Remove pass, `mls::admission`'s Add pass).

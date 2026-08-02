@@ -10,7 +10,7 @@
 //! message-write path —
 //!   1. MLS encrypt of the canonical Content Block bytes (`run_local_mls_encrypt` →
 //!      `mls::runtime::encrypt_message_with_device_snapshot`),
-//!   2. forced `ak.mls.commit` envelope build (governance binding / prev→post epoch / policy_root /
+//!   2. forced `ak.mls.commit` envelope build (governance binding / prev→post epoch /
 //!      membership_frontier),
 //!   3. spec-canonical `ak.schema.encrypted_envelope.v1` wrap bound to the group-state ref,
 //!   4. `ak.message.create` payload build (with reply-to + message id),
@@ -566,7 +566,7 @@ pub(crate) async fn submit_secure_send(
 
     if let Some(commit_event) = commit_event {
         // Submit the forced MLS commit first; if it fails, abort the message
-        // send (covered_seals won't bind).
+        // send (the Security Frontier will not bind).
         match match api.event_submitter() {
             Ok(sub) => sub.submit_sdk_event(&commit_event).await,
             Err(err) => Err(err),

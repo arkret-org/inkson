@@ -1980,7 +1980,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 let seal_view = state_store.read().seal_view_for_realm(&realm);
                                 // Shared MLS core: encrypt → forced ak.mls.commit
                                 // envelope (governance / prev→post epoch /
-                                // policy_root / membership_frontier) → spec
+                                // Security Frontier) → spec
                                 // `ak.schema.encrypted_envelope.v1` wrap →
                                 // `ak.schema.encrypted_envelopeis mirrors the
                                 // shared secure send builder.

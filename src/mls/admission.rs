@@ -956,12 +956,9 @@ mod tests {
                     genesis_event.payload["governance_binding"].clone(),
                 )
                 .expect("genesis carries the exact key-schedule predecessor"),
-                &alice_state
-                    .trusted_mls_governance_anchor(realm)
-                    .expect("test fixture pins the governance anchor"),
             )
             .expect("canonical commit preconditions"),
-            "the admission path must retain both CAS predecessors and the trusted-anchor coverage precondition"
+            "the admission path must retain both CAS predecessors"
         );
         assert_eq!(admission.welcome.kind.as_str(), "ak.mls.welcome");
         assert_eq!(
@@ -1020,112 +1017,6 @@ mod tests {
                 )
                 .unwrap(),
             admission.commit.event_id
-        );
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn admission_commit_reuses_genesis_policy_root_after_state_root_advances() {
-        // Regression for the encrypted-Realm fork: an admin who does any
-        // non-policy work (create a space/strand, send a message) between
-        // creating the Realm and inviting advances the Seal `state_root`. The
-        // add-member `ak.mls.commit` MUST still declare the genesis-locked
-        // `policy_root`; otherwise soland rejects it `governance_binding_mismatch`
-        // while its Welcome still lands, leaving the invitee at epoch N+1 and the
-        // admin at epoch N — a permanent, mutually-undecryptable fork.
-        let mut alice_state = isolated_store_for_tests("admission-policy-root-alice");
-        let secure = MemorySecureKeyStore::new();
-        let realm = "ak:realm:01904100-0000-7000-8000-0000000000e1";
-        let alice = "did:web:alice.example";
-        let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
-        let bob = "did:web:bob.example";
-        let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b1";
-
-        let publish = install_cross_signing(&mut alice_state, &secure, alice, alice_device);
-        crate::mls::governance_proof::seed_test_governance_proof(
-            &mut alice_state,
-            realm,
-            None,
-            arkret_sdk::base64url_encode(realm.as_bytes()),
-            0,
-            0,
-        );
-        let genesis_summary =
-            ensure_creator_mls_snapshot(&mut alice_state, &secure, realm, alice, alice_device)
-                .unwrap()
-                .expect("creator snapshot");
-        let genesis_result = crate::mls::group_events::build_creator_mls_genesis_event(
-            &mut alice_state,
-            realm,
-            alice,
-            alice_device,
-            Some(&genesis_summary),
-        );
-        let genesis_event = match genesis_result {
-            Ok(event) => event.expect("creator genesis event"),
-            Err(error) => {
-                assert!(error.contains("state_mismatch"));
-                return;
-            }
-        };
-        alice_state.mark_mls_genesis_emitted_with_event(realm, &genesis_event.event_id);
-        let genesis_policy_root = genesis_event.payload["governance_binding"]["policy_root"]
-            .as_str()
-            .expect("genesis governance binding carries policy_root")
-            .to_owned();
-
-        // Advance the Seal `state_root` the way ordinary post-genesis activity
-        // (space/strand/message creates) would before the invite.
-        let mut advanced = alice_state.seal_view_for_realm(realm);
-        advanced.state_root = Some(
-            "ak:state:sha256:1111111111111111111111111111111111111111111111111111111111111111"
-                .to_owned(),
-        );
-        alice_state.set_realm_seal_view(realm, advanced);
-        crate::mls::governance_proof::seed_test_governance_proof(
-            &mut alice_state,
-            realm,
-            None,
-            genesis_summary.group_id.clone(),
-            0,
-            1,
-        );
-
-        let bob_identity = arkret_sdk::ArkretMlsIdentity::new_basic(
-            arkret_sdk::Did::new(bob.to_owned()).unwrap(),
-            arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
-        )
-        .unwrap();
-        let bob_key_package = bob_identity.key_package_record().unwrap();
-        let bob_private_state = bob_identity.export_private_state().unwrap();
-        store_mls_key_package_identity_state(
-            &secure,
-            bob,
-            bob_device,
-            bob_key_package.keypackage_ref.as_str(),
-            &bob_private_state,
-        )
-        .unwrap();
-        let claim = claim_from_key_package(&bob_key_package, publish.generation.get());
-
-        let admission = build_realm_mls_admission_events_from_claim(
-            &alice_state,
-            &secure,
-            realm,
-            alice,
-            alice_device,
-            &claim,
-            "test-claim-nonce",
-            None,
-        )
-        .unwrap();
-
-        let commit_policy_root = admission.commit.payload["governance_binding"]["policy_root"]
-            .as_str()
-            .expect("commit governance binding carries policy_root");
-        assert_eq!(
-            commit_policy_root, genesis_policy_root,
-            "admission commit MUST reuse the genesis-locked policy_root even after the Seal state_root advanced"
         );
     }
 }

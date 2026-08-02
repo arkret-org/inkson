@@ -685,18 +685,28 @@ pub fn build_agent_key_authorization_for_pairing(
     .map_err(anyhow::Error::msg)?;
     let agent_key_id = NonEmptyString::new(request.verification_method.as_str().to_owned())
         .map_err(anyhow::Error::msg)?;
+    let binding_public_key = AgentSigningPublicKey {
+        kty: request.public_key.kty.clone(),
+        // The runtime approval JWK uses the JOSE algorithm name `EdDSA`,
+        // while the signing-key binding registry names the concrete key
+        // algorithm `Ed25519`.
+        alg: NonEmptyString::new("Ed25519").map_err(anyhow::Error::msg)?,
+        key: request.public_key.key.clone(),
+    };
+    let binding_public_key_digest =
+        arkret_signatures::agent_evidence::agent_signing_public_key_digest(
+            &request.verification_method,
+            &binding_public_key,
+        )
+        .map_err(|reason| anyhow::anyhow!(reason.as_str()))?;
     let mut signing_key_binding = AgentSigningKeyBinding {
         schema: NonEmptyString::new(arkret_sdk::SchemaId::AGENT_SIGNING_KEY_BINDING_V1.to_owned())
             .map_err(anyhow::Error::msg)?,
         agent_id: request.agent_id.clone(),
         agent_key_id: agent_key_id.clone(),
         verification_method: request.verification_method.clone(),
-        public_key: AgentSigningPublicKey {
-            kty: request.public_key.kty.clone(),
-            alg: request.public_key.alg.clone(),
-            key: request.public_key.key.clone(),
-        },
-        public_key_digest: runtime_public_key_digest.clone(),
+        public_key: binding_public_key,
+        public_key_digest: binding_public_key_digest,
         agent_key_authorize_event_id: authorize_event_id.clone(),
         issued_at,
         expires_at: None,

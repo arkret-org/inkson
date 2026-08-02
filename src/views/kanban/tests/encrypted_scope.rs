@@ -525,7 +525,12 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     assert_registered_payload_valid(&commit);
     assert!(!commit.payload.contains_key("group_id"));
     assert!(!commit.payload.contains_key("expected_prev_epoch"));
-    assert!(!commit.payload.contains_key("commit_bytes_b64"));
+    assert!(
+        commit.payload["commit_bytes_b64"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()),
+        "durable MLS commits must inline the complete RFC 9420 Commit bytes"
+    );
     assert!(!commit.payload.contains_key("preconditions"));
     assert!(!commit.payload.contains_key("effects"));
     assert_eq!(
@@ -540,90 +545,17 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
         })
     );
     assert_eq!(
-        commit.payload["governance_binding"]["membership_frontier"][0],
+        commit.payload["base_epoch_ref"],
         json!(base_group_state_ref)
     );
+    assert!(commit.payload["governance_binding"]["security_frontier_digest"].is_string());
+    assert!(
+        !commit.payload["governance_binding"]
+            .as_object()
+            .unwrap()
+            .contains_key("membership_frontier")
+    );
     assert!(state.load().raw_operations.is_empty());
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn mls_remove_commit_uses_explicit_revocation_membership_frontier() {
-    let mut state = temp_state_store("remove-frontier");
-    state.set_realm_seal_view(
-        TEST_REALM_ID,
-        crate::state::LocalSealView {
-            frontier: vec!["ak:event:0196419b-0000-7000-8000-000000000099".to_owned()],
-            ..crate::state::LocalSealView::default()
-        },
-    );
-    let revoke_frontier =
-        arkret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-000000000001".to_owned())
-            .unwrap();
-    let proposal_ref =
-        arkret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-000000000002".to_owned())
-            .unwrap();
-    state
-        .record_mls_group_state_ref_for_effective_scope(
-            TEST_REALM_ID,
-            None,
-            "mls-remove-group",
-            7,
-            arkret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-000000000099".to_owned())
-                .unwrap(),
-        )
-        .unwrap();
-    let commit = arkret_sdk::MlsCommitEnvelope {
-        group_id: "mls-remove-group".to_owned(),
-        epoch: 8,
-        commit: "commit-bytes".to_owned(),
-        commit_digest: arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
-        ratchet_tree: None,
-    };
-    let root = arkret_sdk::Hash::new(
-        "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    )
-    .unwrap();
-    let previous_governance_binding = arkret_sdk::MlsGovernanceBindingPayload::realm(
-        arkret_sdk::RealmId::new(TEST_REALM_ID.to_owned()).unwrap(),
-        "mls-remove-group",
-        7,
-        7,
-        root,
-        arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
-        arkret_sdk::CORE_REDUCER_PROFILE,
-    )
-    .unwrap();
-
-    let blocked = crate::mls::group_events::mls_remove_commit_event_from_store_for_effective_scope_with_proposal_refs(
-        &state,
-        TEST_REALM_ID,
-        None,
-        "did:web:alice.example",
-        &commit,
-        &previous_governance_binding,
-        vec![proposal_ref],
-        std::slice::from_ref(&revoke_frontier),
-    );
-    let event = match blocked {
-        Ok(value) => value,
-        Err(error) => {
-            assert!(
-                error.contains("state_mismatch"),
-                "unexpected error: {error}"
-            );
-            return;
-        }
-    };
-
-    assert_eq!(
-        event.payload["governance_binding"]["membership_frontier"],
-        json!([revoke_frontier.as_str()])
-    );
-    assert_ne!(
-        event.payload["governance_binding"]["membership_frontier"][0],
-        json!("ak:event:0196419b-0000-7000-8000-000000000099")
-    );
 }
 
 #[test]

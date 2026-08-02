@@ -509,8 +509,8 @@ fn encode_did_key(signing_key: &SigningKey) -> String {
 ///   policy / notary-cell mismatch); the Move never landed.
 /// - `NotaryPaused` — the Space's notary is paused (recovery notary not yet rotated, or quorum
 ///   unmet); the Space cannot advance until ops bring it back online.
-/// - `PendingMlsBinding` — the Move targets an E2EE message but its `covered_seals` precondition
-///   references a governance frontier the local MLS group has not yet acknowledged. Held
+/// - `PendingMlsBinding` — the Move targets an E2EE message but its Security Frontier binding
+///   references accepted control state the local MLS group has not yet acknowledged. Held
 ///   client-side until the binding is observed; the user sees a toast.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -540,7 +540,7 @@ impl MoveSubmissionState {
                     Self::RejectedSeal
                 }
                 r if r.contains("bottom") => Self::FailedBottom,
-                r if r.contains("covered_seals") || r.contains("mls_binding") => {
+                r if r.contains("security_frontier") || r.contains("mls_binding") => {
                     Self::PendingMlsBinding
                 }
                 _ => Self::FailedPrecondition,
@@ -1011,24 +1011,6 @@ pub struct ClientLocalState {
     /// Keys bind agent, method, authorization Event, state root and frontier.
     #[serde(default)]
     pub agent_signer_evidence: BTreeMap<String, CachedAgentSignerEvidence>,
-    /// MLS governance `policy_root` locked at `ak.mls.genesis`, keyed by the
-    /// same effective-scope key as [`Self::mls_genesis_emitted`]
-    /// (`mls_effective_scope_snapshot_key`).
-    ///
-    /// `encryption-and-audit.md` §2.5.1: the genesis-locked `policy_root` binds
-    /// the group's epoch chain; soland's `apply_commit_epoch` carries it forward
-    /// unchanged on every commit and rejects any `ak.mls.commit` whose binding
-    /// declares a different value with `governance_binding_mismatch`. Deriving
-    /// `policy_root` from the live Seal `state_root` (which advances on every
-    /// non-policy event — space/strand/message create) made the admission commit
-    /// drift away from the genesis-locked root the moment the creator did any
-    /// work before inviting, so the add-member commit was rejected while its
-    /// Welcome still landed — leaving the invitee at epoch N+1 and the admin at
-    /// epoch N (permanent fork, mutually undecryptable). We therefore record the
-    /// genesis-locked value once and reuse the exact bytes for every later
-    /// commit instead of recomputing from a moving root.
-    #[serde(default)]
-    pub mls_genesis_policy_root: BTreeMap<String, String>,
     /// `encryption-and-audit.md` §2.4.1 `epoch_update_required` — effective
     /// scopes whose last E2EE application DataEvent was refused with
     /// `mls_governance_binding_stale`, keyed by
@@ -1421,7 +1403,6 @@ impl Default for ClientLocalState {
             mls_historical_group_state_refs: BTreeMap::new(),
             mls_historical_snapshots: BTreeMap::new(),
             agent_signer_evidence: BTreeMap::new(),
-            mls_genesis_policy_root: BTreeMap::new(),
             mls_coverage_stale: BTreeMap::new(),
             mls_governance_proofs: BTreeMap::new(),
             mls_governance_proof_acquisitions: BTreeMap::new(),

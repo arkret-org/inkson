@@ -187,7 +187,7 @@ mod tests {
     fn mls_stale_classifier_accepts_canonical_typed_reason() {
         let envelope = ErrorEnvelope::new(
             arkret_sdk::error::ErrorCode::FAILED_PRECONDITION,
-            "covered_seals_cell is stale",
+            "security_frontier_digest is stale",
         )
         .with_detail(
             "reason_code",
@@ -202,17 +202,17 @@ mod tests {
     }
 
     #[test]
-    fn mls_stale_classifier_accepts_legacy_lease_wrapper() {
+    fn mls_stale_classifier_rejects_wrong_outer_code() {
         let envelope = ErrorEnvelope::new(
             arkret_sdk::error::ErrorCode::POLICY_VIOLATION,
-            "mls_governance_binding_stale: covered_seals_cell does not cover governance Seal",
+            arkret_sdk::error::ReasonCode::MLS_GOVERNANCE_BINDING_STALE,
         );
         let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
             status: 409,
             error: Box::new(envelope),
         });
 
-        assert!(is_mls_governance_binding_stale_error(&error));
+        assert!(!is_mls_governance_binding_stale_error(&error));
     }
 
     #[test]

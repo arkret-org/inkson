@@ -6,7 +6,7 @@
 
 pub mod account_recovery;
 pub(crate) mod admission;
-/// `epoch_update_required` repair: advance the MLS epoch so `covered_seals_cell`
+/// `epoch_update_required` repair: advance the MLS epoch so the Security Frontier
 /// covers the governance Seals a paused scope is missing.
 pub(crate) mod coverage_liveness;
 /// Replayable creator-side MLS bootstrap (accepted Seal view → verified

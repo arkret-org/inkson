@@ -7,30 +7,24 @@
 //! 2. the previous key-schedule governance binding
 //!    (`key_schedule_cell.head_eq(previous_governance_binding)`) — both CAS registers advance from
 //!    an exact, accepted predecessor.
-//! 3. the group's `covered_seals_cell.contains(required_governance_seal)` — the commit MUST already
-//!    cover the governance seal it asserts.
 //!
 //! What the commit *writes* is no longer producer-authored. v1 deleted the
 //! standalone Move object and its `effects[]` channel: the three governance
-//! cells an `ak.mls.commit` advances (epoch / key schedule / covered seals) are
+//! cells an `ak.mls.commit` advances (epoch / key schedule) are
 //! derived by the receiver from the registered reducer contract over the signed
 //! `kind + payload`. Preconditions stay on the Event and stay producer-signed,
 //! so only they are built here.
 //!
-//! All three cells are addressed by `payload.mls_group_id`. A Realm has one MLS
-//! group per Circle, so addressing the covered-seals frontier by `realm_id` —
-//! as the pre-v1 helper did — merged the frontiers of unrelated groups into one
-//! cell.
+//! Both cells are addressed by `payload.mls_group_id`.
 
-use arkret_sdk::mls_move::{covered_seals_cell_id, key_schedule_cell_id, mls_epoch_cell_id};
-use arkret_sdk::{Precondition, Predicate, PredicateOp, SealId};
+use arkret_sdk::mls_cells::{key_schedule_cell_id, mls_epoch_cell_id};
+use arkret_sdk::{Precondition, Predicate, PredicateOp};
 use serde_json::Value;
 
 /// The `ak.profile.mls_governance_binding.full.v1` profile id. Mirrors the
 /// hardening profile registered in `spec/v1/artifacts/profiles/conformance-profiles.json`.
 
-/// The exact predecessor and governance-seal preconditions an `ak.mls.commit`
-/// Event MUST carry.
+/// The exact predecessor preconditions an `ak.mls.commit` Event MUST carry.
 ///
 /// Both are addressed by the MLS group id, matching the registered
 /// `cell_subject` of the cells the commit goes on to write.
@@ -38,12 +32,9 @@ pub fn mls_commit_preconditions(
     mls_group_id: &str,
     prev_epoch: u64,
     previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
-    attested_governance_seal: &SealId,
 ) -> anyhow::Result<Vec<Precondition>> {
     let epoch_cell = mls_epoch_cell_id(mls_group_id)
         .map_err(|error| anyhow::anyhow!("mls epoch cell id invalid: {error:?}"))?;
-    let covered_seals_cell = covered_seals_cell_id(mls_group_id)
-        .map_err(|error| anyhow::anyhow!("covered seals cell id invalid: {error:?}"))?;
     let key_schedule_cell = key_schedule_cell_id(mls_group_id)
         .map_err(|error| anyhow::anyhow!("key schedule cell id invalid: {error:?}"))?;
     Ok(vec![
@@ -67,25 +58,12 @@ pub fn mls_commit_preconditions(
                 predicate_id: None,
             },
         },
-        Precondition {
-            cell: covered_seals_cell,
-            predicate: Predicate {
-                op: PredicateOp::Contains,
-                value: Some(Value::String(attested_governance_seal.as_str().to_owned())),
-                values: None,
-                predicate_id: None,
-            },
-        },
     ])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn seal() -> SealId {
-        SealId::new(format!("ak:seal:sha256:{}", "a".repeat(64))).unwrap()
-    }
 
     fn governance_binding() -> arkret_sdk::MlsGovernanceBindingPayload {
         let root = arkret_sdk::Hash::new(
@@ -112,12 +90,11 @@ mod tests {
     /// `crate::mls::governance_proof`, which is where the projection is
     /// actually consumed.
     #[test]
-    fn commit_preconditions_bind_both_cas_predecessors_and_covered_seal_by_group() {
+    fn commit_preconditions_bind_both_cas_predecessors_by_group() {
         let previous_binding = governance_binding();
-        let preconditions =
-            mls_commit_preconditions("mls-group-1", 7, &previous_binding, &seal()).unwrap();
+        let preconditions = mls_commit_preconditions("mls-group-1", 7, &previous_binding).unwrap();
 
-        assert_eq!(preconditions.len(), 3);
+        assert_eq!(preconditions.len(), 2);
         assert!(preconditions[0].cell.as_str().contains("mls.epoch"));
         assert_eq!(preconditions[0].predicate.op, PredicateOp::HeadEq);
         assert_eq!(preconditions[0].predicate.value, Some(Value::from(7u64)));
@@ -127,13 +104,7 @@ mod tests {
             preconditions[1].predicate.value,
             Some(serde_json::to_value(&previous_binding).unwrap())
         );
-        assert!(preconditions[2].cell.as_str().contains("covered_seals"));
-        assert_eq!(preconditions[2].predicate.op, PredicateOp::Contains);
-        // Both cells are keyed by the MLS group, never by the Realm: a Realm
-        // has one group per Circle, and merging their frontiers would let one
-        // Circle's coverage satisfy another Circle's commit.
         assert!(preconditions[0].cell.as_str().ends_with("mls-group-1"));
         assert!(preconditions[1].cell.as_str().ends_with("mls-group-1"));
-        assert!(preconditions[2].cell.as_str().ends_with("mls-group-1"));
     }
 }
