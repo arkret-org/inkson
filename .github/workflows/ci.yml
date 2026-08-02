@@ -100,6 +100,10 @@ jobs:
         working-directory: inkson
         run: bash scripts/deletion_gate.sh
 
+      - name: Registered cell-family literal gate
+        working-directory: inkson
+        run: python ../arkret-rust-sdk/tools/lint-cell-family-literals.py --root .
+
       - name: Check formatting
         working-directory: inkson
         run: cargo fmt --all -- --check

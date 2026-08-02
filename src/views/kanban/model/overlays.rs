@@ -804,7 +804,7 @@ pub(crate) fn strand_position_component(body: Option<&Value>) -> Option<&Value> 
         .iter()
         .find(|component| {
             component.get("family").and_then(Value::as_str)
-                == Some("ak.component.strand.position.v1")
+                == Some(arkret_wire::CellFamilyId::STRAND_POSITION_V1)
         })
 }
 

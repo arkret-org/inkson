@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { mockArkretContract } from "./mockArkretContract";
 
 const DEMO_REALM = "ak:realm:0196419b-0000-7000-8000-000000000000";
+const STRAND_POSITION_CELL_FAMILY = "ak.component.strand.position.v1";
 const DEMO_FRONTIER_EVENT = "ak:event:0196419b-0000-7000-8000-00000000e2e0";
 const SETUP_REALM = "ak:realm:01js0setupflow000000000000";
 const LOW_FLOOR_REALM = "ak:realm:01lowfloor0000000000000000";
@@ -1937,7 +1938,7 @@ export async function mockArkretApi(
         const component = Array.isArray(body.payload?.components)
           ? body.payload.components.find(
               (candidate: { family?: string }) =>
-                candidate.family === "ak.component.strand.position.v1",
+                candidate.family === STRAND_POSITION_CELL_FAMILY,
             )
           : undefined;
         const strandId = body.payload?.strand_id ?? object.id;

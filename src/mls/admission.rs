@@ -830,7 +830,10 @@ mod tests {
         let writes = crate::operation::direct_registered_cell_writes(&event).unwrap();
         assert_eq!(writes.len(), 1);
         let cell = arkret_sdk::CellId::from_ref(&writes[0].cell).unwrap();
-        assert_eq!(cell.component(), "ak.component.realm_key.delivery.v1");
+        assert_eq!(
+            cell.component(),
+            arkret_wire::CellFamilyId::REALM_KEY_DELIVERY_V1
+        );
         assert_eq!(
             arkret_sdk::events::cba_cell_family_plane(cell.component()),
             Some(arkret_sdk::events::CbaEffectPlane::Data)

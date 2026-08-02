@@ -469,7 +469,7 @@ fn build_realm_create_event_from_object(
     let created_at = object.created_at;
     // ak.component.realm.create.v1 is an ordered-log genesis singleton;
     // the bootstrap write asserts head_eq null and sets the realm metadata.
-    let cell = arkret_wire::null_subject_cell("ak.component.realm.create.v1");
+    let cell = arkret_wire::null_subject_cell(arkret_wire::CellFamilyId::REALM_CREATE_V1);
     let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
     let realm_body = arkret_sdk::RealmCreatePayload::new(object)
         .to_value()
@@ -1270,7 +1270,7 @@ fn build_realm_alias_payload_event(
     payload: arkret_sdk::RealmAliasPayload,
     expected_head: Value,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    let cell = arkret_wire::null_subject_cell("ak.component.realm.alias.v1");
+    let cell = arkret_wire::null_subject_cell(arkret_wire::CellFamilyId::REALM_ALIAS_V1);
     let created_at = event_timestamp();
     OperationBuilder::new(realm_id, actor_id, EventKind::RealmAlias)
         .body(payload.to_value()?)
@@ -1342,7 +1342,9 @@ pub fn build_plaintext_visible_services_event(
         return Ok(None);
     }
     let created_at = event_timestamp();
-    let cell = arkret_wire::null_subject_cell("ak.component.realm.plaintext_visible_services.v1");
+    let cell = arkret_wire::null_subject_cell(
+        arkret_wire::CellFamilyId::REALM_PLAINTEXT_VISIBLE_SERVICES_V1,
+    );
     let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
     let body_value = arkret_sdk::PlaintextVisibleServicesPayload::new(services).to_value()?;
     let event = OperationBuilder::new(

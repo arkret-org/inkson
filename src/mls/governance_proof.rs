@@ -1042,7 +1042,7 @@ fn verify_request_binding(
 fn target_notary_value(
     bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
 ) -> Result<arkret_sdk::NotaryValue, String> {
-    let expected = arkret_wire::null_subject_cell("ak.component.notary.v1");
+    let expected = arkret_wire::null_subject_cell(arkret_wire::CellFamilyId::NOTARY_V1);
     let leaf = bundle
         .control_state
         .iter()
