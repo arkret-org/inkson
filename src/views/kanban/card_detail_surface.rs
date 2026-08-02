@@ -238,6 +238,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
     let mut sidecar_edit_context_seen = use_signal(SidecarTrackEditContext::default);
     let mut suspended_shared_track_edits = use_signal(BTreeMap::<String, SuspendedTrackEdit>::new);
     let mut suspended_private_track_edits = use_signal(BTreeMap::<String, SuspendedTrackEdit>::new);
+    let mut card_detail_backdrop_pressed = use_signal(|| false);
     let edit_context_realm_id = selected_realm_id.clone();
     use_effect(move || {
         let selected_strand = selected_card()
@@ -453,7 +454,12 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                             class: "{overlay_class}",
                             "data-testid": "card-detail-overlay",
                             role: "presentation",
+                            onmousedown: move |_| card_detail_backdrop_pressed.set(true),
                             onclick: move |_| {
+                                if !card_detail_backdrop_pressed() {
+                                    return;
+                                }
+                                card_detail_backdrop_pressed.set(false);
                                 selected_card.set(None);
                                 editing_card_detail.set(false);
                                 card_detail_edit_status.set(String::new());
@@ -478,6 +484,14 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                 "data-testid": "card-detail-modal",
                                 role: "dialog",
                                 "aria-modal": "true",
+                                onmousedown: move |event: dioxus::events::MouseEvent| {
+                                    event.stop_propagation();
+                                    card_detail_backdrop_pressed.set(false);
+                                },
+                                onmouseup: move |event: dioxus::events::MouseEvent| {
+                                    event.stop_propagation();
+                                    card_detail_backdrop_pressed.set(false);
+                                },
                                 onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
                                 if is_docked {
                                     div {

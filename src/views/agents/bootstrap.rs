@@ -635,6 +635,8 @@ fn build_active_mls_history_series_event(
 ) -> anyhow::Result<arkret_sdk::Event> {
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active controller signer is required"))?;
+    let verification_method =
+        principal_bound_active_series_verification_method(controller_id, signer.as_ref())?;
     let issued_at = arkret_sdk::canonical::format_timestamp_canonical(crate::clock::now_utc());
     let mut payload = json!({
         "schema": SchemaId::KEY_BACKUP_ACTIVE_SERIES_V1,
@@ -649,7 +651,7 @@ fn build_active_mls_history_series_event(
         },
         "issued_at": issued_at,
         "auth_data": {
-            "verification_method": signer.verification_method(),
+            "verification_method": verification_method,
             "signature_algorithm": "Ed25519",
             "signature": "pending",
             "signed_fields": ACTIVE_SERIES_SIGNED_FIELDS
@@ -686,6 +688,19 @@ fn build_active_mls_history_series_event(
     )
     .body(payload)
     .build_sdk_event("inkson")
+}
+
+fn principal_bound_active_series_verification_method(
+    controller_id: &str,
+    signer: &crate::event_signer::InksonEventSigner,
+) -> anyhow::Result<String> {
+    let device_id = signer
+        .device_id()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("active controller device id is unavailable"))?;
+    arkret_sdk::DidUrl::new(format!("{controller_id}#{device_id}"))
+        .map(|method| method.to_string())
+        .map_err(|error| anyhow::anyhow!(error))
 }
 
 fn agent_pcr_recovery_matches(
@@ -1564,6 +1579,25 @@ mod tests {
         assert_eq!(
             controller_signer_device_id(controller_id, &signer, Some(controller_id)).unwrap(),
             TEST_DEVICE_ID
+        );
+    }
+
+    #[test]
+    fn active_series_uses_the_controller_principal_bound_device_method() {
+        let controller_id = "did:web:alice.example";
+        let signer = crate::event_signer::build_ed25519_device_signer(
+            [35_u8; 32],
+            "did:key:z6MkhLocalDeviceSigningKey",
+            TEST_DEVICE_ID,
+        );
+
+        assert_eq!(
+            principal_bound_active_series_verification_method(controller_id, &signer).unwrap(),
+            format!("{controller_id}#{TEST_DEVICE_ID}")
+        );
+        assert_ne!(
+            principal_bound_active_series_verification_method(controller_id, &signer).unwrap(),
+            signer.verification_method()
         );
     }
 

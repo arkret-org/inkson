@@ -599,17 +599,8 @@ async fn submit_first_recovery_policy_seal(
 }
 
 fn recovery_policy_frontier_pending(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        matches!(
-            cause.downcast_ref::<arkret_sdk::http_client::Error>(),
-            Some(arkret_sdk::http_client::Error::Api { error, .. })
-                if error.code() == "frontier_unavailable"
-        ) || matches!(
-            cause.downcast_ref::<arkret_sdk::Error>(),
-            Some(arkret_sdk::Error::Api { error, .. })
-                if error.code() == "frontier_unavailable"
-        )
-    })
+    crate::api_error::api_error_status_and_envelope(error)
+        .is_some_and(|(_, envelope)| envelope.code() == "frontier_unavailable")
 }
 
 fn validate_active_policy_key_material(
@@ -1152,6 +1143,19 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn recovery_policy_frontier_retry_recognizes_transport_client_error() {
+        let error = anyhow::Error::new(crate::api_error::TransportClientError {
+            status: reqwest::StatusCode::PRECONDITION_FAILED,
+            error: arkret_sdk::ErrorEnvelope::new(
+                arkret_sdk::error::ErrorCode::FRONTIER_UNAVAILABLE,
+                "accepted recovery policy is waiting for its successor Seal",
+            ),
+        });
+
+        assert!(recovery_policy_frontier_pending(&error));
+    }
 
     fn identity_recovery_key_material() -> arkret_sdk::identity_root::IdentityRecoveryKeyMaterial {
         arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(

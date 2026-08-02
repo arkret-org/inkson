@@ -445,7 +445,7 @@ mod browser {
 pub(crate) mod tests_support {
     pub(crate) fn describe_without_websocket() -> arkret_sdk::ServiceDescribe {
         super::tests::describe_with(vec![arkret_sdk::SupportedBinding::new(
-            arkret_sdk::BindingKind::HttpJson,
+            arkret_wire::BindingKind::HttpJson,
         )])
     }
 
@@ -478,7 +478,7 @@ pub(crate) mod tests {
     #[test]
     fn a_service_without_the_profile_stays_on_http() {
         let selector = WebSocketTransportSelector::from_describe(&describe_with(vec![
-            arkret_sdk::SupportedBinding::new(arkret_sdk::BindingKind::HttpJson),
+            arkret_sdk::SupportedBinding::new(arkret_wire::BindingKind::HttpJson),
         ]));
         assert!(selector.descriptor().is_none());
     }

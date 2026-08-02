@@ -84,6 +84,7 @@ type MockArkretApiOptions = {
   preseedRecoveryMaterial?: boolean;
   seedSharedHistoryCount?: number;
   seedDefaultActiveAgent?: boolean;
+  emptyBoard?: boolean;
 };
 
 type MockAccountDevice = {
@@ -433,9 +434,7 @@ export async function mockArkretApi(
                 key_agreement_ref: `${accountPrincipalId}#backup-hpke-0`,
                 alg: "X25519",
                 public_key_multibase: seededBackupHpkeKey,
-                hpke_suites: [
-                  "ak.hpke_x25519_aead_chacha20poly1305.v1",
-                ],
+                hpke_suites: ["ak.hpke_x25519_aead_chacha20poly1305.v1"],
                 use: "backup_hpke",
                 not_before: "2026-07-29T00:00:00.000Z",
                 expires_at: "2036-07-29T00:00:00.000Z",
@@ -491,10 +490,7 @@ export async function mockArkretApi(
   const personalAgentGrants = new Map<string, Array<Record<string, unknown>>>();
   const managedPcrRealmIds = new Set<string>();
   const managedPcrSealHeads = new Map<string, Record<string, unknown>>();
-  const managedPcrSealPaths = new Map<
-    string,
-    Array<Record<string, unknown>>
-  >();
+  const managedPcrSealPaths = new Map<string, Array<Record<string, unknown>>>();
   let personalAgentCounter = 0;
   // Two orthogonal axes (key-management.md §3.6.1). The fixtures store a single
   // legacy status; project it into the lifecycle intent (status) and the
@@ -565,8 +561,8 @@ export async function mockArkretApi(
         key_id: "runtime-key-1",
         verification_method: `${activeAssistantId}#runtime-key-1`,
         authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000a600",
-        },
-      ],
+      },
+    ],
   };
   if (options.seedDefaultActiveAgent !== false) {
     personalAgents.set(activeAssistantId, {
@@ -759,118 +755,123 @@ export async function mockArkretApi(
       revoked_at: null,
     });
   };
-  const boardSpaceContainers: SpaceContainerProjection[] = [
-    {
-      container_space_id: DEMO_BOARD_SPACE,
-      realm_id: DEMO_REALM,
-      kind: "board",
-      title: "Persisted demo board",
-      state: "active",
-    },
-    {
-      container_space_id: DEMO_SECOND_BOARD_SPACE,
-      realm_id: DEMO_REALM,
-      kind: "board",
-      title: "Secondary planning board",
-      state: "active",
-    },
-    {
-      container_space_id: DEMO_TODO_LIST,
-      realm_id: DEMO_REALM,
-      kind: "list",
-      title: "To Do",
-      state: "active",
-      rank: "U",
-      parent_space_id: DEMO_BOARD_SPACE,
-    },
-    {
-      container_space_id: DEMO_PROGRESS_LIST,
-      realm_id: DEMO_REALM,
-      kind: "list",
-      title: "In Progress",
-      state: "active",
-      rank: "f",
-      parent_space_id: DEMO_BOARD_SPACE,
-    },
-    {
-      container_space_id: DEMO_DONE_LIST,
-      realm_id: DEMO_REALM,
-      kind: "list",
-      title: "Done",
-      state: "active",
-      rank: "p",
-      parent_space_id: DEMO_BOARD_SPACE,
-    },
-    {
-      container_space_id: DEMO_SECOND_LIST,
-      realm_id: DEMO_REALM,
-      kind: "list",
-      title: "Selected Backlog",
-      state: "active",
-      rank: "U",
-      parent_space_id: DEMO_SECOND_BOARD_SPACE,
-    },
-  ];
-  const boardStrandProjections: StrandProjection[] = [
-    {
-      strand_id: DEMO_STRAND_LEGAL_REVIEW,
-      realm_id: DEMO_REALM,
-      title: options.demoPrimaryCardTitle ?? "Legal review for public beta",
-      summary:
-        "Finalize external processor wording before launch checklist can move.",
-      state: "active",
-      board_space_id: DEMO_BOARD_SPACE,
-      list_space_id: DEMO_TODO_LIST,
-      rank: "U",
-      assigned_actor_ids: ["did:web:alice.example"],
-      fields: {
-        labels: ["legal", "beta"],
-        due_at: "May 08",
-        discussion_visibility: "locked",
-        discussion_ref_hash: "sha256:locked-private-decision",
-        locked_reason:
-          "You can see that a restricted discussion is linked, but not its name or members.",
-      },
-    },
-    {
-      strand_id: DEMO_STRAND_ONBOARDING_COPY,
-      realm_id: DEMO_REALM,
-      title: "Onboarding copy",
-      summary:
-        "Waiting on discussion-scoped feedback from support and docs reviewers.",
-      state: "active",
-      board_space_id: DEMO_BOARD_SPACE,
-      list_space_id: DEMO_PROGRESS_LIST,
-      rank: "U",
-      assigned_actor_ids: ["did:web:bob.example"],
-      fields: { labels: ["copy", "support"], due_at: "May 10" },
-    },
-    {
-      strand_id: DEMO_STRAND_SECURITY_SIGNOFF,
-      realm_id: DEMO_REALM,
-      title: "Security sign-off",
-      summary: "Projection detected a stale column head after an offline move.",
-      state: "active",
-      board_space_id: DEMO_BOARD_SPACE,
-      list_space_id: DEMO_DONE_LIST,
-      rank: "U",
-      assigned_actor_ids: ["did:web:carol.example"],
-      fields: { labels: ["security", "reviewed"], due_at: "May 01" },
-    },
-    {
-      strand_id: DEMO_STRAND_SECONDARY_CARD,
-      realm_id: DEMO_REALM,
-      title: "Secondary board card",
-      summary:
-        "Only visible after the Board selector switches projection scope.",
-      state: "active",
-      board_space_id: DEMO_SECOND_BOARD_SPACE,
-      list_space_id: DEMO_SECOND_LIST,
-      rank: "U",
-      assigned_actor_ids: ["did:web:dana.example"],
-      fields: { labels: ["planning"], due_at: "May 12" },
-    },
-  ];
+  const boardSpaceContainers: SpaceContainerProjection[] = options.emptyBoard
+    ? []
+    : [
+        {
+          container_space_id: DEMO_BOARD_SPACE,
+          realm_id: DEMO_REALM,
+          kind: "board",
+          title: "Persisted demo board",
+          state: "active",
+        },
+        {
+          container_space_id: DEMO_SECOND_BOARD_SPACE,
+          realm_id: DEMO_REALM,
+          kind: "board",
+          title: "Secondary planning board",
+          state: "active",
+        },
+        {
+          container_space_id: DEMO_TODO_LIST,
+          realm_id: DEMO_REALM,
+          kind: "list",
+          title: "To Do",
+          state: "active",
+          rank: "U",
+          parent_space_id: DEMO_BOARD_SPACE,
+        },
+        {
+          container_space_id: DEMO_PROGRESS_LIST,
+          realm_id: DEMO_REALM,
+          kind: "list",
+          title: "In Progress",
+          state: "active",
+          rank: "f",
+          parent_space_id: DEMO_BOARD_SPACE,
+        },
+        {
+          container_space_id: DEMO_DONE_LIST,
+          realm_id: DEMO_REALM,
+          kind: "list",
+          title: "Done",
+          state: "active",
+          rank: "p",
+          parent_space_id: DEMO_BOARD_SPACE,
+        },
+        {
+          container_space_id: DEMO_SECOND_LIST,
+          realm_id: DEMO_REALM,
+          kind: "list",
+          title: "Selected Backlog",
+          state: "active",
+          rank: "U",
+          parent_space_id: DEMO_SECOND_BOARD_SPACE,
+        },
+      ];
+  const boardStrandProjections: StrandProjection[] = options.emptyBoard
+    ? []
+    : [
+        {
+          strand_id: DEMO_STRAND_LEGAL_REVIEW,
+          realm_id: DEMO_REALM,
+          title: options.demoPrimaryCardTitle ?? "Legal review for public beta",
+          summary:
+            "Finalize external processor wording before launch checklist can move.",
+          state: "active",
+          board_space_id: DEMO_BOARD_SPACE,
+          list_space_id: DEMO_TODO_LIST,
+          rank: "U",
+          assigned_actor_ids: ["did:web:alice.example"],
+          fields: {
+            labels: ["legal", "beta"],
+            due_at: "May 08",
+            discussion_visibility: "locked",
+            discussion_ref_hash: "sha256:locked-private-decision",
+            locked_reason:
+              "You can see that a restricted discussion is linked, but not its name or members.",
+          },
+        },
+        {
+          strand_id: DEMO_STRAND_ONBOARDING_COPY,
+          realm_id: DEMO_REALM,
+          title: "Onboarding copy",
+          summary:
+            "Waiting on discussion-scoped feedback from support and docs reviewers.",
+          state: "active",
+          board_space_id: DEMO_BOARD_SPACE,
+          list_space_id: DEMO_PROGRESS_LIST,
+          rank: "U",
+          assigned_actor_ids: ["did:web:bob.example"],
+          fields: { labels: ["copy", "support"], due_at: "May 10" },
+        },
+        {
+          strand_id: DEMO_STRAND_SECURITY_SIGNOFF,
+          realm_id: DEMO_REALM,
+          title: "Security sign-off",
+          summary:
+            "Projection detected a stale column head after an offline move.",
+          state: "active",
+          board_space_id: DEMO_BOARD_SPACE,
+          list_space_id: DEMO_DONE_LIST,
+          rank: "U",
+          assigned_actor_ids: ["did:web:carol.example"],
+          fields: { labels: ["security", "reviewed"], due_at: "May 01" },
+        },
+        {
+          strand_id: DEMO_STRAND_SECONDARY_CARD,
+          realm_id: DEMO_REALM,
+          title: "Secondary board card",
+          summary:
+            "Only visible after the Board selector switches projection scope.",
+          state: "active",
+          board_space_id: DEMO_SECOND_BOARD_SPACE,
+          list_space_id: DEMO_SECOND_LIST,
+          rank: "U",
+          assigned_actor_ids: ["did:web:dana.example"],
+          fields: { labels: ["planning"], due_at: "May 12" },
+        },
+      ];
   const canonicalProjectionEvent = (
     eventId: string,
     kind: string,
@@ -942,36 +943,34 @@ export async function mockArkretApi(
   for (let index = 0; index < seedSharedHistoryCount; index += 1) {
     const suffix = (0xd000 + index).toString(16).padStart(12, "0");
     const historyActor = "did:web:history.example";
-    projectionEvents.push(
-      {
-        ...canonicalProjectionEvent(
-          `ak:event:0196419b-0000-7000-8000-${suffix}`,
-          "ak.message.create",
-          230 + index,
-          {
-            message_id: `ak:message:0196419b-0000-7000-8000-${suffix}`,
-            strand_id: DEMO_STRAND_LEGAL_REVIEW,
-            track_name: "discussion",
-            content: {
-              kind: "ak.content.text",
-              body: `shared history row ${String(index).padStart(2, "0")}`,
-            },
+    projectionEvents.push({
+      ...canonicalProjectionEvent(
+        `ak:event:0196419b-0000-7000-8000-${suffix}`,
+        "ak.message.create",
+        230 + index,
+        {
+          message_id: `ak:message:0196419b-0000-7000-8000-${suffix}`,
+          strand_id: DEMO_STRAND_LEGAL_REVIEW,
+          track_name: "discussion",
+          content: {
+            kind: "ak.content.text",
+            body: `shared history row ${String(index).padStart(2, "0")}`,
           },
-        ),
-        actor_id: historyActor,
-        proofs: [
-          {
-            kind: "detached_jws",
-            alg: "EdDSA",
-            verification_method: `${historyActor}#device`,
-            event_digest:
-              "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-            created_at: "2026-04-28T12:30:00.000Z",
-            jws: "eyJhbGciOiJFZERTQSJ9..AA",
-          },
-        ],
-      },
-    );
+        },
+      ),
+      actor_id: historyActor,
+      proofs: [
+        {
+          kind: "detached_jws",
+          alg: "EdDSA",
+          verification_method: `${historyActor}#device`,
+          event_digest:
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          created_at: "2026-04-28T12:30:00.000Z",
+          jws: "eyJhbGciOiJFZERTQSJ9..AA",
+        },
+      ],
+    });
   }
 
   await page.route("**/*", async (route) => {
@@ -1441,12 +1440,7 @@ export async function mockArkretApi(
             -1,
           ) + 1;
         return json(route, {
-          frontier: realmActorFrontier(
-            realmId,
-            actorId,
-            nextActorSeq,
-            heads,
-          ),
+          frontier: realmActorFrontier(realmId, actorId, nextActorSeq, heads),
         });
       }
       if (actorId) {
@@ -1624,14 +1618,21 @@ export async function mockArkretApi(
         ? (body.events as Array<Record<string, any>>)
         : [];
       const issuedAt = new Date().toISOString();
-      const expiresAt = new Date(Date.parse(issuedAt) + 30 * 60 * 1_000).toISOString();
+      const expiresAt = new Date(
+        Date.parse(issuedAt) + 30 * 60 * 1_000,
+      ).toISOString();
       const isAnchorUnit =
         events.length > 0 &&
-        events.every((event) => event.seal_ref === undefined && event.seal_basis === undefined);
+        events.every(
+          (event) =>
+            event.seal_ref === undefined && event.seal_basis === undefined,
+        );
       const anchorEventDigests = isAnchorUnit
         ? events.map((event) => String(event.proofs?.[0]?.event_digest ?? ""))
         : [];
-      const anchorRealmId = isAnchorUnit ? String(events[0]?.realm_id ?? "") : "";
+      const anchorRealmId = isAnchorUnit
+        ? String(events[0]?.realm_id ?? "")
+        : "";
       const anchorUnitBasis = isAnchorUnit
         ? {
             anchor_unit: {
@@ -1646,10 +1647,9 @@ export async function mockArkretApi(
         : undefined;
       const authorizationLeases = events.map((event, index) => {
         const basisRef = anchorUnitBasis ?? event.seal_ref ?? event.seal_basis;
-        const sourceRef =
-          isAnchorUnit
-            ? `anchor-unit:${anchorUnitBasis!.anchor_unit.unit_digest}`
-            : typeof event.seal_ref === "string"
+        const sourceRef = isAnchorUnit
+          ? `anchor-unit:${anchorUnitBasis!.anchor_unit.unit_digest}`
+          : typeof event.seal_ref === "string"
             ? event.seal_ref
             : String(event.seal_basis?.leaves?.[0] ?? "principal-control");
         const verificationMethod = `${event.actor_id}#e2e-device-key`;
@@ -1796,7 +1796,9 @@ export async function mockArkretApi(
         );
       }
       let syncToken = "sx:e2e:event";
-      const submittedEntries = Array.isArray(body.events) ? body.events : [body];
+      const submittedEntries = Array.isArray(body.events)
+        ? body.events
+        : [body];
       const submittedEvents = submittedEntries.map(
         (entry: Record<string, any>) => entry.event ?? entry,
       );
@@ -1979,7 +1981,10 @@ export async function mockArkretApi(
         status: "accepted",
         accepted: submittedEvents
           .map((event: Record<string, any>) => event.event_id)
-          .filter((eventId: unknown): eventId is string => typeof eventId === "string"),
+          .filter(
+            (eventId: unknown): eventId is string =>
+              typeof eventId === "string",
+          ),
         ingress_receipts: ingressReceipts,
         control_proposal_receipts: [],
         duplicate: [],
@@ -3435,11 +3440,9 @@ export async function mockArkretApi(
         unknown
       >;
       const lifecycleSubmission = body.lifecycle_event as
-        | Record<string, any>
-        | undefined;
+        Record<string, any> | undefined;
       const event = lifecycleSubmission?.event as
-        | Record<string, any>
-        | undefined;
+        Record<string, any> | undefined;
       const expectedKind = `ak.self.agent.${action}`;
       const expectedFrom = action === "pause" ? "active" : "paused";
       const expectedTo = action === "pause" ? "paused" : "active";
@@ -3502,11 +3505,9 @@ export async function mockArkretApi(
         any
       >;
       const lifecycleSubmission = body.lifecycle_event as
-        | Record<string, any>
-        | undefined;
+        Record<string, any> | undefined;
       const event = lifecycleSubmission?.event as
-        | Record<string, any>
-        | undefined;
+        Record<string, any> | undefined;
       const keyEvents = Array.isArray(body.key_revocation_events)
         ? body.key_revocation_events
         : [];
@@ -4103,16 +4104,16 @@ function joinCandidate() {
       leaves: [
         "ak:seal:sha256:1111111111111111111111111111111111111111111111111111111111111111",
       ],
-            control_event_set_root:
-              "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-            state_root:
-              "sha256:3333333333333333333333333333333333333333333333333333333333333333",
-            governance_health: {
-              status: "healthy",
-              pending_proposals: [],
-              retained_faults: [],
-            },
-          },
+      control_event_set_root:
+        "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      state_root:
+        "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      governance_health: {
+        status: "healthy",
+        pending_proposals: [],
+        retained_faults: [],
+      },
+    },
     as_of: "2026-05-30T00:00:00.000Z",
     expires_at: "2099-01-01T00:00:00.000Z",
   };

@@ -36,7 +36,7 @@ mod personal_agent_tests {
     }
 
     #[test]
-    fn pairing_credentials_require_bootstrap_state_or_explicit_paused_replacement() {
+    fn pairing_credentials_require_bootstrap_or_explicit_replacement_state() {
         use super::super::admin::should_show_pairing_card;
 
         assert!(should_show_pairing_card(

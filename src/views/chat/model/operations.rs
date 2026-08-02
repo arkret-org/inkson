@@ -440,10 +440,7 @@ pub(crate) fn confirmed_sidecar_publish_message_operation(
         target_shared_strand_id,
         allowlisted_body,
     )?;
-    let content = arkret_sdk::ContentBlock::new(
-        arkret_sdk::CONTENT_KIND_LONG_TEXT,
-        allowlisted_body.to_owned(),
-    );
+    let content = chat_content_block_for_body(allowlisted_body)?;
     let event = chat_message_create_operation_with_content(
         realm_id,
         actor,

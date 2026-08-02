@@ -63,34 +63,12 @@ export async function dismissBlockingRecoveryModal(
     }
     const recoverySetup = page.getByTestId("recovery-key-setup-modal").last();
     if (await recoverySetup.isVisible().catch(() => false)) {
-      const generated = recoverySetup.getByTestId(
-        "recovery-key-setup-generated-key",
+      const dismissSetup = recoverySetup.getByTestId(
+        "recovery-key-setup-dismiss",
       );
-      const generatedReady = await generated
-        .waitFor({ state: "visible", timeout: 15_000 })
-        .then(() => true)
-        .catch(() => false);
-      if (generatedReady) {
-        const recoveryKey = await generated.inputValue();
-        await recoverySetup
-          .getByTestId("recovery-key-setup-confirm-key")
-          .fill(recoveryKey);
-        await recoverySetup.getByTestId("recovery-key-setup-saved").click();
-        try {
-          await expect(recoverySetup).toBeHidden({ timeout: 60_000 });
-        } catch (error) {
-          const diagnostics = {
-            modalText: await recoverySetup.textContent().catch(() => null),
-            recoveryStatus: await recoverySetup
-              .getByTestId("recovery-key-setup-status")
-              .allTextContents()
-              .catch(() => []),
-            recentApi: (apiObservations.get(page) ?? []).slice(-24),
-          };
-          throw new Error(
-            `Recovery setup did not finish: ${JSON.stringify(diagnostics)}\n${String(error)}`,
-          );
-        }
+      if (await dismissSetup.isVisible().catch(() => false)) {
+        await dismissSetup.click();
+        await expect(recoverySetup).toBeHidden({ timeout: 8_000 });
         continue;
       }
     }
@@ -138,7 +116,23 @@ export async function gotoAndDismissRecovery(
   url: string,
 ) {
   await page.goto(url, { waitUntil: "domcontentloaded" });
+  await dismissRealmKeyMissingModal(page);
   await dismissBlockingRecoveryModal(page);
+}
+
+export async function dismissRealmKeyMissingModal(
+  page: import("@playwright/test").Page,
+) {
+  const modal = page.getByTestId("mls-recovery-missing-modal").last();
+  const appeared = await modal
+    .waitFor({ state: "visible", timeout: 30_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!appeared) {
+    return;
+  }
+  await modal.getByTestId("mls-recovery-missing-dismiss").click();
+  await expect(modal).toBeHidden({ timeout: 8_000 });
 }
 
 // The default mock account has encrypted history but no local key/backup, so
@@ -180,6 +174,8 @@ export async function openKanban(page: import("@playwright/test").Page) {
   await assertRealmTreeSeeded(page);
   await page.goto(`/kanban/${DEMO_REALM}`, { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
+  await dismissRealmKeyMissingModal(page);
+  await dismissBlockingRecoveryModal(page);
 }
 
 export async function assertRealmTreeSeeded(
@@ -253,6 +249,8 @@ function sessionInjectionRecord(
     grant_id: string;
     audience: string;
     dpop_seed_b64url: string;
+    local_recovery_state: Record<string, unknown>;
+    mls_recovery_backup_state: Record<string, unknown>;
   }> = {},
 ) {
   return {
@@ -273,6 +271,8 @@ export async function addSessionGrantInjection(
     grant_id: string;
     audience: string;
     dpop_seed_b64url: string;
+    local_recovery_state: Record<string, unknown>;
+    mls_recovery_backup_state: Record<string, unknown>;
   }> = {},
 ) {
   await page.addInitScript(
@@ -457,6 +457,9 @@ export function registerStrandsBeforeEach() {
       includeSidecarInCircleList: testInfo.title.startsWith(
         "ordinary Circle list",
       ),
+      emptyBoard: testInfo.title.startsWith(
+        "kanban hides list creation until a board exists",
+      ),
       additionalActiveAgents: testInfo.title.startsWith(
         "sidecar preserves long-history",
       )
@@ -473,13 +476,21 @@ export function registerStrandsBeforeEach() {
       )
         ? "Legal review for a public beta launch with an intentionally long cross-team approval title"
         : undefined,
-      preseedRecoveryMaterial: testInfo.title.startsWith(
-        "owned agent sidecar labels",
-      ) || testInfo.title.startsWith(
-        "agent deactivation submits controller-signed",
-      ) || testInfo.title.startsWith(
-        "account settings split account/server info",
-      ),
+      preseedRecoveryMaterial:
+        testInfo.title.startsWith("owned agent sidecar labels") ||
+        testInfo.title.startsWith(
+          "agent deactivation submits controller-signed",
+        ) ||
+        testInfo.title.startsWith(
+          "account settings split account/server info",
+        ) ||
+        testInfo.title.startsWith(
+          "kanban hides list creation until a board exists",
+        ) ||
+        testInfo.title.startsWith(
+          "kanban queues canonical event submissions",
+        ) ||
+        testInfo.title.startsWith("card detail embeds discussion directly"),
       seedSharedHistoryCount: testInfo.title.startsWith(
         "sidecar preserves long-history",
       )
@@ -492,7 +503,30 @@ export function registerStrandsBeforeEach() {
     if (testInfo.title.startsWith("login page")) {
       return;
     }
-    await addSessionGrantInjection(page);
+    const exercisesRecoveryKeySetup = testInfo.title.startsWith(
+      "new Recovery Key remains plaintext",
+    );
+    await addSessionGrantInjection(
+      page,
+      exercisesRecoveryKeySetup
+        ? {}
+        : {
+            local_recovery_state: {
+              recovery_key_fingerprint: "sha256:e2e-configured-recovery-key",
+              backup_hpke_public_key_multibase:
+                "z6LSbsw3xDCtsMcRWf8HqYViCDXmadAiioEcZCiefbnKxNjt",
+              recovery_key_rotated_at: "2026-06-12T12:00:00.000Z",
+              sss_threshold: 3,
+              sss_total: 5,
+              guardians: [],
+              passkey_wraps: [],
+              last_rehearsed_at: "",
+            },
+            mls_recovery_backup_state: {
+              backup_id: "ak:backup:e2e-configured-0000",
+            },
+          },
+    );
     await page.addInitScript(
       (initialConfig) => {
         if (localStorage.getItem("inkson.config.v1")) {
