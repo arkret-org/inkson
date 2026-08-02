@@ -579,7 +579,6 @@ fn mls_remove_commit_uses_explicit_revocation_membership_frontier() {
         commit: "commit-bytes".to_owned(),
         commit_digest: arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
         ratchet_tree: None,
-        app_state_ref: None,
     };
     let root = arkret_sdk::Hash::new(
         "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",

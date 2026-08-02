@@ -340,7 +340,6 @@ fn mls_commit_builder_matches_registered_payload_schema() {
         commit_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(commit_bytes))
             .unwrap(),
         ratchet_tree: None,
-        app_state_ref: None,
     };
     let payload = arkret_sdk::MlsCommitPayload::new(
         0,

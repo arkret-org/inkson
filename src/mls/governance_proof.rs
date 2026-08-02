@@ -219,57 +219,6 @@ fn governance_projection_pending(error: &arkret_sdk::http_client::Error) -> bool
     }
 }
 
-pub(crate) struct WelcomeGovernanceProof {
-    pub request: arkret_sdk::MlsGovernanceProofRequestBodyBody,
-    pub binding: arkret_sdk::MlsGovernanceBindingPayload,
-}
-
-pub(crate) fn welcome_proof_requests(
-    state_store: &crate::state::LocalStateStore,
-    messages: &serde_json::Value,
-) -> Result<Vec<WelcomeGovernanceProof>, String> {
-    let Some(entries) = messages
-        .get("messages")
-        .or_else(|| messages.get("events"))
-        .and_then(serde_json::Value::as_array)
-    else {
-        return Ok(Vec::new());
-    };
-    let mut requests = Vec::new();
-    for entry in entries {
-        if entry
-            .get("kind")
-            .or_else(|| entry.get("type"))
-            .and_then(serde_json::Value::as_str)
-            != Some("ak.mls.welcome")
-        {
-            continue;
-        }
-        let binding_value = entry
-            .get("content")
-            .and_then(|content| content.get("governance_binding"))
-            .ok_or_else(|| "durable MLS Welcome omits governance_binding".to_owned())?;
-        let binding: arkret_sdk::MlsGovernanceBindingPayload =
-            serde_json::from_value(binding_value.clone())
-                .map_err(|error| format!("decode MLS Welcome governance_binding: {error}"))?;
-        let request = proof_request(
-            state_store,
-            binding.realm_id().as_str(),
-            binding.circle_id().map(|circle_id| circle_id.as_str()),
-            binding.mls_group_id(),
-            binding.previous_epoch(),
-            binding.next_epoch(),
-        )?;
-        if !requests
-            .iter()
-            .any(|entry: &WelcomeGovernanceProof| entry.request == request)
-        {
-            requests.push(WelcomeGovernanceProof { request, binding });
-        }
-    }
-    Ok(requests)
-}
-
 pub(crate) async fn fetch_verify_and_cache_proof<S: GovernanceProofStateStore>(
     api: &crate::transport::TransportClient,
     state_store: S,
@@ -952,31 +901,6 @@ pub(crate) fn current_security_frontier_leaves(
     group
         .security_frontier_leaves()
         .map_err(|error| format!("derive MLS security frontier leaves: {error}"))
-}
-
-pub(crate) fn security_frontier_with_added_keypackages(
-    mut leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
-    records: &[arkret_sdk::MlsKeyPackageRecord],
-) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
-    let mut next_index = leaves
-        .iter()
-        .map(|leaf| leaf.leaf_index)
-        .max()
-        .map_or(0, |index| index.saturating_add(1));
-    for record in records {
-        leaves.push(arkret_sdk::MlsSecurityFrontierLeaf {
-            leaf_index: next_index,
-            principal_id: record.principal_id.clone(),
-            credential_ref: arkret_sdk::NonEmptyString::new(format!(
-                "{}#{}",
-                record.principal_id, record.device_id
-            ))
-            .map_err(|error| format!("MLS KeyPackage credential ref is invalid: {error}"))?,
-        });
-        next_index = next_index.saturating_add(1);
-    }
-    leaves.sort_by_key(|leaf| leaf.leaf_index);
-    Ok(leaves)
 }
 
 pub(crate) fn security_frontier_with_added_claims(

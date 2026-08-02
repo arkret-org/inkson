@@ -491,7 +491,7 @@ fn inkson_accepts_server_contract_payloads() {
         "routed_to": ["did:web:server.local"]
     }))
     .unwrap();
-    assert_eq!(report.status, "submitted");
+    assert_eq!(report.status, arkret_sdk::ModerationReportStatus::Submitted);
     assert_eq!(report.routed_to.len(), 1);
     assert_eq!(report.routed_to[0].as_str(), "did:web:server.local");
 
