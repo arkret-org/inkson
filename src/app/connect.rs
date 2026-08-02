@@ -1455,6 +1455,15 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     .and_then(|content| {
                                         crate::account_data::blocklist_entries_from_account_data(
                                             &content,
+                                            &account_did(),
+                                            entry
+                                                .get("revision")
+                                                .and_then(serde_json::Value::as_u64)
+                                                .ok_or_else(|| {
+                                                    anyhow::anyhow!(
+                                                        "ak.account.blocklist is missing revision"
+                                                    )
+                                                })?,
                                         )
                                         .map_err(anyhow::Error::msg)
                                     }) {

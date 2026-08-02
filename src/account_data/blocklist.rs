@@ -3,28 +3,37 @@
 //!
 //! Spec: `discovery/client-preferences.md` §3.5.
 
+use arkret_models_collaboration::objects::productivity::{
+    AccountBlocklistAppletTarget, AccountBlocklistAppletTargetKind, AccountBlocklistDeviceIdTarget,
+    AccountBlocklistDeviceTargetKind, AccountBlocklistDeviceVerificationMethodTarget,
+    AccountBlocklistDidTarget, AccountBlocklistDidTargetKind, AccountBlocklistMode,
+    AccountBlocklistPayload, AccountBlocklistPayloadEntry, AccountBlocklistSurface,
+    AccountBlocklistTarget, AccountBlocklistValueTarget, AccountBlocklistValueTargetKind,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// A single local actor-DID entry in the actor-private personal blocklist
+/// A single local entry in the actor-private personal blocklist
 /// (`ak.account.blocklist` per `discovery/client-preferences.md` §3.5).
 ///
 /// [`build_blocklist_account_data_body`] expands it to the canonical account
-/// data wire shape: `{ target: { kind, did|domain }, mode, applies_to,
+/// data wire shape: `{ target: { kind, did|object_ref|value }, mode, applies_to,
 /// reason_code, created_at, expires_at, entry_id }`.
 /// [`blocklist_entries_from_account_data`] accepts only that canonical shape.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlocklistEntry {
-    /// Target identifier value. For `kind = "actor" | "service" |
-    /// "organization" | "device"` this is a DID; for `kind = "domain"` it is
-    /// a normalized DNS domain. Trimmed before insertion (DID values are not
-    /// lower-cased because base58 SCIDs are case-sensitive; domain values are
-    /// lower-cased by [`normalize_blocklist_value`]). The field name stays
-    /// `did` for wire/UI backward-compat — non-DID kinds reuse the same slot.
+    /// Target identifier value. DID-backed kinds carry a DID, `device` and
+    /// `applet` carry their typed object reference (or a verification-method
+    /// DID URL for a device), and value-backed kinds carry normalized text.
+    /// The local field name remains `did` for the existing UI/storage model;
+    /// the wire builder maps it into the SDK's closed target union.
     pub did: String,
     /// `target.kind` per `discovery/client-preferences.md` §3.5.
     #[serde(default = "default_blocklist_target_kind")]
     pub kind: String,
+    /// Holder-facing behavior for the covered surfaces.
+    #[serde(default = "default_blocklist_mode")]
+    pub mode: AccountBlocklistMode,
     /// Optional user-supplied reason (serialised as `reason_code`). Empty
     /// strings tombstone to `None` on the wire to keep payloads tight.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -59,9 +68,13 @@ fn default_blocklist_target_kind() -> String {
     DEFAULT_BLOCKLIST_TARGET_KIND.to_owned()
 }
 
+fn default_blocklist_mode() -> AccountBlocklistMode {
+    AccountBlocklistMode::Block
+}
+
 /// True when `kind` identifies its target by DID (vs. a bare domain string).
 pub fn blocklist_kind_is_did(kind: &str) -> bool {
-    matches!(kind, "actor" | "service" | "organization" | "device")
+    matches!(kind, "actor" | "service" | "organization")
 }
 
 /// Normalise a block target value. DID kinds are only trimmed (SCIDs are
@@ -70,7 +83,7 @@ pub fn blocklist_kind_is_did(kind: &str) -> bool {
 /// DNS domain per `client-preferences.md` §3.5.
 pub fn normalize_blocklist_value(kind: &str, value: &str) -> String {
     let trimmed = value.trim();
-    if blocklist_kind_is_did(kind) {
+    if blocklist_kind_is_did(kind) || matches!(kind, "device" | "applet") {
         return trimmed.to_owned();
     }
     let mut v = trimmed
@@ -153,6 +166,7 @@ impl BlocklistEntry {
         Self {
             did,
             kind,
+            mode: default_blocklist_mode(),
             reason,
             blocked_at: Some(arkret_sdk::canonical::format_timestamp_canonical(
                 chrono::Utc::now(),
@@ -164,17 +178,67 @@ impl BlocklistEntry {
     }
 }
 
-/// True when actor `did` appears in `list`. Empty + whitespace `did` is
-/// always `false`. Matching is exact on the (already trimmed) DID string and
-/// scoped to `kind == "actor"` entries — this is the message sender
-/// filter, so domain / service / organization blocks (which gate other
-/// surfaces) must not accidentally match a sender DID string.
+/// True when an active actor entry hides `did` on the message surface.
+/// Empty input, expired entries, `mute`, and entries that do not cover
+/// `messages` return `false`. Domain, service, and organization targets gate
+/// other surfaces and must not accidentally match a sender DID string.
 pub fn is_blocked(list: &[BlocklistEntry], did: &str) -> bool {
+    actor_entries_filter_surface(list, did, "messages", false)
+}
+
+/// True when an actor entry suppresses notification attention on any related
+/// surface. Unlike message rendering, `mute` also suppresses attention.
+pub fn suppresses_notifications(
+    list: &[BlocklistEntry],
+    did: &str,
+    related_surfaces: &[&str],
+) -> bool {
+    related_surfaces
+        .iter()
+        .any(|surface| actor_entries_filter_surface(list, did, surface, true))
+}
+
+/// True when this entry hides an actor's message body in the default view.
+pub fn hides_actor_messages(entry: &BlocklistEntry) -> bool {
+    entry_filters_surface(entry, "messages", false, chrono::Utc::now())
+}
+
+fn actor_entries_filter_surface(
+    list: &[BlocklistEntry],
+    did: &str,
+    surface: &str,
+    include_mute: bool,
+) -> bool {
     let needle = did.trim();
     if needle.is_empty() {
         return false;
     }
-    list.iter().any(|e| e.kind == "actor" && e.did == needle)
+    let now = chrono::Utc::now();
+    list.iter().any(|entry| {
+        entry.kind == "actor"
+            && entry.did == needle
+            && entry_filters_surface(entry, surface, include_mute, now)
+    })
+}
+
+fn entry_filters_surface(
+    entry: &BlocklistEntry,
+    surface: &str,
+    include_mute: bool,
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    if entry.kind != "actor"
+        || (!entry.applies_to.is_empty() && !entry.applies_to.iter().any(|value| value == surface))
+        || entry.expires_at.as_deref().is_some_and(|value| {
+            chrono::DateTime::parse_from_rfc3339(value).is_ok_and(|expires_at| expires_at <= now)
+        })
+    {
+        return false;
+    }
+    matches!(
+        entry.mode,
+        AccountBlocklistMode::Block | AccountBlocklistMode::Hide
+    ) || include_mute && entry.mode == AccountBlocklistMode::Mute
 }
 
 /// Append an actor block for `did` (idempotent). Thin wrapper over
@@ -268,8 +332,6 @@ pub fn unblock_target_in(list: &mut Vec<BlocklistEntry>, kind: &str, value: &str
     list.len() != before
 }
 
-const BLOCKLIST_ACCOUNT_DATA_VERSION: u32 = 1;
-
 /// Surfaces a personal block can apply to (`client-preferences.md` §3.5
 /// `applies_to`). An entry with an empty `applies_to` expands to this full
 /// set on the wire (block everything).
@@ -278,117 +340,118 @@ pub const DEFAULT_BLOCKLIST_APPLIES_TO: &[&str] = &[
     "mentions",
     "dm",
     "calls",
+    "contacts",
+    "applets",
     "presence",
     "notifications",
     "directory",
 ];
 
-// Invariant assertions: each `expect` message names the check that
-// establishes it a few lines earlier. Rewriting them as `?` would add
-// error paths no caller can reach.
-#[allow(clippy::expect_used)]
 /// Canonical wire body for the `ak.account.blocklist` account-data entry.
-/// The settings UI calls this just before PUTting via
-/// [`crate::transport::TransportClient::set_account_data`]; keep the shape aligned with
-/// `discovery/client-preferences.md` §3.5 so other clients agree on layout.
+/// The settings UI calls this inside the account-data CAS merge closure; keep
+/// the shape aligned with `discovery/client-preferences.md` §3.5 so owner and
+/// payload version remain bound to the accepted account-data revision.
 ///
-/// Per-entry shape: `{ entry_id?, target: { kind, did|domain }, mode: "block",
-/// applies_to[], reason_code?, created_at, expires_at }`. The target value is
-/// emitted under `did` for DID-shaped kinds and `domain` for `kind="domain"`.
-pub fn build_blocklist_account_data_body(entries: &[BlocklistEntry]) -> Value {
+/// Per-entry shape: `{ entry_id?, target: { kind, did|object_ref|value }, mode,
+/// applies_to[], reason_code?, created_at, expires_at }`.
+pub fn build_blocklist_account_data_body(
+    owner: &str,
+    version: u64,
+    entries: &[BlocklistEntry],
+) -> Result<Value, String> {
+    let owner = arkret_sdk::Did::new(owner.trim().to_owned()).map_err(|error| error.to_string())?;
+    if version == 0 {
+        return Err("account blocklist version must be at least 1".to_owned());
+    }
     let entries = entries
         .iter()
         .filter(|entry| !entry.did.trim().is_empty())
-        .filter_map(|entry| {
+        .map(|entry| {
             let kind = if entry.kind.trim().is_empty() {
                 DEFAULT_BLOCKLIST_TARGET_KIND
             } else {
                 entry.kind.as_str()
             };
-            let target = if blocklist_kind_is_did(kind) {
-                arkret_models_collaboration::objects::productivity::AccountBlocklistTarget {
-                    kind: kind.to_owned(),
-                    did: arkret_sdk::Did::new(entry.did.trim().to_owned()).ok(),
-                    object_ref: None,
-                    value: None,
-                }
-            } else {
-                arkret_models_collaboration::objects::productivity::AccountBlocklistTarget {
-                    kind: kind.to_owned(),
-                    did: None,
-                    object_ref: None,
-                    value: arkret_sdk::NonEmptyString::new(entry.did.trim().to_owned()).ok(),
-                }
-            };
-            if target.did.is_none() && target.value.is_none() {
-                return None;
-            }
+            let target = blocklist_target_to_wire(kind, entry.did.trim())?;
             let applies_to = if entry.applies_to.is_empty() {
                 DEFAULT_BLOCKLIST_APPLIES_TO
                     .iter()
-                    .map(|value| (*value).to_owned())
-                    .collect()
+                    .map(|value| blocklist_surface_to_wire(value))
+                    .collect::<Result<Vec<_>, _>>()?
             } else {
-                entry.applies_to.clone()
+                entry
+                    .applies_to
+                    .iter()
+                    .map(|value| blocklist_surface_to_wire(value))
+                    .collect::<Result<Vec<_>, _>>()?
             };
-            Some(
-                arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry {
-                    entry_id: entry.entry_id.as_ref().and_then(|value| {
-                        arkret_sdk::NonEmptyString::new(value.trim().to_owned()).ok()
-                    }),
-                    target,
-                    mode: "block".to_owned(),
-                    applies_to,
-                    reason_code: entry.reason.as_ref().and_then(|value| {
-                        arkret_sdk::NonEmptyString::new(value.trim().to_owned()).ok()
-                    }),
-                    created_at: entry
-                        .blocked_at
-                        .as_deref()
-                        .and_then(|value| value.parse().ok())
-                        .unwrap_or_else(chrono::Utc::now),
-                    expires_at: entry
-                        .expires_at
-                        .as_deref()
-                        .and_then(|value| value.parse().ok()),
-                },
-            )
+            Ok(AccountBlocklistPayloadEntry {
+                entry_id: entry.entry_id.as_ref().and_then(|value| {
+                    arkret_sdk::NonEmptyString::new(value.trim().to_owned()).ok()
+                }),
+                target,
+                mode: entry.mode,
+                applies_to,
+                reason_code: entry.reason.as_ref().and_then(|value| {
+                    arkret_sdk::NonEmptyString::new(value.trim().to_owned()).ok()
+                }),
+                created_at: entry
+                    .blocked_at
+                    .as_deref()
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or_else(chrono::Utc::now),
+                expires_at: entry
+                    .expires_at
+                    .as_deref()
+                    .and_then(|value| value.parse().ok()),
+            })
         })
-        .collect::<Vec<_>>();
-    serde_json::to_value(
-        arkret_models_collaboration::objects::productivity::AccountBlocklistPayload {
-            version: BLOCKLIST_ACCOUNT_DATA_VERSION,
-            entries,
-        },
-    )
-    .expect("canonical blocklist payload serializes")
+        .collect::<Result<Vec<_>, String>>()?;
+    let payload = AccountBlocklistPayload {
+        owner,
+        version,
+        entries,
+        updated_at: Some(chrono::Utc::now()),
+    };
+    payload.validate().map_err(|error| error.to_string())?;
+    serde_json::to_value(payload).map_err(|error| error.to_string())
 }
 
-/// Parse the `ak.account.blocklist` account-data content body. Malformed
-/// actor entries are skipped instead of partially corrupting the local UI.
-pub fn blocklist_entries_from_account_data(value: &Value) -> Result<Vec<BlocklistEntry>, String> {
-    let payload: arkret_models_collaboration::objects::productivity::AccountBlocklistPayload =
+/// Parse and validate the canonical `ak.account.blocklist` account-data body,
+/// including its holder binding.
+pub fn blocklist_entries_from_account_data(
+    value: &Value,
+    expected_owner: &str,
+    expected_revision: u64,
+) -> Result<Vec<BlocklistEntry>, String> {
+    let payload: AccountBlocklistPayload =
         serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
     payload.validate().map_err(|error| error.to_string())?;
+    if payload.owner.as_str() != expected_owner.trim() {
+        return Err("account blocklist owner does not match the active account".to_owned());
+    }
+    if payload.version != expected_revision {
+        return Err("account blocklist version does not match account-data revision".to_owned());
+    }
     Ok(payload
         .entries
         .into_iter()
-        .filter(|entry| matches!(entry.mode.as_str(), "block" | "mute" | "hide"))
         .filter_map(|entry| {
-            let value = entry
-                .target
-                .did
-                .map(|did| did.to_string())
-                .or_else(|| entry.target.value.map(|value| value.to_string()))
-                .or(entry.target.object_ref)?;
+            let (kind, value) = blocklist_target_from_wire(entry.target);
             blocklist_entry_from_parts(
-                &entry.target.kind,
+                &kind,
                 &value,
+                entry.mode,
                 entry.reason_code.map(|value| value.to_string()),
                 Some(arkret_sdk::canonical::format_timestamp_canonical(
                     entry.created_at,
                 )),
-                entry.applies_to,
+                entry
+                    .applies_to
+                    .into_iter()
+                    .map(blocklist_surface_from_wire)
+                    .map(ToOwned::to_owned)
+                    .collect(),
                 entry
                     .expires_at
                     .map(arkret_sdk::canonical::format_timestamp_canonical),
@@ -402,6 +465,7 @@ pub fn blocklist_entries_from_account_data(value: &Value) -> Result<Vec<Blocklis
 fn blocklist_entry_from_parts(
     kind: &str,
     value: &str,
+    mode: AccountBlocklistMode,
     reason: Option<String>,
     blocked_at: Option<String>,
     applies_to: Vec<String>,
@@ -412,6 +476,7 @@ fn blocklist_entry_from_parts(
     if entry.did.trim().is_empty() {
         return None;
     }
+    entry.mode = mode;
     if let Some(blocked_at) = blocked_at {
         let blocked_at = blocked_at.trim();
         if !blocked_at.is_empty() {
@@ -427,4 +492,120 @@ fn blocklist_entry_from_parts(
         }
     });
     Some(entry)
+}
+
+fn blocklist_surface_to_wire(value: &str) -> Result<AccountBlocklistSurface, String> {
+    match value.trim() {
+        "messages" => Ok(AccountBlocklistSurface::Messages),
+        "mentions" => Ok(AccountBlocklistSurface::Mentions),
+        "dm" => Ok(AccountBlocklistSurface::Dm),
+        "calls" => Ok(AccountBlocklistSurface::Calls),
+        "contacts" => Ok(AccountBlocklistSurface::Contacts),
+        "applets" => Ok(AccountBlocklistSurface::Applets),
+        "presence" => Ok(AccountBlocklistSurface::Presence),
+        "notifications" => Ok(AccountBlocklistSurface::Notifications),
+        "directory" => Ok(AccountBlocklistSurface::Directory),
+        other => Err(format!("unsupported account blocklist surface `{other}`")),
+    }
+}
+
+fn blocklist_surface_from_wire(value: AccountBlocklistSurface) -> &'static str {
+    match value {
+        AccountBlocklistSurface::Messages => "messages",
+        AccountBlocklistSurface::Mentions => "mentions",
+        AccountBlocklistSurface::Dm => "dm",
+        AccountBlocklistSurface::Calls => "calls",
+        AccountBlocklistSurface::Contacts => "contacts",
+        AccountBlocklistSurface::Applets => "applets",
+        AccountBlocklistSurface::Presence => "presence",
+        AccountBlocklistSurface::Notifications => "notifications",
+        AccountBlocklistSurface::Directory => "directory",
+    }
+}
+
+fn blocklist_target_to_wire(kind: &str, value: &str) -> Result<AccountBlocklistTarget, String> {
+    match kind {
+        "actor" | "service" | "organization" => {
+            let kind = match kind {
+                "actor" => AccountBlocklistDidTargetKind::Actor,
+                "service" => AccountBlocklistDidTargetKind::Service,
+                "organization" => AccountBlocklistDidTargetKind::Organization,
+                _ => unreachable!(),
+            };
+            Ok(AccountBlocklistTarget::Did(AccountBlocklistDidTarget {
+                kind,
+                did: arkret_sdk::Did::new(value.to_owned()).map_err(|error| error.to_string())?,
+            }))
+        }
+        "device" => {
+            if let Ok(object_ref) = arkret_sdk::DeviceId::new(value.to_owned()) {
+                return Ok(AccountBlocklistTarget::DeviceId(
+                    AccountBlocklistDeviceIdTarget {
+                        kind: AccountBlocklistDeviceTargetKind::Device,
+                        object_ref,
+                    },
+                ));
+            }
+            Ok(AccountBlocklistTarget::DeviceVerificationMethod(
+                AccountBlocklistDeviceVerificationMethodTarget {
+                    kind: AccountBlocklistDeviceTargetKind::Device,
+                    value: arkret_sdk::DidUrl::new(value.to_owned())
+                        .map_err(|error| error.to_string())?,
+                },
+            ))
+        }
+        "applet" => Ok(AccountBlocklistTarget::Applet(
+            AccountBlocklistAppletTarget {
+                kind: AccountBlocklistAppletTargetKind::Applet,
+                object_ref: arkret_sdk::AppletId::new(value.to_owned())
+                    .map_err(|error| error.to_string())?,
+            },
+        )),
+        "handle" | "domain" | "keyword" => {
+            let kind = match kind {
+                "handle" => AccountBlocklistValueTargetKind::Handle,
+                "domain" => AccountBlocklistValueTargetKind::Domain,
+                "keyword" => AccountBlocklistValueTargetKind::Keyword,
+                _ => unreachable!(),
+            };
+            Ok(AccountBlocklistTarget::Value(AccountBlocklistValueTarget {
+                kind,
+                value: arkret_sdk::NonEmptyString::new(value.to_owned())
+                    .map_err(|error| error.to_string())?,
+            }))
+        }
+        other => Err(format!(
+            "unsupported account blocklist target kind `{other}`"
+        )),
+    }
+}
+
+fn blocklist_target_from_wire(target: AccountBlocklistTarget) -> (String, String) {
+    match target {
+        AccountBlocklistTarget::Did(target) => {
+            let kind = match target.kind {
+                AccountBlocklistDidTargetKind::Actor => "actor",
+                AccountBlocklistDidTargetKind::Service => "service",
+                AccountBlocklistDidTargetKind::Organization => "organization",
+            };
+            (kind.to_owned(), target.did.to_string())
+        }
+        AccountBlocklistTarget::DeviceId(target) => {
+            ("device".to_owned(), target.object_ref.to_string())
+        }
+        AccountBlocklistTarget::DeviceVerificationMethod(target) => {
+            ("device".to_owned(), target.value.to_string())
+        }
+        AccountBlocklistTarget::Applet(target) => {
+            ("applet".to_owned(), target.object_ref.to_string())
+        }
+        AccountBlocklistTarget::Value(target) => {
+            let kind = match target.kind {
+                AccountBlocklistValueTargetKind::Handle => "handle",
+                AccountBlocklistValueTargetKind::Domain => "domain",
+                AccountBlocklistValueTargetKind::Keyword => "keyword",
+            };
+            (kind.to_owned(), target.value.to_string())
+        }
+    }
 }

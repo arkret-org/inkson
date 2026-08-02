@@ -533,7 +533,7 @@ fn build_blocklist_account_data_body_emits_domain_and_expiry_fields() {
         Some("2026-08-01T00:00:00.000Z".into()),
         None,
     );
-    let body = build_blocklist_account_data_body(&list);
+    let body = build_blocklist_account_data_body("did:web:owner.example", 1, &list).unwrap();
     let entry = &body["entries"][0];
     assert_eq!(entry["target"]["kind"], "domain");
     // Non-DID target kinds use the canonical polymorphic `value` slot.
@@ -546,13 +546,12 @@ fn build_blocklist_account_data_body_emits_domain_and_expiry_fields() {
 }
 
 #[test]
-fn build_blocklist_account_data_body_emits_null_expiry_for_permanent_block() {
+fn build_blocklist_account_data_body_omits_expiry_for_permanent_block() {
     let mut list: Vec<BlocklistEntry> = Vec::new();
     block_user_in(&mut list, "did:web:alice.example", None, None);
-    let body = build_blocklist_account_data_body(&list);
-    // Permanent blocks emit an explicit null so peers can tell "no expiry"
-    // apart from "field absent".
-    assert!(body["entries"][0]["expires_at"].is_null());
+    let body = build_blocklist_account_data_body("did:web:owner.example", 1, &list).unwrap();
+    // The typed SDK omits the optional expiry for a permanent block.
+    assert!(body["entries"][0].get("expires_at").is_none());
 }
 
 #[test]
@@ -561,7 +560,8 @@ fn build_blocklist_account_data_body_emits_entries_array() {
         "did:web:alice.example",
         Some("spam".into()),
     )];
-    let body = build_blocklist_account_data_body(&entries);
+    let body = build_blocklist_account_data_body("did:web:owner.example", 1, &entries).unwrap();
+    assert_eq!(body["owner"], "did:web:owner.example");
     assert_eq!(body["version"], 1);
     assert_eq!(body["entries"][0]["target"]["kind"], "actor");
     assert_eq!(body["entries"][0]["target"]["did"], "did:web:alice.example");
@@ -577,13 +577,23 @@ fn build_blocklist_account_data_body_emits_entries_array() {
 }
 
 #[test]
+fn build_blocklist_account_data_body_clears_with_next_empty_revision() {
+    let body = build_blocklist_account_data_body("did:web:owner.example", 7, &[]).unwrap();
+    assert_eq!(body["owner"], "did:web:owner.example");
+    assert_eq!(body["version"], 7);
+    assert_eq!(body["entries"], json!([]));
+}
+
+#[test]
 fn blocklist_entries_parse_canonical_account_data_body() {
     let body = json!({
+        "owner": "did:web:owner.example",
         "version": 1,
         "entries": [
             {
                 "target": {"kind": "actor", "did": "did:web:mallory.example"},
                 "mode": "block",
+                "applies_to": ["messages"],
                 "reason_code": "harassment",
                 "created_at": "2026-05-29T00:00:00.000Z"
             },
@@ -596,7 +606,7 @@ fn blocklist_entries_parse_canonical_account_data_body() {
             }
         ]
     });
-    let entries = blocklist_entries_from_account_data(&body).unwrap();
+    let entries = blocklist_entries_from_account_data(&body, "did:web:owner.example", 1).unwrap();
     // The canonical actor + domain blocks parse through the SDK wire model.
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].did, "did:web:mallory.example");
@@ -615,6 +625,117 @@ fn blocklist_entries_parse_canonical_account_data_body() {
         chrono::DateTime::parse_from_rfc3339(entries[1].expires_at.as_deref().unwrap()).unwrap(),
         chrono::DateTime::parse_from_rfc3339("2026-07-01T00:00:00.000Z").unwrap()
     );
+}
+
+#[test]
+fn blocklist_round_trip_preserves_owner_closed_targets_modes_and_surfaces() {
+    let owner = "did:web:owner.example";
+    let body = json!({
+        "owner": owner,
+        "version": 4,
+        "entries": [
+            {
+                "target": {
+                    "kind": "device",
+                    "object_ref": "ak:device:01904100-0000-7000-8000-000000000901"
+                },
+                "mode": "mute",
+                "applies_to": ["contacts", "notifications"],
+                "created_at": "2026-05-29T00:00:00.000Z"
+            },
+            {
+                "target": {
+                    "kind": "applet",
+                    "object_ref": "ak:applet:01904100-0000-7000-8000-000000000902"
+                },
+                "mode": "hide",
+                "applies_to": ["applets"],
+                "created_at": "2026-05-29T00:00:01.000Z"
+            }
+        ]
+    });
+
+    let entries = blocklist_entries_from_account_data(&body, owner, 4).unwrap();
+    assert_eq!(entries[0].kind, "device");
+    assert_eq!(
+        entries[0].mode,
+        arkret_models_collaboration::objects::productivity::AccountBlocklistMode::Mute
+    );
+    assert_eq!(entries[0].applies_to, vec!["contacts", "notifications"]);
+    assert_eq!(entries[1].kind, "applet");
+    assert_eq!(
+        entries[1].mode,
+        arkret_models_collaboration::objects::productivity::AccountBlocklistMode::Hide
+    );
+
+    let rebuilt = build_blocklist_account_data_body(owner, 5, &entries).unwrap();
+    assert_eq!(rebuilt["owner"], owner);
+    assert_eq!(rebuilt["version"], 5);
+    assert_eq!(rebuilt["entries"][0]["target"]["kind"], "device");
+    assert_eq!(
+        rebuilt["entries"][0]["target"]["object_ref"],
+        "ak:device:01904100-0000-7000-8000-000000000901"
+    );
+    assert_eq!(rebuilt["entries"][0]["mode"], "mute");
+    assert_eq!(rebuilt["entries"][1]["target"]["kind"], "applet");
+    assert_eq!(rebuilt["entries"][1]["mode"], "hide");
+
+    assert!(blocklist_entries_from_account_data(&body, "did:web:other.example", 4).is_err());
+    assert!(blocklist_entries_from_account_data(&body, owner, 3).is_err());
+}
+
+#[test]
+fn blocklist_projection_respects_mode_surface_and_expiry() {
+    use arkret_models_collaboration::objects::productivity::AccountBlocklistMode;
+
+    let mut muted = BlocklistEntry::new("did:web:muted.example", None);
+    muted.mode = AccountBlocklistMode::Mute;
+    assert!(!is_blocked(&[muted.clone()], &muted.did));
+    assert!(suppresses_notifications(
+        &[muted.clone()],
+        &muted.did,
+        &["notifications"]
+    ));
+    assert!(!hides_actor_messages(&muted));
+
+    let mut notification_only = BlocklistEntry::new("did:web:notification.example", None);
+    notification_only.applies_to = vec!["notifications".to_owned()];
+    assert!(!is_blocked(
+        &[notification_only.clone()],
+        &notification_only.did
+    ));
+    assert!(suppresses_notifications(
+        &[notification_only.clone()],
+        &notification_only.did,
+        &["notifications"]
+    ));
+
+    let mut mention_only = BlocklistEntry::new("did:web:mention.example", None);
+    mention_only.mode = AccountBlocklistMode::Mute;
+    mention_only.applies_to = vec!["mentions".to_owned()];
+    assert!(!suppresses_notifications(
+        &[mention_only.clone()],
+        &mention_only.did,
+        &["notifications"]
+    ));
+    assert!(suppresses_notifications(
+        &[mention_only.clone()],
+        &mention_only.did,
+        &["notifications", "mentions"]
+    ));
+
+    let mut hidden = BlocklistEntry::new("did:web:hidden.example", None);
+    hidden.mode = AccountBlocklistMode::Hide;
+    assert!(hides_actor_messages(&hidden));
+
+    let mut expired = BlocklistEntry::new("did:web:expired.example", None);
+    expired.expires_at = Some("2020-01-01T00:00:00.000Z".to_owned());
+    assert!(!is_blocked(&[expired.clone()], &expired.did));
+    assert!(!suppresses_notifications(
+        &[expired.clone()],
+        &expired.did,
+        &["notifications"]
+    ));
 }
 
 // ── A4a — ak.client.ui_state shape + merge logic ────────────────────────────

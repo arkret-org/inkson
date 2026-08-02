@@ -264,7 +264,14 @@ async fn store_file_transfer_record(
     let response = crate::transport::account::update_account_data_with_merge(
         submitter,
         account_data_key,
-        |current| merge_file_transfer_account_data(current, candidate, &candidate_envelope, crypto),
+        |snapshot| {
+            merge_file_transfer_account_data(
+                snapshot.entry.as_ref(),
+                candidate,
+                &candidate_envelope,
+                crypto,
+            )
+        },
     )
     .await?;
     let item = file_transfer_item_from_account_data(&response, crypto)?;

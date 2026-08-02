@@ -341,12 +341,12 @@ pub(crate) fn set_notification_inbox_state(
             crate::transport::account::update_account_data_with_merge(
                 &submitter,
                 &account_data_key,
-                |current| {
+                |snapshot| {
                     crate::account_data::merge_notification_inbox_account_data(
                         &actor_id,
                         &account_data_key,
                         &candidate,
-                        current,
+                        snapshot.entry.as_ref(),
                     )
                 },
             )

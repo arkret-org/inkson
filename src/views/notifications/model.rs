@@ -228,8 +228,28 @@ fn notification_from_stored(
         return None;
     }
     let mut eval_ctx = notification_eval_context(&value);
+    let mut blocklist_surfaces = vec!["notifications"];
+    if eval_ctx.mentions_actor.unwrap_or(false) {
+        blocklist_surfaces.push("mentions");
+    }
+    if eval_ctx.is_direct_message {
+        blocklist_surfaces.push("dm");
+    }
+    if eval_ctx.event_kind.starts_with("ak.contact.") {
+        blocklist_surfaces.push("contacts");
+    }
+    if eval_ctx.event_kind.starts_with("ak.call.") {
+        blocklist_surfaces.push("calls");
+    }
+    if eval_ctx.event_kind.starts_with("ak.applet.") {
+        blocklist_surfaces.push("applets");
+    }
     if eval_ctx.sender.as_deref().is_some_and(|sender| {
-        crate::account_data::is_blocked(&local_state.client_blocklist, sender)
+        crate::account_data::suppresses_notifications(
+            &local_state.client_blocklist,
+            sender,
+            &blocklist_surfaces,
+        )
     }) {
         return None;
     }

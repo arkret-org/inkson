@@ -1453,7 +1453,7 @@ pub(crate) async fn update_account_data_with_merge<F>(
     mut merge: F,
 ) -> anyhow::Result<Value>
 where
-    F: FnMut(Option<&arkret_sdk::AccountDataRow>) -> anyhow::Result<Value>,
+    F: FnMut(&AccountDataSnapshot) -> anyhow::Result<Value>,
 {
     let path = format!(
         "{ACCOUNT_DATA_RESOURCE_PATH}/{}",
@@ -1463,7 +1463,7 @@ where
     for attempt in 1..=MAX_ACCOUNT_DATA_CAS_ATTEMPTS {
         let body = arkret_sdk::AccountDataReplaceRequestBody {
             expected_revision: snapshot.revision,
-            content: merge(snapshot.entry.as_ref())?,
+            content: merge(&snapshot)?,
         };
         match submitter
             .http()

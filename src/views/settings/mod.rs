@@ -279,48 +279,34 @@ pub(crate) fn build_read_receipt_preferences_body(
 pub(crate) fn push_blocklist_account_data(
     base_url: String,
     api_token: String,
+    account_did: String,
     entries: Vec<crate::account_data::BlocklistEntry>,
 ) {
     if api_token.trim().is_empty() {
         return;
     }
-    if entries.is_empty() {
-        spawn(async move {
-            if let Err(err) = with_event_submitter(&base_url, api_token, |sub| async move {
-                crate::transport::account::delete_account_data(
-                    &sub,
-                    AccountDataKey::ACCOUNT_BLOCKLIST,
-                )
-                .await
-            })
-            .await
-            {
-                tracing::debug!(
-                    "ak.account_data.delete for ak.account.blocklist failed: {}",
-                    err.display()
-                );
-            }
-        });
-        return;
-    }
-    let plaintext_body = crate::account_data::build_blocklist_account_data_body(&entries);
-    let body =
-        match encrypted_account_data_value(AccountDataKey::ACCOUNT_BLOCKLIST, &plaintext_body) {
-            Ok(body) => body,
-            Err(err) => {
-                tracing::warn!(
-                    "ak.account_data.set for ak.account.blocklist skipped: {}",
-                    err
-                );
-                return;
-            }
-        };
     spawn(async move {
         match with_event_submitter(&base_url, api_token, |sub| async move {
-            crate::transport::account::set_account_data(
+            crate::transport::account::update_account_data_with_merge(
                 &sub,
                 AccountDataKey::ACCOUNT_BLOCKLIST,
-                body,
+                |snapshot| {
+                    let version = snapshot
+                        .revision
+                        .checked_add(1)
+                        .ok_or_else(|| anyhow::anyhow!("account blocklist revision overflow"))?;
+                    let plaintext = crate::account_data::build_blocklist_account_data_body(
+                        &account_did,
+                        version,
+                        &entries,
+                    )
+                    .map_err(anyhow::Error::msg)?;
+                    crate::account_data::encrypt_account_data_value(
+                        &account_did,
+                        AccountDataKey::ACCOUNT_BLOCKLIST,
+                        &plaintext,
+                    )
+                },
             )
             .await
         })
@@ -3135,7 +3121,12 @@ pub fn SettingsPanel(
                                                 "settings.privacy.blocked_users.added"
                                             )
                                         ));
-                                        push_blocklist_account_data(base(), token(), entries);
+                                        push_blocklist_account_data(
+                                            base(),
+                                            token(),
+                                            account_did(),
+                                            entries,
+                                        );
                                     } else {
                                         let did_label =
                                             actor_display_label(&state_store.read(), &did);
@@ -3224,6 +3215,7 @@ pub fn SettingsPanel(
                                                             push_blocklist_account_data(
                                                                 base(),
                                                                 token(),
+                                                                account_did(),
                                                                 entries,
                                                             );
                                                         }

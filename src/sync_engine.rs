@@ -2966,8 +2966,18 @@ pub(crate) fn apply_account_data_entries(
                 &entry.payload,
             )
             .and_then(|content| {
-                crate::account_data::blocklist_entries_from_account_data(&content)
-                    .map_err(anyhow::Error::msg)
+                crate::account_data::blocklist_entries_from_account_data(
+                    &content,
+                    account_did,
+                    entry
+                        .payload
+                        .get("revision")
+                        .and_then(Value::as_u64)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("ak.account.blocklist is missing revision")
+                        })?,
+                )
+                .map_err(anyhow::Error::msg)
             }) {
                 Ok(entries) => store.set_client_blocklist(entries),
                 Err(error) => {

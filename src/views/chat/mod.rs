@@ -1863,6 +1863,7 @@ pub fn ChatPanel(
         .read()
         .client_blocklist()
         .into_iter()
+        .filter(crate::account_data::hides_actor_messages)
         .map(|entry| entry.did)
         .collect();
     let sidecar_mode = sidecar_session.is_some();

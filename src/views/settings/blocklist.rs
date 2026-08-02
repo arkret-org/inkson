@@ -80,7 +80,6 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::get().base_url;
     let mut state_store = crate::app::SessionContext::get().state_store;
-    let _ = account_did;
     let _ = token;
 
     let initial = state_store.read().client_blocklist();
@@ -221,6 +220,7 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
                                                         crate::views::settings::push_blocklist_account_data(
                                                             base(),
                                                             token(),
+                                                            account_did(),
                                                             next,
                                                         );
                                                     }
@@ -387,6 +387,7 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
                                     crate::views::settings::push_blocklist_account_data(
                                         base(),
                                         token(),
+                                        account_did(),
                                         next,
                                     );
                                 } else {

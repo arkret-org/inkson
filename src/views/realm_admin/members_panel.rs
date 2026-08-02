@@ -1193,6 +1193,7 @@ fn MemberRowActions(
                                     crate::views::settings::push_blocklist_account_data(
                                         base.clone(),
                                         token(),
+                                        account_did.clone(),
                                         entries,
                                     );
                                 } else {
