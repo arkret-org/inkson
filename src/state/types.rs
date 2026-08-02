@@ -1140,11 +1140,20 @@ pub struct ClientLocalState {
     /// `discovery/client-preferences.md` (`ak.account.blocklist`). Each
     /// entry hides messages from the targeted DID in chat
     /// renderers and surfaces in the Settings → Privacy panel. The
-    /// shape mirrors the wire body so the future
-    /// `ak.account_data.set("ak.account.blocklist", …)` push can serialise
-    /// straight from this `Vec`.
+    /// Entries use the SDK's closed wire contract directly; no client-local
+    /// DTO is persisted alongside it.
     #[serde(default)]
-    pub client_blocklist: Vec<crate::account_data::BlocklistEntry>,
+    pub client_blocklist:
+        Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry>,
+    /// Outer Account Data CAS revision that produced `client_blocklist`.
+    /// Payload `version` is only the schema version and never orders updates.
+    #[serde(default)]
+    pub client_blocklist_revision: u64,
+    /// Durable actor-block side effects awaiting the standard contact
+    /// tombstone + full consent revoke operation. Entries remain until the
+    /// canonical operation succeeds and are retried by later blocklist writes.
+    #[serde(default)]
+    pub pending_personal_block_sagas: BTreeSet<String>,
     /// Round 4 (spec a77b995) — last `trust_domain` advertised by the
     /// connected principal server's Round 4 `ServiceDescribe` response.
     /// Threaded through to strands that need to canonicalise into
@@ -1414,6 +1423,8 @@ impl Default for ClientLocalState {
             realm_remarks: BTreeMap::new(),
             contact_remarks: BTreeMap::new(),
             client_blocklist: Vec::new(),
+            client_blocklist_revision: 0,
+            pending_personal_block_sagas: BTreeSet::new(),
             server_trust_domain: None,
             dpop_device_key: None,
             member_identity_events: BTreeMap::new(),

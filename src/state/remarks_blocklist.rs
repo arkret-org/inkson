@@ -115,8 +115,14 @@ impl LocalStateStore {
 
     /// Current personal blocklist. Cheap clone — the underlying `Vec`
     /// is short by design (curated by the user).
-    pub fn client_blocklist(&self) -> Vec<crate::account_data::BlocklistEntry> {
+    pub fn client_blocklist(
+        &self,
+    ) -> Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry> {
         self.load().client_blocklist
+    }
+
+    pub fn client_blocklist_revision(&self) -> u64 {
+        self.load().client_blocklist_revision
     }
 
     /// True when `did` appears in the local blocklist. Used by the
@@ -135,14 +141,16 @@ impl LocalStateStore {
     /// `ak.account_data.set("ak.account.blocklist", …)`.
     pub fn block_user(&mut self, did: impl AsRef<str>, reason: Option<String>) -> bool {
         self.ensure_cached_loaded();
-        let now = arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now());
         let changed = crate::account_data::block_user_in(
             &mut self.cached.client_blocklist,
             did.as_ref(),
             reason,
-            Some(now),
+            chrono::Utc::now(),
         );
         if changed {
+            self.cached
+                .pending_personal_block_sagas
+                .insert(did.as_ref().trim().to_owned());
             let _ = self.flush();
         }
         changed
@@ -167,24 +175,30 @@ impl LocalStateStore {
     /// persistence + push contract as [`block_user`].
     pub fn block_target(
         &mut self,
-        kind: impl AsRef<str>,
+        kind: crate::account_data::BlocklistUiTargetKind,
         value: impl AsRef<str>,
         reason: Option<String>,
-        applies_to: Vec<String>,
-        expires_at: Option<String>,
+        applies_to: Vec<
+            arkret_models_collaboration::objects::productivity::AccountBlocklistSurface,
+        >,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> bool {
         self.ensure_cached_loaded();
-        let now = arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now());
         let changed = crate::account_data::block_target_in(
             &mut self.cached.client_blocklist,
-            kind.as_ref(),
+            kind,
             value.as_ref(),
             reason,
             applies_to,
             expires_at,
-            Some(now),
+            chrono::Utc::now(),
         );
         if changed {
+            if kind == crate::account_data::BlocklistUiTargetKind::Actor {
+                self.cached
+                    .pending_personal_block_sagas
+                    .insert(value.as_ref().trim().to_owned());
+            }
             let _ = self.flush();
         }
         changed
@@ -193,13 +207,13 @@ impl LocalStateStore {
     /// Remove the `(kind, value)` block from the personal blocklist. Returns
     /// `true` when an entry was removed. Prefer this over [`unblock_user`] on
     /// surfaces that track the target kind.
-    pub fn unblock_target(&mut self, kind: impl AsRef<str>, value: impl AsRef<str>) -> bool {
+    pub fn unblock_target(
+        &mut self,
+        target: &arkret_models_collaboration::objects::productivity::AccountBlocklistTarget,
+    ) -> bool {
         self.ensure_cached_loaded();
-        let changed = crate::account_data::unblock_target_in(
-            &mut self.cached.client_blocklist,
-            kind.as_ref(),
-            value.as_ref(),
-        );
+        let changed =
+            crate::account_data::unblock_target_in(&mut self.cached.client_blocklist, target);
         if changed {
             let _ = self.flush();
         }
@@ -209,10 +223,34 @@ impl LocalStateStore {
     /// Replace the whole personal blocklist from `/sync account_data`.
     /// User edits still go through [`block_user`] / [`unblock_user`];
     /// this method is only for remote state hydration.
-    pub fn set_client_blocklist(&mut self, entries: Vec<crate::account_data::BlocklistEntry>) {
+    pub fn set_client_blocklist(
+        &mut self,
+        revision: u64,
+        entries: Vec<
+            arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry,
+        >,
+    ) {
         self.ensure_cached_loaded();
+        if revision < self.cached.client_blocklist_revision
+            || (revision == self.cached.client_blocklist_revision
+                && self.cached.client_blocklist != entries)
+        {
+            return;
+        }
         self.cached.client_blocklist = entries;
+        self.cached.client_blocklist_revision = revision;
         let _ = self.flush();
+    }
+
+    pub fn pending_personal_block_sagas(&self) -> BTreeSet<String> {
+        self.load().pending_personal_block_sagas
+    }
+
+    pub fn complete_personal_block_saga(&mut self, peer_did: &str) {
+        self.ensure_cached_loaded();
+        if self.cached.pending_personal_block_sagas.remove(peer_did) {
+            let _ = self.flush();
+        }
     }
 
     /// Best-effort name for `realm_id`: trimmed `local_name` from the

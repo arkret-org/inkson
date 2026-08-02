@@ -2987,20 +2987,19 @@ pub(crate) fn apply_account_data_entries(
                 &entry.payload,
             )
             .and_then(|content| {
-                crate::account_data::blocklist_entries_from_account_data(
-                    &content,
-                    account_did,
-                    entry
-                        .payload
-                        .get("revision")
-                        .and_then(Value::as_u64)
-                        .ok_or_else(|| {
-                            anyhow::anyhow!("ak.account.blocklist is missing revision")
-                        })?,
-                )
-                .map_err(anyhow::Error::msg)
+                let entries =
+                    crate::account_data::blocklist_entries_from_account_data(&content, account_did)
+                        .map_err(anyhow::Error::msg)?;
+                let revision = entry
+                    .payload
+                    .get("revision")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| anyhow::anyhow!("ak.account.blocklist is missing revision"))?;
+                Ok((revision, entries))
             }) {
-                Ok(entries) => store.set_client_blocklist(entries),
+                Ok((revision, entries)) => {
+                    store.set_client_blocklist(revision, entries);
+                }
                 Err(error) => {
                     tracing::warn!(
                         "sync engine: ignoring malformed ak.account.blocklist account_data: {error}",

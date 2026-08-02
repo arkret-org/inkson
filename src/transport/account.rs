@@ -1314,6 +1314,26 @@ pub async fn tombstone_contact(
         .map_err(anyhow::Error::from)
 }
 
+/// Complete the non-blocklist legs of a personal block saga using the
+/// standard contact command. `full_peer_revoke` revokes every consent scope
+/// while the tombstone removes the contact projection; no private endpoint or
+/// receiver-visible block response is introduced.
+pub async fn tombstone_contact_and_revoke_all(
+    http: &arkret_sdk::http_client::Client,
+    peer: &str,
+) -> anyhow::Result<arkret_sdk::ContactTombstone> {
+    let body = arkret_sdk::ContactTombstoneRequestBody {
+        contact: did_for_request_field("contact", peer)?,
+        revoke_scopes: Vec::new(),
+        full_peer_revoke: true,
+        block_peer: true,
+        peer_service_id: None,
+    };
+    http.contacts_tombstone(&body)
+        .await
+        .map_err(anyhow::Error::from)
+}
+
 /// Grant scoped consent to `peer` from the holder cell. `expires_at` is an
 /// optional RFC 3339 time window upper bound. Spec OpenAPI
 /// `ak.self.consent.command.grant`.

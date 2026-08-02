@@ -228,21 +228,22 @@ fn notification_from_stored(
         return None;
     }
     let mut eval_ctx = notification_eval_context(&value);
-    let mut blocklist_surfaces = vec!["notifications"];
+    use arkret_models_collaboration::objects::productivity::AccountBlocklistSurface;
+    let mut blocklist_surfaces = vec![AccountBlocklistSurface::Notifications];
     if eval_ctx.mentions_actor.unwrap_or(false) {
-        blocklist_surfaces.push("mentions");
+        blocklist_surfaces.push(AccountBlocklistSurface::Mentions);
     }
     if eval_ctx.is_direct_message {
-        blocklist_surfaces.push("dm");
+        blocklist_surfaces.push(AccountBlocklistSurface::Dm);
     }
     if eval_ctx.event_kind.starts_with("ak.contact.") {
-        blocklist_surfaces.push("contacts");
+        blocklist_surfaces.push(AccountBlocklistSurface::Contacts);
     }
     if eval_ctx.event_kind.starts_with("ak.call.") {
-        blocklist_surfaces.push("calls");
+        blocklist_surfaces.push(AccountBlocklistSurface::Calls);
     }
     if eval_ctx.event_kind.starts_with("ak.applet.") {
-        blocklist_surfaces.push("applets");
+        blocklist_surfaces.push(AccountBlocklistSurface::Applets);
     }
     if eval_ctx.sender.as_deref().is_some_and(|sender| {
         crate::account_data::suppresses_notifications(

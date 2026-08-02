@@ -41,38 +41,36 @@ const BLOCK_REASON_CODES: &[&str] = &[
 ];
 
 /// Human label for a `target.kind` value.
-fn target_kind_label(kind: &str) -> &'static str {
+fn target_kind_label(kind: crate::account_data::BlocklistUiTargetKind) -> &'static str {
     match kind {
-        "service" => "Principal server / service",
-        "domain" => "Domain",
-        "organization" => "Organization",
-        _ => "Actor (user / agent)",
+        crate::account_data::BlocklistUiTargetKind::Service => "Principal server / service",
+        crate::account_data::BlocklistUiTargetKind::Domain => "Domain",
+        crate::account_data::BlocklistUiTargetKind::Organization => "Organization",
+        crate::account_data::BlocklistUiTargetKind::Actor => "Actor (user / agent)",
     }
 }
 
 /// Placeholder hint for the identifier input, by target kind. Actor uses the
 /// v1-core default principal method `did:webvh`, not `did:web`.
-fn target_kind_placeholder(kind: &str) -> &'static str {
+fn target_kind_placeholder(kind: crate::account_data::BlocklistUiTargetKind) -> &'static str {
     match kind {
-        "service" => "did:web:server.acme.example",
-        "domain" => "example.com",
-        "organization" => "did:web:acme.example",
-        _ => "did:webvh:<scid>:alice.example",
+        crate::account_data::BlocklistUiTargetKind::Service => "did:web:server.acme.example",
+        crate::account_data::BlocklistUiTargetKind::Domain => "example.com",
+        crate::account_data::BlocklistUiTargetKind::Organization => "did:web:acme.example",
+        crate::account_data::BlocklistUiTargetKind::Actor => "did:webvh:<scid>:alice.example",
     }
 }
 
 /// Resolve a UI expiry choice to an absolute RFC 3339 timestamp. `never`
 /// (and any unknown value) maps to `None` — a permanent block.
-fn expiry_choice_to_rfc3339(choice: &str) -> Option<String> {
+fn expiry_choice_to_rfc3339(choice: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     let duration = match choice {
         "1d" => chrono::Duration::days(1),
         "7d" => chrono::Duration::days(7),
         "30d" => chrono::Duration::days(30),
         _ => return None,
     };
-    Some(arkret_sdk::canonical::format_timestamp_canonical(
-        chrono::Utc::now() + duration,
-    ))
+    Some(chrono::Utc::now() + duration)
 }
 
 #[component]
@@ -84,8 +82,8 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
 
     let initial = state_store.read().client_blocklist();
     let mut entries = use_signal(|| initial);
-    let mut target_kind = use_signal(|| "actor".to_owned());
-    let kind_selected = use_memo(move || Some(target_kind()));
+    let mut target_kind = use_signal(|| crate::account_data::BlocklistUiTargetKind::Actor);
+    let kind_selected = use_memo(move || Some(target_kind().ui_value().to_owned()));
     let mut add_input = use_signal(String::new);
     let mut reason_code = use_signal(String::new);
     let reason_selected = use_memo(move || Some(reason_code()));
@@ -94,8 +92,7 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
     let mut applies_to = use_signal(|| {
         crate::account_data::DEFAULT_BLOCKLIST_APPLIES_TO
             .iter()
-            .map(|surface| (*surface).to_owned())
-            .collect::<Vec<String>>()
+            .to_vec()
     });
     let mut status = use_signal(String::new);
 
@@ -103,7 +100,7 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
     // (actor / service / organization) or as a domain for `domain`. At least
     // one surface must be selected.
     let kind_now = target_kind();
-    let is_did_kind = crate::account_data::blocklist_kind_is_did(&kind_now);
+    let is_did_kind = kind_now.is_did();
     let raw_input = add_input();
     let input_trimmed = raw_input.trim();
     let input_empty = input_trimmed.is_empty();
@@ -154,58 +151,61 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
                 } else {
                     for entry in entries.read().iter().cloned() {
                         {
-                            let blocked_at = entry.blocked_at.clone().unwrap_or_default();
-                            let kind = entry.kind.clone();
-                            let kind_label = target_kind_label(&kind);
-                            let entry_label = if kind == "actor" {
-                                actor_display_label(&state_store.read(), &entry.did)
-                            } else {
-                                short_protocol_id(&entry.did)
+                            let blocked_at = entry.created_at;
+                            let kind = crate::account_data::blocklist_target_kind_label(&entry.target);
+                            let kind_label = match kind {
+                                "service" => target_kind_label(crate::account_data::BlocklistUiTargetKind::Service),
+                                "domain" => target_kind_label(crate::account_data::BlocklistUiTargetKind::Domain),
+                                "organization" => target_kind_label(crate::account_data::BlocklistUiTargetKind::Organization),
+                                _ => target_kind_label(crate::account_data::BlocklistUiTargetKind::Actor),
                             };
-                            let applies_summary = if entry.applies_to.is_empty() {
-                                "all surfaces".to_owned()
+                            let entry_value = crate::account_data::blocklist_target_value(&entry.target);
+                            let entry_label = if crate::account_data::target_is_actor(&entry.target) {
+                                actor_display_label(&state_store.read(), entry_value)
                             } else {
-                                entry.applies_to.join(", ")
+                                short_protocol_id(entry_value)
                             };
-                            let expires_at = entry.expires_at.clone();
+                            let applies_summary = entry.applies_to.iter()
+                                .map(|surface| crate::account_data::blocklist_surface_label(*surface))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            let expires_at = entry.expires_at;
                             rsx! {
                                 div {
                                     class: "event",
                                     "data-testid": "blocked-user-row",
-                                    "data-actor-did": "{entry.did}",
+                                    "data-actor-did": "{entry_value}",
                                     "data-target-kind": "{kind}",
                                     "data-blocked-at": "{blocked_at}",
                                     div { class: "event-head",
                                         span { class: "badge", "{kind_label}" }
-                                        span { title: "{entry.did}", "{entry_label}" }
-                                        if !blocked_at.is_empty() {
-                                            span { class: "muted", "{blocked_at}" }
-                                        }
+                                        span { title: "{entry_value}", "{entry_label}" }
+                                        span { class: "muted", "{blocked_at}" }
                                     }
                                     div { class: "muted", "Applies to: {applies_summary}" }
                                     if let Some(expires) = &expires_at {
                                         div { class: "muted", "Expires: {expires}" }
                                     }
-                                    if let Some(reason) = &entry.reason {
+                                    if let Some(reason) = &entry.reason_code {
                                         div { class: "muted", "Reason: {reason}" }
                                     }
                                     div { class: "actions",
                                         Button {
                                             variant: ButtonVariant::Secondary,
                                             "data-testid": "unblock-button",
-                                            "data-actor-did": "{entry.did}",
+                                            "data-actor-did": "{entry_value}",
                                             onclick: {
-                                                let target_value = entry.did.clone();
-                                                let target_kind = entry.kind.clone();
+                                                let target = entry.target.clone();
+                                                let target_value = entry_value.to_owned();
                                                 let base = base_url;
                                                 move |_| {
                                                     let changed = state_store
                                                         .write()
-                                                        .unblock_target(&target_kind, &target_value);
+                                                        .unblock_target(&target);
                                                     let next = state_store.read().client_blocklist();
                                                     entries.set(next.clone());
                                                     if changed {
-                                                        let target_label = if target_kind == "actor" {
+                                                        let target_label = if crate::account_data::target_is_actor(&target) {
                                                             actor_display_label(
                                                                 &state_store.read(),
                                                                 &target_value,
@@ -221,6 +221,7 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
                                                             base(),
                                                             token(),
                                                             account_did(),
+                                                            state_store,
                                                             next,
                                                         );
                                                     }
@@ -243,14 +244,20 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
                         "data-testid": "block-target-kind",
                         value: Some(kind_selected.into()),
                         on_value_change: move |v: Option<String>| {
-                            if let Some(v) = v {
-                                target_kind.set(v);
+                            if let Some(kind) = v.as_deref().and_then(
+                                crate::account_data::BlocklistUiTargetKind::from_ui_value,
+                            ) {
+                                target_kind.set(kind);
                             }
                         },
-                        SelectOption::<String> { index: 0usize, value: "actor".to_string(), text_value: "Actor", {target_kind_label("actor")} }
-                        SelectOption::<String> { index: 1usize, value: "service".to_string(), text_value: "Service", {target_kind_label("service")} }
-                        SelectOption::<String> { index: 2usize, value: "domain".to_string(), text_value: "Domain", {target_kind_label("domain")} }
-                        SelectOption::<String> { index: 3usize, value: "organization".to_string(), text_value: "Organization", {target_kind_label("organization")} }
+                        for (index, kind) in crate::account_data::BlocklistUiTargetKind::ALL.iter().copied().enumerate() {
+                            SelectOption::<String> {
+                                index,
+                                value: kind.ui_value().to_owned(),
+                                text_value: kind.ui_value(),
+                                {target_kind_label(kind)}
+                            }
+                        }
                     }
                 }
 
@@ -261,7 +268,7 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
                         class: "{input_class}",
                         "data-testid": "block-target-input",
                         value: "{add_input}",
-                        placeholder: target_kind_placeholder(&kind_now),
+        placeholder: target_kind_placeholder(kind_now),
                         "aria-invalid": if !input_empty && !input_valid { "true" } else { "false" },
                         oninput: move |event: FormEvent| add_input.set(event.value()),
                     }
@@ -278,10 +285,12 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
                     Label { html_for: "block-applies-to", "Applies to" }
                     div { class: "blocklist-applies-grid", "data-testid": "block-applies-to",
                         for surface in crate::account_data::DEFAULT_BLOCKLIST_APPLIES_TO.iter().copied() {
+                            {
+                            let surface_label = crate::account_data::blocklist_surface_label(surface);
                             label { class: "metric",
                                 Checkbox {
-                                    "data-testid": "block-applies-{surface}",
-                                    checked: if applies_to.read().iter().any(|s| s == surface) {
+                                    "data-testid": "block-applies-{surface_label}",
+                                    checked: if applies_to.read().contains(&surface) {
                                         CheckboxState::Checked
                                     } else {
                                         CheckboxState::Unchecked
@@ -289,16 +298,17 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
                                     on_checked_change: move |state: CheckboxState| {
                                         let mut next = applies_to();
                                         if bool::from(state) {
-                                            if !next.iter().any(|s| s == surface) {
-                                                next.push(surface.to_owned());
+                                            if !next.contains(&surface) {
+                                                next.push(surface);
                                             }
                                         } else {
-                                            next.retain(|s| s != surface);
+                                            next.retain(|candidate| *candidate != surface);
                                         }
                                         applies_to.set(next);
                                     },
                                 }
-                                span { "{surface}" }
+                                span { "{surface_label}" }
+                            }
                             }
                         }
                     }
@@ -374,7 +384,7 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
                                 let next = state_store.read().client_blocklist();
                                 entries.set(next.clone());
                                 if changed {
-                                    let target_label = if kind == "actor" {
+                                    let target_label = if kind == crate::account_data::BlocklistUiTargetKind::Actor {
                                         actor_display_label(&state_store.read(), &target)
                                     } else {
                                         short_protocol_id(&target)
@@ -388,10 +398,11 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
                                         base(),
                                         token(),
                                         account_did(),
+                                        state_store,
                                         next,
                                     );
                                 } else {
-                                    let target_label = if kind == "actor" {
+                                    let target_label = if kind == crate::account_data::BlocklistUiTargetKind::Actor {
                                         actor_display_label(&state_store.read(), &target)
                                     } else {
                                         short_protocol_id(&target)
@@ -430,8 +441,25 @@ mod tests {
 
         let entries = store.client_blocklist();
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].did, "did:web:bob.example");
-        assert!(entries[0].blocked_at.is_some());
+        assert_eq!(
+            crate::account_data::blocklist_target_value(&entries[0].target),
+            "did:web:bob.example"
+        );
+        assert!(crate::account_data::target_is_actor(&entries[0].target));
+        assert_eq!(
+            store.pending_personal_block_sagas(),
+            std::collections::BTreeSet::from(["did:web:bob.example".to_owned()])
+        );
+
+        let remote = entries.clone();
+        store.set_client_blocklist(4, remote.clone());
+        store.set_client_blocklist(3, Vec::new());
+        store.set_client_blocklist(4, Vec::new());
+        assert_eq!(store.client_blocklist_revision(), 4);
+        assert_eq!(store.client_blocklist(), remote);
+
+        store.complete_personal_block_saga("did:web:bob.example");
+        assert!(store.pending_personal_block_sagas().is_empty());
 
         assert!(store.unblock_user("did:web:bob.example"));
         assert!(!store.unblock_user("did:web:bob.example"));

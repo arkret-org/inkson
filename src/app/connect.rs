@@ -1453,22 +1453,19 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         entry,
                                     )
                                     .and_then(|content| {
-                                        crate::account_data::blocklist_entries_from_account_data(
+                                        let entries = crate::account_data::blocklist_entries_from_account_data(
                                             &content,
                                             &account_did(),
-                                            entry
-                                                .get("revision")
-                                                .and_then(serde_json::Value::as_u64)
-                                                .ok_or_else(|| {
-                                                    anyhow::anyhow!(
-                                                        "ak.account.blocklist is missing revision"
-                                                    )
-                                                })?,
                                         )
-                                        .map_err(anyhow::Error::msg)
+                                        .map_err(anyhow::Error::msg)?;
+                                        let revision = entry
+                                            .get("revision")
+                                            .and_then(serde_json::Value::as_u64)
+                                            .ok_or_else(|| anyhow::anyhow!("ak.account.blocklist is missing revision"))?;
+                                        Ok((revision, entries))
                                     }) {
-                                        Ok(entries) => {
-                                            store.set_client_blocklist(entries);
+                                        Ok((revision, entries)) => {
+                                            store.set_client_blocklist(revision, entries);
                                         }
                                         Err(error) => {
                                             tracing::warn!(
@@ -1544,7 +1541,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 }
                             }
                             if !blocklist_snapshot_seen {
-                                store.set_client_blocklist(Vec::new());
+                                store.set_client_blocklist(0, Vec::new());
                             }
                             // Force a synchronous flush so that if the user
                             // refreshes the tab immediately after a successful

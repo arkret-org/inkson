@@ -280,24 +280,20 @@ pub(crate) fn push_blocklist_account_data(
     base_url: String,
     api_token: String,
     account_did: String,
-    entries: Vec<crate::account_data::BlocklistEntry>,
+    mut state_store: Signal<crate::state::LocalStateStore>,
+    entries: Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry>,
 ) {
     if api_token.trim().is_empty() {
         return;
     }
     spawn(async move {
         match with_event_submitter(&base_url, api_token, |sub| async move {
-            crate::transport::account::update_account_data_with_merge(
+            let outcome = crate::transport::account::update_account_data_with_merge(
                 &sub,
                 AccountDataKey::ACCOUNT_BLOCKLIST,
-                |snapshot| {
-                    let version = snapshot
-                        .revision
-                        .checked_add(1)
-                        .ok_or_else(|| anyhow::anyhow!("account blocklist revision overflow"))?;
+                |_| {
                     let plaintext = crate::account_data::build_blocklist_account_data_body(
                         &account_did,
-                        version,
                         &entries,
                     )
                     .map_err(anyhow::Error::msg)?;
@@ -308,7 +304,13 @@ pub(crate) fn push_blocklist_account_data(
                     )
                 },
             )
-            .await
+            .await?;
+            for peer in state_store.read().pending_personal_block_sagas() {
+                crate::transport::account::tombstone_contact_and_revoke_all(sub.http(), &peer)
+                    .await?;
+                state_store.write().complete_personal_block_saga(&peer);
+            }
+            Ok(outcome)
         })
         .await
         {
@@ -3125,6 +3127,7 @@ pub fn SettingsPanel(
                                             base(),
                                             token(),
                                             account_did(),
+                                            state_store,
                                             entries,
                                         );
                                     } else {
@@ -3178,29 +3181,31 @@ pub fn SettingsPanel(
                         ul { class: "settings-list", "data-testid": "blocklist-entries",
                             for entry in blocklist_snapshot.read().iter() {
                                 {
+                                    let entry_value = crate::account_data::blocklist_target_value(
+                                        &entry.target,
+                                    );
                                     let did_label =
-                                        actor_display_label(&state_store.read(), &entry.did);
+                                        actor_display_label(&state_store.read(), entry_value);
                                     rsx! {
                                         li { class: "settings-list-row", "data-testid": "blocklist-entry",
                                             div {
-                                                strong { title: "{entry.did}", "{did_label}" }
-                                                if let Some(reason) = &entry.reason {
+                                                strong { title: "{entry_value}", "{did_label}" }
+                                                if let Some(reason) = &entry.reason_code {
                                                     div { class: "muted", "{reason}" }
                                                 }
-                                                if let Some(blocked_at) = &entry.blocked_at {
-                                                    div { class: "muted", "{blocked_at}" }
-                                                }
+                                                div { class: "muted", "{entry.created_at}" }
                                             }
                                             Button {
                                                 variant: ButtonVariant::Secondary,
                                                 "data-testid": "blocklist-unblock",
                                                 onclick: {
-                                                    let did = entry.did.clone();
+                                                    let target = entry.target.clone();
+                                                    let did = crate::account_data::blocklist_target_value(&target).to_owned();
                                                     let base = base_url;
                                                     move |_| {
                                                         let changed = state_store
                                                             .write()
-                                                            .unblock_user(&did);
+                                                            .unblock_target(&target);
                                                         let entries = state_store.read().client_blocklist();
                                                         blocklist_snapshot.set(entries.clone());
                                                         if changed {
@@ -3216,6 +3221,7 @@ pub fn SettingsPanel(
                                                                 base(),
                                                                 token(),
                                                                 account_did(),
+                                                                state_store,
                                                                 entries,
                                                             );
                                                         }

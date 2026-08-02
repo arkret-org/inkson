@@ -1194,6 +1194,7 @@ fn MemberRowActions(
                                         base.clone(),
                                         token(),
                                         account_did.clone(),
+                                        state_store,
                                         entries,
                                     );
                                 } else {

@@ -1892,7 +1892,7 @@ pub fn ChatPanel(
         .client_blocklist()
         .into_iter()
         .filter(crate::account_data::hides_actor_messages)
-        .map(|entry| entry.did)
+        .map(|entry| crate::account_data::blocklist_target_value(&entry.target).to_owned())
         .collect();
     let sidecar_mode = sidecar_session.is_some();
     let mut right_panel = use_signal(move || {
