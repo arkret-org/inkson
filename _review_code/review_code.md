@@ -318,3 +318,28 @@
   fail-closed. Regression coverage asserts both the allowed transient codes and rejected errors.
 - **Prevention dimension:** every bounded workflow waiting on a governance Seal must classify the
   registered structured frontier state, not infer liveness only from one reducer error message.
+
+## 2026-08-01 — server-contract fixture omitted the mandatory grant authority source
+
+- **Surface:** `tests/server_contract.rs` parsed a purported full canonical `CapabilityGrant` from
+  the Soland grant-list contract, but the fixture omitted `issuer_authority_refs` after the SDK made
+  the field mandatory under `capabilities.md` §3 and §10.
+- **Regression:** the latest SDK correctly rejected the fixture with
+  `missing field issuer_authority_refs`, causing Inkson's otherwise green workspace gate to fail.
+- **Correction:** the contract fixture now carries the typed Realm authority-root reference and
+  asserts that the SDK projection preserves it. No serde default or compatibility fallback was
+  added; older authority-less grants remain rejected.
+- **Prevention dimension:** cross-repository contract fixtures must carry every mandatory
+  authority-chain field and be rerun against SDK HEAD whenever the canonical grant schema changes.
+
+## 2026-08-02 — MLS Commit Event omitted the newly mandatory inline Commit bytes
+
+- **Surface:** `src/mls/group_events.rs` typed `ak.mls.commit` Event construction.
+- **Regression:** the final spec sync made `commit_bytes_b64` mandatory so offline members can
+  replay RFC 9420 commits without an optional blob, while Inkson supplied only `commit_digest`.
+- **Correction:** carry the already serialized `MlsCommitEnvelope.commit` into the typed payload;
+  the SDK now decodes it and verifies the digest before authoring the Event. The operation fixture
+  pins a byte/digest-matching pair.
+- **Prevention dimension:** every MLS envelope field required for durable offline replay must
+  survive the envelope-to-Event boundary; a digest alone proves integrity but provides no recovery
+  bytes.

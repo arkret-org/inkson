@@ -46,10 +46,9 @@ pub fn capability_revoke(
 /// `subject` is the delegee DID the grant authorizes; `actor` is the
 /// issuer (and the Envelope signer). `resources` defaults to a single
 /// `{kind:"realm", realm_id}` selector — the management surface this
-/// covers. The Envelope `seal_basis` / signature carries the issuer
-/// proof; the per-grant `proofs[]` the strict SDK builder mints is not
-/// re-derived here (consistent with the rest of the inkson `ak_ops`
-/// event pipeline, which signs at the Envelope boundary).
+/// covers. The submit pipeline attaches the grant's issuer-attestation
+/// proof before freezing the durable semantic intent, then signs the outer
+/// Event envelope separately.
 pub fn capability_grant_actions(
     realm_id: &str,
     actor: &str,
@@ -90,6 +89,19 @@ pub fn capability_grant_actions_with_resources(
     constraints: Value,
 ) -> OperationBuilder {
     let realm = trim_realm_id(realm_id);
+    let constraints = match constraints {
+        Value::Null => json!([non_regrantable_authority_constraint()]),
+        Value::Array(mut items) => {
+            let has_authority_control = items.iter().any(|item| {
+                item.get("constraint_kind").and_then(Value::as_str) == Some("authority_control")
+            });
+            if !has_authority_control {
+                items.push(non_regrantable_authority_constraint());
+            }
+            Value::Array(items)
+        }
+        other => other,
+    };
     let mut grant = json!({
         "id": grant_id,
         "schema": "ak.schema.capability.v1",
@@ -98,7 +110,18 @@ pub fn capability_grant_actions_with_resources(
         "subject": subject,
         "actions": actions,
         "resources": resources,
+        // Current Inkson authoring supports direct Realm-root issuance. The
+        // typed ref is part of the signed grant body; membership / created_by
+        // must never be inferred as authority by the receiver.
+        "issuer_authority_refs": [{
+            "kind": "realm_root",
+            "realm_id": realm,
+            "cell_ref": "ak:cell:ak.component.realm.authority_root.v1:null",
+            "controller_epoch_at_issuance": 0,
+            "authority_generation": 0,
+        }],
         "issued_at": crate::clock::now_timestamp(),
+        "constraints": constraints,
         "proofs": [],
     });
     let carries_aggregate_admin = actions.iter().any(|action| {
@@ -116,15 +139,23 @@ pub fn capability_grant_actions_with_resources(
     if let Some(expires_at) = expires_at {
         grant["expires_at"] = json!(expires_at);
     }
-    if !constraints.is_null() {
-        grant["constraints"] = constraints;
-    }
     OperationBuilder::new(&realm, actor, arkret_sdk::EventKind::CapabilityGrant)
         .target_ref(grant_id)
         .body(json!({
             "grant_id": grant_id,
             "grant": grant,
         }))
+}
+
+fn non_regrantable_authority_constraint() -> Value {
+    json!({
+        "constraint_kind": "authority_control",
+        "effect": "allow",
+        "max_authority_depth": 0,
+        "authority_regrant_allowed": false,
+        "authority_scope": "narrowing_only",
+        "scope_expansion_allowed": false,
+    })
 }
 
 #[cfg(test)]
@@ -149,6 +180,27 @@ mod tests {
             event.payload["grant"]["capability_action_registry_digest"],
             serde_json::to_value(arkret_sdk::current_capability_action_registry_digest().unwrap())
                 .unwrap()
+        );
+        assert_eq!(
+            event.payload["grant"]["issuer_authority_refs"],
+            json!([{
+                "kind": "realm_root",
+                "realm_id": "ak:realm:019f9000-0000-7000-8000-000000000001",
+                "cell_ref": "ak:cell:ak.component.realm.authority_root.v1:null",
+                "controller_epoch_at_issuance": 0,
+                "authority_generation": 0,
+            }])
+        );
+        assert_eq!(
+            event.payload["grant"]["constraints"],
+            json!([{
+                "constraint_kind": "authority_control",
+                "effect": "allow",
+                "max_authority_depth": 0,
+                "authority_regrant_allowed": false,
+                "authority_scope": "narrowing_only",
+                "scope_expansion_allowed": false,
+            }])
         );
         // v1 derives the OR-Set write from the registered contract instead of
         // shipping it. The dot is `<event_id>:<write_index>` and the element

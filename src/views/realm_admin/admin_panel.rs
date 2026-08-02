@@ -45,8 +45,8 @@ pub fn RealmAdminPanel(
     let mut history_visibility = use_signal(|| "shared".to_owned());
     let mut status_msg = use_signal(String::new);
     // Capability grant/revoke Move-strand inputs (see capability-grant-card)
-    let mut cap_grant_id = use_signal(|| "cap.demo-01".to_owned());
-    let mut cap_tag = use_signal(|| "discussion.message.create".to_owned());
+    let mut cap_grant_id = use_signal(|| arkret_sdk::new_prefixed_uuid7("ak:grant:"));
+    let mut cap_tag = use_signal(|| "ak.message.create".to_owned());
     let mut cap_subject = use_signal(String::new);
     let mut cap_revoke_reason = use_signal(|| "rotation policy".to_owned());
     let mut archive_confirm_open = use_signal(|| false);

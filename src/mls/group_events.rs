@@ -584,6 +584,7 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
         base_group_state_ref,
         proposal_refs,
         commit_envelope.epoch,
+        commit_envelope.commit.clone(),
         commit_envelope.commit_digest.clone(),
         governance_binding,
     )

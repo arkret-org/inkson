@@ -361,6 +361,13 @@ fn inkson_accepts_server_contract_payloads() {
             "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
             "issuer": "did:web:server.local",
             "subject": "did:web:alice.example",
+            "issuer_authority_refs": [{
+                "kind": "realm_root",
+                "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
+                "cell_ref": "ak:cell:ak.component.realm.authority_root.v1:null",
+                "controller_epoch_at_issuance": 0,
+                "authority_generation": 0
+            }],
             "actions": ["ak.message.create"],
             "resources": [
                 {"kind": "realm", "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001"}
@@ -380,6 +387,7 @@ fn inkson_accepts_server_contract_payloads() {
     }))
     .unwrap();
     assert_eq!(grants.grants.len(), 1);
+    assert_eq!(grants.grants[0].issuer_authority_refs.len(), 1);
 
     let invites: inkson::models::AuthzInviteList = serde_json::from_value(json!({
         "invites": [],

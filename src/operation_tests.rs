@@ -351,8 +351,9 @@ fn mls_commit_builder_matches_registered_payload_schema() {
         "ak:event:0196419b-0000-7000-8000-000000000001",
         Vec::new(),
         1,
+        "dGVzdA",
         arkret_sdk::Hash::new(
-            "sha256:7777777777777777777777777777777777777777777777777777777777777777".to_owned(),
+            "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08".to_owned(),
         )
         .unwrap(),
         governance_binding,

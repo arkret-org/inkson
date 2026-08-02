@@ -1502,6 +1502,11 @@ impl EventSubmitter {
         // present and leaves it untouched, keeping every attempt's authored
         // envelope equal to its intent.
         self.stamp_realm_authority_root_claim(&mut intent).await;
+        // The issuer attestation is part of the capability artifact itself,
+        // hence part of the immutable semantic intent. Finalize it before the
+        // durable queue freezes that intent; adding it during an authored
+        // attempt would correctly trip the queue's mutation guard.
+        attach_capability_grant_payload_proof(&mut intent)?;
         tracing::warn!(
             event_id = %intent.event_id,
             kind = %intent.kind.as_str(),
@@ -1953,6 +1958,10 @@ impl EventSubmitter {
             .await?;
         self.stamp_cba_basis_for_sdk_event_inner(&mut signed, authoring)
             .await?;
+        // Fresh single-Event submission finalizes this proof before freezing
+        // the durable intent. Keep this idempotent call for direct preparation
+        // and batch callers, which do not pass through that queue boundary.
+        attach_capability_grant_payload_proof(&mut signed)?;
         if signed.proofs.is_empty() {
             let proof_context = self.event_proof_context(&signed).await?;
             crate::event_signer::sign_sdk_event_with_active_context(&mut signed, proof_context)
@@ -2817,6 +2826,49 @@ mod tests {
         let second = EventIntent::from_event(second);
         assert_ne!(first, second);
         assert_ne!(first.digest().unwrap(), second.digest().unwrap());
+    }
+
+    #[test]
+    fn capability_issuer_attestation_is_frozen_into_queue_intent() {
+        let mut event = crate::operation::ak_ops::capability_grant_actions(
+            "ak:realm:01904100-0000-7000-8000-000000000001",
+            "did:web:alice.example",
+            "ak:grant:01904100-0000-7000-8000-000000000002",
+            "did:web:bob.example",
+            &["ak.message.create"],
+            None,
+            Value::Null,
+        )
+        .build_sdk_event("inkson")
+        .unwrap();
+        let unsigned_intent = EventIntent::from_event(event.clone());
+        let signer = crate::event_signer::build_ed25519_device_signer(
+            [42_u8; 32],
+            "did:web:alice.example",
+            "ak:device:01904100-0000-7000-8000-a11ce0000001",
+        );
+
+        attach_capability_grant_payload_proof_with_signer(&mut event, &signer).unwrap();
+        let frozen = QueuedSdkEvent::unauthored(
+            event,
+            "capability-operation".to_owned(),
+            "capability-attempt".to_owned(),
+            None,
+            test_authoring_generation(),
+            None,
+        )
+        .unwrap();
+        assert_ne!(frozen.intent, unsigned_intent);
+        assert_eq!(
+            frozen.intent.payload["grant"]["proofs"]
+                .as_array()
+                .map(Vec::len),
+            Some(1)
+        );
+
+        let mut authored_attempt = frozen.intent.to_unauthored_event();
+        attach_capability_grant_payload_proof_with_signer(&mut authored_attempt, &signer).unwrap();
+        assert_eq!(EventIntent::from_event(authored_attempt), frozen.intent);
     }
 
     #[test]
