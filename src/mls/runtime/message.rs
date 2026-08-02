@@ -1296,7 +1296,7 @@ fn verify_welcome_governance_binding(
     realm_id: &str,
     group: &arkret_sdk::ArkretMlsGroup,
     welcome_value: &serde_json::Value,
-) -> Result<Option<String>, String> {
+) -> Result<(), String> {
     let binding_value = welcome_value.get("governance_binding").ok_or_else(|| {
         "governance_binding missing; epoch remains decryption_pending (state_mismatch)".to_owned()
     })?;
@@ -1338,7 +1338,78 @@ fn verify_welcome_governance_binding(
                 .to_owned(),
         );
     }
-    Ok(Some(binding.policy_root().to_string()))
+    Ok(())
+}
+
+pub(crate) struct WelcomeSecurityFrontierPreview {
+    pub binding: arkret_sdk::MlsGovernanceBindingPayload,
+    pub leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
+}
+
+/// Join each durable Welcome in an isolated in-memory provider so the proof
+/// verifier can use the transcript-authenticated post-Commit leaf set before
+/// any snapshot is persisted.
+pub(crate) fn preview_welcome_security_frontiers(
+    secure_store: &dyn SecureKeyStore,
+    actor_id: &str,
+    device_id: &str,
+    messages_value: &serde_json::Value,
+) -> Result<Vec<WelcomeSecurityFrontierPreview>, String> {
+    let principal_did = arkret_sdk::Did::new(actor_id.to_owned())
+        .map_err(|error| format!("preview Welcome principal: {error}"))?;
+    let device_id_typed = arkret_sdk::DeviceId::new(device_id.to_owned())
+        .map_err(|error| format!("preview Welcome device: {error}"))?;
+    let mut previews = Vec::new();
+    for entry in collect_welcome_message_entries(messages_value) {
+        let payload = durable_welcome_wire_payload(&entry.content);
+        let binding_value = payload
+            .get("governance_binding")
+            .ok_or_else(|| "durable MLS Welcome omits governance_binding".to_owned())?;
+        let binding: arkret_sdk::MlsGovernanceBindingPayload =
+            serde_json::from_value(binding_value.clone())
+                .map_err(|error| format!("decode Welcome governance_binding: {error}"))?;
+        let welcome = decode_welcome_envelope(&payload)?;
+        let key_package_id = entry
+            .key_package_id
+            .as_deref()
+            .ok_or_else(|| "Welcome carries no key_package_id".to_owned())?;
+        let serialized_state = load_mls_key_package_identity_state(
+            secure_store,
+            actor_id,
+            device_id,
+            key_package_id,
+        )
+        .map_err(|error| format!("load Welcome KeyPackage state: {error}"))?
+        .ok_or_else(|| {
+            format!(
+                "no local KeyPackage identity state for welcome key_package_id={key_package_id}"
+            )
+        })?;
+        let identity = arkret_sdk::ArkretMlsIdentity::restore_from_private_state(
+            principal_did.clone(),
+            device_id_typed.clone(),
+            &serialized_state,
+        )
+        .map_err(|error| format!("restore Welcome KeyPackage identity: {error}"))?;
+        let group = arkret_sdk::ArkretMlsGroup::join_from_welcome(identity, &welcome)
+            .map_err(|error| format!("preview Welcome group: {error}"))?;
+        let embedded = group
+            .current_governance_binding()
+            .map_err(|error| format!("read preview governance binding: {error}"))?;
+        if embedded.as_ref() != Some(&binding) {
+            return Err(
+                "MLS GroupContext governance_binding differs from durable Welcome payload"
+                    .to_owned(),
+            );
+        }
+        previews.push(WelcomeSecurityFrontierPreview {
+            binding,
+            leaves: group
+                .security_frontier_leaves()
+                .map_err(|error| format!("derive Welcome MLS leaf set: {error}"))?,
+        });
+    }
+    Ok(previews)
 }
 
 pub fn apply_welcome_messages_with_device_snapshot(
@@ -1468,18 +1539,15 @@ pub fn apply_welcome_messages_with_device_snapshot(
         // profile/epoch/policy_root mismatch rejects the Welcome before
         // snapshot persistence. The declared policy_root feeds the genesis
         // record below.
-        let welcome_policy_root = match verify_welcome_governance_binding(
+        if let Err(reason) = verify_welcome_governance_binding(
             state_store,
             realm_id,
             &group,
             &welcome_value_for_governance,
         ) {
-            Ok(policy_root) => policy_root,
-            Err(reason) => {
-                outcome.record_failure(format!("welcome governance_binding authz: {reason}"));
-                continue;
-            }
-        };
+            outcome.record_failure(format!("welcome governance_binding authz: {reason}"));
+            continue;
+        }
         let post_state = match group.export_state_record() {
             Ok(post_state) => post_state,
             Err(err) => {
@@ -1552,9 +1620,6 @@ pub fn apply_welcome_messages_with_device_snapshot(
             }
         }
         state_store.save_mls_snapshot(realm_id.to_owned(), snapshot);
-        if let Some(policy_root) = welcome_policy_root.as_deref() {
-            state_store.record_genesis_policy_root_for_effective_scope(realm_id, None, policy_root);
-        }
         // Retain the claimed KeyPackage private state until redelivery has
         // quiesced. The server-side package is single-use, but the durable
         // to-device queue may replay the same Welcome before its ACK lands; the

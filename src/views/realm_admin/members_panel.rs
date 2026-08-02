@@ -1510,7 +1510,15 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     // Verify the current governance frontier before consuming a one-time
     // KeyPackage. The roster projection only schedules this attempt; it never
     // authorizes the claim or the resulting Add commit.
-    ensure_mls_governance_proof_for_next_commit(api, state_store, &realm_id).await?;
+    ensure_mls_governance_proof_for_next_commit(
+        api,
+        state_store,
+        &realm_id,
+        &actor_id,
+        &device_id,
+        &[],
+    )
+    .await?;
     let claim_nonce = crate::mls_api_helpers::generate_mls_claim_nonce()?;
     let mls_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
     let claim_outcome = mls_clients
@@ -1534,7 +1542,15 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     })?;
     // Refresh after the claim as well: membership/policy may have advanced
     // while the remote claim request was in flight.
-    ensure_mls_governance_proof_for_next_commit(api, state_store, &realm_id).await?;
+    ensure_mls_governance_proof_for_next_commit(
+        api,
+        state_store,
+        &realm_id,
+        &actor_id,
+        &device_id,
+        &[&claim],
+    )
+    .await?;
     // History sharing (encryption-and-audit.md): retain the CURRENT (pre-commit)
     // epoch's `history_secret` BEFORE building the admission commit. The commit
     // advances the group epoch (N → N+1) and OpenMLS can only export the epoch
@@ -2949,7 +2965,15 @@ pub(crate) async fn submit_mls_admission_for_invitees(
     // Fail closed before consuming any one-time KeyPackage. Candidate rows are
     // synchronization hints; only a verified governance frontier plus service
     // authorization may advance the MLS group.
-    ensure_mls_governance_proof_for_next_commit(api, state_store, &realm_id).await?;
+    ensure_mls_governance_proof_for_next_commit(
+        api,
+        state_store,
+        &realm_id,
+        &actor_id,
+        &device_id,
+        &[],
+    )
+    .await?;
 
     let mut claims = Vec::<(arkret_sdk::KeyPackageClaimRecord, String)>::new();
     let mls_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
@@ -2978,7 +3002,16 @@ pub(crate) async fn submit_mls_admission_for_invitees(
     }
     // Refresh after the batch of claims to bind the Commit to the latest
     // accepted frontier observed after those network round trips.
-    ensure_mls_governance_proof_for_next_commit(api, state_store, &realm_id).await?;
+    let added_claims = claims.iter().map(|(claim, _)| claim).collect::<Vec<_>>();
+    ensure_mls_governance_proof_for_next_commit(
+        api,
+        state_store,
+        &realm_id,
+        &actor_id,
+        &device_id,
+        &added_claims,
+    )
+    .await?;
     let admission = {
         let store = state_store.read();
         crate::mls::admission::build_realm_mls_admission_events_from_claims(
@@ -3072,9 +3105,17 @@ async fn ensure_mls_genesis_frontier_for_invite(
         0,
     )
     .map_err(anyhow::Error::msg)?;
-    crate::mls::governance_proof::fetch_verify_and_cache_proof(api, state_store, &genesis_request)
-        .await
-        .map_err(anyhow::Error::msg)?;
+    let leaves =
+        crate::mls::governance_proof::singleton_security_frontier_leaf(actor_id, device_id)
+            .map_err(anyhow::Error::msg)?;
+    crate::mls::governance_proof::fetch_verify_and_cache_proof(
+        api,
+        state_store,
+        &genesis_request,
+        &leaves,
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
     let genesis_event = {
         let mut store = state_store.write();
         crate::mls::group_events::build_creator_mls_genesis_event(
@@ -3128,6 +3169,9 @@ async fn ensure_mls_governance_proof_for_next_commit(
     api: &crate::transport::TransportClient,
     state_store: SyncSignal<LocalStateStore>,
     realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    added_claims: &[&arkret_sdk::KeyPackageClaimRecord],
 ) -> anyhow::Result<()> {
     let request = {
         let store = state_store.read();
@@ -3144,7 +3188,18 @@ async fn ensure_mls_governance_proof_for_next_commit(
         )
         .map_err(anyhow::Error::msg)?
     };
-    crate::mls::governance_proof::fetch_verify_and_cache_proof(api, state_store, &request)
+    let leaves = crate::mls::governance_proof::current_security_frontier_leaves(
+        &state_store.read(),
+        realm_id,
+        None,
+        actor_id,
+        device_id,
+    )
+    .map_err(anyhow::Error::msg)?;
+    let leaves =
+        crate::mls::governance_proof::security_frontier_with_added_claims(leaves, added_claims)
+            .map_err(anyhow::Error::msg)?;
+    crate::mls::governance_proof::fetch_verify_and_cache_proof(api, state_store, &request, &leaves)
         .await
         .map(|_| ())
         .map_err(anyhow::Error::msg)

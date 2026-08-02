@@ -163,7 +163,14 @@ pub(crate) async fn ensure_mls_governance_coverage(
         snapshot.epoch.saturating_add(1),
     )
     .map_err(|error| format!("preparing the MLS governance proof request failed: {error}"))?;
-    crate::mls::governance_proof::fetch_verify_and_cache_proof(api, state_store, &request)
+    let leaves = crate::mls::governance_proof::current_security_frontier_leaves(
+        &state_store.read(),
+        realm_id,
+        circle_id,
+        actor_id,
+        device_id,
+    )?;
+    crate::mls::governance_proof::fetch_verify_and_cache_proof(api, state_store, &request, &leaves)
         .await
         .map_err(|error| {
             format!(

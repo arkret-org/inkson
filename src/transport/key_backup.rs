@@ -454,7 +454,10 @@ impl crate::transport::TransportClient {
             request_id,
             challenge_id: challenge.challenge_id.clone(),
             proof,
-            reason: reason.map(str::to_owned),
+            reason: reason
+                .map(|value| arkret_sdk::NonEmptyString::new(value.to_owned()))
+                .transpose()
+                .map_err(anyhow::Error::msg)?,
         };
         client
             .delete_key_backup(&backup_id, &body)

@@ -538,9 +538,13 @@ fn OrganizationCreatePanel(token: Signal<String>, account_did: String) -> Elemen
                                             );
                                         }
                                         created_did.set(outcome.did.as_str().to_owned());
+                                        let outcome_status = match outcome.status {
+                                            arkret_sdk::DidOperationSubmitStatus::Accepted => "accepted",
+                                            arkret_sdk::DidOperationSubmitStatus::Duplicate => "duplicate",
+                                            arkret_sdk::DidOperationSubmitStatus::Pending => "pending",
+                                        };
                                         status_msg.set(format!(
-                                            "organization minted ({})",
-                                            outcome.status
+                                            "organization minted ({outcome_status})"
                                         ));
                                         display_name.set(String::new());
                                         handle.set(String::new());

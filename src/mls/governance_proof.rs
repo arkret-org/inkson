@@ -219,10 +219,15 @@ fn governance_projection_pending(error: &arkret_sdk::http_client::Error) -> bool
     }
 }
 
+pub(crate) struct WelcomeGovernanceProof {
+    pub request: arkret_sdk::MlsGovernanceProofRequestBodyBody,
+    pub binding: arkret_sdk::MlsGovernanceBindingPayload,
+}
+
 pub(crate) fn welcome_proof_requests(
     state_store: &crate::state::LocalStateStore,
     messages: &serde_json::Value,
-) -> Result<Vec<arkret_sdk::MlsGovernanceProofRequestBodyBody>, String> {
+) -> Result<Vec<WelcomeGovernanceProof>, String> {
     let Some(entries) = messages
         .get("messages")
         .or_else(|| messages.get("events"))
@@ -255,8 +260,11 @@ pub(crate) fn welcome_proof_requests(
             binding.previous_epoch(),
             binding.next_epoch(),
         )?;
-        if !requests.contains(&request) {
-            requests.push(request);
+        if !requests
+            .iter()
+            .any(|entry: &WelcomeGovernanceProof| entry.request == request)
+        {
+            requests.push(WelcomeGovernanceProof { request, binding });
         }
     }
     Ok(requests)
@@ -266,19 +274,49 @@ pub(crate) async fn fetch_verify_and_cache_proof<S: GovernanceProofStateStore>(
     api: &crate::transport::TransportClient,
     state_store: S,
     request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+    leaves: &[arkret_sdk::MlsSecurityFrontierLeaf],
 ) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
-    Ok(
-        fetch_verify_and_cache_proof_bundle(api, state_store, request)
-            .await?
-            .governance_binding,
-    )
+    fetch_verify_and_cache_proof_internal(api, state_store, request, leaves, None)
+        .await
+        .map(|(_, binding)| binding)
 }
 
 pub(crate) async fn fetch_verify_and_cache_proof_bundle<S: GovernanceProofStateStore>(
     api: &crate::transport::TransportClient,
     state_store: S,
     request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+    leaves: &[arkret_sdk::MlsSecurityFrontierLeaf],
 ) -> Result<arkret_sdk::MaterializedMlsGovernanceProofBundle, String> {
+    fetch_verify_and_cache_proof_internal(api, state_store, request, leaves, None)
+        .await
+        .map(|(bundle, _)| bundle)
+}
+
+pub(crate) async fn fetch_verify_and_cache_expected_proof<S: GovernanceProofStateStore>(
+    api: &crate::transport::TransportClient,
+    state_store: S,
+    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+    leaves: &[arkret_sdk::MlsSecurityFrontierLeaf],
+    expected_binding: &arkret_sdk::MlsGovernanceBindingPayload,
+) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
+    fetch_verify_and_cache_proof_internal(api, state_store, request, leaves, Some(expected_binding))
+        .await
+        .map(|(_, binding)| binding)
+}
+
+async fn fetch_verify_and_cache_proof_internal<S: GovernanceProofStateStore>(
+    api: &crate::transport::TransportClient,
+    state_store: S,
+    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+    leaves: &[arkret_sdk::MlsSecurityFrontierLeaf],
+    expected_binding: Option<&arkret_sdk::MlsGovernanceBindingPayload>,
+) -> Result<
+    (
+        arkret_sdk::MaterializedMlsGovernanceProofBundle,
+        arkret_sdk::MlsGovernanceBindingPayload,
+    ),
+    String,
+> {
     let bundle = fetch_proof_bundle(api, state_store.clone(), request).await?;
     let existing_pin = state_store
         .with_read(|store| store.trusted_mls_governance_anchor(request.realm_id.as_str()));
@@ -372,7 +410,20 @@ pub(crate) async fn fetch_verify_and_cache_proof_bundle<S: GovernanceProofStateS
             ));
         }
     }
-    verify_proof_bundle(request, &bundle, &trusted_anchor, &resolver)?;
+    let verified = verify_proof_bundle(request, &bundle, &trusted_anchor, &resolver, leaves)?;
+    let binding = match expected_binding {
+        Some(binding) => {
+            verify_request_binding(request, binding)?;
+            if binding.security_frontier_digest() != &verified.security_frontier_digest {
+                return Err(
+                    "MLS governance binding security_frontier_digest differs from the locally derived frontier"
+                        .to_owned(),
+                );
+            }
+            binding.clone()
+        }
+        None => binding_from_verified_frontier(request, verified.security_frontier_digest)?,
+    };
     // Persist whatever this verification accepted so the next boot (and every
     // other authority call site) reuses it instead of resolving again.
     if let (_, Some(records)) = authority.into_cache_and_bindings() {
@@ -385,9 +436,9 @@ pub(crate) async fn fetch_verify_and_cache_proof_bundle<S: GovernanceProofStateS
                 &bundle.trusted_anchor_seal_id,
             )?;
         }
-        store.cache_verified_mls_governance_proof(request.clone(), &bundle)
+        store.cache_verified_mls_governance_proof(request.clone(), binding.clone(), &bundle)
     })?;
-    Ok(bundle)
+    Ok((bundle, binding))
 }
 
 pub(crate) async fn resolve_proof_signer_document(
@@ -696,11 +747,11 @@ pub(crate) fn verify_proof_bundle<R>(
     bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
     trusted_anchor: &arkret_sdk::SealId,
     resolver: &R,
+    leaves: &[arkret_sdk::MlsSecurityFrontierLeaf],
 ) -> Result<arkret_sdk::VerifiedMlsGovernanceProof, String>
 where
     R: DidResolver,
 {
-    verify_request_binding(request, &bundle.governance_binding)?;
     let notary = target_notary_value(bundle)?;
     let delegated_controller = managed_agent_pcr_delegated_controller(bundle, &notary)?;
     // `verify_mls_governance_proof_bundle` validates the complete Seal path
@@ -714,9 +765,9 @@ where
         .state_root;
     let digest_suite = crate::event_signer::digest_suite_from_trusted_hash(accepted_state_root)
         .map_err(|error| format!("resolve MLS governance digest suite: {error}"))?;
-    arkret_sdk::verify_mls_governance_proof_bundle(
+    arkret_sdk::verify_mls_governance_proof_materialization(
         bundle,
-        &bundle.governance_binding,
+        request,
         trusted_anchor,
         |seal| verify_seal(seal, &notary, delegated_controller.as_ref(), resolver),
         |event| {
@@ -807,6 +858,7 @@ where
                     ))
                 })
         },
+        leaves,
     )
     .map_err(|error| format!("verify MLS governance proof: {error}"))
 }
@@ -815,20 +867,150 @@ pub(crate) fn cached_verified_binding(
     state_store: &crate::state::LocalStateStore,
     request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
 ) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
-    let bundle = state_store
-        .cached_mls_governance_proof(request, chrono::Utc::now())?
+    let entry = state_store
+        .cached_mls_governance_proof_entry(request, chrono::Utc::now())?
         .ok_or_else(|| {
             "full-profile MLS governance binding requires a fresh, locally verified accepted-Seal proof bundle; operation remains decryption_pending (state_mismatch)"
                 .to_owned()
         })?;
-    verify_request_binding(request, &bundle.governance_binding)?;
+    verify_request_binding(request, &entry.governance_binding)?;
     let pinned = state_store
         .trusted_mls_governance_anchor(request.realm_id.as_str())
         .ok_or_else(|| "MLS governance trust anchor is not pinned".to_owned())?;
-    if pinned != bundle.trusted_anchor_seal_id {
+    if pinned != entry.trusted_anchor_seal_id {
         return Err("cached MLS governance proof no longer matches the pinned anchor".to_owned());
     }
-    Ok(bundle.governance_binding)
+    Ok(entry.governance_binding)
+}
+
+fn binding_from_verified_frontier(
+    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+    security_frontier_digest: arkret_sdk::Hash,
+) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
+    let binding = match &request.effective_scope {
+        arkret_wire::ScopeRef::Realm { realm_id } => {
+            arkret_sdk::MlsGovernanceBindingPayload::realm(
+                realm_id.clone(),
+                request.mls_group_id.clone(),
+                request.previous_epoch,
+                request.next_epoch,
+                security_frontier_digest,
+                request.binding_profile.clone(),
+                request.reducer_profile.clone(),
+            )
+        }
+        arkret_wire::ScopeRef::Circle {
+            realm_id,
+            circle_id,
+        } => arkret_sdk::MlsGovernanceBindingPayload::circle(
+            realm_id.clone(),
+            circle_id.clone(),
+            request.mls_group_id.clone(),
+            request.previous_epoch,
+            request.next_epoch,
+            security_frontier_digest,
+            request.binding_profile.clone(),
+            request.reducer_profile.clone(),
+        ),
+        _ => return Err("unsupported MLS governance effective scope".to_owned()),
+    };
+    binding.map_err(|error| format!("construct verified MLS governance binding: {error}"))
+}
+
+pub(crate) fn singleton_security_frontier_leaf(
+    principal_id: &str,
+    device_id: &str,
+) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
+    Ok(vec![arkret_sdk::MlsSecurityFrontierLeaf {
+        leaf_index: 0,
+        principal_id: arkret_sdk::Did::new(principal_id.to_owned())
+            .map_err(|error| format!("MLS leaf principal is invalid: {error}"))?,
+        credential_ref: arkret_sdk::NonEmptyString::new(format!("{principal_id}#{device_id}"))
+            .map_err(|error| format!("MLS leaf credential ref is invalid: {error}"))?,
+    }])
+}
+
+pub(crate) fn current_security_frontier_leaves(
+    state_store: &crate::state::LocalStateStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
+    let snapshot = state_store
+        .mls_snapshot_for_effective_scope(realm_id, circle_id)
+        .ok_or_else(|| "MLS security frontier requires a local group snapshot".to_owned())?;
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let secret = crate::mls::runtime::load_device_snapshot_secret(
+        secure_store.as_ref(),
+        actor_id,
+        device_id,
+    )
+    .map_err(|error| format!("load MLS snapshot secret for frontier: {error}"))?;
+    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
+        .map_err(|error| format!("restore MLS group for frontier: {error}"))?;
+    group
+        .security_frontier_leaves()
+        .map_err(|error| format!("derive MLS security frontier leaves: {error}"))
+}
+
+pub(crate) fn security_frontier_with_added_keypackages(
+    mut leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
+    records: &[arkret_sdk::MlsKeyPackageRecord],
+) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
+    let mut next_index = leaves
+        .iter()
+        .map(|leaf| leaf.leaf_index)
+        .max()
+        .map_or(0, |index| index.saturating_add(1));
+    for record in records {
+        leaves.push(arkret_sdk::MlsSecurityFrontierLeaf {
+            leaf_index: next_index,
+            principal_id: record.principal_id.clone(),
+            credential_ref: arkret_sdk::NonEmptyString::new(format!(
+                "{}#{}",
+                record.principal_id, record.device_id
+            ))
+            .map_err(|error| format!("MLS KeyPackage credential ref is invalid: {error}"))?,
+        });
+        next_index = next_index.saturating_add(1);
+    }
+    leaves.sort_by_key(|leaf| leaf.leaf_index);
+    Ok(leaves)
+}
+
+pub(crate) fn security_frontier_with_added_claims(
+    mut leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
+    records: &[&arkret_sdk::KeyPackageClaimRecord],
+) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
+    let mut next_index = leaves
+        .iter()
+        .map(|leaf| leaf.leaf_index)
+        .max()
+        .map_or(0, |index| index.saturating_add(1));
+    for record in records {
+        leaves.push(arkret_sdk::MlsSecurityFrontierLeaf {
+            leaf_index: next_index,
+            principal_id: record.principal_id.clone(),
+            credential_ref: arkret_sdk::NonEmptyString::new(format!(
+                "{}#{}",
+                record.principal_id, record.device_id
+            ))
+            .map_err(|error| format!("claimed MLS credential ref is invalid: {error}"))?,
+        });
+        next_index = next_index.saturating_add(1);
+    }
+    leaves.sort_by_key(|leaf| leaf.leaf_index);
+    Ok(leaves)
+}
+
+pub(crate) fn security_frontier_without_principals(
+    mut leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
+    removed: &[String],
+) -> Vec<arkret_sdk::MlsSecurityFrontierLeaf> {
+    let removed = removed.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    leaves.retain(|leaf| !removed.contains(leaf.principal_id.as_str()));
+    leaves
 }
 
 #[cfg(test)]
@@ -856,8 +1038,6 @@ pub(crate) fn seed_test_governance_proof(
         next_epoch,
     )
     .unwrap();
-    let frontier =
-        vec![arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-0000000000aa").unwrap()];
     let root = arkret_sdk::Hash::new(
         "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     )
@@ -869,11 +1049,7 @@ pub(crate) fn seed_test_governance_proof(
                 request.mls_group_id.clone(),
                 previous_epoch,
                 next_epoch,
-                frontier,
-                vec![anchor.clone()],
                 root.clone(),
-                root.clone(),
-                root,
                 request.binding_profile.clone(),
                 request.reducer_profile.clone(),
             )
@@ -887,11 +1063,7 @@ pub(crate) fn seed_test_governance_proof(
             request.mls_group_id.clone(),
             previous_epoch,
             next_epoch,
-            frontier,
-            vec![anchor.clone()],
             root.clone(),
-            root.clone(),
-            root,
             request.binding_profile.clone(),
             request.reducer_profile.clone(),
         ),
@@ -910,7 +1082,6 @@ pub(crate) fn seed_test_governance_proof(
         realm_id: request.realm_id.clone(),
         effective_scope: request.effective_scope.clone(),
         reducer_profile: request.reducer_profile.clone(),
-        governance_binding: binding.clone(),
         trusted_anchor_seal_id: anchor.clone(),
         accepted_seal_id: anchor.clone(),
         seal_path: Vec::new(),
@@ -919,7 +1090,7 @@ pub(crate) fn seed_test_governance_proof(
         frontier_events: Vec::new(),
     };
     state_store
-        .cache_verified_mls_governance_proof(request, &bundle)
+        .cache_verified_mls_governance_proof(request, binding.clone(), &bundle)
         .unwrap();
     binding
 }

@@ -1184,10 +1184,14 @@ pub(crate) async fn bootstrap_provisioned_agent(
         0,
     )
     .map_err(anyhow::Error::msg)?;
+    let leaves =
+        crate::mls::governance_proof::singleton_security_frontier_leaf(agent_id, &device_id)
+            .map_err(anyhow::Error::msg)?;
     crate::mls::governance_proof::fetch_verify_and_cache_proof_bundle(
         api,
         state_store,
         &proof_request,
+        &leaves,
     )
     .await
     .map_err(anyhow::Error::msg)?;

@@ -10,25 +10,17 @@ use crate::state::isolated_store_for_tests as temp_state_store;
 fn genesis_governance_binding(group_id: &str) -> arkret_sdk::MlsGovernanceBindingPayload {
     let realm_id =
         arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap();
-    let frontier =
-        vec![arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-0000000000aa").unwrap()];
-    let policy_root = arkret_sdk::Hash::new(
+    let security_frontier_digest = arkret_sdk::Hash::new(
         "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     )
     .unwrap();
-    let capability_root = policy_root.clone();
-    let discussion_metadata_digest = policy_root.clone();
     // Genesis installs epoch 0 (governance binding epoch 0 -> 0).
     arkret_sdk::MlsGovernanceBindingPayload::realm(
         realm_id,
         group_id,
         0,
         0,
-        frontier,
-        vec![arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "11".repeat(32))).unwrap()],
-        policy_root,
-        capability_root,
-        discussion_metadata_digest,
+        security_frontier_digest,
         arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
         arkret_sdk::CORE_REDUCER_PROFILE,
     )

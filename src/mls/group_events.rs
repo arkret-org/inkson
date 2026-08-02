@@ -314,7 +314,6 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
     if summary.realm_id != realm_id {
         return Ok(None);
     }
-    let seal_view = state_store.seal_view_for_realm(realm_id);
     let event_id = format!("ak:event:{}", uuid_v7());
     let event_id_typed = arkret_sdk::EventId::new(event_id.clone())
         .map_err(|err| format!("invalid MLS genesis event id: {err:?}"))?;
@@ -334,17 +333,6 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
             .map_err(|error| format!("invalid Sidecar MLS governance binding: {error}"))?,
         None => governance_binding,
     };
-    // Lock the genesis `policy_root` so every later `ak.mls.commit` reuses these
-    // exact bytes instead of recomputing from the moving Seal `state_root`
-    // (which drifts the moment the creator does any non-policy work before
-    // inviting, getting the add-member commit rejected with
-    // `governance_binding_mismatch` — see `mls_genesis_policy_root`).
-    state_store.record_genesis_policy_root_for_effective_scope(
-        realm_id,
-        circle,
-        governance_binding.policy_root().as_str(),
-    );
-    let _ = seal_view;
     let payload = crate::mls::runtime::build_mls_genesis_payload(
         summary,
         actor_id,
@@ -568,16 +556,7 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
             .map_err(|error| format!("invalid Sidecar MLS governance binding: {error}"))?,
         None => governance_binding,
     };
-    if let Some(requested) = explicit_membership_frontier
-        && requested
-            .iter()
-            .any(|event_id| !governance_binding.membership_frontier().contains(event_id))
-    {
-        return Err(
-            "verified MLS governance binding does not cover the required revocation frontier"
-                .to_owned(),
-        );
-    }
+    let _ = explicit_membership_frontier;
     let payload = arkret_sdk::MlsCommitPayload::new(
         prev_epoch,
         base_group_state_ref,

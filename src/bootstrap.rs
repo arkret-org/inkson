@@ -748,13 +748,34 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
             },
         );
     }
-    let proof_requests =
-        crate::mls::governance_proof::welcome_proof_requests(&state_store.read(), &messages_value)?;
-    for request in proof_requests {
-        crate::mls::governance_proof::fetch_verify_and_cache_proof(&api, state_store, &request)
-            .await?;
-    }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let previews = crate::mls::runtime::preview_welcome_security_frontiers(
+        secure_store.as_ref(),
+        &actor_id,
+        &device_id,
+        &messages_value,
+    )?;
+    for preview in previews {
+        let request = crate::mls::governance_proof::proof_request(
+            &state_store.read(),
+            preview.binding.realm_id().as_str(),
+            preview
+                .binding
+                .circle_id()
+                .map(|circle_id| circle_id.as_str()),
+            preview.binding.mls_group_id(),
+            preview.binding.previous_epoch(),
+            preview.binding.next_epoch(),
+        )?;
+        crate::mls::governance_proof::fetch_verify_and_cache_expected_proof(
+            &api,
+            state_store,
+            &request,
+            &preview.leaves,
+            &preview.binding,
+        )
+        .await?;
+    }
     let welcome_outcome = {
         let mut store = state_store.write();
         crate::mls::runtime::apply_welcome_messages_with_device_snapshot(

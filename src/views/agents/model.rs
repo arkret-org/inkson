@@ -486,7 +486,7 @@ pub fn build_requested_scope_disclosure_for_pairing(
     .map_err(|error| anyhow::anyhow!("agent disclosure verification method is invalid: {error}"))?;
     let issued_at = Utc::now();
     let mut disclosure = AgentRequestedScopeDisclosure {
-        schema: arkret_sdk::SchemaId::AGENT_REQUESTED_SCOPE_DISCLOSURE_V1.to_owned(),
+        schema: arkret_sdk::SchemaId::AgentRequestedScopeDisclosureV1,
         request_id: RequestId::new(format!("ak:request:{request_uuid}"))?,
         agent_id,
         controller_id,

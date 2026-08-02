@@ -324,21 +324,8 @@ fn mls_commit_builder_matches_registered_payload_schema() {
         group_id,
         0,
         1,
-        vec![
-            arkret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-000000000002".to_owned())
-                .unwrap(),
-        ],
-        vec![arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "11".repeat(32))).unwrap()],
         arkret_sdk::Hash::new(
             "sha256:2222222222222222222222222222222222222222222222222222222222222222".to_owned(),
-        )
-        .unwrap(),
-        arkret_sdk::Hash::new(
-            "sha256:3333333333333333333333333333333333333333333333333333333333333333".to_owned(),
-        )
-        .unwrap(),
-        arkret_sdk::Hash::new(
-            "sha256:4444444444444444444444444444444444444444444444444444444444444444".to_owned(),
         )
         .unwrap(),
         arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,

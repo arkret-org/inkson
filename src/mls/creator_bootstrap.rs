@@ -117,7 +117,9 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         0,
     )
     .map_err(|error| format!("preparing the MLS governance proof request failed: {error}"))?;
-    crate::mls::governance_proof::fetch_verify_and_cache_proof(api, state_store, &request)
+    let leaves =
+        crate::mls::governance_proof::singleton_security_frontier_leaf(actor_id, device_id)?;
+    crate::mls::governance_proof::fetch_verify_and_cache_proof(api, state_store, &request, &leaves)
         .await
         .map_err(|error| {
             format!("verifying the accepted governance proof before MLS setup failed: {error}")

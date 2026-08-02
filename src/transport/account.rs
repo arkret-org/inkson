@@ -799,10 +799,14 @@ async fn materialize_direct_conversation(
             0,
         )
         .map_err(anyhow::Error::msg)?;
+        let genesis_leaves =
+            crate::mls::governance_proof::singleton_security_frontier_leaf(&actor_id, device_id)
+                .map_err(anyhow::Error::msg)?;
         crate::mls::governance_proof::fetch_verify_and_cache_proof(
             api,
             state_store,
             &genesis_request,
+            &genesis_leaves,
         )
         .await
         .map_err(anyhow::Error::msg)?;
@@ -877,10 +881,24 @@ async fn materialize_direct_conversation(
             1,
         )
         .map_err(anyhow::Error::msg)?;
+        let current_leaves = crate::mls::governance_proof::current_security_frontier_leaves(
+            &state_store.read(),
+            &realm_id,
+            None,
+            &actor_id,
+            device_id,
+        )
+        .map_err(anyhow::Error::msg)?;
+        let commit_leaves = crate::mls::governance_proof::security_frontier_with_added_claims(
+            current_leaves,
+            &[&draft.claimed_keypackage],
+        )
+        .map_err(anyhow::Error::msg)?;
         crate::mls::governance_proof::fetch_verify_and_cache_proof(
             api,
             state_store,
             &commit_request,
+            &commit_leaves,
         )
         .await
         .map_err(anyhow::Error::msg)?;

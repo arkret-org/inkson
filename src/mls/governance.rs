@@ -98,15 +98,6 @@ mod tests {
             "mls-group-1",
             7,
             7,
-            vec![
-                arkret_sdk::EventId::new(
-                    "ak:event:01904100-0000-7000-8000-0000000000aa".to_owned(),
-                )
-                .unwrap(),
-            ],
-            vec![seal()],
-            root.clone(),
-            root.clone(),
             root,
             arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
             arkret_sdk::CORE_REDUCER_PROFILE,

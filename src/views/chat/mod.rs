@@ -671,13 +671,6 @@ async fn reconcile_sidecar_mls_access(
                 snapshot.epoch.saturating_add(1),
             )
             .map_err(anyhow::Error::msg)?;
-            crate::mls::governance_proof::fetch_verify_and_cache_proof_bundle(
-                &api,
-                state_store,
-                &proof_request,
-            )
-            .await
-            .map_err(anyhow::Error::msg)?;
             let mut claims = Vec::new();
             for agent_id in missing {
                 let claim_nonce = crate::mls_api_helpers::generate_mls_claim_nonce()?;
@@ -705,6 +698,28 @@ async fn reconcile_sidecar_mls_access(
                     .await
                     .map_err(anyhow::Error::from);
             }
+            let current_leaves = crate::mls::governance_proof::current_security_frontier_leaves(
+                &state_store.read(),
+                &realm_id,
+                Some(&circle_id),
+                &controller_id,
+                &device_id,
+            )
+            .map_err(anyhow::Error::msg)?;
+            let added_claims = claims.iter().map(|(claim, _)| claim).collect::<Vec<_>>();
+            let proof_leaves = crate::mls::governance_proof::security_frontier_with_added_claims(
+                current_leaves,
+                &added_claims,
+            )
+            .map_err(anyhow::Error::msg)?;
+            crate::mls::governance_proof::fetch_verify_and_cache_proof_bundle(
+                &api,
+                state_store,
+                &proof_request,
+                &proof_leaves,
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             let admission = crate::mls::admission::build_sidecar_mls_admission_events_from_claims(
                 &state_store.read(),
@@ -875,10 +890,23 @@ async fn reconcile_sidecar_mls_removals(
                 snapshot.epoch.saturating_add(1),
             )
             .map_err(anyhow::Error::msg)?;
+            let current_leaves = crate::mls::governance_proof::current_security_frontier_leaves(
+                &state_store.read(),
+                &realm_id,
+                Some(&circle_id),
+                &controller_id,
+                &device_id,
+            )
+            .map_err(anyhow::Error::msg)?;
+            let proof_leaves = crate::mls::governance_proof::security_frontier_without_principals(
+                current_leaves,
+                &[removal.agent_id.to_string()],
+            );
             crate::mls::governance_proof::fetch_verify_and_cache_proof_bundle(
                 &api,
                 state_store,
                 &proof_request,
+                &proof_leaves,
             )
             .await
             .map_err(anyhow::Error::msg)?;

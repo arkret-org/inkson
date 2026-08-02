@@ -795,7 +795,10 @@ fn spawn_set_agent_enabled(
                     .map_err(anyhow::Error::from)?
             } else {
                 let body = AgentPauseRequestBody {
-                    reason: Some("controller_paused".to_owned()),
+                    reason: Some(
+                        arkret_sdk::NonEmptyString::new("controller_paused")
+                            .map_err(anyhow::Error::msg)?,
+                    ),
                     lifecycle_event,
                 };
                 submitter
@@ -983,7 +986,7 @@ fn spawn_deactivate_agent(
             }
             let key_revocation_events = prepared;
             let body = AgentDeactivateRequestBody {
-                reason: Some(reason),
+                reason: Some(arkret_sdk::NonEmptyString::new(reason).map_err(anyhow::Error::msg)?),
                 lifecycle_event,
                 key_revocation_events,
                 capability_revocation_events,

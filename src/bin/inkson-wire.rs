@@ -281,13 +281,6 @@ fn mls_governance_proof(input: Value) -> Result<Value> {
             arkret_sdk::CellState::Bottom(_) => None,
         })
         .collect::<Vec<_>>();
-    let policy_root = arkret_sdk::derive_mls_policy_root(&material.joined)
-        .map_err(|error| anyhow::anyhow!("derive MLS policy root: {error}"))?;
-    let capability_root = arkret_sdk::derive_mls_capability_root(&material.joined)
-        .map_err(|error| anyhow::anyhow!("derive MLS capability root: {error}"))?;
-    let discussion_metadata_digest =
-        arkret_sdk::derive_mls_discussion_metadata_digest(&control_state)
-            .map_err(|error| anyhow::anyhow!("derive MLS discussion metadata digest: {error}"))?;
     let mut frontier_events = input
         .events
         .iter()
@@ -298,24 +291,6 @@ fn mls_governance_proof(input: Value) -> Result<Value> {
     if frontier_events.len() != 1 {
         bail!("managed Agent PCR proof requires exactly one Realm genesis frontier Event");
     }
-    let membership_frontier = frontier_events
-        .iter()
-        .map(|event| event.event_id.clone())
-        .collect::<Vec<_>>();
-    let governance_binding = arkret_sdk::MlsGovernanceBindingPayload::realm(
-        input.request.realm_id.clone(),
-        input.request.mls_group_id.clone(),
-        input.request.previous_epoch,
-        input.request.next_epoch,
-        membership_frontier,
-        input.seals.iter().map(|seal| seal.id.clone()).collect(),
-        policy_root,
-        capability_root,
-        discussion_metadata_digest,
-        input.request.binding_profile.clone(),
-        input.request.reducer_profile.clone(),
-    )
-    .map_err(|error| anyhow::anyhow!("build MLS governance binding: {error}"))?;
     let zero = arkret_sdk::Hash::new(format!("sha256:{}", "00".repeat(32)))
         .context("construct zero digest")?;
     let materialized = arkret_sdk::MaterializedMlsGovernanceProofBundle {
@@ -327,7 +302,6 @@ fn mls_governance_proof(input: Value) -> Result<Value> {
         realm_id: input.request.realm_id.clone(),
         effective_scope: input.request.effective_scope.clone(),
         reducer_profile: input.request.reducer_profile.clone(),
-        governance_binding,
         trusted_anchor_seal_id: input.request.trusted_anchor_seal_id.clone(),
         accepted_seal_id: accepted_seal.id.clone(),
         seal_path: input.seals,

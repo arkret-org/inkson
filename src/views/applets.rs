@@ -828,7 +828,7 @@ pub fn AppletsPanel(
                                                         };
                                                         let body = AppletRevokeRequestBody {
                                                             effective_scope,
-                                                            reason_code: "admin_uninstall".to_owned(),
+                                                            reason_code: arkret_sdk::ReasonCode::PolicyRevoked,
                                                             revoke_mode: AppletRevokeMode::RevokeAll,
                                                             proof: None,
                                                         };

@@ -1045,6 +1045,26 @@ async fn run_circle_scope_rotate_pass(
                     continue;
                 }
             };
+            let proof_leaves = ctx.state_store.read(|store| {
+                crate::mls::governance_proof::current_security_frontier_leaves(
+                    store, &realm_id, None, &actor_id, &device_id,
+                )
+            });
+            let proof_leaves = match proof_leaves {
+                Ok(leaves) => crate::mls::governance_proof::security_frontier_without_principals(
+                    leaves,
+                    &target_principal_ids,
+                ),
+                Err(error) => {
+                    tracing::debug!(
+                        %realm_id,
+                        ?target_principal_ids,
+                        %error,
+                        "sync_engine: Realm MLS remove security frontier deferred",
+                    );
+                    continue;
+                }
+            };
             let realm_for_submit = realm_id.clone();
             let actor_for_submit = actor_id.clone();
             let device_for_submit = device_id.clone();
@@ -1059,6 +1079,7 @@ async fn run_circle_scope_rotate_pass(
                         &api,
                         state_store.clone(),
                         &proof_request,
+                        &proof_leaves,
                     )
                     .await
                     .map_err(anyhow::Error::msg)?;

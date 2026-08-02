@@ -140,6 +140,7 @@ impl LocalStateStore {
     pub fn cache_verified_mls_governance_proof(
         &mut self,
         request: arkret_sdk::MlsGovernanceProofRequestBodyBody,
+        governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
         bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
     ) -> Result<(), String> {
         self.ensure_cached_loaded();
@@ -154,7 +155,7 @@ impl LocalStateStore {
         let key = proof_cache_key(&request)?;
         let entry = CachedMlsGovernanceProof {
             request,
-            governance_binding: bundle.governance_binding.clone(),
+            governance_binding,
             trusted_anchor_seal_id: bundle.trusted_anchor_seal_id.clone(),
             accepted_seal_id: bundle.accepted_seal_id.clone(),
             bundle: serde_json::to_value(bundle)
@@ -183,6 +184,19 @@ impl LocalStateStore {
         request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
         now: DateTime<Utc>,
     ) -> Result<Option<arkret_sdk::MaterializedMlsGovernanceProofBundle>, String> {
+        let Some(entry) = self.cached_mls_governance_proof_entry(request, now)? else {
+            return Ok(None);
+        };
+        serde_json::from_value(entry.bundle.clone())
+            .map(Some)
+            .map_err(|error| format!("decode cached MLS governance proof: {error}"))
+    }
+
+    pub fn cached_mls_governance_proof_entry(
+        &self,
+        request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+        now: DateTime<Utc>,
+    ) -> Result<Option<CachedMlsGovernanceProof>, String> {
         let key = proof_cache_key(request)?;
         let state = self.load();
         let Some(entry) = state.mls_governance_proofs.get(&key) else {
@@ -193,9 +207,7 @@ impl LocalStateStore {
         {
             return Ok(None);
         }
-        serde_json::from_value(entry.bundle.clone())
-            .map(Some)
-            .map_err(|error| format!("decode cached MLS governance proof: {error}"))
+        Ok(Some(entry.clone()))
     }
 
     pub fn invalidate_mls_governance_proofs_for_realm(&mut self, realm_id: &str) {

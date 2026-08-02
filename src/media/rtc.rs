@@ -26,11 +26,9 @@ pub use arkret_crypto::sframe::FRAME_KEY_LABEL as SFRAME_FRAME_KEY_LABEL;
 use arkret_crypto::sframe::{FrameKeyContext, MlsExporterSource, derive_frame_key};
 use arkret_sdk::{
     CallId, CallMediaDesiredMedia, CallMediaParticipantBinding, CallMediaTokenExchangeOutcome,
-    CallMediaTokenExchangeRequestBody, DeviceId, Did, DidDocument, MediaDecryptPolicyValue,
-    MediaIceConfigRequestBody, MediaIceMode, MediaPlaintextService, MlsGovernanceBindingPayload,
-    PlaintextDataClassKind, PlaintextVisibleServicesPayload, RealmId,
-    derive_media_decrypt_metadata_digest, resolve_verification_method_key_from_document,
-    verify_media_decrypt_metadata,
+    CallMediaTokenExchangeRequestBody, DeviceId, Did, DidDocument, MediaIceConfigRequestBody,
+    MediaIceMode, MlsGovernanceBindingPayload, PlaintextDataClassKind,
+    PlaintextVisibleServicesPayload, RealmId, resolve_verification_method_key_from_document,
 };
 use arkret_signatures::media::{
     IceConfig, MediaServiceAnchors, call_media_token_exchange, verify_call_media_token_outcome,
@@ -339,16 +337,6 @@ impl MediaGovernanceEvidence {
             return Err(RtcClientError::FocusMismatch);
         }
 
-        let policy_root = recompute_media_policy_root(
-            &request.realm_id,
-            &self.media_service_payload,
-            self.policy_bundle_payload.as_ref(),
-            self.plaintext_visible_services_payload.as_ref(),
-        )?;
-        if &policy_root != self.governance_binding.policy_root() {
-            return Err(RtcClientError::MediaServiceBindingUncovered);
-        }
-
         if self.media_service_decrypts_enabled() {
             self.verify_plaintext_media_authorization(service_id)?;
         }
@@ -376,67 +364,8 @@ impl MediaGovernanceEvidence {
             return Err(RtcClientError::MediaPlaintextServiceNotAuthorised);
         }
 
-        let binding_digest = self
-            .governance_binding
-            .discussion_metadata_digest()
-            .ok_or(RtcClientError::MlsGovernanceBindingStale)?;
-        let recomputed = derive_media_decrypt_metadata_digest(&MediaDecryptPolicyValue {
-            media_service_decrypts: true,
-            plaintext_visible_services: plaintext_payload
-                .services
-                .iter()
-                .filter(|service| {
-                    service
-                        .data_classes
-                        .iter()
-                        .any(|class| matches!(class, PlaintextDataClassKind::MediaPlaintext))
-                })
-                .map(|service| MediaPlaintextService {
-                    service_id: service.service_id.clone(),
-                })
-                .collect(),
-        })
-        .map_err(|_| RtcClientError::MlsGovernanceBindingStale)?;
-        verify_media_decrypt_metadata(binding_digest, &recomputed)
-            .map_err(|_| RtcClientError::MlsGovernanceBindingStale)
+        Ok(())
     }
-}
-
-fn recompute_media_policy_root(
-    realm_id: &str,
-    media_service_payload: &Value,
-    policy_bundle_payload: Option<&Value>,
-    plaintext_visible_services_payload: Option<&PlaintextVisibleServicesPayload>,
-) -> Result<arkret_sdk::Hash, RtcClientError> {
-    let realm_id = RealmId::new(realm_id.to_owned())
-        .map_err(|_| RtcClientError::MediaServiceBindingUncovered)?;
-    let subject = realm_id.as_str();
-    let mut cells = std::collections::BTreeMap::new();
-    cells.insert(
-        media_policy_cell("ak.component.realm.media_service.v1", subject)?,
-        arkret_sdk::lattice::CellState::Value(media_service_payload.clone()),
-    );
-    if let Some(payload) = policy_bundle_payload {
-        cells.insert(
-            media_policy_cell("ak.component.realm.policy_bundle.v1", subject)?,
-            arkret_sdk::lattice::CellState::Value(payload.clone()),
-        );
-    }
-    if let Some(payload) = plaintext_visible_services_payload {
-        let value =
-            serde_json::to_value(payload).map_err(|_| RtcClientError::MlsGovernanceBindingStale)?;
-        cells.insert(
-            media_policy_cell("ak.component.realm.plaintext_visible_services.v1", subject)?,
-            arkret_sdk::lattice::CellState::Value(value),
-        );
-    }
-    arkret_sdk::state::compute_state_root(&cells)
-        .map_err(|_| RtcClientError::MlsGovernanceBindingStale)
-}
-
-fn media_policy_cell(family: &str, realm_id: &str) -> Result<arkret_sdk::CellRef, RtcClientError> {
-    arkret_sdk::CellRef::new(format!("ak:cell:{family}:{realm_id}"))
-        .map_err(|_| RtcClientError::MlsGovernanceBindingStale)
 }
 
 fn media_service_payload_service_id(payload: &Value) -> Option<&str> {
@@ -1045,46 +974,12 @@ mod tests {
                 arkret_sdk::PlaintextServiceVisibility::PrivatePlaintext,
             )])
         });
-        let policy_root = recompute_media_policy_root(
-            "ak:realm:01904100-0000-7000-8000-9b64700c6ee8",
-            &media_service_payload,
-            policy_bundle_payload.as_ref(),
-            plaintext_visible_services_payload.as_ref(),
-        )
-        .unwrap();
-        let discussion_metadata_digest =
-            derive_media_decrypt_metadata_digest(&MediaDecryptPolicyValue {
-                media_service_decrypts,
-                plaintext_visible_services: plaintext_visible_services_payload
-                    .as_ref()
-                    .map(|payload| {
-                        payload
-                            .services
-                            .iter()
-                            .map(|service| MediaPlaintextService {
-                                service_id: service.service_id.clone(),
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            })
-            .unwrap();
-        let capability_root = arkret_sdk::Hash::new(format!("sha256:{}", "00".repeat(32))).unwrap();
         let governance_binding = MlsGovernanceBindingPayload::realm(
             RealmId::new("ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()).unwrap(),
             "Z3JvdXA",
             6,
             7,
-            vec![
-                arkret_sdk::EventId::new(
-                    "ak:event:01904100-0000-7000-8000-000000000001".to_owned(),
-                )
-                .unwrap(),
-            ],
-            vec![arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "11".repeat(32))).unwrap()],
-            policy_root,
-            capability_root,
-            discussion_metadata_digest,
+            arkret_sdk::Hash::new(format!("sha256:{}", "00".repeat(32))).unwrap(),
             arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
             "ak.reducer.realm.v1",
         )
