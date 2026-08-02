@@ -250,11 +250,22 @@ pub fn is_stale_frontier_error(error: &anyhow::Error) -> bool {
 /// submit failure, so the send just failed and nothing ever advanced the epoch —
 /// the scope stayed unsendable for as long as the app ran.
 pub(crate) fn is_mls_governance_binding_stale_error(error: &anyhow::Error) -> bool {
-    api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
-        envelope.code() == arkret_sdk::error::ErrorCode::FAILED_PRECONDITION
-            && envelope
+    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
+        let compatible_outer_code = envelope.code()
+            == arkret_sdk::error::ErrorCode::FAILED_PRECONDITION
+            // Older publication-lease endpoints flattened every validator
+            // refusal to policy_violation while retaining the validator's
+            // HTTP status and stable reason in the message.
+            || envelope.code() == arkret_sdk::error::ErrorCode::POLICY_VIOLATION;
+        let stable_reason = envelope
+            .details()
+            .get("reason_code")
+            .and_then(serde_json::Value::as_str)
+            == Some(arkret_sdk::error::ReasonCode::MLS_GOVERNANCE_BINDING_STALE)
+            || envelope
                 .message()
-                .contains(arkret_sdk::error::ReasonCode::MLS_GOVERNANCE_BINDING_STALE)
+                .contains(arkret_sdk::error::ReasonCode::MLS_GOVERNANCE_BINDING_STALE);
+        status == StatusCode::CONFLICT && compatible_outer_code && stable_reason
     })
 }
 

@@ -11,7 +11,7 @@ use crate::views::agents::{
     bootstrap_provisioned_agent, build_agent_key_authorization_for_pairing,
     build_requested_scope_disclosure_for_pairing, into_agent_key_pair_request,
     parse_runtime_key_approval_request, runtime_key_pairing_error_message,
-    summarize_runtime_key_approval_request,
+    seal_managed_agent_pcr_current, summarize_runtime_key_approval_request,
 };
 use crate::views::helpers::short_protocol_id;
 
@@ -390,8 +390,23 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                             authorize_submission,
                                             authorization.signing_key_binding,
                                         );
-                                        let outcome =
+                                        let mut outcome =
                                             submitter.agent_key_pair(&pair_request).await?;
+                                        if !outcome.is_active() {
+                                            seal_managed_agent_pcr_current(
+                                                &api,
+                                                state_store,
+                                                &key_state.principal_control_realm_id,
+                                            )
+                                            .await?;
+                                            outcome =
+                                                submitter.agent_key_pair(&pair_request).await?;
+                                        }
+                                        if !outcome.is_active() {
+                                            anyhow::bail!(
+                                                "Agent authorization is still awaiting its accepted PCR frontier"
+                                            );
+                                        }
                                         let recovery_refresh_error = bootstrap_provisioned_agent(
                                             &api,
                                             state_store,
@@ -416,14 +431,14 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                             format!(
                                                 "Runtime key approved: {}. Agent PCR recovery refresh failed: {error}",
                                                 short_protocol_id(
-                                                    outcome.authorized_event_ref.as_str(),
+                                                    outcome.authorize_event_ref.as_str(),
                                                 )
                                             )
                                         } else {
                                             format!(
                                                 "Runtime key approved: {}. Agent PCR recovery is current.",
                                                 short_protocol_id(
-                                                    outcome.authorized_event_ref.as_str(),
+                                                    outcome.authorize_event_ref.as_str(),
                                                 )
                                             )
                                         });

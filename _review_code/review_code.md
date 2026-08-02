@@ -319,27 +319,46 @@
 - **Prevention dimension:** every bounded workflow waiting on a governance Seal must classify the
   registered structured frontier state, not infer liveness only from one reducer error message.
 
-## 2026-08-01 — server-contract fixture omitted the mandatory grant authority source
+## 2026-08-01 — Direct Conversation Realms leaked into ordinary Collaboration navigation
 
-- **Surface:** `tests/server_contract.rs` parsed a purported full canonical `CapabilityGrant` from
-  the Soland grant-list contract, but the fixture omitted `issuer_authority_refs` after the SDK made
-  the field mandatory under `capabilities.md` §3 and §10.
-- **Regression:** the latest SDK correctly rejected the fixture with
-  `missing field issuer_authority_refs`, causing Inkson's otherwise green workspace gate to fail.
-- **Correction:** the contract fixture now carries the typed Realm authority-root reference and
-  asserts that the SDK projection preserves it. No serde default or compatibility fallback was
-  added; older authority-less grants remain rejected.
-- **Prevention dimension:** cross-repository contract fixtures must carry every mandatory
-  authority-chain field and be rerun against SDK HEAD whenever the canonical grant schema changes.
+- **Surface:** sync-derived Realm tree, pinned Realm ordering, and the Collaboration sidebar.
+- **Regression:** typed `collaboration_role=direct_conversation` was recorded only as a sort hint,
+  so canonical, pending, and orphan DM Realms all rendered as ordinary "Direct conversation"
+  Realm rows. Retries made the leak visibly multiply even though the resolver still selected at
+  most one canonical binding per participant pair.
+- **Correction:** typed Direct Conversation Realms are filtered when the ordinary navigation
+  projection is built, with a second defensive filter at final tree-item rendering so stale local
+  snapshots cannot reintroduce them. The state remains synchronized for the dedicated
+  `Route::DirectConversation` opened from a contact or owned Agent.
+- **Prevention dimension:** regression tests assert that even a pinned DM is absent and that only
+  the typed sync role—not heuristic titles, categories, tags, or Event-payload probing—controls
+  the exclusion.
 
-## 2026-08-02 — MLS Commit Event omitted the newly mandatory inline Commit bytes
+## 2026-08-01 — Agent reply-policy failure invalidated an already resolved private chat
 
-- **Surface:** `src/mls/group_events.rs` typed `ak.mls.commit` Event construction.
-- **Regression:** the final spec sync made `commit_bytes_b64` mandatory so offline members can
-  replay RFC 9420 commits without an optional blob, while Inkson supplied only `commit_digest`.
-- **Correction:** carry the already serialized `MlsCommitEnvelope.commit` into the typed payload;
-  the SDK now decodes it and verifies the digest before authoring the Event. The operation fixture
-  pins a byte/digest-matching pair.
-- **Prevention dimension:** every MLS envelope field required for durable offline replay must
-  survive the envelope-to-Event boundary; a digest alone proves integrity but provides no recovery
-  bytes.
+- **Surface:** clicking an owned Agent contact and rendering the dedicated Direct Conversation.
+- **Regression:** after the resolver returned the canonical `found` binding, Inkson synchronously
+  tried to grant Agent reply participation and propagated that independent mutation error. A stale
+  authority generation therefore blocked navigation; the same participation filter also hid the
+  Agent peer from the roster. Optimistic accepted Realm projections stored member DIDs as strings,
+  while the roster accepted only canonical disclosure objects.
+- **Correction:** a resolved binding is preserved when best-effort reply enablement fails, with a
+  warning for remediation. The exact route peer and accepted/projected Direct membership make the
+  Agent visible independently of reply authorization, and optimistic string members remain visible
+  until canonical sync replaces them. Ordinary Realm Agent visibility remains fail-closed.
+- **Prevention dimension:** tests separately cover resolver outcome preservation, route-to-peer
+  resolution, Direct peer visibility without participation, and optimistic member projection.
+
+## 2026-08-01 — ordinary encrypted sends forged an audit RYW receipt
+
+- **Surface:** the post-accept success path for every ordinary encrypted message, including a
+  Direct Conversation.
+- **Regression:** Inkson unconditionally authored `ak.audit.ryw_receipt` as the end user after the
+  message landed. The spec reserves that attestation for an Events API node, witness, or bound
+  audit service after an accepted audit access/release Event; ordinary Realms must not enter the
+  audit profile. The client Event had no registered CBA plane, so lease issuance correctly rejected
+  it for missing `seal_ref/seal_basis` and displayed a misleading post-send failure.
+- **Correction:** ordinary and Direct message success paths no longer manufacture audit receipts;
+  the receipt builder documentation now identifies its trusted-issuer boundary.
+- **Prevention dimension:** a source guard fails if the ordinary chat composer reintroduces the
+  trusted receipt builder.

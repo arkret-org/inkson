@@ -1805,10 +1805,16 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     content_type: &str,
     aad: arkret_sdk::EncryptedEnvelopeAad,
     plaintext: &[u8],
+    metadata_content_type: Option<&str>,
     metadata_plaintext: Option<&[u8]>,
     circle_id: Option<&str>,
     sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
 ) -> Result<DeviceSnapshotEncryption, MlsRuntimeError> {
+    if metadata_content_type.is_some() != metadata_plaintext.is_some() {
+        return Err(MlsRuntimeError::Serialize(
+            "metadata content type and plaintext must be supplied together".to_owned(),
+        ));
+    }
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
@@ -1854,26 +1860,30 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     // bound by the exporter-AEAD immutable header.
     let exporter_key_ref = use_exporter_aead
         .then(|| arkret_sdk::KeyRefObject::mls_exporter_aead(group.group_id(), group.epoch()));
-    let encrypt_one = |group: &mut arkret_sdk::ArkretMlsGroup, bytes: &[u8]| {
-        if let Some(key_ref) = exporter_key_ref.as_ref() {
-            group.encrypt_payload_exporter_aead(
-                content_type,
-                realm_id,
-                key_ref.clone(),
-                aad.clone(),
-                bytes,
-            )
-        } else {
-            group.encrypt_payload_with_aad(content_type, Some(aad.clone()), bytes)
-        }
-        .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))
-    };
-    let encrypted = encrypt_one(&mut group, plaintext)?;
+    let encrypt_one =
+        |group: &mut arkret_sdk::ArkretMlsGroup, payload_content_type: &str, bytes: &[u8]| {
+            if let Some(key_ref) = exporter_key_ref.as_ref() {
+                group.encrypt_payload_exporter_aead(
+                    payload_content_type,
+                    realm_id,
+                    key_ref.clone(),
+                    aad.clone(),
+                    bytes,
+                )
+            } else {
+                group.encrypt_payload_with_aad(payload_content_type, Some(aad.clone()), bytes)
+            }
+            .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))
+        };
+    let encrypted = encrypt_one(&mut group, content_type, plaintext)?;
     // The optional `encrypted_metadata` plaintext (e.g. the Sidecar exchange
     // binding) is a second application message on the same ratchet, bound to
     // the same canonical AAD/visibility as the content envelope.
     let encrypted_metadata = metadata_plaintext
-        .map(|metadata| encrypt_one(&mut group, metadata))
+        .zip(metadata_content_type)
+        .map(|(metadata, metadata_content_type)| {
+            encrypt_one(&mut group, metadata_content_type, metadata)
+        })
         .transpose()?;
     // §2.10 history sharing: retain this epoch's `history_secret` at author time
     // so a late joiner can decrypt it — see the fuller rationale in

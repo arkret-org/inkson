@@ -1335,7 +1335,7 @@ pub fn RealmAdminPanel(
                                     expires_at_opt.as_deref(),
                                     constraint_json,
                                 )
-                                .build_sdk_event("inkson");
+                                .and_then(|builder| builder.build_sdk_event("inkson"));
                                 let envelope = match envelope {
                                     Ok(envelope) => envelope,
                                     Err(err) => {

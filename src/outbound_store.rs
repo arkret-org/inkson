@@ -10,6 +10,57 @@
 use garth::OutboundQueueStore;
 use garth::outbound::BoxOutboundFuture;
 
+#[cfg(target_arch = "wasm32")]
+const BROWSER_OUTBOUND_STORAGE_PREFIX: &str = "inkson.outbound.v1::";
+
+fn compact_snapshot_json(
+    raw: &str,
+    cutoff: chrono::DateTime<chrono::Utc>,
+) -> garth::Result<Option<(String, usize)>> {
+    let snapshot = serde_json::from_str(raw).map_err(|error| {
+        garth::Error::Protocol(format!("decode browser outbound queue: {error}"))
+    })?;
+    let mut queue = garth::SendQueue::from_snapshot(snapshot)?;
+    let removed = queue.prune_terminal_before(cutoff);
+    if removed == 0 {
+        return Ok(None);
+    }
+    let encoded = serde_json::to_string(&queue.snapshot()).map_err(|error| {
+        garth::Error::Protocol(format!("encode compacted browser outbound queue: {error}"))
+    })?;
+    Ok(Some((encoded, removed)))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn compact_sibling_browser_outbound_queues(
+    storage: &web_sys::Storage,
+    current_storage_key: &str,
+) -> usize {
+    let Ok(length) = storage.length() else {
+        return 0;
+    };
+    let keys = (0..length)
+        .filter_map(|index| storage.key(index).ok().flatten())
+        .filter(|key| {
+            key.starts_with(BROWSER_OUTBOUND_STORAGE_PREFIX) && key != current_storage_key
+        })
+        .collect::<Vec<_>>();
+    let cutoff = chrono::Utc::now();
+    let mut removed_total = 0;
+    for key in keys {
+        let Some(raw) = storage.get_item(&key).ok().flatten() else {
+            continue;
+        };
+        let Ok(Some((encoded, removed))) = compact_snapshot_json(&raw, cutoff) else {
+            continue;
+        };
+        if storage.set_item(&key, &encoded).is_ok() {
+            removed_total += removed;
+        }
+    }
+    removed_total
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 static NATIVE_OUTBOUND_STORES: std::sync::OnceLock<
     std::sync::Mutex<std::collections::BTreeMap<std::path::PathBuf, garth::FileStore>>,
@@ -50,7 +101,7 @@ impl InksonOutboundStore {
         #[cfg(target_arch = "wasm32")]
         {
             Ok(Self {
-                storage_key: format!("inkson.outbound.v1::{scope}"),
+                storage_key: format!("{BROWSER_OUTBOUND_STORAGE_PREFIX}{scope}"),
             })
         }
     }
@@ -99,25 +150,28 @@ impl OutboundQueueStore for InksonOutboundStore {
                 })?;
                 if let Err(initial_error) = storage.set_item(&self.storage_key, &encoded) {
                     // Browser localStorage has a small per-origin quota. Preserve
-                    // every pending/dependency item, discard only unreferenced
-                    // terminal history, and retry the same mutation once.
+                    // every pending/dependency item. First discard unreferenced
+                    // terminal history in this actor queue, then compact sibling
+                    // actor queues left by earlier Agent identities. A new actor
+                    // otherwise cannot persist its first item when an old actor's
+                    // terminal history consumes the shared origin quota.
                     let removed = queue.prune_terminal_before(chrono::Utc::now());
-                    if removed == 0 {
-                        return Err(garth::Error::Protocol(format!(
-                            "persist browser outbound queue: {initial_error:?}"
-                        )));
+                    if removed > 0 {
+                        encoded = serde_json::to_string(&queue.snapshot()).map_err(|error| {
+                            garth::Error::Protocol(format!(
+                                "encode compacted browser outbound queue: {error}"
+                            ))
+                        })?;
                     }
-                    encoded = serde_json::to_string(&queue.snapshot()).map_err(|error| {
-                        garth::Error::Protocol(format!(
-                            "encode compacted browser outbound queue: {error}"
-                        ))
-                    })?;
+                    let sibling_removed =
+                        compact_sibling_browser_outbound_queues(&storage, &self.storage_key);
                     storage
                         .set_item(&self.storage_key, &encoded)
                         .map_err(|error| {
                             garth::Error::Protocol(format!(
                                 "persist compacted browser outbound queue after removing {removed} \
-                             terminal item(s): {error:?}; initial error: {initial_error:?}"
+                             current and {sibling_removed} sibling terminal item(s): {error:?}; \
+                             initial error: {initial_error:?}"
                             ))
                         })?;
                 }
@@ -129,7 +183,7 @@ impl OutboundQueueStore for InksonOutboundStore {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use chrono::Utc;
+    use chrono::{Duration, Utc};
     use garth::{OutboundEngine, OutboundQueueStore};
 
     use super::*;
@@ -169,5 +223,45 @@ mod tests {
             "ak:event:01904100-0000-7000-8000-000000000001"
         );
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn snapshot_compaction_removes_only_unreferenced_terminal_history() {
+        let realm =
+            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap();
+        let mut queue = garth::SendQueue::new();
+        queue
+            .enqueue(
+                Some("terminal".to_owned()),
+                realm.clone(),
+                garth::SendQueueItemKind::Custom {
+                    kind: "ak.test.terminal".to_owned(),
+                },
+                serde_json::json!({"event_id": "terminal"}),
+                Vec::new(),
+            )
+            .unwrap();
+        queue.cancel("terminal", false).unwrap();
+        queue
+            .enqueue(
+                Some("pending".to_owned()),
+                realm,
+                garth::SendQueueItemKind::Custom {
+                    kind: "ak.test.pending".to_owned(),
+                },
+                serde_json::json!({"event_id": "pending"}),
+                Vec::new(),
+            )
+            .unwrap();
+        let raw = serde_json::to_string(&queue.snapshot()).unwrap();
+
+        let (encoded, removed) = compact_snapshot_json(&raw, Utc::now() + Duration::seconds(1))
+            .unwrap()
+            .expect("terminal history should compact");
+        let snapshot: garth::SendQueueSnapshot = serde_json::from_str(&encoded).unwrap();
+
+        assert_eq!(removed, 1);
+        assert_eq!(snapshot.items.len(), 1);
+        assert_eq!(snapshot.items[0].transaction_id, "pending");
     }
 }

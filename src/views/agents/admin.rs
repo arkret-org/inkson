@@ -43,6 +43,10 @@ pub(super) fn should_offer_pairing_renewal(pcr_recovery_ready: bool, runtime_sta
     pcr_recovery_ready && matches!(runtime_state, "pending_runtime_key" | "pairing_expired")
 }
 
+fn should_offer_security_refresh(has_key_state: bool, lifecycle_state: &str) -> bool {
+    has_key_state && lifecycle_state != "deactivated"
+}
+
 pub(super) fn should_show_pairing_card(
     runtime_state: &str,
     has_pairing_handle: bool,
@@ -171,6 +175,14 @@ fn replace_agent_directory(rows: &mut Vec<AgentView>, directory_rows: Vec<AgentV
 #[cfg(test)]
 mod directory_refresh_tests {
     use super::*;
+
+    #[test]
+    fn security_refresh_is_available_without_replacing_an_existing_runtime() {
+        assert!(should_offer_security_refresh(true, "active"));
+        assert!(should_offer_security_refresh(true, "paused"));
+        assert!(!should_offer_security_refresh(false, "active"));
+        assert!(!should_offer_security_refresh(true, "deactivated"));
+    }
 
     #[test]
     fn agent_slug_input_is_trimmed_and_lowercased() {
@@ -850,8 +862,6 @@ fn spawn_deactivate_agent(
     mut deactivate_dialog_open: Signal<bool>,
     mut deactivate_confirm: Signal<String>,
     owned_agents_rev: Signal<u64>,
-    // DID-P2-B: see `spawn_set_agent_enabled`.
-    state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
 ) {
     spawn(async move {
         if id.is_empty() {
@@ -963,15 +973,6 @@ fn spawn_deactivate_agent(
         let id_for_status = id.clone();
         let refresh_api_token = api_token.clone();
         let result = with_event_submitter(&base, api_token, move |submitter| async move {
-            let controller_did = arkret_sdk::Did::new(controller_id.clone())?;
-            let signer = crate::event_signer::active_signer()
-                .ok_or_else(|| anyhow::anyhow!("active controller signer is unavailable"))?;
-            let signer_account_scope = crate::secure_key_store::active_device_seed_scope();
-            let device_id = super::bootstrap::controller_signer_device_id(
-                &controller_id,
-                signer.as_ref(),
-                signer_account_scope.as_deref(),
-            )?;
             let mut prepared = submitter.prepare_initial_submissions(drafts).await?;
             let lifecycle_event = prepared
                 .pop()
@@ -987,36 +988,22 @@ fn spawn_deactivate_agent(
                 key_revocation_events,
                 capability_revocation_events,
             };
-            let outcome = submitter
+            submitter
                 .http()
                 .agent_deactivate(&id, &body)
                 .await
-                .map_err(anyhow::Error::from)?;
-            let seal_warning = super::bootstrap::ensure_managed_agent_pcr_seal_current(
-                &submitter,
-                submitter.http(),
-                signer.as_ref(),
-                &controller_did,
-                &device_id,
-                key_state.principal_control_realm_id.as_str(),
-                state_store,
-            )
-            .await
-            .err()
-            .map(|error| error.to_string());
-            Ok((outcome, seal_warning))
+                .map_err(anyhow::Error::from)
         })
         .await;
 
         match result {
-            Ok((outcome, seal_warning)) => {
+            Ok(outcome) => {
                 agents.with_mut(|rows| update_agent_status(rows, &id_for_status, outcome.status));
                 bump_owned_agents_rev(owned_agents_rev);
-                let mut message = "Agent deactivated permanently.".to_owned();
-                if let Some(warning) = seal_warning {
-                    message.push_str(&format!(" Seal refresh warning: {warning}"));
-                }
-                last_op_status.set(message);
+                // Deactivation revokes the Agent key and closes its principal-
+                // control Realm. Refreshing that Realm's Seal afterwards is
+                // both unnecessary and expected to return 404.
+                last_op_status.set("Agent deactivated permanently.".to_owned());
                 deactivate_dialog_open.set(false);
                 deactivate_confirm.set(String::new());
             }
@@ -1224,6 +1211,9 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
             key_state.controller_authorization_ref.clone(),
         )
     });
+    let selected_should_offer_security_refresh =
+        should_offer_security_refresh(selected_key_state.is_some(), &selected_status);
+    let security_refresh_target = selected_pcr_bootstrap_target.clone();
     let selected_pairing_request_id = selected_key_state
         .and_then(|key_state| key_state.pairing_request_id.as_deref())
         .unwrap_or_default()
@@ -1329,6 +1319,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                 title: "Create agent",
                                 "aria-label": "Create agent",
                                 onclick: move |_| {
+                                    last_op_status.set(String::new());
                                     new_agent_slug.set(String::new());
                                     new_agent_avatar_blob_ref.set(String::new());
                                     create_mode.set(true);
@@ -1436,6 +1427,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                     placeholder: "Slug (required)",
                                     value: "{new_agent_slug}",
                                     oninput: move |event: FormEvent| {
+                                        last_op_status.set(String::new());
                                         new_agent_slug.set(normalize_agent_slug(&event.value()));
                                     },
                                 }
@@ -2327,6 +2319,75 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                 }
                             }
                             div { class: "actions",
+                                    if selected_should_offer_security_refresh {
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
+                                            "data-testid": "agent-admin-refresh-security-state-button",
+                                            disabled: any_pairing_action_in_flight,
+                                            onclick: {
+                                                let base = base_url.clone();
+                                                let target = security_refresh_target.clone();
+                                                move |_| {
+                                                    let Some((agent_id, realm_id, authorization_ref)) = target.clone() else {
+                                                        last_op_status.set("Agent security binding is unavailable; refresh details and retry.".to_owned());
+                                                        return;
+                                                    };
+                                                    if !pairing_action_agent_id.peek().is_empty() {
+                                                        return;
+                                                    }
+                                                    pairing_action_agent_id.set(agent_id.to_string());
+                                                    pairing_action_phase.set(PairingActionPhase::RepairingRecovery);
+                                                    let base = base.clone();
+                                                    let api_token = token();
+                                                    spawn(async move {
+                                                        let repaired_agent_id = agent_id.clone();
+                                                        let result = with_authed_api(&base, api_token, move |api| async move {
+                                                            let seal = super::bootstrap::seal_managed_agent_pcr_current(
+                                                                &api,
+                                                                state_store,
+                                                                &realm_id,
+                                                            )
+                                                            .await?;
+                                                            let recovery_warning = super::bootstrap::bootstrap_provisioned_agent(
+                                                                &api,
+                                                                state_store,
+                                                                &agent_id,
+                                                                &realm_id,
+                                                                authorization_ref.as_str(),
+                                                                Some(seal.id.as_str()),
+                                                            )
+                                                            .await
+                                                            .err()
+                                                            .map(|error| error.to_string());
+                                                            Ok::<_, anyhow::Error>(recovery_warning)
+                                                        })
+                                                        .await;
+                                                        pairing_action_agent_id.set(String::new());
+                                                        pairing_action_phase.set(PairingActionPhase::Idle);
+                                                        match result {
+                                                            Ok(Some(warning)) => last_op_status.set(format!(
+                                                                "Agent authorization frontier is repaired. Recovery refresh warning: {warning}"
+                                                            )),
+                                                            Ok(None) => last_op_status.set(
+                                                                "Agent authorization frontier and recovery state are current.".to_owned(),
+                                                            ),
+                                                            Err(error) => last_op_status.set(format!(
+                                                                "Agent security refresh failed: {}",
+                                                                error.display()
+                                                            )),
+                                                        }
+                                                        bump_owned_agents_rev(owned_agents_rev);
+                                                        selected_agent_id.set(repaired_agent_id.to_string());
+                                                    });
+                                                }
+                                            },
+                                            if selected_pairing_action_in_flight {
+                                                "Refreshing security…"
+                                            } else {
+                                                "Refresh security state"
+                                            }
+                                        }
+                                    }
                                     if selected_can_replace_runtime && !replace_runtime_confirm_open() {
                                         Button {
                                             variant: ButtonVariant::Secondary,
@@ -2534,7 +2595,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                         deactivate_dialog_open,
                                                         deactivate_confirm,
                                                         owned_agents_rev,
-                                                        state_store,
                                                     );
                                                 }
                                             },

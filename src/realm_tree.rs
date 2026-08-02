@@ -704,6 +704,16 @@ pub(crate) fn realm_tree_items_with_pinned_realms(
     nodes: &[RealmTreeNode],
     pinned_realm_ids: &BTreeSet<String>,
 ) -> Vec<RealmTreeItem> {
+    // Direct conversations are addressable only through the contact/direct
+    // resolver. Keep this defensive filter at the final navigation projection
+    // as well as at sync ingestion so stale local snapshots cannot leak a DM
+    // Realm into the ordinary Collaboration sidebar.
+    let visible_nodes: Vec<RealmTreeNode> = nodes
+        .iter()
+        .filter(|node| !realm_tree_node_is_direct_conversation(node))
+        .cloned()
+        .collect();
+    let nodes = visible_nodes.as_slice();
     let order: BTreeMap<&str, usize> = nodes
         .iter()
         .enumerate()
@@ -837,7 +847,10 @@ pub fn realm_tree_nodes_from_sync_realms_with_roles(
     let mut previews: Vec<RealmTreeNode> = realms
         .iter()
         .filter(|(id, body)| {
-            is_realm_or_space_projection_id(id) && !projection_looks_like_strand(body)
+            is_realm_or_space_projection_id(id)
+                && !projection_looks_like_strand(body)
+                && collaboration_roles.get(*id)
+                    != Some(&arkret_sdk::CollaborationRealmRole::DirectConversation)
         })
         .map(|(id, body)| {
             let summary = body.get("summary").unwrap_or(&Value::Null);
@@ -1334,7 +1347,7 @@ mod tests {
     }
 
     #[test]
-    fn pinned_sort_does_not_promote_direct_conversation_realms() {
+    fn ordinary_navigation_omits_direct_conversation_realms_even_when_pinned() {
         let mut dm = preview("ak:realm:dm", "DM", None);
         dm.direct_conversation = true;
         let nodes = vec![
@@ -1347,7 +1360,7 @@ mod tests {
         let items = realm_tree_items_with_pinned_realms(&nodes, &pinned);
         let ids: Vec<_> = items.iter().map(|item| item.node.id.as_str()).collect();
 
-        assert_eq!(ids, vec!["ak:realm:later", "ak:realm:dm", "ak:realm:work"]);
+        assert_eq!(ids, vec!["ak:realm:later", "ak:realm:work"]);
     }
 
     #[test]
@@ -1363,7 +1376,10 @@ mod tests {
                 arkret_sdk::CollaborationRealmRole::DirectConversation,
             )]),
         );
-        assert!(realm_tree_node_is_direct_conversation(&strong[0]));
+        assert!(
+            strong.is_empty(),
+            "typed direct-conversation Realms must stay out of ordinary navigation"
+        );
 
         let genesis_only = realm_tree_nodes_from_sync_realms(&BTreeMap::from([(
             realm_id.to_owned(),

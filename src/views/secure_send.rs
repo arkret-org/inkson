@@ -18,7 +18,7 @@
 //!      schedule + move-submission record), then message.
 //!
 //! UI-shaped concerns stay in the caller: the optimistic bubble, draft
-//! recovery, author-owned sidecar persistence, audit RYW receipt, and status
+//! recovery, author-owned sidecar persistence, and status
 //! text. The caller drives these off the typed [`SecureSendBuild`] /
 //! [`SecureSendOutcome`] returned here.
 
@@ -36,7 +36,7 @@ pub(crate) type LocalEncryptedMessage = (
 /// Result of the local MLS encrypt step.
 ///
 /// * `schedule_hash` — post-encrypt group key-schedule hash (B3d governance).
-/// * `member_dids` — every principal DID in the group (B6c audit receipts).
+/// * `member_dids` — every principal DID in the group (membership sanity check).
 /// * encrypted content — typed MLS payload + AAD, or `None` on failure.
 /// * commit envelope — the SDK self-update commit, when the encrypt advanced the epoch (a forced
 ///   `ak.mls.commit` is then emitted).
@@ -75,14 +75,27 @@ pub(crate) fn run_local_mls_encrypt(
     circle_id: Option<&str>,
     sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
 ) -> Result<LocalMlsEncryptResult, crate::mls::runtime::MlsRuntimeError> {
+    serde_json::from_slice::<arkret_sdk::ContentBlock>(plaintext_bytes).map_err(|error| {
+        crate::mls::runtime::MlsRuntimeError::Serialize(format!(
+            "message plaintext is not a ContentBlock: {error}"
+        ))
+    })?;
+    if let Some(metadata) = metadata_plaintext_bytes {
+        serde_json::from_slice::<arkret_sdk::MessageMetadata>(metadata).map_err(|error| {
+            crate::mls::runtime::MlsRuntimeError::Serialize(format!(
+                "message metadata plaintext is not MessageMetadata: {error}"
+            ))
+        })?;
+    }
     run_local_mls_encrypt_for_event(
         state_store,
         realm_id,
         principal_id,
         device_id,
-        "application/vnd.arkret.message+json",
+        arkret_sdk::MESSAGE_CONTENT_BLOCK_MLS_CONTENT_TYPE,
         arkret_sdk::EventKind::MESSAGE_CREATE,
         plaintext_bytes,
+        metadata_plaintext_bytes.map(|_| arkret_sdk::MESSAGE_METADATA_MLS_CONTENT_TYPE),
         metadata_plaintext_bytes,
         circle_id,
         sidecar_binding,
@@ -98,6 +111,7 @@ fn run_local_mls_encrypt_for_event(
     content_type: &str,
     event_kind: &str,
     plaintext_bytes: &[u8],
+    metadata_content_type: Option<&str>,
     metadata_plaintext_bytes: Option<&[u8]>,
     circle_id: Option<&str>,
     sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
@@ -127,6 +141,7 @@ fn run_local_mls_encrypt_for_event(
         content_type,
         aad.clone(),
         plaintext_bytes,
+        metadata_content_type,
         metadata_plaintext_bytes,
         circle_id,
         sidecar_binding,
@@ -167,8 +182,6 @@ pub(crate) struct SecureSendBuild {
     /// Post-commit snapshot — persisted by the caller ONLY after the server
     /// accepts the commit (persist-on-accept).
     pub new_mls_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
-    /// Every principal DID in the post-encrypt group (audit RYW delivered set).
-    pub member_dids: Vec<arkret_sdk::Did>,
     /// The Realm move-seal ref captured at build time (covered-seals binding).
     pub seal_ref: String,
     /// History-secret update that must commit before either MLS event is sent.
@@ -304,28 +317,33 @@ pub(crate) fn build_secure_send(
     let message_event_id = arkret_sdk::MessageId::new(message_id.to_owned())
         .map_err(|err| format!("Send Secure message id invalid: {err}"))?
         .event_id();
-    let mut message_payload = arkret_sdk::MessageCreatePayload::with_encrypted_content(
+    let encrypted_content =
+        arkret_sdk::MlsEncryptedPayload::<arkret_sdk::ContentBlock>::new(encrypted_envelope)
+            .map_err(|err| format!("MLS ContentBlock envelope type mismatch: {err}"))?;
+    let mut message_payload = arkret_sdk::MessageCreatePayload::with_mls_encrypted_content(
         typed_strand_id,
         "discussion",
-        encrypted_envelope,
+        encrypted_content,
     );
     if let Some((metadata_payload, metadata_aad)) = encrypted_metadata_message {
         // Same canonical wrap + AAD visibility + group-state binding as the
         // `encrypted_content` envelope, mounted parallel to it on the payload.
-        message_payload.encrypted_metadata = Some(
-            arkret_sdk::mls::encrypted_envelope_from_payload(
-                &metadata_payload,
-                metadata_aad,
-                arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
-                // `hidden` is at or below every possible Realm ceiling, so the
-                // fail-closed `from_declared(None)` resolution always admits it. A
-                // caller that starts emitting `routing_digest` MUST pass the Realm's
-                // accepted `aad_visibility` component here instead.
-                arkret_sdk::AadVisibilityCeiling::from_declared(None),
-                &group_state_ref,
-            )
-            .map_err(|err| format!("MLS encrypted metadata envelope build failed: {err}"))?,
-        );
+        let encrypted_metadata = arkret_sdk::mls::encrypted_envelope_from_payload(
+            &metadata_payload,
+            metadata_aad,
+            arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
+            // `hidden` is at or below every possible Realm ceiling, so the
+            // fail-closed `from_declared(None)` resolution always admits it. A
+            // caller that starts emitting `routing_digest` MUST pass the Realm's
+            // accepted `aad_visibility` component here instead.
+            arkret_sdk::AadVisibilityCeiling::from_declared(None),
+            &group_state_ref,
+        )
+        .map_err(|err| format!("MLS encrypted metadata envelope build failed: {err}"))?;
+        let encrypted_metadata =
+            arkret_sdk::MlsEncryptedPayload::<arkret_sdk::MessageMetadata>::new(encrypted_metadata)
+                .map_err(|err| format!("MLS MessageMetadata envelope type mismatch: {err}"))?;
+        message_payload = message_payload.with_mls_encrypted_metadata(encrypted_metadata);
     }
     if let Some(reply_to) = reply_to.filter(|value| !value.trim().is_empty()) {
         message_payload = message_payload.with_reply_to(reply_to);
@@ -353,7 +371,6 @@ pub(crate) fn build_secure_send(
         commit_event,
         message_event,
         new_mls_snapshot,
-        member_dids: local_member_dids,
         seal_ref,
         pending_history_secrets,
         mention_routing_key,
@@ -400,6 +417,7 @@ pub(crate) fn build_sidecar_exchange_control_send(
         "application/vnd.arkret.agent-sidecar-exchange-control+json",
         arkret_sdk::EventKind::AGENT_SIDECAR_EXCHANGE_CONTROL,
         &plaintext,
+        None,
         None,
         Some(circle_id),
         Some(&sidecar_binding),
@@ -486,7 +504,6 @@ pub(crate) fn build_sidecar_exchange_control_send(
         commit_event,
         message_event: control_event,
         new_mls_snapshot,
-        member_dids: local_member_dids,
         seal_ref,
         pending_history_secrets,
         mention_routing_key: None,
@@ -531,7 +548,6 @@ pub(crate) async fn submit_secure_send(
         message_event,
         new_mls_snapshot,
         seal_ref,
-        member_dids: _,
         pending_history_secrets,
         mention_routing_key: _,
     } = build;

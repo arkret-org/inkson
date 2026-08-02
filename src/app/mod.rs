@@ -585,6 +585,7 @@ fn AppBootstrap() -> Element {
                     token,
                     account_did,
                     did_cache,
+                    runtime_adapter::state_store_handle(state_store),
                 ),
             ));
         });

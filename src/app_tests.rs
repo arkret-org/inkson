@@ -1,6 +1,36 @@
 use super::*;
 
 #[test]
+fn direct_route_resolves_agent_peer_independently_of_reply_participation() {
+    let contacts: Vec<crate::models::ContactListRow> = serde_json::from_value(serde_json::json!([
+        {
+            "peer": "did:web:example.com:users:alice",
+            "state": "accepted",
+            "agents": [{
+                "agent_id": "did:web:example.com:agents:aa",
+                "controller_id": "did:web:example.com:users:alice",
+                "agent_slug": "aa",
+                "direct_conversation": {
+                    "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000020",
+                    "main_strand_id": "ak:strand:0196419b-0000-7000-8000-000000000021",
+                    "state": "active"
+                }
+            }]
+        }
+    ]))
+    .expect("contact fixture");
+
+    assert_eq!(
+        route_surface::direct_conversation_peer_id(
+            &contacts,
+            "ak:realm:0196419b-0000-7000-8000-000000000020",
+            "ak:strand:0196419b-0000-7000-8000-000000000021",
+        ),
+        "did:web:example.com:agents:aa"
+    );
+}
+
+#[test]
 fn unchanged_session_refresh_is_a_noop_for_reactive_and_persisted_state() {
     let grant = session_grant(3600);
     let config = ClientConfig::from_fields(

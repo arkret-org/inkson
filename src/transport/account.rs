@@ -233,7 +233,7 @@ pub async fn set_invite_receive_policy(
 
 pub async fn direct_conversation_resolve(
     api: &crate::transport::TransportClient,
-    state_store: SyncSignal<crate::state::LocalStateStore>,
+    mut state_store: SyncSignal<crate::state::LocalStateStore>,
     peer: &str,
     create: bool,
     enable_owned_agent_reply: bool,
@@ -297,8 +297,13 @@ pub async fn direct_conversation_resolve(
             );
         }
         if enable_owned_agent_reply {
-            ensure_owned_agent_direct_reply(http, peer, &confirmed).await?;
+            preserve_resolved_direct_conversation(
+                peer,
+                &confirmed,
+                ensure_owned_agent_direct_reply(http, state_store, peer, &confirmed).await,
+            );
         }
+        remember_direct_conversation_peer(&mut state_store, peer, &confirmed);
         return Ok(confirmed);
     }
     if outcome.state == arkret_sdk::DirectConversationResolveState::AuthoringRequired {
@@ -309,13 +314,76 @@ pub async fn direct_conversation_resolve(
     if enable_owned_agent_reply
         && outcome.state == arkret_sdk::DirectConversationResolveState::Found
     {
-        ensure_owned_agent_direct_reply(http, peer, &outcome).await?;
+        preserve_resolved_direct_conversation(
+            peer,
+            &outcome,
+            ensure_owned_agent_direct_reply(http, state_store, peer, &outcome).await,
+        );
+    }
+    if outcome.state == arkret_sdk::DirectConversationResolveState::Found {
+        remember_direct_conversation_peer(&mut state_store, peer, &outcome);
     }
     Ok(outcome)
 }
 
+fn direct_conversation_peer_cache_key(realm_id: &str, strand_id: &str) -> String {
+    format!("direct_conversation.peer.{realm_id}.{strand_id}")
+}
+
+const DIRECT_CONVERSATION_PEER_CACHE_OBFUSCATION_KEY: &str = "ak.local.direct_conversation.peer.v1";
+
+fn remember_direct_conversation_peer(
+    state_store: &mut SyncSignal<crate::state::LocalStateStore>,
+    peer: &str,
+    outcome: &arkret_sdk::DirectConversationResolveOutcome,
+) {
+    let (Some(realm_id), Some(strand_id)) =
+        (outcome.realm_id.as_ref(), outcome.main_strand_id.as_ref())
+    else {
+        return;
+    };
+    state_store.write().save_private_data(
+        DIRECT_CONVERSATION_PEER_CACHE_OBFUSCATION_KEY,
+        direct_conversation_peer_cache_key(realm_id.as_str(), strand_id.as_str()),
+        peer,
+    );
+}
+
+pub(crate) fn cached_direct_conversation_peer(
+    state_store: &crate::state::LocalStateStore,
+    realm_id: &str,
+    strand_id: &str,
+) -> Option<String> {
+    state_store.load_private_data(
+        DIRECT_CONVERSATION_PEER_CACHE_OBFUSCATION_KEY,
+        &direct_conversation_peer_cache_key(realm_id, strand_id),
+    )
+}
+
+/// Opening a canonical Direct Conversation and changing an Agent's participation
+/// policy are separate protocol operations.  The latter is best-effort here: a
+/// stale authoring generation or a restrictive participation ceiling may stop
+/// the Agent from replying, but MUST NOT turn an already resolved conversation
+/// into an unavailable navigation target.
+fn preserve_resolved_direct_conversation(
+    agent_id: &str,
+    outcome: &arkret_sdk::DirectConversationResolveOutcome,
+    reply_enablement: anyhow::Result<()>,
+) {
+    if let Err(error) = reply_enablement {
+        tracing::warn!(
+            error = %error,
+            agent_id,
+            realm_id = outcome.realm_id.as_ref().map(ToString::to_string),
+            strand_id = outcome.main_strand_id.as_ref().map(ToString::to_string),
+            "owned Agent Direct Conversation resolved, but reply participation could not be enabled"
+        );
+    }
+}
+
 async fn ensure_owned_agent_direct_reply(
     http: &arkret_sdk::http_client::Client,
+    mut state_store: SyncSignal<crate::state::LocalStateStore>,
     agent_id: &str,
     outcome: &arkret_sdk::DirectConversationResolveOutcome,
 ) -> anyhow::Result<()> {
@@ -335,6 +403,13 @@ async fn ensure_owned_agent_direct_reply(
         .agent_participation_get(agent_id)
         .await
         .map_err(anyhow::Error::from)?;
+    // Opening an already configured DM is a read/navigation operation.  Do
+    // not author another byte-equivalent capability Control Move on every
+    // contact click: each accepted governance write legitimately pauses E2EE
+    // until the MLS covered-Seal accumulator advances.
+    if !owned_agent_reply_update_needed(&existing, &scope) {
+        return Ok(());
+    }
     let mut selection = existing
         .entries
         .iter()
@@ -346,6 +421,14 @@ async fn ensure_owned_agent_direct_reply(
     if !participation_reply_is_effective(&updated, &scope) {
         anyhow::bail!("owned-Agent Direct Conversation reply participation remains disabled");
     }
+    // The capability grant is a governance Control Move.  Arm the known
+    // coverage repair immediately so the first human message does not have to
+    // discover the stale MLS accumulator by failing once.
+    state_store.write().record_mls_coverage_stale(
+        scope.realm_id().as_str().to_owned(),
+        None,
+        "agent reply participation grant changed the Realm governance frontier",
+    );
     Ok(())
 }
 
@@ -355,9 +438,15 @@ pub(crate) async fn replace_agent_participation(
     scope: arkret_sdk::AgentParticipationScope,
     selection: arkret_sdk::AgentParticipation,
 ) -> anyhow::Result<arkret_sdk::AgentParticipationOutcome> {
-    let controller_id = crate::event_signer::active_signer()
-        .map(|signer| signer.signer_did().to_owned())
-        .ok_or_else(|| anyhow::anyhow!("no active controller signer is available"))?;
+    // The signer DID is the device verification-key subject (`did:key:...`),
+    // not the authenticated account principal that owns the Agent.  A
+    // capability grant authored as that key subject cannot resolve an account
+    // device generation and is therefore (correctly) quarantined as
+    // `authority_generation_unknown`.  Read the controller from the
+    // authenticated account projection instead of trying to infer it from
+    // key material.
+    let viewer = account_viewer(http).await?;
+    let controller_id = participation_controller_id(&viewer).to_owned();
     let previous = http
         .agent_participation_get(agent_id)
         .await
@@ -417,6 +506,12 @@ pub(crate) async fn replace_agent_participation(
     Ok(updated)
 }
 
+fn participation_controller_id(
+    viewer: &arkret_models_collaboration::account_lifecycle::AccountView,
+) -> &str {
+    viewer.principal_id.as_str()
+}
+
 fn participation_materialization_event(
     controller_id: &str,
     agent_id: &str,
@@ -465,7 +560,7 @@ fn participation_materialization_event(
         vec![resource],
         None,
         serde_json::Value::Null,
-    )
+    )?
     .build_sdk_event("inkson")
 }
 
@@ -477,6 +572,13 @@ fn participation_reply_is_effective(
         .entries
         .iter()
         .any(|entry| &entry.scope == scope && entry.effective.reply)
+}
+
+fn owned_agent_reply_update_needed(
+    outcome: &arkret_sdk::AgentParticipationOutcome,
+    scope: &arkret_sdk::AgentParticipationScope,
+) -> bool {
+    !participation_reply_is_effective(outcome, scope)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1608,6 +1710,59 @@ mod tests {
                 "strand_id": strand_id
             }])
         );
+        assert_eq!(
+            event.payload["grant"]["issuer_authority_refs"],
+            json!([{
+                "kind": "realm_root",
+                "realm_id": realm_id,
+                "cell_ref": "ak:cell:ak.component.realm.authority_root.v1:null",
+                "controller_epoch_at_issuance": 0,
+                "authority_generation": 0
+            }])
+        );
+    }
+
+    #[test]
+    fn reply_participation_uses_authenticated_account_principal_not_device_key_subject() {
+        let viewer: arkret_models_collaboration::account_lifecycle::AccountView =
+            serde_json::from_value(json!({
+                "principal_id": "did:web:alice.example",
+                "state": "active",
+                "devices": []
+            }))
+            .expect("account viewer shape");
+
+        assert_eq!(
+            participation_controller_id(&viewer),
+            "did:web:alice.example"
+        );
+        assert_ne!(
+            participation_controller_id(&viewer),
+            "did:key:z6MkDeviceSigningKey"
+        );
+    }
+
+    #[test]
+    fn effective_owned_agent_reply_does_not_request_another_governance_write() {
+        let scope = arkret_sdk::AgentParticipationScope::Strand {
+            realm_id: arkret_sdk::RealmId::new("ak:realm:01970000-0000-7000-8000-000000000001")
+                .expect("realm id"),
+            strand_id: arkret_sdk::StrandId::new("ak:strand:01970000-0000-7000-8000-000000000002")
+                .expect("strand id"),
+        };
+        let outcome: arkret_sdk::AgentParticipationOutcome = serde_json::from_value(json!({
+            "ok": true,
+            "agent_id": "did:web:agent.example",
+            "entries": [{
+                "participation_scope": scope,
+                "selection": {"reply": true, "accept_third_party_mention": false, "act_on_behalf": false},
+                "ceiling": {"reply": true, "accept_third_party_mention": false, "act_on_behalf": false},
+                "effective": {"reply": true, "accept_third_party_mention": false, "act_on_behalf": false}
+            }]
+        }))
+        .expect("participation outcome");
+
+        assert!(!owned_agent_reply_update_needed(&outcome, &scope));
     }
 
     #[test]
@@ -1630,5 +1785,38 @@ mod tests {
             event.payload["reason"],
             json!("agent_participation_disabled")
         );
+    }
+
+    #[test]
+    fn reply_enablement_failure_does_not_invalidate_resolved_direct_conversation() {
+        let outcome = arkret_sdk::DirectConversationResolveOutcome {
+            state: arkret_sdk::DirectConversationResolveState::Found,
+            realm_id: Some(
+                arkret_sdk::RealmId::new("ak:realm:01970000-0000-7000-8000-000000000001")
+                    .expect("realm id"),
+            ),
+            main_strand_id: Some(
+                arkret_sdk::StrandId::new("ak:strand:01970000-0000-7000-8000-000000000002")
+                    .expect("strand id"),
+            ),
+            binding_event_ref: None,
+            created: Some(false),
+            authoring_kind: None,
+            claim_authorization_draft: None,
+            materialization_draft: None,
+        };
+
+        preserve_resolved_direct_conversation(
+            "did:web:agent.example",
+            &outcome,
+            Err(anyhow::anyhow!("authority_generation_unknown")),
+        );
+
+        assert_eq!(
+            outcome.state,
+            arkret_sdk::DirectConversationResolveState::Found
+        );
+        assert!(outcome.realm_id.is_some());
+        assert!(outcome.main_strand_id.is_some());
     }
 }

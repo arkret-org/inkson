@@ -24,6 +24,15 @@ const AUTHZ_VERDICT_TTL_MS: u64 = 30_000;
 /// Hard cap on cached verdicts, evicting the oldest first.
 const MAX_AUTHZ_VERDICTS: usize = 256;
 
+fn agent_prefetch_needed_for_directory_lookup(
+    lookup: &crate::identity::device_directory::CacheLookup,
+) -> bool {
+    !matches!(
+        lookup,
+        crate::identity::device_directory::CacheLookup::Hit(_)
+    )
+}
+
 #[derive(Clone, Copy)]
 struct CachedVerdict {
     allowed: bool,
@@ -38,6 +47,7 @@ pub(super) struct AppSignalProductSink {
     token: Signal<String>,
     account_did: Signal<String>,
     did_cache: Signal<arkret_sdk::identity::DidResolutionCache>,
+    state_store: crate::runtime::input::StateStoreHandle,
     authz_verdicts: RefCell<BTreeMap<String, CachedVerdict>>,
 }
 
@@ -50,6 +60,7 @@ impl AppSignalProductSink {
         token: Signal<String>,
         account_did: Signal<String>,
         did_cache: Signal<arkret_sdk::identity::DidResolutionCache>,
+        state_store: crate::runtime::input::StateStoreHandle,
     ) -> Self {
         Self {
             call_hub,
@@ -59,6 +70,7 @@ impl AppSignalProductSink {
             token,
             account_did,
             did_cache,
+            state_store,
             authz_verdicts: RefCell::new(BTreeMap::new()),
         }
     }
@@ -147,29 +159,70 @@ impl SignalProductSink for AppSignalProductSink {
         Box::pin(async move {
             let actor = envelope.sender_actor_id.as_str();
             let device = envelope.sender_device_id.as_str();
-            if !matches!(
-                crate::identity::device_directory::cached_device_signing_key(actor, device),
-                crate::identity::device_directory::CacheLookup::Miss
-            ) {
-                // A fresh positive or negative verdict already exists. Only a
-                // miss is worth a network call, and the directory's negative
-                // TTL is what bounds how often an unknown sender can trigger
-                // one.
+            let directory_lookup =
+                crate::identity::device_directory::cached_device_signing_key(actor, device);
+            if !agent_prefetch_needed_for_directory_lookup(&directory_lookup) {
                 return;
             }
             let Some(api) = self.authenticated_api() else {
+                tracing::debug!(
+                    %actor,
+                    %device,
+                    "Signal sender-key prefetch skipped because no authenticated API is available",
+                );
                 return;
+            };
+            let http = match api.sdk_http_client() {
+                Ok(http) => http,
+                Err(error) => {
+                    tracing::debug!(
+                        %actor,
+                        %device,
+                        %error,
+                        "Signal sender-key prefetch could not construct the SDK HTTP client",
+                    );
+                    return;
+                }
             };
             let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
                 crate::identity::did_resolver::DeploymentProfile::PersonalNode,
                 self.did_cache.peek().clone(),
             );
-            let _ = crate::identity::device_directory::resolve_device_signing_key(
+            if matches!(
+                directory_lookup,
+                crate::identity::device_directory::CacheLookup::Miss
+            ) && crate::identity::device_directory::resolve_device_signing_key(
                 &api, &anchor, actor, device,
             )
-            .await;
+            .await
+            .ok()
+            .flatten()
+            .is_some()
+            {
+                let mut did_cache = self.did_cache;
+                did_cache.set(anchor.into_cache());
+                return;
+            }
             let mut did_cache = self.did_cache;
             did_cache.set(anchor.into_cache());
+            let resolved = crate::identity::agent_signer_evidence::prefetch_for_signal(
+                &http,
+                &envelope.realm_id,
+                &envelope.sender_actor_id,
+                &envelope.proof.verification_method,
+                &self.state_store,
+                crate::app::runtime_adapter::value_cell(self.did_cache),
+            )
+            .await;
+            if !resolved {
+                tracing::debug!(
+                    target_realm_id = %envelope.realm_id,
+                    %actor,
+                    %device,
+                    verification_method = %envelope.proof.verification_method,
+                    "Signal sender key remained unresolved after Agent evidence prefetch",
+                );
+            }
         })
     }
 
@@ -251,5 +304,20 @@ impl SignalProductSink for AppSignalProductSink {
     fn advance_clock(&self, now: chrono::DateTime<chrono::Utc>) {
         let mut hub = self.message_hub;
         hub.maintain(now);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn negative_device_directory_verdict_still_allows_agent_evidence_prefetch() {
+        assert!(agent_prefetch_needed_for_directory_lookup(
+            &crate::identity::device_directory::CacheLookup::NegativeHit
+        ));
+        assert!(agent_prefetch_needed_for_directory_lookup(
+            &crate::identity::device_directory::CacheLookup::Miss
+        ));
     }
 }

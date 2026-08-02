@@ -759,6 +759,8 @@ fn actor_frontier_refresh_error(actor_id: &str, error: anyhow::Error) -> anyhow:
 
 fn pending_chat_message_ids_from_snapshot(
     snapshot: &garth::SendQueueSnapshot,
+    realm_id: &str,
+    strand_id: &str,
 ) -> std::collections::BTreeSet<String> {
     use garth::SendQueueStatus;
 
@@ -779,6 +781,15 @@ fn pending_chat_message_ids_from_snapshot(
             )
         })
         .filter_map(|item| decode_queued_sdk_event(item.content.clone()).ok())
+        .filter(|queued| {
+            queued.intent.realm_id.as_str() == realm_id
+                && queued
+                    .intent
+                    .payload
+                    .get("strand_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(strand_id)
+        })
         .map(|queued| {
             arkret_sdk::MessageId::from_event_id(&queued.intent.event_id)
                 .as_str()
@@ -792,10 +803,14 @@ fn pending_chat_message_ids_from_snapshot(
 /// outbox with separate replay semantics.
 pub(crate) async fn pending_chat_outbound_message_ids(
     actor_id: &str,
+    realm_id: &str,
+    strand_id: &str,
 ) -> anyhow::Result<std::collections::BTreeSet<String>> {
     let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(actor_id)?);
     let snapshot = outbound.snapshot().await?;
-    Ok(pending_chat_message_ids_from_snapshot(&snapshot))
+    Ok(pending_chat_message_ids_from_snapshot(
+        &snapshot, realm_id, strand_id,
+    ))
 }
 
 fn completed_outbound_result(item: &garth::SendQueueItem) -> SubmitEventResult {
@@ -2916,7 +2931,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_chat_projection_ignores_sent_items() {
+    fn pending_chat_projection_ignores_sent_items_and_other_conversations() {
         let realm =
             arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001".to_owned())
                 .unwrap();
@@ -2930,7 +2945,8 @@ mod tests {
         );
         let mut pending = pending;
         pending.payload = serde_json::from_value(json!({
-            "message_id": "ak:message:01904100-0000-7000-8000-000000000001"
+            "message_id": "ak:message:01904100-0000-7000-8000-000000000001",
+            "strand_id": "ak:strand:01904100-0000-7000-8000-000000000010"
         }))
         .unwrap();
         queue
@@ -2945,6 +2961,40 @@ mod tests {
                         pending,
                         "pending-operation".to_owned(),
                         "pending-attempt".to_owned(),
+                        None,
+                        test_authoring_generation(),
+                        None,
+                    )
+                    .unwrap(),
+                )
+                .unwrap(),
+                Vec::new(),
+            )
+            .unwrap();
+
+        let mut other_conversation = sdk_event_with_kind(
+            "ak:event:01904100-0000-7000-8000-000000000003",
+            realm.as_str(),
+            "ak.message.create",
+            actor,
+        );
+        other_conversation.payload = serde_json::from_value(json!({
+            "message_id": "ak:message:01904100-0000-7000-8000-000000000003",
+            "strand_id": "ak:strand:01904100-0000-7000-8000-000000000099"
+        }))
+        .unwrap();
+        queue
+            .enqueue(
+                Some(other_conversation.event_id.to_string()),
+                realm.clone(),
+                garth::SendQueueItemKind::Custom {
+                    kind: "ak.message.create".to_owned(),
+                },
+                serde_json::to_value(
+                    QueuedSdkEvent::unauthored(
+                        other_conversation,
+                        "other-operation".to_owned(),
+                        "other-attempt".to_owned(),
                         None,
                         test_authoring_generation(),
                         None,
@@ -3011,7 +3061,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            pending_chat_message_ids_from_snapshot(&queue.snapshot()),
+            pending_chat_message_ids_from_snapshot(
+                &queue.snapshot(),
+                realm.as_str(),
+                "ak:strand:01904100-0000-7000-8000-000000000010",
+            ),
             std::collections::BTreeSet::from([
                 "ak:message:01904100-0000-7000-8000-000000000001".to_owned()
             ])

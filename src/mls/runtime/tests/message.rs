@@ -161,12 +161,21 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
             "application/vnd.arkret.message+json",
             aad,
             br#"{"kind":"ak.content.text","body":"routed"}"#,
+            Some(arkret_sdk::MESSAGE_METADATA_MLS_CONTENT_TYPE),
             Some(br#"{"sidecar_exchange_binding":{}}"#.as_slice()),
             None,
             None,
         )
         .unwrap();
     let metadata_payload = metadata_payload.expect("metadata ciphertext");
+    assert_eq!(
+        content_payload.content_type,
+        arkret_sdk::MESSAGE_CONTENT_BLOCK_MLS_CONTENT_TYPE
+    );
+    assert_eq!(
+        metadata_payload.content_type,
+        arkret_sdk::MESSAGE_METADATA_MLS_CONTENT_TYPE
+    );
     assert_eq!(metadata_payload.epoch, content_payload.epoch);
     assert_ne!(
         metadata_payload.payload_digest,

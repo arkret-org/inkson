@@ -182,4 +182,50 @@ mod tests {
 
         assert_eq!(display_with_reason_detail(&error), error.to_string());
     }
+
+    #[test]
+    fn mls_stale_classifier_accepts_canonical_typed_reason() {
+        let envelope = ErrorEnvelope::new(
+            arkret_sdk::error::ErrorCode::FAILED_PRECONDITION,
+            "covered_seals_cell is stale",
+        )
+        .with_detail(
+            "reason_code",
+            Value::String(arkret_sdk::error::ReasonCode::MLS_GOVERNANCE_BINDING_STALE.to_owned()),
+        );
+        let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: 409,
+            error: Box::new(envelope),
+        });
+
+        assert!(is_mls_governance_binding_stale_error(&error));
+    }
+
+    #[test]
+    fn mls_stale_classifier_accepts_legacy_lease_wrapper() {
+        let envelope = ErrorEnvelope::new(
+            arkret_sdk::error::ErrorCode::POLICY_VIOLATION,
+            "mls_governance_binding_stale: covered_seals_cell does not cover governance Seal",
+        );
+        let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: 409,
+            error: Box::new(envelope),
+        });
+
+        assert!(is_mls_governance_binding_stale_error(&error));
+    }
+
+    #[test]
+    fn mls_stale_classifier_rejects_unrelated_policy_violation() {
+        let envelope = ErrorEnvelope::new(
+            arkret_sdk::error::ErrorCode::POLICY_VIOLATION,
+            "ordinary policy denial",
+        );
+        let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: 409,
+            error: Box::new(envelope),
+        });
+
+        assert!(!is_mls_governance_binding_stale_error(&error));
+    }
 }

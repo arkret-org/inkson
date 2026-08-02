@@ -579,13 +579,10 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
         );
     }
     let payload = arkret_sdk::MlsCommitPayload::new(
-        commit_envelope.group_id.clone(),
         prev_epoch,
         base_group_state_ref,
         proposal_refs,
-        commit_envelope.epoch,
-        commit_envelope.commit.clone(),
-        commit_envelope.commit_digest.clone(),
+        commit_envelope,
         governance_binding,
     )
     .map_err(|err| format!("MLS commit payload failed: {err}"))?;

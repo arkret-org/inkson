@@ -6,7 +6,6 @@ use dioxus_router::hooks::use_navigator;
 use serde_json::{Value, json};
 
 use crate::api_error::is_space_membership_denied_error;
-use crate::audit::build_audit_ryw_receipt;
 use crate::circle::{CircleScope, CircleSummary};
 use crate::components::{
     ActorIdentityLabel, CircleScopePicker, HelpTip, SecurityStateBadge, SelfAttributionBadge,
@@ -1611,6 +1610,12 @@ pub fn ChatPanel(
     initial_strand_id: String,
     embedded: bool,
     direct_mode: bool,
+    /// Counterpart resolved by the contact-only Direct Conversation entry
+    /// point. It is display identity, not participation authorization: an
+    /// Agent remains the conversation peer even when reply enablement is
+    /// unavailable.
+    #[props(default)]
+    direct_peer_id: String,
     /// Present only when `/direct/...` was reached through the standard
     /// Agent Sidecar ensure flow. Contact DMs continue to use direct mode
     /// without receiving Sidecar-specific membership semantics.
@@ -2238,6 +2243,20 @@ pub fn ChatPanel(
         &selected_realm_id,
         &account_did,
     );
+    let direct_peer_id = if direct_mode {
+        crate::transport::account::cached_direct_conversation_peer(
+            &state_store.read(),
+            &selected_realm_id,
+            &initial_strand_id,
+        )
+        .unwrap_or(direct_peer_id)
+    } else {
+        String::new()
+    };
+    let projected_member_dids = participants
+        .iter()
+        .map(|participant| participant.did.clone())
+        .collect::<std::collections::BTreeSet<_>>();
     let own_controller_handle = participants
         .iter()
         .find(|participant| participant.is_self && !participant.is_agent)
@@ -2327,6 +2346,20 @@ pub fn ChatPanel(
     // private Circle and left the panel showing only the controller.
     if sidecar_mode {
         public_agent_dids.extend(known_agent_ids.iter().cloned());
+    }
+    if direct_mode {
+        public_agent_dids.extend(
+            known_agent_ids
+                .iter()
+                .filter(|agent_id| {
+                    direct_agent_is_conversation_peer(
+                        agent_id,
+                        &direct_peer_id,
+                        &projected_member_dids,
+                    )
+                })
+                .cloned(),
+        );
     }
     participants.retain(|participant| {
         !participant.is_agent || public_agent_dids.contains(&participant.did)

@@ -1041,6 +1041,42 @@ pub(crate) fn managed_agent_seal_head_receipt_unavailable(error: &anyhow::Error)
         .contains("events/frontier omitted the accepted managed Agent PCR Seal head")
 }
 
+/// Publish the controller-authored successor Seal required to turn durable
+/// managed Agent-PCR Events into accepted authorization state.
+pub(crate) async fn seal_managed_agent_pcr_current(
+    api: &crate::transport::TransportClient,
+    state_store: SyncSignal<LocalStateStore>,
+    realm_id: &arkret_sdk::RealmId,
+) -> anyhow::Result<arkret_sdk::Seal> {
+    let controller_id = state_store
+        .read()
+        .active_account_did()
+        .filter(|did| !did.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("active controller DID is unavailable"))?;
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("active controller signer is unavailable"))?;
+    let signer_account_scope = crate::secure_key_store::active_device_seed_scope();
+    let device_id = controller_signer_device_id(
+        &controller_id,
+        signer.as_ref(),
+        signer_account_scope.as_deref(),
+    )?;
+    let controller_did = arkret_sdk::Did::new(controller_id)?;
+    let submitter = api.event_submitter()?;
+    let http = api.sdk_http_client()?;
+    let (_, seal) = ensure_managed_agent_pcr_seal_current(
+        &submitter,
+        &http,
+        signer.as_ref(),
+        &controller_did,
+        &device_id,
+        realm_id.as_str(),
+        state_store,
+    )
+    .await?;
+    Ok(seal)
+}
+
 /// Complete the client-owned half of `agent_provision`: create the Agent PCR,
 /// generate its epoch-0 MLS state locally, publish a controller-owned managed
 /// recovery envelope, and select that envelope's series from the controller

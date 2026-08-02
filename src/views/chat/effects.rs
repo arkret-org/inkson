@@ -125,16 +125,21 @@ pub(super) fn ChatEffects(
     }
 
     let account_for_connectivity = account_did.clone();
+    let realm_for_connectivity = selected_realm_id.clone();
     use_future(move || {
         let account_for_connectivity = account_for_connectivity.clone();
+        let realm_for_connectivity = realm_for_connectivity.clone();
         async move {
             loop {
                 let online = navigator_online();
                 if *is_online.peek() != online {
                     event_sink.emit(ChatProjectionEvent::Connectivity(online));
                 }
+                let strand_for_connectivity = selected_channel();
                 if let Ok(next) = crate::event_submit::pending_chat_outbound_message_ids(
                     &account_for_connectivity,
+                    &realm_for_connectivity,
+                    &strand_for_connectivity,
                 )
                 .await
                     && *queued_outbound_message_ids.peek() != next

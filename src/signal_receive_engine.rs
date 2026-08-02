@@ -32,7 +32,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use garth::{
-    RunOptions, SignalReceiveHandlers, SignalRejection, SignalSink, SyncLoopControl,
+    Backoff, RunOptions, SignalReceiveHandlers, SignalRejection, SignalSink, SyncLoopControl,
     TransportProvider,
 };
 use serde_json::Value;
@@ -86,7 +86,9 @@ pub struct SignalReceiveEngineContext {
 /// Seal does not locate, and `keys_query_request_body` deliberately has no
 /// as-of basis. soland's `verify_signal_device_proof` resolves the same way, so
 /// every verifying role applies one rule.
-pub struct DirectorySenderKeyResolver;
+pub struct DirectorySenderKeyResolver {
+    state_store: crate::runtime::input::StateStoreHandle,
+}
 
 impl garth::SignalSenderKeyResolver for DirectorySenderKeyResolver {
     fn resolve_sender_key(
@@ -99,7 +101,15 @@ impl garth::SignalSenderKeyResolver for DirectorySenderKeyResolver {
         ) {
             crate::identity::device_directory::CacheLookup::Hit(key) => Some(key),
             crate::identity::device_directory::CacheLookup::NegativeHit
-            | crate::identity::device_directory::CacheLookup::Miss => None,
+            | crate::identity::device_directory::CacheLookup::Miss => {
+                self.state_store.read(|store| {
+                    crate::identity::agent_signer_evidence::resolve_cached_signal_key(
+                        store,
+                        &envelope.sender_actor_id,
+                        &envelope.proof.verification_method,
+                    )
+                })
+            }
         }
     }
 }
@@ -313,13 +323,14 @@ impl SignalSink for InksonSignalSink {
     fn rejected(
         &self,
         envelope: &arkret_wire::SignalEnvelope,
-        _rejection: SignalRejection,
+        rejection: SignalRejection,
         error: &garth::Error,
     ) {
         // Sender identity is already server-visible on this rail, so naming it
         // here leaks nothing the transport did not. The plaintext never exists
         // for a rejected envelope, so nothing product-level can be logged.
-        tracing::debug!(
+        tracing::warn!(
+            rejection = ?rejection,
             %error,
             actor = %envelope.sender_actor_id,
             device = %envelope.sender_device_id,
@@ -476,7 +487,9 @@ pub async fn run_signal_receive_engine(
         start_generation,
         start_profile_id,
     };
-    let resolver = DirectorySenderKeyResolver;
+    let resolver = DirectorySenderKeyResolver {
+        state_store: ctx.state_store.clone(),
+    };
     let decryptor = MlsSignalDecryptor::new(
         ctx.state_store.clone(),
         ctx.account_did.clone(),
@@ -487,24 +500,43 @@ pub async fn run_signal_receive_engine(
         products: ctx.products.clone(),
         live: Mutex::new(LivePresenceProjection::default()),
     };
-    let result = ctx
-        .client_runtime
-        .client()
-        .run_signal(
-            &provider,
-            SignalReceiveHandlers::new(&resolver, &decryptor, &sink),
-            &SignalHostClock,
-            &SyncLoopControl::new(),
-            RunOptions {
-                beat: Duration::from_millis(250),
-                min_backoff: BACKOFF_FLOOR,
-                max_backoff: BACKOFF_CEILING,
-                jitter_ratio: 0.2,
-            },
-        )
-        .await;
-    if let Err(error) = result {
-        tracing::warn!(error = %error, "signal receive runner stopped with error");
+    let mut restart_backoff = Backoff::new(BACKOFF_FLOOR, BACKOFF_CEILING);
+    while provider.is_active() {
+        let result = ctx
+            .client_runtime
+            .client()
+            .run_signal(
+                &provider,
+                SignalReceiveHandlers::new(&resolver, &decryptor, &sink),
+                &SignalHostClock,
+                &SyncLoopControl::new(),
+                RunOptions {
+                    beat: Duration::from_millis(250),
+                    min_backoff: BACKOFF_FLOOR,
+                    max_backoff: BACKOFF_CEILING,
+                    jitter_ratio: 0.2,
+                },
+            )
+            .await;
+        let Some(retry_delay) = crate::runtime_helpers::next_reconnect_delay(
+            provider.is_active(),
+            &mut restart_backoff,
+        ) else {
+            break;
+        };
+        match result {
+            Ok(reason) => tracing::warn!(
+                reason = ?reason,
+                retry_delay_ms = retry_delay.as_millis(),
+                "signal receive runner stopped while still active; reconnecting"
+            ),
+            Err(error) => tracing::warn!(
+                error = %error,
+                retry_delay_ms = retry_delay.as_millis(),
+                "signal receive runner stopped with error; reconnecting"
+            ),
+        }
+        crate::runtime_helpers::sleep_for(retry_delay).await;
     }
 }
 

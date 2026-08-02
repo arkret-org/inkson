@@ -156,6 +156,15 @@ pub(crate) fn participant_roster_rows(
     rows
 }
 
+pub(crate) fn direct_agent_is_conversation_peer(
+    agent_id: &str,
+    direct_peer_id: &str,
+    projected_member_dids: &std::collections::BTreeSet<String>,
+) -> bool {
+    !agent_id.trim().is_empty()
+        && (agent_id == direct_peer_id || projected_member_dids.contains(agent_id))
+}
+
 pub(crate) fn space_participants(
     projection: Option<&Value>,
     state_store: &LocalStateStore,

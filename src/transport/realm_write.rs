@@ -618,7 +618,7 @@ pub async fn grant_realm_admin(
         &["ak.realm.admin"],
         None,
         Value::Null,
-    )
+    )?
     .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }

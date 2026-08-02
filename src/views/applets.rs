@@ -260,13 +260,7 @@ fn build_formal_applet_install_events(
             authority_depth: None,
             authority_root_refs: Vec::new(),
         };
-        let payload = arkret_sdk::CapabilityGrantPayload {
-            grant: Some(grant),
-            grant_id,
-            subject: None,
-            actions: None,
-            resources: None,
-        };
+        let payload = arkret_sdk::CapabilityGrantPayload { grant, grant_id };
         grant_events.push(
             operation_builder_for_scope(
                 &snapshot.effective_scope,

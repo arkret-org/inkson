@@ -281,6 +281,39 @@ async fn verify_for_cache(
     evidence: AgentSignerEvidence,
     selector: &EventAgentSelector,
 ) -> Option<CachedAgentSignerEvidence> {
+    let entry = materialize_verified_cache_entry(http, anchor, evidence).await?;
+    let binding = &entry.evidence.signing_key_binding;
+    let binding_digest = agent_signing_key_binding_digest(binding).ok()?;
+    let context = AgentSignerEvidenceValidationContext {
+        signer_id: &selector.admission.agent_id,
+        agent_key_id: &binding.agent_key_id,
+        authorization_realm_id: &entry.evidence.state_witness.seal.realm_id,
+        controller_id: &binding.controller_id,
+        verification_method: &selector.admission.verification_method,
+        agent_key_authorize_event_id: &selector.admission.authorization_event_id,
+        authorize_public_key_digest: &binding.public_key_digest,
+        authorize_signing_key_binding_digest: &binding_digest,
+        event_accepted_frontier: &selector.admission.accepted_frontier,
+        event_accepted_at: selector.admission.accepted_at,
+        now: crate::clock::now_utc(),
+        controller_public_key: &entry.controller_public_key,
+        seal_lineage_signatures_verified: true,
+        freshness_signature_verified: true,
+        require_transparency: false,
+        transparency_verified: false,
+    };
+    matches!(
+        validate_agent_signer_evidence(Some(&entry.evidence), &context),
+        AgentSignerEvidenceVerdict::Verified(_)
+    )
+    .then_some(entry)
+}
+
+async fn materialize_verified_cache_entry(
+    http: &arkret_sdk::http_client::Client,
+    anchor: &crate::identity::did_resolver::ResolverDidAnchor,
+    evidence: AgentSignerEvidence,
+) -> Option<CachedAgentSignerEvidence> {
     let controller_public_key = resolve_method_key(
         http,
         anchor,
@@ -320,31 +353,234 @@ async fn verify_for_cache(
     if !verify_cached_crypto(&entry) {
         return None;
     }
-    let binding = &entry.evidence.signing_key_binding;
-    let binding_digest = agent_signing_key_binding_digest(binding).ok()?;
-    let context = AgentSignerEvidenceValidationContext {
-        signer_id: &selector.admission.agent_id,
-        agent_key_id: &binding.agent_key_id,
-        authorization_realm_id: &entry.evidence.state_witness.seal.realm_id,
-        controller_id: &binding.controller_id,
-        verification_method: &selector.admission.verification_method,
-        agent_key_authorize_event_id: &selector.admission.authorization_event_id,
-        authorize_public_key_digest: &binding.public_key_digest,
-        authorize_signing_key_binding_digest: &binding_digest,
-        event_accepted_frontier: &selector.admission.accepted_frontier,
-        event_accepted_at: selector.admission.accepted_at,
-        now: crate::clock::now_utc(),
-        controller_public_key: &entry.controller_public_key,
-        seal_lineage_signatures_verified: true,
-        freshness_signature_verified: true,
-        require_transparency: false,
-        transparency_verified: false,
+    Some(entry)
+}
+
+/// Query and cache the current Native Agent signing evidence needed to admit
+/// a live Signal. Unlike a durable Event, a Signal has no reducer-stamped
+/// `agent_authorization_admission`, so the query deliberately omits Event
+/// frontier selectors and validates the returned evidence against its own
+/// current accepted authorization witness.
+pub(crate) async fn prefetch_for_signal(
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &RealmId,
+    agent_id: &Did,
+    verification_method: &DidUrl,
+    state_store: &crate::runtime::input::StateStoreHandle,
+    did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
+) -> bool {
+    if state_store
+        .read(|store| resolve_cached_signal_key(store, agent_id, verification_method).is_some())
+    {
+        return true;
+    }
+    let request = signal_evidence_query(realm_id, agent_id, verification_method);
+    let outcome = match http.agent_signer_evidence_query(&request).await {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            tracing::warn!(
+                target_realm_id = %realm_id,
+                %agent_id,
+                %verification_method,
+                %error,
+                "live Signal Agent signer evidence query failed",
+            );
+            return false;
+        }
     };
-    matches!(
-        validate_agent_signer_evidence(Some(&entry.evidence), &context),
-        AgentSignerEvidenceVerdict::Verified(_)
-    )
-    .then_some(entry)
+    if outcome.evidence.is_empty() {
+        tracing::warn!(
+            target_realm_id = %realm_id,
+            %agent_id,
+            %verification_method,
+            failures = ?outcome.failures,
+            "live Signal Agent signer evidence query returned no evidence",
+        );
+    }
+    let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
+        crate::identity::did_resolver::DeploymentProfile::PersonalNode,
+        did_cache.get(),
+    );
+    for evidence in outcome.evidence {
+        let binding = &evidence.signing_key_binding;
+        if &binding.agent_id != agent_id || &binding.verification_method != verification_method {
+            continue;
+        }
+        let Some(entry) = materialize_verified_cache_entry(http, &anchor, evidence).await else {
+            tracing::warn!(
+                target_realm_id = %realm_id,
+                %agent_id,
+                %verification_method,
+                "live Signal Agent signer evidence failed cryptographic materialization",
+            );
+            continue;
+        };
+        let evidence = &entry.evidence;
+        let binding = &evidence.signing_key_binding;
+        // `realm_id` is the Signal's target/shared-context Realm. The
+        // authorization witness is intentionally anchored in the Agent's
+        // principal-control Realm instead (signal.md's two independent state
+        // domains). The authenticated evidence-query endpoint already gates
+        // disclosure on the requested target Realm; comparing the witness
+        // Realm with that target here would reject every correctly authorised
+        // Agent whose PCR is distinct from the conversation Realm.
+        let authorization_realm_id =
+            live_signal_authorization_realm(realm_id, &evidence.state_witness.seal.realm_id);
+        let Ok(binding_digest) = agent_signing_key_binding_digest(binding) else {
+            continue;
+        };
+        let context = AgentSignerEvidenceValidationContext {
+            signer_id: agent_id,
+            agent_key_id: &binding.agent_key_id,
+            authorization_realm_id,
+            controller_id: &binding.controller_id,
+            verification_method,
+            agent_key_authorize_event_id: &binding.agent_key_authorize_event_id,
+            authorize_public_key_digest: &binding.public_key_digest,
+            authorize_signing_key_binding_digest: &binding_digest,
+            event_accepted_frontier: &evidence.authorization.accepted_frontier,
+            event_accepted_at: evidence.authorization.accepted_at,
+            now: crate::clock::now_utc(),
+            controller_public_key: &entry.controller_public_key,
+            seal_lineage_signatures_verified: true,
+            freshness_signature_verified: true,
+            require_transparency: false,
+            transparency_verified: false,
+        };
+        let verdict = validate_agent_signer_evidence(Some(evidence), &context);
+        if !matches!(verdict, AgentSignerEvidenceVerdict::Verified(_)) {
+            tracing::warn!(
+                target_realm_id = %realm_id,
+                authorization_realm_id = %authorization_realm_id,
+                %agent_id,
+                %verification_method,
+                ?verdict,
+                "live Signal Agent signer evidence failed validation",
+            );
+            continue;
+        }
+        match state_store.write(|store| store.store_verified_agent_signer_evidence(entry)) {
+            Ok(()) => {
+                did_cache.set(anchor.into_cache());
+                return true;
+            }
+            Err(error) => {
+                tracing::debug!(
+                    target_realm_id = %realm_id,
+                    %agent_id,
+                    %verification_method,
+                    %error,
+                    "live Signal Agent signer evidence cache write failed",
+                );
+            }
+        }
+    }
+    did_cache.set(anchor.into_cache());
+    false
+}
+
+/// Select the Realm that anchors the portable signer evidence used for a live
+/// Signal. The target Realm proves shared Signal context at the query endpoint;
+/// the returned state witness proves Agent-key authorization in the Agent's
+/// principal-control Realm. They are orthogonal and commonly differ.
+fn live_signal_authorization_realm<'a>(
+    _target_realm_id: &RealmId,
+    witness_realm_id: &'a RealmId,
+) -> &'a RealmId {
+    witness_realm_id
+}
+
+fn signal_evidence_query(
+    realm_id: &RealmId,
+    agent_id: &Did,
+    verification_method: &DidUrl,
+) -> AgentSignerEvidenceQueryRequestBodyBody {
+    AgentSignerEvidenceQueryRequestBodyBody {
+        realm_id: realm_id.clone(),
+        queries: vec![AgentSignerEvidenceQuerySelector {
+            agent_id: agent_id.clone(),
+            verification_method: verification_method.clone(),
+            agent_key_authorize_event_id: None,
+            event_accepted_frontier: None,
+        }],
+    }
+}
+
+#[cfg(test)]
+mod signal_query_tests {
+    use super::*;
+
+    #[test]
+    fn live_signal_query_does_not_invent_event_admission_fields() {
+        let realm_id = RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap();
+        let agent_id = Did::new("did:webvh:z6mkfixture:agent.example").unwrap();
+        let method = DidUrl::new("did:webvh:z6mkfixture:agent.example#agent-runtime").unwrap();
+        let request = signal_evidence_query(&realm_id, &agent_id, &method);
+
+        assert_eq!(request.queries.len(), 1);
+        assert!(request.queries[0].agent_key_authorize_event_id.is_none());
+        assert!(request.queries[0].event_accepted_frontier.is_none());
+    }
+
+    #[test]
+    fn live_signal_validates_signer_evidence_in_the_agent_pcr() {
+        let target = RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap();
+        let agent_pcr = RealmId::new("ak:realm:01904100-0000-7000-8000-000000000002").unwrap();
+
+        assert_ne!(target, agent_pcr);
+        assert_eq!(
+            live_signal_authorization_realm(&target, &agent_pcr),
+            &agent_pcr
+        );
+    }
+}
+
+/// Resolve a live Signal signer through the same verified Native Agent
+/// evidence used for durable Events. Signals have no server-stamped Event
+/// admission object, so the evidence's current accepted authorization basis is
+/// used directly; stale, revoked, superseded, conflicted, or cryptographically
+/// invalid evidence fails closed.
+pub(crate) fn resolve_cached_signal_key(
+    store: &LocalStateStore,
+    agent_id: &Did,
+    verification_method: &DidUrl,
+) -> Option<PublicKeyMaterial> {
+    for entry in store.cached_agent_signer_evidence(agent_id, verification_method, None) {
+        if !verify_cached_crypto(&entry) {
+            continue;
+        }
+        let evidence = &entry.evidence;
+        let binding = &evidence.signing_key_binding;
+        let Ok(binding_digest) = agent_signing_key_binding_digest(binding) else {
+            continue;
+        };
+        let context = AgentSignerEvidenceValidationContext {
+            signer_id: agent_id,
+            agent_key_id: &binding.agent_key_id,
+            authorization_realm_id: &evidence.state_witness.seal.realm_id,
+            controller_id: &binding.controller_id,
+            verification_method,
+            agent_key_authorize_event_id: &binding.agent_key_authorize_event_id,
+            authorize_public_key_digest: &binding.public_key_digest,
+            authorize_signing_key_binding_digest: &binding_digest,
+            event_accepted_frontier: &evidence.authorization.accepted_frontier,
+            event_accepted_at: evidence.authorization.accepted_at,
+            now: crate::clock::now_utc(),
+            controller_public_key: &entry.controller_public_key,
+            seal_lineage_signatures_verified: true,
+            freshness_signature_verified: true,
+            require_transparency: false,
+            transparency_verified: false,
+        };
+        if let AgentSignerEvidenceVerdict::Verified(verified) =
+            validate_agent_signer_evidence(Some(evidence), &context)
+        {
+            return Some(PublicKeyMaterial::Ed25519Raw {
+                bytes: verified.key.to_vec(),
+            });
+        }
+    }
+    None
 }
 
 fn verify_cached_crypto(entry: &CachedAgentSignerEvidence) -> bool {

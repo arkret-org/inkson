@@ -46,9 +46,10 @@ pub fn capability_revoke(
 /// `subject` is the delegee DID the grant authorizes; `actor` is the
 /// issuer (and the Envelope signer). `resources` defaults to a single
 /// `{kind:"realm", realm_id}` selector — the management surface this
-/// covers. The submit pipeline attaches the grant's issuer-attestation
-/// proof before freezing the durable semantic intent, then signs the outer
-/// Event envelope separately.
+/// covers. The Envelope `seal_basis` / signature carries the issuer
+/// proof; the per-grant `proofs[]` the strict SDK builder mints is not
+/// re-derived here (consistent with the rest of the inkson `ak_ops`
+/// event pipeline, which signs at the Envelope boundary).
 pub fn capability_grant_actions(
     realm_id: &str,
     actor: &str,
@@ -57,7 +58,7 @@ pub fn capability_grant_actions(
     actions: &[&str],
     expires_at: Option<&str>,
     constraints: Value,
-) -> OperationBuilder {
+) -> anyhow::Result<OperationBuilder> {
     let realm = trim_realm_id(realm_id);
     capability_grant_actions_with_resources(
         &realm,
@@ -87,75 +88,73 @@ pub fn capability_grant_actions_with_resources(
     resources: Vec<Value>,
     expires_at: Option<&str>,
     constraints: Value,
-) -> OperationBuilder {
+) -> anyhow::Result<OperationBuilder> {
     let realm = trim_realm_id(realm_id);
-    let constraints = match constraints {
-        Value::Null => json!([non_regrantable_authority_constraint()]),
-        Value::Array(mut items) => {
-            let has_authority_control = items.iter().any(|item| {
-                item.get("constraint_kind").and_then(Value::as_str) == Some("authority_control")
-            });
-            if !has_authority_control {
-                items.push(non_regrantable_authority_constraint());
-            }
-            Value::Array(items)
-        }
-        other => other,
+    let realm_typed = arkret_sdk::RealmId::new(realm.clone())?;
+    let grant_id_typed = arkret_sdk::GrantId::new(grant_id.to_owned())?;
+    let actor_typed = arkret_sdk::Did::new(actor.to_owned())?;
+    let subject_typed = arkret_sdk::Did::new(subject.to_owned())?;
+    let resources_typed = resources
+        .into_iter()
+        .map(serde_json::from_value::<arkret_sdk::WireResourceSelector>)
+        .collect::<Result<Vec<_>, _>>()?;
+    let constraints_typed = if constraints.is_null() {
+        Vec::new()
+    } else {
+        serde_json::from_value::<Vec<arkret_sdk::GrantConstraint>>(constraints)?
     };
-    let mut grant = json!({
-        "id": grant_id,
-        "schema": "ak.schema.capability.v1",
-        "realm_id": realm,
-        "issuer": actor,
-        "subject": subject,
-        "actions": actions,
-        "resources": resources,
-        // Current Inkson authoring supports direct Realm-root issuance. The
-        // typed ref is part of the signed grant body; membership / created_by
-        // must never be inferred as authority by the receiver.
-        "issuer_authority_refs": [{
-            "kind": "realm_root",
-            "realm_id": realm,
-            "cell_ref": "ak:cell:ak.component.realm.authority_root.v1:null",
-            "controller_epoch_at_issuance": 0,
-            "authority_generation": 0,
-        }],
-        "issued_at": crate::clock::now_timestamp(),
-        "constraints": constraints,
-        "proofs": [],
-    });
     let carries_aggregate_admin = actions.iter().any(|action| {
         arkret_sdk::schema::embedded_capability_action(action)
             .ok()
             .flatten()
             .is_some_and(|descriptor| descriptor.event_mapping_kind == "aggregate_admin")
     });
-    if carries_aggregate_admin {
-        grant["capability_action_registry_digest"] = json!(
-            arkret_sdk::current_capability_action_registry_digest()
-                .expect("embedded capability-action registry must be available to author grants")
-        );
-    }
-    if let Some(expires_at) = expires_at {
-        grant["expires_at"] = json!(expires_at);
-    }
-    OperationBuilder::new(&realm, actor, arkret_sdk::EventKind::CapabilityGrant)
-        .target_ref(grant_id)
-        .body(json!({
-            "grant_id": grant_id,
-            "grant": grant,
-        }))
-}
-
-fn non_regrantable_authority_constraint() -> Value {
-    json!({
-        "constraint_kind": "authority_control",
-        "effect": "allow",
-        "max_authority_depth": 0,
-        "authority_regrant_allowed": false,
-        "authority_scope": "narrowing_only",
-        "scope_expansion_allowed": false,
-    })
+    let registry_digest = carries_aggregate_admin
+        .then(|| arkret_sdk::current_capability_action_registry_digest())
+        .transpose()?;
+    let expires_at = expires_at
+        .map(str::parse)
+        .transpose()
+        .map_err(|error| anyhow::anyhow!("invalid capability grant expires_at: {error}"))?;
+    let grant = arkret_sdk::CapabilityGrant {
+        id: grant_id_typed.clone(),
+        schema: arkret_wire::SchemaId::CAPABILITY_V1.to_owned(),
+        realm_id: Some(realm_typed.clone()),
+        issuer: actor_typed,
+        subject: arkret_sdk::CapabilitySubject::Did(subject_typed),
+        actions: actions.iter().map(|action| (*action).to_owned()).collect(),
+        resources: resources_typed,
+        capability_action_registry_digest: registry_digest,
+        constraints: constraints_typed,
+        // Realm creation locks the v1 authority root to controller epoch 0 and
+        // generation 0. Owner transfer/reset is not a v1 authoring surface;
+        // when it is introduced this value must come from the resolved root.
+        issuer_authority_refs: vec![arkret_sdk::IssuerAuthorityRef::RealmRoot {
+            realm_id: realm_typed,
+            cell_ref: arkret_wire::REALM_AUTHORITY_ROOT_CELL.to_owned(),
+            controller_epoch_at_issuance: 0,
+            authority_generation: 0,
+        }],
+        issued_at: crate::clock::now_utc_millis(),
+        not_before: None,
+        expires_at,
+        updated_by: None,
+        updated_at: None,
+        revoked_by: None,
+        revoked_at: None,
+        // EventSubmitter attaches the detached payload proof immediately
+        // before signing the outer Event.
+        proofs: Vec::new(),
+    };
+    let payload = arkret_sdk::CapabilityGrantPayload {
+        grant,
+        grant_id: grant_id_typed,
+    };
+    Ok(
+        OperationBuilder::new(&realm, actor, arkret_sdk::EventKind::CapabilityGrant)
+            .target_ref(grant_id)
+            .body(payload_value(&payload, "capability_grant payload")?),
+    )
 }
 
 #[cfg(test)]
@@ -173,6 +172,7 @@ mod tests {
             None,
             Value::Null,
         )
+        .unwrap()
         .build_sdk_event("inkson")
         .unwrap();
 
@@ -188,18 +188,7 @@ mod tests {
                 "realm_id": "ak:realm:019f9000-0000-7000-8000-000000000001",
                 "cell_ref": "ak:cell:ak.component.realm.authority_root.v1:null",
                 "controller_epoch_at_issuance": 0,
-                "authority_generation": 0,
-            }])
-        );
-        assert_eq!(
-            event.payload["grant"]["constraints"],
-            json!([{
-                "constraint_kind": "authority_control",
-                "effect": "allow",
-                "max_authority_depth": 0,
-                "authority_regrant_allowed": false,
-                "authority_scope": "narrowing_only",
-                "scope_expansion_allowed": false,
+                "authority_generation": 0
             }])
         );
         // v1 derives the OR-Set write from the registered contract instead of

@@ -3407,6 +3407,27 @@ fn participant_roster_rows_groups_agents_under_visible_controller() {
 }
 
 #[test]
+fn direct_agent_peer_visibility_does_not_require_reply_participation() {
+    let agent = "did:web:example.com:agents:aa";
+    let projected_members = std::collections::BTreeSet::from([agent.to_owned()]);
+    assert!(direct_agent_is_conversation_peer(
+        agent,
+        "",
+        &projected_members
+    ));
+    assert!(direct_agent_is_conversation_peer(
+        agent,
+        agent,
+        &std::collections::BTreeSet::new()
+    ));
+    assert!(!direct_agent_is_conversation_peer(
+        "did:web:example.com:agents:other",
+        agent,
+        &projected_members
+    ));
+}
+
+#[test]
 fn mention_candidate_for_own_agent_uses_me_alias() {
     let controller = SpaceParticipant {
         did: "did:web:example.com:users:alice".to_owned(),

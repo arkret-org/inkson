@@ -167,12 +167,15 @@ mod personal_agent_tests {
                 "ak.reaction.add",
                 "ak.self.events.stream.subscribe",
                 "ak.self.events.query.scan",
+                "ak.self.events.query.frontier",
+                "ak.self.authorization_leases.command.issue",
                 "ak.self.events.command.submit",
                 "ak.self.keys.keypackages.upload.create",
                 "ak.self.keys.keypackages.command.consume",
                 "ak.self.keys.keypackages.command.revoke",
                 "ak.self.device_messages.query.list",
                 "ak.self.device_messages.command.ack",
+                "ak.self.signal.command.send",
             ]
         );
         let wire = serde_json::to_value(&scope).unwrap();
@@ -186,6 +189,14 @@ mod personal_agent_tests {
                 {
                     "kind": "operation",
                     "operation": "ak.self.events.query.scan"
+                },
+                {
+                    "kind": "operation",
+                    "operation": "ak.self.events.query.frontier"
+                },
+                {
+                    "kind": "operation",
+                    "operation": "ak.self.authorization_leases.command.issue"
                 },
                 {
                     "kind": "operation",
@@ -210,6 +221,10 @@ mod personal_agent_tests {
                 {
                     "kind": "operation",
                     "operation": "ak.self.device_messages.command.ack"
+                },
+                {
+                    "kind": "operation",
+                    "operation": "ak.self.signal.command.send"
                 }
             ])
         );
@@ -428,7 +443,8 @@ mod personal_agent_tests {
 
     #[test]
     fn runtime_key_request_summary_exposes_sdk_fingerprint() {
-        let verification_method = "did:web:agents.example:summary#runtime-key-1";
+        let verification_method =
+            "did:web:agents.example:summary#ak:device:01964137-0000-7000-8000-000000000008";
         let raw = serde_json::json!({
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "agent_id": "did:web:agents.example:summary",
@@ -492,7 +508,8 @@ mod personal_agent_tests {
         let controller = "did:web:controller.example";
         let service_id = "did:web:arkret.example";
         let agent = "did:web:agents.example:summary";
-        let verification_method = "did:web:agents.example:summary#runtime-key-1";
+        let verification_method =
+            "did:web:agents.example:summary#ak:device:01964137-0000-7000-8000-000000000008";
         let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
             [41u8; 32],
             controller,
@@ -680,7 +697,8 @@ mod personal_agent_tests {
 
     #[test]
     fn runtime_key_reauthorize_supersedes_same_key_active_authorization() {
-        // Regression: re-pairing an active agent reuses the `#runtime-1`
+        // Regression: re-pairing an active agent reuses the same stable
+        // endpoint-bound verification method.
         // verification_method, so the currently-active authorization shares the
         // new authorization's key_id. `supersedes` MUST still include it —
         // coauth requires an exact match against the authoritative
@@ -690,7 +708,8 @@ mod personal_agent_tests {
         let controller = "did:web:controller.example";
         let service_id = "did:web:arkret.example";
         let agent = "did:web:agents.example:summary";
-        let verification_method = "did:web:agents.example:summary#runtime-key-1";
+        let verification_method =
+            "did:web:agents.example:summary#ak:device:01964137-0000-7000-8000-000000000008";
         let old_event = "ak:event:01999999-0000-7000-8000-0000000000aa";
         let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
             [41u8; 32],

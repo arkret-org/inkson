@@ -1,5 +1,35 @@
 use super::*;
 
+pub(super) fn direct_conversation_peer_id(
+    contacts: &[crate::models::ContactListRow],
+    realm_id: &str,
+    strand_id: &str,
+) -> String {
+    let matches_route = |summary: &crate::models::DirectConversationSummary| {
+        summary.state == arkret_sdk::DirectConversationBindingState::Active
+            && summary.realm_id.as_str() == realm_id
+            && summary.main_strand_id.as_str() == strand_id
+    };
+    for contact in contacts {
+        if contact
+            .direct_conversation
+            .as_ref()
+            .is_some_and(&matches_route)
+        {
+            return contact.peer.to_string();
+        }
+        if let Some(agent) = contact.agents.iter().find(|agent| {
+            agent
+                .direct_conversation
+                .as_ref()
+                .is_some_and(&matches_route)
+        }) {
+            return agent.agent_id.to_string();
+        }
+    }
+    String::new()
+}
+
 #[derive(Clone, PartialEq)]
 pub(super) struct RouteSurfaceState {
     pub(super) content_route: Route,
@@ -189,6 +219,10 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             selected_realm_id.set(realm_id.clone());
                         }
                         if minimal_ready {
+                            let direct_peer_id = {
+                                let contacts = direct_contact_rows.read();
+                                direct_conversation_peer_id(&contacts, &realm_id, &strand_id)
+                            };
                             let active_sidecar_session = sidecar_session()
                                 .filter(|session| session.matches_route(&realm_id, &strand_id));
                             rsx! {
@@ -205,6 +239,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                     initial_strand_id: strand_id.clone(),
                                     embedded: false,
                                     direct_mode: true,
+                                    direct_peer_id,
                                     sidecar_session: active_sidecar_session,
                                 }
                             }

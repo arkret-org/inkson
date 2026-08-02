@@ -33,7 +33,7 @@
 use std::time::Duration;
 
 use garth::{
-    ClientEvent, ClientProjector, RunOptions, ScanCatchupOptions, SyncLoopControl,
+    Backoff, ClientEvent, ClientProjector, RunOptions, ScanCatchupOptions, SyncLoopControl,
     TransportProvider,
 };
 
@@ -185,53 +185,94 @@ pub async fn run_realm_events_engine(
         realm_live_epoch: ctx.realm_live_epoch.clone(),
         message_stream_hub: ctx.message_stream_hub,
     };
-    // `events/subscribe` without `after` is a live tail, not a history
-    // endpoint. Bootstrap durable history through events.query.scan and let
-    // the shared client core checkpoint only after the projector commits it.
-    let has_stream_cursor = ctx
-        .state_store
-        .read(|store| store.realm_events_cursor(realm_id_typed.as_str()).is_some());
-    if !has_stream_cursor {
-        let bootstrap_transport = match provider.provide().await {
-            Ok(transport) => transport,
-            Err(error) => {
-                tracing::warn!(error = %error, "realm history transport is not ready");
-                return;
+    let mut restart_backoff = Backoff::new(BACKOFF_FLOOR, BACKOFF_CEILING);
+    while provider.is_active() {
+        // `events/subscribe` without `after` is a live tail, not a history
+        // endpoint. Bootstrap durable history through events.query.scan and let
+        // the shared client core checkpoint only after the projector commits it.
+        let has_stream_cursor = ctx
+            .state_store
+            .read(|store| store.realm_events_cursor(realm_id_typed.as_str()).is_some());
+        if !has_stream_cursor {
+            let bootstrap_transport = match provider.provide().await {
+                Ok(transport) => transport,
+                Err(error) => {
+                    let Some(retry_delay) = crate::runtime_helpers::next_reconnect_delay(
+                        provider.is_active(),
+                        &mut restart_backoff,
+                    ) else {
+                        break;
+                    };
+                    tracing::warn!(
+                        error = %error,
+                        retry_delay_ms = retry_delay.as_millis(),
+                        "realm history transport is not ready; reconnecting"
+                    );
+                    crate::runtime_helpers::sleep_for(retry_delay).await;
+                    continue;
+                }
+            };
+            if let Err(error) = ctx
+                .client_runtime
+                .subscription_engine()
+                .bootstrap_realm_history(
+                    &bootstrap_transport,
+                    realm_id_typed.clone(),
+                    &projector,
+                    ScanCatchupOptions::default(),
+                )
+                .await
+            {
+                let Some(retry_delay) = crate::runtime_helpers::next_reconnect_delay(
+                    provider.is_active(),
+                    &mut restart_backoff,
+                ) else {
+                    break;
+                };
+                tracing::warn!(
+                    error = %error,
+                    retry_delay_ms = retry_delay.as_millis(),
+                    "realm history bootstrap failed; reconnecting"
+                );
+                crate::runtime_helpers::sleep_for(retry_delay).await;
+                continue;
             }
-        };
-        if let Err(error) = ctx
+        }
+        let result = ctx
             .client_runtime
-            .subscription_engine()
-            .bootstrap_realm_history(
-                &bootstrap_transport,
+            .client()
+            .run_realm(
+                &provider,
                 realm_id_typed.clone(),
                 &projector,
-                ScanCatchupOptions::default(),
+                &SyncLoopControl::new(),
+                RunOptions {
+                    beat: Duration::from_millis(250),
+                    min_backoff: BACKOFF_FLOOR,
+                    max_backoff: BACKOFF_CEILING,
+                    jitter_ratio: 0.2,
+                },
             )
-            .await
-        {
-            tracing::warn!(error = %error, "realm history bootstrap failed");
-            return;
+            .await;
+        let Some(retry_delay) = crate::runtime_helpers::next_reconnect_delay(
+            provider.is_active(),
+            &mut restart_backoff,
+        ) else {
+            break;
+        };
+        match result {
+            Ok(reason) => tracing::warn!(
+                reason = ?reason,
+                retry_delay_ms = retry_delay.as_millis(),
+                "realm events runner stopped while still active; reconnecting"
+            ),
+            Err(error) => tracing::warn!(
+                error = %error,
+                retry_delay_ms = retry_delay.as_millis(),
+                "realm events runner stopped with error; reconnecting"
+            ),
         }
-    }
-    let result = ctx
-        .client_runtime
-        .client()
-        .run_realm(
-            &provider,
-            realm_id_typed,
-            &projector,
-            &SyncLoopControl::new(),
-            RunOptions {
-                beat: Duration::from_millis(250),
-                min_backoff: BACKOFF_FLOOR,
-                max_backoff: BACKOFF_CEILING,
-                jitter_ratio: 0.2,
-            },
-        )
-        .await;
-    if let Err(error) = result {
-        tracing::warn!(error = %error, "realm events runner stopped with error");
+        crate::runtime_helpers::sleep_for(retry_delay).await;
     }
 }
 

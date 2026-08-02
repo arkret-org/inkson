@@ -345,17 +345,21 @@ fn mls_commit_builder_matches_registered_payload_schema() {
         arkret_sdk::CORE_REDUCER_PROFILE,
     )
     .unwrap();
+    let commit_bytes = b"operation-test-commit";
+    let commit = arkret_sdk::MlsCommitEnvelope {
+        group_id: group_id.to_owned(),
+        epoch: 1,
+        commit: arkret_sdk::base64url_encode(commit_bytes),
+        commit_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(commit_bytes))
+            .unwrap(),
+        ratchet_tree: None,
+        app_state_ref: None,
+    };
     let payload = arkret_sdk::MlsCommitPayload::new(
-        group_id,
         0,
         "ak:event:0196419b-0000-7000-8000-000000000001",
         Vec::new(),
-        1,
-        "dGVzdA",
-        arkret_sdk::Hash::new(
-            "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08".to_owned(),
-        )
-        .unwrap(),
+        &commit,
         governance_binding,
     )
     .unwrap();

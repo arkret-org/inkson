@@ -76,6 +76,24 @@ pub(crate) fn pending_mls_coverage_repairs(
         .collect()
 }
 
+/// Stable, non-secret fingerprint for the Realm bootstrap effect's dedup key.
+///
+/// Recording `mls_governance_binding_stale` mutates only the local state store;
+/// it does not advance the sync cursor or any of the other inputs that used to
+/// make up that effect's key.  Without this hint the effect woke up, compared
+/// the same key, and returned before running the repair it had just been asked
+/// to perform.  Include every stale effective scope (even one that is not yet
+/// repairable because its snapshot is still arriving) so a later snapshot
+/// write and the stale marker are both observable scheduler edges.
+pub(crate) fn mls_coverage_repair_dedup_hint(store: &LocalStateStore, realm_id: &str) -> String {
+    store
+        .stale_mls_coverage_scopes(realm_id)
+        .into_iter()
+        .map(|circle_id| circle_id.unwrap_or_else(|| "realm".to_owned()))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 /// Refresh the accepted Seal view, acquire + verify a governance proof for
 /// `epoch → epoch + 1`, and submit the `ak.mls.commit` that attests the
 /// governance Seals the scope is currently missing.
@@ -284,6 +302,27 @@ mod tests {
                 .mls_coverage_stale_reason(REALM, Some("ak:circle:demo"))
                 .as_deref(),
             Some("circle")
+        );
+    }
+
+    #[test]
+    fn stale_marker_changes_the_bootstrap_dedup_hint() {
+        let mut store = temp_store("dedup-hint");
+        assert_eq!(mls_coverage_repair_dedup_hint(&store, REALM), "");
+
+        store.record_mls_coverage_stale(REALM, None, "realm-default");
+        assert_eq!(mls_coverage_repair_dedup_hint(&store, REALM), "realm");
+
+        store.record_mls_coverage_stale(REALM, Some("ak:circle:demo"), "circle");
+        assert_eq!(
+            mls_coverage_repair_dedup_hint(&store, REALM),
+            "ak:circle:demo,realm"
+        );
+
+        store.clear_mls_coverage_stale(REALM, None);
+        assert_eq!(
+            mls_coverage_repair_dedup_hint(&store, REALM),
+            "ak:circle:demo"
         );
     }
 }

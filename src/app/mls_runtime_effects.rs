@@ -83,6 +83,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
     let sidecar_background_basis_seen = use_signal(|| Option::<String>::None);
     let sidecar_background_in_flight = use_signal(|| false);
     let sidecar_background_retry_attempt = use_signal(|| 0_u32);
+    let mls_coverage_repair_in_flight = use_signal(std::collections::BTreeSet::<String>::new);
 
     {
         let mut seen_publish_key = mls_key_package_publish_key_seen;
@@ -875,6 +876,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         let secure_store_ready_for_bootstrap = secure_store_bootstrap_ready;
         let account_recovery_configured_for_bootstrap = account_recovery_configured;
         let welcome_device_queue = device_queue;
+        let coverage_repair_in_flight = mls_coverage_repair_in_flight;
         use_effect(move || {
             // Account sync journals to-device envelopes in the shared store,
             // then publishes the durable inbox length through `device_queue`.
@@ -939,6 +941,11 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 &state_for_bootstrap_key.to_device_inbox(),
                 &bootstrap_realm_id,
             );
+            let coverage_repair_hint =
+                crate::mls::coverage_liveness::mls_coverage_repair_dedup_hint(
+                    &state_for_bootstrap_key,
+                    &bootstrap_realm_id,
+                );
             drop(state_for_bootstrap_key);
             let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
                 crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
@@ -947,7 +954,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             .map(|secret| secret.is_some())
             .unwrap_or(false);
             let bootstrap_key = format!(
-                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|welcome={local_pending_welcome_hint}|recovery={account_recovery_configured_value:?}"
+                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|welcome={local_pending_welcome_hint}|coverage={coverage_repair_hint}|recovery={account_recovery_configured_value:?}"
             );
             if seen_bootstrap_key().as_deref() == Some(bootstrap_key.as_str()) {
                 return;
@@ -968,6 +975,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             let detect_device = device.clone();
             let creator_bootstrap_realm_id = bootstrap_realm_id.clone();
             let mut state_store_for_probe = state_store_for_bootstrap;
+            let mut coverage_repair_in_flight_for_probe = coverage_repair_in_flight;
             spawn(async move {
                 match bootstrap_mls_welcome_for_realm(
                     base,
@@ -1065,10 +1073,35 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 // membership frontier change, so a capability grant, a policy
                 // update, or a single-member creator group had nothing to
                 // resume it. Same replay shape as the bootstrap above.
-                for circle_id in crate::mls::coverage_liveness::pending_mls_coverage_repairs(
-                    &state_store_for_probe.read(),
-                    &creator_bootstrap_realm_id,
-                ) {
+                // Materialize the list before entering the async loop. A
+                // `SyncSignal::read()` temporary used directly as the `for`
+                // iterator input lives for the whole loop statement; the
+                // repair later needs a write lock to persist the accepted
+                // snapshot. Native parking_lot merely blocks there, while
+                // wasm correctly panics because its single thread cannot
+                // park. Keep the read guard in this synchronous scope only.
+                let pending_coverage_repairs = {
+                    let state = state_store_for_probe.read();
+                    crate::mls::coverage_liveness::pending_mls_coverage_repairs(
+                        &state,
+                        &creator_bootstrap_realm_id,
+                    )
+                };
+                for circle_id in pending_coverage_repairs {
+                    let repair_key = format!(
+                        "{}|{}",
+                        creator_bootstrap_realm_id,
+                        circle_id.as_deref().unwrap_or("-")
+                    );
+                    if coverage_repair_in_flight_for_probe
+                        .peek()
+                        .contains(&repair_key)
+                    {
+                        continue;
+                    }
+                    coverage_repair_in_flight_for_probe
+                        .write()
+                        .insert(repair_key.clone());
                     tracing::warn!(
                         realm = %creator_bootstrap_realm_id,
                         circle = circle_id.as_deref().unwrap_or("-"),
@@ -1090,6 +1123,9 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         .err(),
                         Err(error) => Some(error.to_string()),
                     };
+                    coverage_repair_in_flight_for_probe
+                        .write()
+                        .remove(&repair_key);
                     if let Some(error) = coverage_error {
                         tracing::warn!(
                             realm = %creator_bootstrap_realm_id,

@@ -19,9 +19,9 @@ pub enum AuditPolicy {
     /// `attested_audit.e2ee.v1` — every successful decrypt writes
     /// `ak.audit.accessed`. Read clients fail closed if they cannot emit.
     Attested,
-    /// `disclosed_audit.e2ee.v1` — every Realm write produces a per-actor
-    /// `ak.audit.ryw_receipt`. Receipt is actor-private; the audit channel is
-    /// the read side.
+    /// `disclosed_audit.e2ee.v1` — accepted audit access/release writes are
+    /// followed by a receipt from the Events API node, witness, or bound audit
+    /// service before protected output. End-user clients do not self-issue it.
     Disclosed,
 }
 
@@ -61,8 +61,10 @@ pub fn build_audit_accessed(
         }))
 }
 
-/// Build a `ak.audit.ryw_receipt` event. Emitted by the writer after a
-/// disclosed audit policy commit; the receipt is actor-private.
+/// Build the durable Event form of an `ak.audit.ryw_receipt` for a trusted
+/// receipt issuer. Ordinary message writers MUST NOT use this as a post-send
+/// acknowledgement; the receipt attests that its target audit Event is already
+/// accepted.
 pub fn build_audit_ryw_receipt(
     realm_id: &str,
     actor: &str,
@@ -237,6 +239,15 @@ mod tests {
         // No illegal top-level fields under the strict audit_payload schema.
         assert!(!op.payload.contains_key("delivered_to_devices"));
         assert!(!op.payload.contains_key("source_event_id"));
+    }
+
+    #[test]
+    fn ordinary_chat_send_does_not_self_issue_audit_ryw_receipts() {
+        let composer = include_str!("views/chat/composer.rs");
+        assert!(
+            !composer.contains("build_audit_ryw_receipt"),
+            "ordinary message writers are not trusted audit receipt issuers"
+        );
     }
 
     /// The closed `identity_presentation_request_state_payload` keeps only

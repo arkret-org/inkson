@@ -2028,13 +2028,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 );
                                 let base = base.clone();
                                 let realm_for_record = realm.clone();
-                                let actor_for_audit = actor.clone();
                                 let is_sidecar_native_send = sidecar_circle_id.is_some();
-                                let audit_delivered: Vec<String> = secure_build
-                                    .member_dids
-                                    .iter()
-                                    .map(|did| did.as_str().to_owned())
-                                    .collect();
                                 let device_for_sidecar_backup = did.clone();
                                 // X9: capture identifiers needed by the
                                 // encrypted Ok(resp) arm to (A) clear the
@@ -2223,51 +2217,11 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         .await;
                                     }
 
-                                    // Disclosed-audit hardening profile
-                                    // (`ak.profile.disclosed_audit.e2ee.v1`): emit a
-                                    // p`ak.profile.disclosed_auditceipt right after a
-                                    // successful E2EE commit. Actor-private +
-                                    // fire-and-forget; non-profile servers store it
-                                    // as a regular operation.
-                                    if is_sidecar_native_send {
-                                        return;
-                                    }
-                                    let audit_op = build_audit_ryw_receipt(
-                                        &realm_for_record,
-                                        &actor_for_audit,
-                                        &resp_event_id,
-                                        audit_delivered.clone(),
-                                    )
-                                    .build_sdk_event("inkson");
-                                    // YOU-02-007: surface a silent receipt failure so
-                                    // the sender knows the audit row is missing (the
-                                    // message itself sent).
-                                    match audit_op {
-                                        Ok(audit_op) => {
-                                            if let Err(err) = match api.event_submitter() {
-                                                Ok(sub) => sub.submit_sdk_event(&audit_op).await,
-                                                Err(err) => Err(err),
-                                            }
-                                            {
-                                                tracing::warn!(
-                                                    "audit RYW receipt for {} failed: {err:#}",
-                                                    resp_event_id
-                                                );
-                                                status_msg.set(format!(
-                                                    "Message sent; audit receipt failed: {err}"
-                                                ));
-                                            }
-                                        }
-                                        Err(err) => {
-                                            tracing::warn!(
-                                                "audit RYW receipt for {} failed to build: {err:#}",
-                                                resp_event_id
-                                            );
-                                            status_msg.set(format!(
-                                                "Message sent; audit receipt failed: {err}"
-                                            ));
-                                        }
-                                    }
+                                    // Audit RYW receipts are issued by the Events API
+                                    // node, witness, or bound audit service after an
+                                    // accepted audit access/release Event. An end-user
+                                    // client MUST NOT manufacture one after an ordinary
+                                    // message send, including inside a Direct Conversation.
                                 });
                                 });
                             }
