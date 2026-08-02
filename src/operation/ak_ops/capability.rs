@@ -142,9 +142,6 @@ pub fn capability_grant_actions_with_resources(
         updated_at: None,
         revoked_by: None,
         revoked_at: None,
-        // EventSubmitter attaches the detached payload proof immediately
-        // before signing the outer Event.
-        proofs: Vec::new(),
     };
     let payload = arkret_sdk::CapabilityGrantPayload {
         grant,

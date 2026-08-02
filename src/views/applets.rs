@@ -256,9 +256,6 @@ fn build_formal_applet_install_events(
             updated_at: None,
             revoked_by: None,
             revoked_at: None,
-            proofs: Vec::new(),
-            authority_depth: None,
-            authority_root_refs: Vec::new(),
         };
         let payload = arkret_sdk::CapabilityGrantPayload { grant, grant_id };
         grant_events.push(

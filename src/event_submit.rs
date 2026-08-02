@@ -52,7 +52,7 @@ pub(crate) struct EventIntent {
     pub(crate) scope_ref: arkret_sdk::ScopeRef,
     pub(crate) actor_id: arkret_sdk::Did,
     pub(crate) executed_by: Option<arkret_sdk::Did>,
-    pub(crate) authorization_ref: Option<String>,
+    pub(crate) authorization_ref: Option<arkret_sdk::AuthorizationRef>,
     pub(crate) applet_id: Option<arkret_sdk::AppletId>,
     pub(crate) external_ref: Option<BTreeMap<String, Value>>,
     pub(crate) actor_kind: Option<arkret_sdk::EnvelopeActorKind>,
@@ -2442,61 +2442,40 @@ fn account_authority_http_client(
         .map_err(anyhow::Error::from)
 }
 
-/// Finalize the inner capability artifact before the outer Event is signed.
-/// Capability grants have two distinct signatures: the issuer attestation over
-/// the grant body, and the Event proof over the complete envelope.
+/// Validate the inner capability artifact before the outer Event is signed.
+/// The Event envelope proof is the sole durable issuer signature; nested grant
+/// proofs are intentionally absent from the v1 wire shape.
 pub(crate) fn attach_capability_grant_payload_proof(
     event: &mut arkret_sdk::Event,
 ) -> anyhow::Result<()> {
     if event.kind.as_str() != arkret_sdk::EventKind::CAPABILITY_GRANT {
         return Ok(());
     }
-    let signer = crate::event_signer::active_signer().ok_or_else(|| {
-        anyhow::anyhow!("no active signer configured — cannot attest capability grant payload")
-    })?;
-    attach_capability_grant_payload_proof_with_signer(event, &signer)
+    validate_capability_grant_payload(event)
 }
 
 pub(crate) fn attach_capability_grant_payload_proof_with_signer(
     event: &mut arkret_sdk::Event,
-    signer: &crate::event_signer::InksonEventSigner,
+    _signer: &crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<()> {
+    validate_capability_grant_payload(event)
+}
+
+fn validate_capability_grant_payload(event: &arkret_sdk::Event) -> anyhow::Result<()> {
     if event.kind.as_str() != arkret_sdk::EventKind::CAPABILITY_GRANT {
         return Ok(());
     }
-    let grant_value = event
-        .payload
-        .get("grant")
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("capability grant payload requires grant object"))?;
-    let mut grant: arkret_sdk::CapabilityGrant = serde_json::from_value(grant_value)
+    let payload: arkret_sdk::CapabilityGrantPayload = serde_json::from_value(
+        serde_json::to_value(&event.payload)
+            .map_err(|error| anyhow::anyhow!("encode capability grant payload: {error}"))?,
+    )
         .map_err(|error| anyhow::anyhow!("decode capability grant payload: {error}"))?;
-    if !grant.proofs.is_empty() {
-        return Ok(());
+    if payload.grant.id != payload.grant_id {
+        anyhow::bail!("capability grant id must equal payload grant_id");
     }
-    if grant.issuer != event.actor_id {
+    if payload.grant.issuer != event.actor_id {
         anyhow::bail!("capability grant issuer must equal the Event actor");
     }
-    let mut proof = arkret_sdk::PayloadProof {
-        kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
-        alg: signer.algorithm().to_owned(),
-        verification_method: signer.verification_method_for_sdk_event(event)?,
-        payload_digest: grant.payload_digest()?,
-        created_at: chrono::DateTime::from_timestamp(event.created_at.timestamp(), 0)
-            .ok_or_else(|| anyhow::anyhow!("capability grant proof timestamp is invalid"))?,
-        domain: None,
-        audience: None,
-        proof_purpose: Some(arkret_sdk::PayloadProofPurpose::IssuerAttestation),
-        jws: String::new(),
-    };
-    let transcript = grant.canonical_proof_binding_bytes(&proof)?;
-    proof.jws = signer.detached_jws_over(&transcript)?;
-    grant.proofs.push(proof);
-    event.payload.insert(
-        "grant".to_owned(),
-        serde_json::to_value(grant)
-            .map_err(|error| anyhow::anyhow!("capability grant proof encode: {error}"))?,
-    );
     Ok(())
 }
 
@@ -2646,7 +2625,7 @@ fn realm_owner_covers_event_kind(kind: &str) -> bool {
 fn realm_authority_root_claim(
     event: &arkret_sdk::Event,
     authority: Option<&RealmCreateAuthority>,
-) -> Option<String> {
+) -> Option<arkret_sdk::AuthorizationRef> {
     if event.authorization_ref.is_some()
         || event.executed_by.is_some()
         || event.applet_id.is_some()
@@ -2658,7 +2637,10 @@ fn realm_authority_root_claim(
         RealmCreateAuthority::Root { controller_id }
             if controller_id == event.actor_id.as_str() =>
         {
-            Some(arkret_wire::REALM_AUTHORITY_ROOT_CELL.to_owned())
+            Some(
+                arkret_sdk::AuthorizationRef::new(arkret_wire::REALM_AUTHORITY_ROOT_CELL)
+                    .expect("realm authority-root constant must be valid"),
+            )
         }
         _ => None,
     }
@@ -2844,7 +2826,7 @@ mod tests {
     }
 
     #[test]
-    fn capability_issuer_attestation_is_frozen_into_queue_intent() {
+    fn capability_payload_validation_does_not_mutate_queue_intent() {
         let mut event = crate::operation::ak_ops::capability_grant_actions(
             "ak:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
@@ -2873,13 +2855,8 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_ne!(frozen.intent, unsigned_intent);
-        assert_eq!(
-            frozen.intent.payload["grant"]["proofs"]
-                .as_array()
-                .map(Vec::len),
-            Some(1)
-        );
+        assert_eq!(frozen.intent, unsigned_intent);
+        assert!(frozen.intent.payload["grant"].get("proofs").is_none());
 
         let mut authored_attempt = frozen.intent.to_unauthored_event();
         attach_capability_grant_payload_proof_with_signer(&mut authored_attempt, &signer).unwrap();

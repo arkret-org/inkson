@@ -13,7 +13,7 @@
 //! - `authz/capabilities.md` §3.4 — audit trail.
 
 use arkret_models_collaboration::governance::grant_constraint::{
-    AuthorityRootRef, CapabilityGrant, CapabilitySubject, IssuerAuthorityRef,
+    CapabilityGrant, CapabilitySubject, IssuerAuthorityRef,
 };
 use dioxus::prelude::*;
 
@@ -36,9 +36,7 @@ struct CapabilityRow {
     issuer_did: String,
     subject_did: String,
     expires_at: String,
-    authority_depth: Option<u64>,
     issuer_authority_refs: Vec<String>,
-    authority_root_refs: Vec<String>,
 }
 
 /// Map one authoritative SDK [`CapabilityGrant`] onto a display row.
@@ -60,7 +58,6 @@ fn decode_capability_row(grant: &CapabilityGrant) -> CapabilityRow {
             .expires_at
             .map(arkret_sdk::canonical::format_timestamp_canonical)
             .unwrap_or_default(),
-        authority_depth: grant.authority_depth,
         issuer_authority_refs: grant
             .issuer_authority_refs
             .iter()
@@ -77,17 +74,6 @@ fn decode_capability_row(grant: &CapabilityGrant) -> CapabilityRow {
                     realm_id.as_str(),
                     authority_generation
                 ),
-            })
-            .collect(),
-        authority_root_refs: grant
-            .authority_root_refs
-            .iter()
-            .map(|root| match root {
-                AuthorityRootRef::RealmRoot {
-                    realm_id,
-                    authority_generation,
-                    ..
-                } => format!("{} generation {}", realm_id.as_str(), authority_generation),
             })
             .collect(),
     }
@@ -198,10 +184,6 @@ pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<Strin
                 if let Some(row) = rows.read().iter().find(|r| r.capability_id == capability_id).cloned() {
                     {
                         let capability_id_label = short_protocol_id(&row.capability_id);
-                        let authority_depth_label = row
-                            .authority_depth
-                            .map(|depth| depth.to_string())
-                            .unwrap_or_else(|| "pending".to_owned());
                         rsx! {
                             Dialog {
                                 open: true,
@@ -227,10 +209,6 @@ pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<Strin
                                         }
                                     }
                                     div { class: "muted", title: "{row.capability_id}", "{capability_id_label}" }
-                                    div {
-                                        class: "muted",
-                                        "Authority depth: {authority_depth_label}"
-                                    }
                                     if row.issuer_authority_refs.is_empty() {
                                         div {
                                             class: "muted",
@@ -246,14 +224,6 @@ pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<Strin
                                                     "data-ref-index": "{idx}",
                                                     div { class: "mono", "{authority}" }
                                                 }
-                                            }
-                                        }
-                                    }
-                                    if !row.authority_root_refs.is_empty() {
-                                        div { class: "muted", "Authority roots" }
-                                        ul { class: "settings-list",
-                                            for root in row.authority_root_refs.iter() {
-                                                li { class: "mono", "{root}" }
                                             }
                                         }
                                     }
@@ -286,19 +256,11 @@ mod tests {
             ],
             "issued_at": "2026-01-01T00:00:00.000Z",
             "expires_at": "2026-12-31T00:00:00.000Z",
-            "proofs": [],
             "issuer_authority_refs": [{
                 "kind": "realm_root",
                 "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
                 "cell_ref": "ak:cell:ak.component.realm.authority_root.v1:null",
                 "controller_epoch_at_issuance": 0,
-                "authority_generation": 0
-            }],
-            "authority_depth": 1,
-            "authority_root_refs": [{
-                "kind": "realm_root",
-                "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
-                "cell_ref": "ak:cell:ak.component.realm.authority_root.v1:null",
                 "authority_generation": 0
             }]
         }))
@@ -316,9 +278,7 @@ mod tests {
         assert_eq!(row.issuer_did, "did:web:alice.example");
         assert_eq!(row.subject_did, "did:web:bob.example");
         assert!(row.expires_at.starts_with("2026-12-31"));
-        assert_eq!(row.authority_depth, Some(1));
         assert_eq!(row.issuer_authority_refs.len(), 1);
-        assert_eq!(row.authority_root_refs.len(), 1);
     }
 
     #[test]

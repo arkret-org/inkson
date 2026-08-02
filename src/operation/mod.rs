@@ -394,7 +394,11 @@ impl OperationBuilder {
             .map(arkret_sdk::Did::new)
             .transpose()
             .map_err(|err| anyhow::anyhow!("invalid executed_by DID: {err}"))?;
-        event.authorization_ref = self.authorization_ref;
+        event.authorization_ref = self
+            .authorization_ref
+            .map(arkret_sdk::AuthorizationRef::new)
+            .transpose()
+            .map_err(|err| anyhow::anyhow!("invalid authorization_ref: {err}"))?;
         event.unsigned = unsigned;
         // Authoring pre-check. All 163 active reducer-input kinds carry a
         // complete `cell_writes[]` contract, so the receiver can always derive

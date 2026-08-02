@@ -681,7 +681,10 @@ async fn materialize_direct_conversation(
         anyhow::anyhow!("direct conversation genesis has no staged root proof: {error}")
     })?;
     let mut peer_member_event = draft.peer_member_event.clone();
-    peer_member_event.authorization_ref = Some(staged_root_proof.authorization_ref().to_owned());
+    peer_member_event.authorization_ref = Some(
+        arkret_sdk::AuthorizationRef::new(staged_root_proof.authorization_ref())
+            .map_err(anyhow::Error::msg)?,
+    );
     let bootstrap_key =
         pending_direct_conversation_bootstrap_key(draft.materialization_id.as_str());
     let mut accepted = accepted_direct_materialization_events(&submitter, &realm_id).await;
@@ -748,9 +751,11 @@ async fn materialize_direct_conversation(
         // `ak.strand.create`, so this Event names the authority-root cell under
         // an accepted Seal and MUST NOT reuse the staged genesis proof.
         main_strand_event.authorization_ref = Some(
-            arkret_policy::realm_bootstrap::RealmAuthorityRootProof::AcceptedSeal
-                .authorization_ref()
-                .to_owned(),
+            arkret_sdk::AuthorizationRef::new(
+                arkret_policy::realm_bootstrap::RealmAuthorityRootProof::AcceptedSeal
+                    .authorization_ref(),
+            )
+            .map_err(anyhow::Error::msg)?,
         );
         submitter
             .submit_sdk_event(&main_strand_event)

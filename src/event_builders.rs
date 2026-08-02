@@ -48,7 +48,8 @@ fn head_eq_precondition(cell: &str, value: Value) -> anyhow::Result<Precondition
 
 fn event_requirements_with_schema(schema_ref: &str) -> EventRequirements {
     EventRequirements {
-        schema_profile_refs: vec![schema_ref.to_owned()],
+        schema_profile_refs: vec![arkret_sdk::ProfileRef::new(schema_ref.to_owned())
+            .expect("event builder schema profile ref must be valid")],
         reducer_profile_ref: None,
         required_features: Vec::new(),
         critical_extensions: Vec::new(),
@@ -593,7 +594,10 @@ pub fn build_managed_agent_pcr_create_event(
 
     let mut event = build_realm_create_event_from_object(realm_id, agent_id, object)?;
     event.executed_by = Some(controller_did);
-    event.authorization_ref = Some(controller_authorization_ref.to_owned());
+    event.authorization_ref = Some(
+        arkret_sdk::AuthorizationRef::new(controller_authorization_ref.to_owned())
+            .map_err(anyhow::Error::msg)?,
+    );
     Ok(event)
 }
 
