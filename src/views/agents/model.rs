@@ -10,7 +10,7 @@ use arkret_models_collaboration::agent_operations::{
 use arkret_models_collaboration::events_payloads::agent::{
     AgentKeyScope, AgentKeyScopeResource, AgentKeyScopeResourceKind,
 };
-use arkret_models_collaboration::governance::agent_participation::AgentParticipation;
+use arkret_models_collaboration::protocol_journey::ParticipationBits;
 use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
     AgentKeyPairRequestBody, AgentKeySupersession, AgentPairingBootstrap,
@@ -823,8 +823,8 @@ pub fn agent_state_is_terminal(state: &str) -> bool {
 }
 
 pub fn participation_ceiling_reason(
-    selection: AgentParticipation,
-    ceiling: AgentParticipation,
+    selection: ParticipationBits,
+    ceiling: ParticipationBits,
 ) -> String {
     let mut blocked = Vec::new();
     if selection.reply_message && !ceiling.reply_message {

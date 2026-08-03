@@ -43,15 +43,7 @@ fn prepared_contact_request(
 fn sign_prepared_contact_event(
     draft: &ContactPreparedEventDraft,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    let bytes = arkret_sdk::base64url_decode(draft.unsigned_event_bytes.as_str().as_bytes())
-        .map_err(|error| anyhow::anyhow!("invalid prepared Contact Event bytes: {error}"))?;
-    let mut event: arkret_sdk::Event = serde_json::from_slice(&bytes)
-        .map_err(|error| anyhow::anyhow!("invalid prepared Contact Event: {error}"))?;
-    let digest = arkret_sdk::Hash::new(event.event_digest()?)?;
-    if event.event_id != draft.event_id || event.kind != draft.kind || digest != draft.event_digest
-    {
-        anyhow::bail!("prepared Contact Event metadata does not match its canonical bytes");
-    }
+    let mut event = draft.unsigned_event()?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active device signer is required for Contact commit"))?;
     signer.sign_sdk_event_with_context(

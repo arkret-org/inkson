@@ -302,7 +302,7 @@ async fn ensure_owned_agent_direct_reply(
         .ok_or_else(|| anyhow::anyhow!("owned-Agent Direct Conversation omitted realm_id"))?;
     let realm_id = coordinates.realm_id.clone();
     let strand_id = coordinates.main_strand_id.clone();
-    let scope = arkret_sdk::AgentParticipationScope::Strand {
+    let scope = arkret_sdk::protocol_journey::ParticipationScope::Strand {
         realm_id,
         strand_id,
     };
@@ -342,75 +342,13 @@ async fn ensure_owned_agent_direct_reply(
 pub(crate) async fn replace_agent_participation(
     http: &arkret_sdk::http_client::Client,
     agent_id: &str,
-    scope: arkret_sdk::AgentParticipationScope,
-    selection: arkret_sdk::AgentParticipation,
+    scope: arkret_sdk::protocol_journey::ParticipationScope,
+    selection: arkret_sdk::protocol_journey::ParticipationBits,
 ) -> anyhow::Result<arkret_sdk::AgentParticipationOutcome> {
-    // The signer DID is the device verification-key subject (`did:key:...`),
-    // not the authenticated account principal that owns the Agent.  A
-    // capability grant authored as that key subject cannot resolve an account
-    // device generation and is therefore (correctly) quarantined as
-    // `authority_generation_unknown`.  Read the controller from the
-    // authenticated account projection instead of trying to infer it from
-    // key material.
-    let viewer = account_viewer(http).await?;
-    let controller_id = participation_controller_id(&viewer).to_owned();
-    let previous = http
-        .agent_participation_get(agent_id)
-        .await
-        .map_err(anyhow::Error::from)?;
-    let previous_entry = previous.entries.iter().find(|entry| entry.scope == scope);
-    let previous_selection = previous_entry
-        .map(|entry| entry.selection)
-        .unwrap_or_default();
-    let updated = http
-        .agent_participation_replace(
-            agent_id,
-            &arkret_sdk::AgentParticipationReplaceRequestBody {
-                scope: scope.clone(),
-                selection,
-            },
-        )
-        .await
-        .map_err(anyhow::Error::from)?;
-    let entry = updated
-        .entries
-        .iter()
-        .find(|entry| entry.scope == scope)
-        .ok_or_else(|| anyhow::anyhow!("participation replace omitted the requested scope"))?;
-    let materialization = async {
-        let grant_id = arkret_sdk::agent_participation_grant_id(agent_id, &entry.scope.scope_key());
-        let mut event = participation_materialization_event(
-            &controller_id,
-            agent_id,
-            &entry.scope,
-            entry.effective,
-            &grant_id,
-        )?;
-        crate::event_submit::attach_capability_grant_payload_proof(&mut event)?;
-        crate::event_submit::EventSubmitter::new(http.clone())
-            .submit_sdk_event(&event)
-            .await
-    }
-    .await;
-    if let Err(materialization_error) = materialization {
-        let rollback = http
-            .agent_participation_replace(
-                agent_id,
-                &arkret_sdk::AgentParticipationReplaceRequestBody {
-                    scope,
-                    selection: previous_selection,
-                },
-            )
-            .await;
-        if let Err(rollback_error) = rollback {
-            anyhow::bail!(
-                "signed participation materialization failed ({materialization_error}); \
-                 restoring the previous selection also failed ({rollback_error})"
-            );
-        }
-        return Err(materialization_error);
-    }
-    Ok(updated)
+    let _ = (http, agent_id, scope, selection);
+    anyhow::bail!(
+        "agent participation replacement requires the evidence-bound SDK workflow"
+    );
 }
 
 fn participation_controller_id(
@@ -422,11 +360,21 @@ fn participation_controller_id(
 fn participation_materialization_event(
     controller_id: &str,
     agent_id: &str,
-    scope: &arkret_sdk::AgentParticipationScope,
-    effective: arkret_sdk::AgentParticipation,
+    scope: &arkret_sdk::protocol_journey::ParticipationScope,
+    effective: arkret_sdk::protocol_journey::ParticipationBits,
     grant_id: &str,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    if !effective.reply_message {
+    let mut actions = Vec::new();
+    if effective.reply_message {
+        actions.push("ak.message.create");
+    }
+    if effective.reaction_add {
+        actions.push("ak.reaction.add");
+    }
+    if effective.reaction_remove {
+        actions.push("ak.reaction.remove");
+    }
+    if actions.is_empty() {
         return crate::operation::ak_ops::capability_revoke(
             scope.realm_id().as_str(),
             controller_id,
@@ -435,13 +383,11 @@ fn participation_materialization_event(
         )?
         .build_sdk_event("inkson");
     }
-
-    let actions = ["ak.message.create", "ak.reaction.add"];
     let resource = match scope {
-        arkret_sdk::AgentParticipationScope::Realm { realm_id } => {
+        arkret_sdk::protocol_journey::ParticipationScope::Realm { realm_id } => {
             serde_json::json!({ "kind": "realm", "realm_id": realm_id })
         }
-        arkret_sdk::AgentParticipationScope::Circle {
+        arkret_sdk::protocol_journey::ParticipationScope::Circle {
             realm_id,
             circle_id,
         } => serde_json::json!({
@@ -449,7 +395,7 @@ fn participation_materialization_event(
             "realm_id": realm_id,
             "circle_id": circle_id
         }),
-        arkret_sdk::AgentParticipationScope::Strand {
+        arkret_sdk::protocol_journey::ParticipationScope::Strand {
             realm_id,
             strand_id,
         } => serde_json::json!({
@@ -473,7 +419,7 @@ fn participation_materialization_event(
 
 fn participation_reply_is_effective(
     outcome: &arkret_sdk::AgentParticipationOutcome,
-    scope: &arkret_sdk::AgentParticipationScope,
+    scope: &arkret_sdk::protocol_journey::ParticipationScope,
 ) -> bool {
     outcome
         .entries
@@ -483,7 +429,7 @@ fn participation_reply_is_effective(
 
 fn owned_agent_reply_update_needed(
     outcome: &arkret_sdk::AgentParticipationOutcome,
-    scope: &arkret_sdk::AgentParticipationScope,
+    scope: &arkret_sdk::protocol_journey::ParticipationScope,
 ) -> bool {
     !participation_reply_is_effective(outcome, scope)
 }
@@ -995,12 +941,14 @@ mod tests {
         let event = participation_materialization_event(
             "did:web:alice.example",
             "did:web:agent.example",
-            &arkret_sdk::AgentParticipationScope::Strand {
+            &arkret_sdk::protocol_journey::ParticipationScope::Strand {
                 realm_id: realm_id.clone(),
                 strand_id: strand_id.clone(),
             },
-            arkret_sdk::AgentParticipation {
+            arkret_sdk::protocol_journey::ParticipationBits {
                 reply_message: true,
+                reaction_add: true,
+                reaction_remove: false,
                 ..Default::default()
             },
             grant_id,
@@ -1056,7 +1004,7 @@ mod tests {
 
     #[test]
     fn effective_owned_agent_reply_does_not_request_another_governance_write() {
-        let scope = arkret_sdk::AgentParticipationScope::Strand {
+        let scope = arkret_sdk::protocol_journey::ParticipationScope::Strand {
             realm_id: arkret_sdk::RealmId::new("ak:realm:01970000-0000-7000-8000-000000000001")
                 .expect("realm id"),
             strand_id: arkret_sdk::StrandId::new("ak:strand:01970000-0000-7000-8000-000000000002")
@@ -1085,8 +1033,8 @@ mod tests {
         let event = participation_materialization_event(
             "did:web:alice.example",
             "did:web:agent.example",
-            &arkret_sdk::AgentParticipationScope::Realm { realm_id },
-            arkret_sdk::AgentParticipation::NONE,
+            &arkret_sdk::protocol_journey::ParticipationScope::Realm { realm_id },
+            arkret_sdk::protocol_journey::ParticipationBits::NONE,
             grant_id,
         )
         .expect("reply revoke");
