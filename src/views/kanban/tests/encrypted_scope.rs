@@ -402,6 +402,74 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn encrypted_private_patch_repairs_persisted_epoch_zero_without_genesis_reference() {
+    let actor = "did:web:alice.example";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
+    let mut state = temp_state_store("creator-persisted-epoch-zero");
+    state.save_realm_tree_projection(
+        realm,
+        json!({
+            "__kind": "realm",
+            "owner": actor,
+            "content_scheme": "mls_rfc9420",
+            "members_limited": false,
+            "members": [{ "actor_id": actor, "membership": "join" }],
+            "summary": {
+                "title": "Encrypted Realm",
+                "encryption_profile": "mls_rfc9420",
+                "owner": actor,
+            }
+        }),
+    );
+    crate::mls::governance_proof::seed_test_governance_proof(
+        &mut state,
+        realm,
+        None,
+        arkret_sdk::base64url_encode(realm.as_bytes()),
+        0,
+        0,
+    );
+    let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+    crate::mls::runtime::ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
+        .unwrap()
+        .expect("fixture creates and persists epoch-0 MLS state");
+    // Reproduce the broken state seen after first-Realm creation: the local
+    // group exists and a legacy/incomplete path set the emitted bit, but no
+    // accepted Event id was attached to the snapshot.
+    state.mark_mls_genesis_emitted(realm);
+    assert!(
+        state
+            .mls_group_state_ref_for_effective_scope(
+                realm,
+                None,
+                &arkret_sdk::base64url_encode(realm.as_bytes()),
+                0,
+            )
+            .is_err()
+    );
+
+    let patch = json!({
+        "body": {"$op": "set", "value": "first description"},
+    });
+    let strand_id = "ak:strand:01904100-0000-7000-8000-0000000000ff";
+    let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
+        patch, realm, strand_id, actor, device, &mut state, &secure,
+    )
+    .expect("persisted epoch-0 state must rebuild genesis for the first encrypted write");
+
+    let genesis = mls_events
+        .genesis
+        .expect("missing accepted genesis reference must be repaired by resubmission");
+    assert_eq!(genesis.kind.as_str(), "ak.mls.genesis");
+    assert_eq!(
+        patched["body"]["value"]["key_ref"]["group_state_ref"],
+        genesis.event_id.as_str()
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
 

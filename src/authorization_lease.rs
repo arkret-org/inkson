@@ -295,8 +295,8 @@ pub fn initial_submission(
         // a shortfall; a bounded superset is always acceptable, so nothing is
         // guessed here.
         cba_proof_bundles: Vec::new(),
-        // Standard Control Moves acquire their authority receipt separately;
-        // DataEvents and caller-proven anchor units must omit it.
+        // Control Moves acquire their authority receipt separately, including
+        // caller-proven closed anchors. DataEvents keep it absent.
         control_proposal_receipt: None,
         membership_compensation_evidence: None,
     })
@@ -314,7 +314,8 @@ pub async fn standard_initial_submission(
     event: &arkret_sdk::Event,
 ) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
     let mut submission = arkret_wire::EventInitialSubmission::online(event.clone());
-    if event.seal_basis.is_some() {
+    let managed_genesis = is_managed_agent_pcr_genesis(event);
+    if event.seal_basis.is_some() || managed_genesis {
         let member_receipt = match resolve_proposal_authority_route(http, event).await? {
             ProposalAuthorityRoute::LocalPrincipal(local) => {
                 let signer = crate::event_signer::active_signer().ok_or_else(|| {
@@ -333,7 +334,11 @@ pub async fn standard_initial_submission(
         }
     }
     submission
-        .validate_structural_in_context(arkret_wire::EventSubmitContext::Standard)
+        .validate_structural_in_context(if managed_genesis {
+            arkret_wire::EventSubmitContext::AnchorUnit
+        } else {
+            arkret_wire::EventSubmitContext::Standard
+        })
         .map_err(anyhow::Error::from)?;
     Ok(submission)
 }
@@ -348,7 +353,8 @@ pub async fn delayed_initial_submission(
     event: &arkret_sdk::Event,
 ) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
     let mut submission = initial_submission(event)?;
-    if event.seal_basis.is_some() {
+    let managed_genesis = is_managed_agent_pcr_genesis(event);
+    if event.seal_basis.is_some() || managed_genesis {
         let member_receipt = match resolve_proposal_authority_route(http, event).await? {
             ProposalAuthorityRoute::LocalPrincipal(local) => {
                 let signer = crate::event_signer::active_signer().ok_or_else(|| {
@@ -377,7 +383,11 @@ pub async fn delayed_initial_submission(
         );
     }
     submission
-        .validate_structural_in_context(arkret_wire::EventSubmitContext::Standard)
+        .validate_structural_in_context(if managed_genesis {
+            arkret_wire::EventSubmitContext::AnchorUnit
+        } else {
+            arkret_wire::EventSubmitContext::Standard
+        })
         .map_err(anyhow::Error::from)?;
     Ok(submission)
 }
@@ -467,6 +477,11 @@ fn is_managed_agent_pcr_control(event: &arkret_sdk::Event) -> bool {
         && event.authorization_ref.as_deref() == Some(managed_authorization_ref.as_str())
 }
 
+fn is_managed_agent_pcr_genesis(event: &arkret_sdk::Event) -> bool {
+    event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE
+        && is_managed_agent_pcr_control(event)
+}
+
 /// The three authority routes a Control Move can take, decided from the Event
 /// alone. Resolving the route's material is a separate step because only the
 /// managed branch needs accepted Realm history.
@@ -513,12 +528,30 @@ async fn resolve_proposal_authority_route(
             ))
         }
         ProposalAuthorityRouteKind::ManagedAgentPcr => {
-            let accepted = http
-                .events_query_all_pages(event.realm_id.as_str())
-                .await
-                .map_err(anyhow::Error::from)?;
-            let authority_set_ref =
-                managed_agent_pcr_authority_set_ref_from_events(event, &accepted.events)?;
+            // The single-Event managed PCR genesis is a caller-proven closed
+            // anchor unit. Its founding notary material is completely derived
+            // from that signed create, so the delegated controller can issue
+            // the proposal receipt before the Event is durable. Successors
+            // continue to resolve the same immutable authority from accepted
+            // genesis history.
+            let authority_set_ref = if is_managed_agent_pcr_genesis(event) {
+                arkret_bootstrap::ManagedAgentPcrGenesisAuthority::from_accepted_create(
+                    event,
+                    &crate::operation::cell_write_projector,
+                )
+                .map(|authority| authority.authority_set_ref().clone())
+                .map_err(|error| {
+                    anyhow::anyhow!(
+                        "managed Agent PCR candidate genesis authority is unavailable: {error}"
+                    )
+                })?
+            } else {
+                let accepted = http
+                    .events_query_all_pages(event.realm_id.as_str())
+                    .await
+                    .map_err(anyhow::Error::from)?;
+                managed_agent_pcr_authority_set_ref_from_events(event, &accepted.events)?
+            };
             // A managed Agent PCR write is executed by the delegated
             // controller, so the controller's device key — not the Agent's —
             // signs under the founding notary profile.

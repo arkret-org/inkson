@@ -3124,6 +3124,9 @@ async fn ensure_mls_genesis_frontier_for_invite(
             "local MLS genesis event is already marked emitted but no group-state event id is available; sync this Realm before inviting"
         )
     })?;
+    crate::mls::runtime::upload_mls_genesis_public_material(api, &summary)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.user_message()))?;
     match api
         .event_submitter()?
         .submit_sdk_event(&genesis_event)

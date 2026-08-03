@@ -222,12 +222,13 @@ pub(crate) fn creator_scope_bootstrap_blocker(
 /// Build the `ak.mls.genesis` SDK event for a creator group that has a
 /// local snapshot but whose genesis has not yet been submitted to soland.
 ///
-/// Returns `None` when genesis was already emitted for this Realm (idempotent —
-/// see [`LocalStateStore::mls_genesis_emitted_for`]) or when there is no local
-/// snapshot. `fresh_summary` carries the just-created group's epoch-0 ratchet
-/// tree / schedule hash captured by `ensure_creator_mls_snapshot`; genesis MUST
-/// describe the group at epoch 0, so this builder only emits when that fresh
-/// epoch-0 material is available (the normal create-then-first-write path).
+/// Returns `None` when genesis was already emitted for this Realm and its exact
+/// accepted group-state Event reference is available, or when there is no local
+/// snapshot. A legacy/incomplete emitted flag without that reference is not a
+/// completed bootstrap: rebuilding is safe because the submit path resolves a
+/// server-side duplicate to the already-accepted Event id. `fresh_summary`
+/// carries either the just-created group's epoch-0 material or material restored
+/// from its durable epoch-0 snapshot.
 ///
 /// The genesis governance binding installs epoch `0 -> 0` and mirrors the
 /// commit path's realm ID and Security Frontier derivation.
@@ -279,7 +280,17 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
-    if state_store.mls_genesis_emitted_for_effective_scope(realm_id, circle) {
+    if state_store.mls_genesis_emitted_for_effective_scope(realm_id, circle)
+        && let Some(snapshot) = state_store.mls_snapshot_for_effective_scope(realm_id, circle)
+        && state_store
+            .mls_group_state_ref_for_effective_scope(
+                realm_id,
+                circle,
+                &snapshot.group_id,
+                snapshot.epoch,
+            )
+            .is_ok()
+    {
         return Ok(None);
     }
     // Genesis describes the group at epoch 0. We can only build a
@@ -324,6 +335,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
         &summary.group_id,
         &payload,
     )
+    .map_err(|err| format!("MLS genesis typed payload conversion failed: {err}"))?
     .build_sdk_event("inkson")
     .map(Some)
     .map_err(|err| format!("MLS genesis SDK Event conversion failed: {err}"))?;

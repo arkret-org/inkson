@@ -40,7 +40,8 @@ fn build_mls_genesis_payload_has_required_fields() {
         .unwrap()
         .expect("creator snapshot should be created");
     let binding = genesis_governance_binding(&summary.group_id);
-    let payload = build_mls_genesis_payload(&summary, actor, device, &binding).unwrap();
+    let typed_payload = build_mls_genesis_payload(&summary, actor, device, &binding).unwrap();
+    let payload = serde_json::to_value(&typed_payload).unwrap();
 
     // epoch MUST be the literal 0 the schema/reducer require.
     assert_eq!(payload["epoch"].as_u64(), Some(0));
@@ -72,7 +73,18 @@ fn build_mls_genesis_payload_has_required_fields() {
     let ratchet_tree_digest = payload["ratchet_tree_digest"].as_str().unwrap();
     assert!(group_info_digest.starts_with("sha256:"));
     assert!(ratchet_tree_digest.starts_with("sha256:"));
-    assert_eq!(group_info_digest, summary.schedule_hash);
+    assert_eq!(
+        group_info_digest,
+        crate::canonical::sha256_digest(&summary.group_info_bytes)
+    );
+    assert_eq!(
+        payload["group_info_ref"].as_str(),
+        Some(format!("ak:blob:{group_info_digest}").as_str())
+    );
+    assert_eq!(
+        payload["ratchet_tree_ref"].as_str(),
+        Some(format!("ak:blob:{ratchet_tree_digest}").as_str())
+    );
     // created_at present.
     assert!(payload["created_at"].as_str().unwrap_or("").contains('T'));
 
@@ -109,8 +121,8 @@ fn existing_epoch_zero_snapshot_restores_genesis_summary() {
     assert_eq!(restored.realm_id, fresh.realm_id);
     assert_eq!(restored.group_id, fresh.group_id);
     assert_eq!(restored.epoch, 0);
-    assert_eq!(restored.schedule_hash, fresh.schedule_hash);
-    assert_eq!(restored.ratchet_tree, fresh.ratchet_tree);
+    assert_eq!(restored.group_info_bytes, fresh.group_info_bytes);
+    assert_eq!(restored.ratchet_tree_bytes, fresh.ratchet_tree_bytes);
 }
 
 #[test]
@@ -170,8 +182,8 @@ fn pending_genesis_event_round_trips_exactly_and_clears_on_accept() {
         realm_id: realm.to_owned(),
         group_id: group_id.clone(),
         epoch: 0,
-        ratchet_tree: "cmF0Y2hldC10cmVl".to_owned(),
-        schedule_hash: format!("sha256:{}", "4".repeat(64)),
+        group_info_bytes: b"group-info".to_vec(),
+        ratchet_tree_bytes: b"ratchet-tree".to_vec(),
         cipher_suite: arkret_sdk::ARKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned(),
     };
     let payload = build_mls_genesis_payload(
@@ -183,6 +195,7 @@ fn pending_genesis_event_round_trips_exactly_and_clears_on_accept() {
     .unwrap();
     let event =
         crate::operation::ak_ops::mls_genesis_with_governance(realm, actor, &group_id, &payload)
+            .unwrap()
             .build_sdk_event("inkson")
             .unwrap();
 

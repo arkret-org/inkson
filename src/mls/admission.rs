@@ -64,7 +64,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
     let governance_binding =
         serde_json::from_value::<arkret_sdk::MlsGovernanceBindingPayload>(governance_binding)
             .map_err(|err| format!("MLS commit governance_binding is invalid: {err}"))?;
-    let welcome_payload = build_mls_welcome_payload_value(
+    let welcome_payload = build_mls_welcome_payload(
         state_store,
         secure_store,
         realm_id,
@@ -84,6 +84,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
         &add.welcome.group_id,
         &welcome_payload,
     )
+    .map_err(|err| format!("MLS Welcome typed payload conversion failed: {err}"))?
     .build_sdk_event("inkson")
     .map_err(|err| format!("MLS Welcome SDK Event conversion failed: {err}"))?;
     Ok(RealmMlsAdmissionEvents {
@@ -208,7 +209,7 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
         .iter()
         .zip(member_key_packages.iter().zip(add.welcomes.iter()))
     {
-        let welcome_payload = build_mls_welcome_payload_value(
+        let welcome_payload = build_mls_welcome_payload(
             state_store,
             secure_store,
             realm_id,
@@ -228,6 +229,7 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
             &welcome_envelope.group_id,
             &welcome_payload,
         )
+        .map_err(|err| format!("MLS Welcome typed payload conversion failed: {err}"))?
         .build_sdk_event("inkson")
         .map_err(|err| format!("MLS Welcome SDK Event conversion failed: {err}"))?;
         let mut welcome = welcome;
@@ -442,7 +444,7 @@ pub(crate) fn sign_realm_key_share_sender_signature(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_mls_welcome_payload_value(
+pub(crate) fn build_mls_welcome_payload(
     state_store: &LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
@@ -455,7 +457,7 @@ pub(crate) fn build_mls_welcome_payload_value(
     governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
     claim_nonce: &str,
     peer_claim_receipt: Option<&arkret_sdk::PeerKeyPackageClaimReceipt>,
-) -> Result<Value, String> {
+) -> Result<arkret_sdk::MlsWelcomePayload, String> {
     let intended_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|err| format!("invalid MLS Welcome Realm id: {err:?}"))?;
     let requester_did = arkret_sdk::Did::new(actor_id.trim().to_owned())
@@ -551,8 +553,7 @@ pub(crate) fn build_mls_welcome_payload_value(
         governance_binding,
         expires_at,
     };
-    serde_json::to_value(payload)
-        .map_err(|err| format!("serialize typed MLS Welcome payload: {err}"))
+    Ok(payload)
 }
 
 fn sign_welcome_claim_envelope(

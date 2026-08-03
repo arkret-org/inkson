@@ -69,6 +69,9 @@ pub(super) fn rebind_encrypted_group_state_ref(
 #[derive(Default, Debug)]
 pub(super) struct EncryptedWriteMlsEvents {
     pub genesis: Option<arkret_sdk::Event>,
+    /// Exact public epoch-0 bytes whose content-addressed refs are carried by
+    /// `genesis`. Uploaded before the Event is submitted.
+    pub genesis_material: Option<crate::mls::runtime::InitialMlsSnapshotSummary>,
     pub commit: Option<arkret_sdk::Event>,
     /// X14 — the post-commit MLS snapshot. Persisted by the caller ONLY
     /// after the server ACCEPTS `commit`, so the local snapshot epoch never
@@ -163,7 +166,7 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
         .map(|(_, bytes)| bytes.clone())
         .collect::<Vec<_>>();
     let circle_id = sidecar.map(|context| context.circle_id.as_str());
-    let fresh_summary = if circle_id.is_none() {
+    let mut fresh_summary = if circle_id.is_none() {
         apply_local_mls_welcomes_for_realm(
             state_store,
             secure_store,
@@ -187,6 +190,29 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
         }
         None
     };
+    // Realm creation persists the creator's epoch-0 snapshot before submitting
+    // `ak.mls.genesis`. If that submit was interrupted or an older client left
+    // only the emitted flag, this write is not a fresh-snapshot path, but it
+    // still has all material needed to rebuild genesis. Recover the summary so
+    // the dispatch path can submit (or duplicate-resolve) genesis before the
+    // encrypted Strand update instead of failing on a missing group_state_ref.
+    if circle_id.is_none()
+        && fresh_summary.is_none()
+        && crate::mls::creator_bootstrap::creator_mls_bootstrap_pending(
+            state_store,
+            realm_id,
+            actor_id,
+        )
+    {
+        fresh_summary = crate::mls::runtime::initial_mls_snapshot_summary_from_existing(
+            state_store,
+            secure_store,
+            realm_id,
+            actor_id,
+            device_id,
+        )
+        .map_err(|error| error.user_message())?;
+    }
     // Build genesis BEFORE the first commit mutates the group past epoch 0.
     let genesis_event = if let Some(sidecar) = sidecar {
         crate::mls::group_events::build_creator_mls_genesis_event_for_effective_scope_with_binding(
@@ -325,6 +351,7 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
         encrypted_patch,
         EncryptedWriteMlsEvents {
             genesis: genesis_event,
+            genesis_material: fresh_summary,
             commit: commit_event,
             // X14 — forced-commit snapshots are persisted by
             // `dispatch_card_detail_update` ONLY after the server accepts the
@@ -429,6 +456,7 @@ pub(super) fn dispatch_card_detail_update(
     };
     let EncryptedWriteMlsEvents {
         genesis: mls_genesis_op,
+        genesis_material: mls_genesis_material,
         commit: mls_commit_op,
         snapshot: mls_new_snapshot,
         pending_history_secrets,
@@ -552,6 +580,14 @@ pub(super) fn dispatch_card_detail_update(
             let provisional_genesis_event_id = genesis_event_id.clone();
             let realm_for_genesis_lookup = realm_id.clone();
             let genesis_result = with_authed_api(&base_url, api_token.clone(), |api| async move {
+                let material = mls_genesis_material.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "ak.mls.genesis is missing its public group-state upload material"
+                    )
+                })?;
+                crate::mls::runtime::upload_mls_genesis_public_material(&api, &material)
+                    .await
+                    .map_err(|error| anyhow::anyhow!(error.user_message()))?;
                 let submitter = api.event_submitter()?;
                 match submitter.submit_sdk_event(&genesis_op).await {
                     Ok(_) => Ok(genesis_event_id),

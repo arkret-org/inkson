@@ -1850,7 +1850,11 @@ async fn ensure_sidecar_mls_bootstrap(
 
     let submitted = crate::transport::auth::with_authed_api(base_url, api_token.clone(), |api| {
         let genesis = genesis.clone();
+        let summary = summary.clone();
         async move {
+            crate::mls::runtime::upload_mls_genesis_public_material(&api, &summary)
+                .await
+                .map_err(|error| anyhow::anyhow!(error.user_message()))?;
             api.event_submitter()?
                 .submit_signed_sdk_event(&genesis)
                 .await

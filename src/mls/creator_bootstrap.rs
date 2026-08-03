@@ -65,7 +65,18 @@ pub(crate) fn creator_mls_bootstrap_pending(
     {
         return false;
     }
-    store.mls_snapshot_for(realm_id).is_none() || !store.mls_genesis_emitted_for(realm_id)
+    let Some(snapshot) = store.mls_snapshot_for(realm_id) else {
+        return true;
+    };
+    !store.mls_genesis_emitted_for(realm_id)
+        || store
+            .mls_group_state_ref_for_effective_scope(
+                realm_id,
+                None,
+                &snapshot.group_id,
+                snapshot.epoch,
+            )
+            .is_err()
 }
 
 /// Refresh the accepted Seal view, acquire + verify + pin the governance
@@ -179,6 +190,17 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     };
 
     if let Some(genesis_event) = genesis_event {
+        let genesis_material = summary.as_ref().ok_or_else(|| {
+            "ak.mls.genesis was built without recoverable epoch-0 public material".to_owned()
+        })?;
+        crate::mls::runtime::upload_mls_genesis_public_material(api, genesis_material)
+            .await
+            .map_err(|error| {
+                format!(
+                    "publishing ak.mls.genesis public group-state material failed: {}",
+                    error.user_message()
+                )
+            })?;
         let provisional_event_id = genesis_event.event_id.clone();
         let accepted = match submitter.submit_sdk_event(&genesis_event).await {
             Ok(_) => Ok(provisional_event_id),
@@ -205,14 +227,17 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
                     .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &accepted_event_id);
             }
             Err(error) => {
-                // Non-fatal: the local snapshot and the pinned anchor are the
-                // parts that cannot be re-derived cheaply, and both are already
-                // persisted. The next bootstrap pass retries the submit.
+                // The local snapshot and pinned anchor stay persisted, but the
+                // bootstrap is not complete until genesis is accepted and its
+                // exact Event id is recorded. Propagate the failure so the
+                // background effect clears its dedup key and retries; returning
+                // success here used to strand first-Realm writes permanently.
                 tracing::warn!(
                     error = %error,
                     realm = %realm_id,
                     "ak.mls.genesis submit failed; creator MLS bootstrap will retry",
                 );
+                return Err(format!("submitting ak.mls.genesis failed: {error}"));
             }
         }
     }

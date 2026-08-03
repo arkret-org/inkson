@@ -1,7 +1,5 @@
 //! Creator initial-group setup and the `ak.mls.genesis` event payload.
 
-use serde_json::Value;
-
 use super::{MlsRuntimeError, load_device_snapshot_secret, load_or_create_device_snapshot_secret};
 use crate::secure_key_store::SecureKeyStore;
 
@@ -10,12 +8,12 @@ pub struct InitialMlsSnapshotSummary {
     pub realm_id: String,
     pub group_id: String,
     pub epoch: u64,
-    /// Base64 TLS-serialized ratchet tree of the freshly created group —
-    /// used to seed the `ak.mls.genesis` event's `ratchet_tree_digest`.
-    pub ratchet_tree: String,
-    /// `sha256:<hex>` digest over the group's current key schedule (epoch
-    /// authenticator). Used as the genesis `group_info_digest`.
-    pub schedule_hash: String,
+    /// Exact RFC 9420 MLSMessage(GroupInfo) bytes published as a durable,
+    /// content-addressed blob before `ak.mls.genesis` is submitted.
+    pub group_info_bytes: Vec<u8>,
+    /// Exact TLS-serialized external ratchet-tree bytes published alongside
+    /// [`Self::group_info_bytes`].
+    pub ratchet_tree_bytes: Vec<u8>,
     /// String form of the MLS ciphersuite the group was created with.
     pub cipher_suite: String,
 }
@@ -111,10 +109,9 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
     let group = identity
         .create_group_with_governance_binding(group_seed.as_bytes(), &governance_binding)
         .map_err(|err| MlsRuntimeError::Genesis(format!("create group: {err}")))?;
-    let ratchet_tree = group
-        .ratchet_tree()
-        .map_err(|err| MlsRuntimeError::Genesis(format!("export ratchet tree: {err}")))?;
-    let schedule_hash = group.schedule_hash().to_string();
+    let (group_info_bytes, ratchet_tree_bytes) = group
+        .public_group_state_bytes()
+        .map_err(|err| MlsRuntimeError::Genesis(format!("export public group state: {err}")))?;
     let cipher_suite = arkret_sdk::ARKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned();
     let post_state = group
         .export_state_record()
@@ -135,8 +132,8 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
         realm_id: realm.to_owned(),
         group_id: post_state.group_id.clone(),
         epoch: post_state.epoch,
-        ratchet_tree,
-        schedule_hash,
+        group_info_bytes,
+        ratchet_tree_bytes,
         cipher_suite,
     };
     state_store.save_mls_snapshot_for_effective_scope(realm.to_owned(), circle, snapshot);
@@ -237,15 +234,15 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope_with_bindi
                 .to_owned(),
         ));
     }
-    let ratchet_tree = group
-        .ratchet_tree()
-        .map_err(|err| MlsRuntimeError::Genesis(format!("export ratchet tree: {err}")))?;
+    let (group_info_bytes, ratchet_tree_bytes) = group
+        .public_group_state_bytes()
+        .map_err(|err| MlsRuntimeError::Genesis(format!("export public group state: {err}")))?;
     Ok(Some(InitialMlsSnapshotSummary {
         realm_id: realm.to_owned(),
         group_id,
         epoch: group.epoch(),
-        ratchet_tree,
-        schedule_hash: group.schedule_hash().to_string(),
+        group_info_bytes,
+        ratchet_tree_bytes,
         cipher_suite: arkret_sdk::ARKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned(),
     }))
 }
@@ -258,10 +255,8 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope_with_bindi
 /// into the top-level `effective_scope` field so the two stay in lockstep
 /// (soland and strict client schema validators both compare them).
 ///
-/// Digest field derivation (deterministic, leak-free):
-/// - `group_info_digest`  = the group's `schedule_hash()` (`sha256:` over the RFC 9420 epoch
-///   authenticator) — a stable per-epoch group-state digest.
-/// - `ratchet_tree_digest` = `sha256:` over the base64 TLS-serialized ratchet tree bytes.
+/// Ref/digest fields are content addresses over the exact raw RFC 9420 bytes,
+/// matching `encryption-and-audit.md` §5.1.1.
 ///
 /// `created_at` uses the same RFC3339 (seconds, UTC `Z`) format the event
 /// builder stamps on SDK events.
@@ -270,27 +265,82 @@ pub fn build_mls_genesis_payload(
     actor_id: &str,
     device_id: &str,
     governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
-) -> Result<Value, MlsRuntimeError> {
-    let binding_value = serde_json::to_value(governance_binding)
-        .map_err(|err| MlsRuntimeError::Genesis(format!("serialize governance binding: {err}")))?;
-    let effective_scope = binding_value
-        .get("effective_scope")
-        .cloned()
-        .ok_or_else(|| {
-            MlsRuntimeError::Genesis("governance binding missing effective_scope".to_owned())
-        })?;
-    let ratchet_tree_digest = crate::canonical::sha256_digest(summary.ratchet_tree.as_bytes());
-    let created_at = crate::clock::now_timestamp();
-    Ok(serde_json::json!({
-        "mls_group_id": summary.group_id,
-        "effective_scope": effective_scope,
-        "epoch": 0,
-        "creator_principal_id": actor_id,
-        "creator_device_id": device_id,
-        "cipher_suite": summary.cipher_suite,
-        "group_info_digest": summary.schedule_hash,
-        "ratchet_tree_digest": ratchet_tree_digest,
-        "governance_binding": binding_value,
-        "created_at": created_at,
-    }))
+) -> Result<arkret_sdk::MlsGenesisPayload, MlsRuntimeError> {
+    let group_info_digest = crate::canonical::sha256_digest(&summary.group_info_bytes);
+    let ratchet_tree_digest = crate::canonical::sha256_digest(&summary.ratchet_tree_bytes);
+    let group_info_ref = format!("ak:blob:{group_info_digest}");
+    let ratchet_tree_ref = format!("ak:blob:{ratchet_tree_digest}");
+    let payload = arkret_sdk::MlsGenesisPayload {
+        mls_group_id: arkret_sdk::MlsGroupId::new(summary.group_id.clone())
+            .map_err(|error| MlsRuntimeError::Genesis(format!("invalid MLS group id: {error}")))?,
+        effective_scope: governance_binding.effective_scope().clone(),
+        epoch: arkret_sdk::MlsGenesisEpoch,
+        creator_principal_id: arkret_sdk::Did::new(actor_id.to_owned()).map_err(|error| {
+            MlsRuntimeError::Genesis(format!("invalid creator principal id: {error}"))
+        })?,
+        creator_device_id: arkret_sdk::DeviceId::new(device_id.to_owned()).map_err(|error| {
+            MlsRuntimeError::Genesis(format!("invalid creator device id: {error}"))
+        })?,
+        cipher_suite: arkret_sdk::NonEmptyString::new(summary.cipher_suite.clone()).map_err(
+            |error| MlsRuntimeError::Genesis(format!("invalid MLS cipher suite: {error}")),
+        )?,
+        group_info_ref: arkret_sdk::BlobRef::new(group_info_ref).map_err(|error| {
+            MlsRuntimeError::Genesis(format!("invalid GroupInfo blob ref: {error}"))
+        })?,
+        group_info_digest: arkret_sdk::Hash::new(group_info_digest).map_err(|error| {
+            MlsRuntimeError::Genesis(format!("invalid GroupInfo digest: {error}"))
+        })?,
+        ratchet_tree_ref: arkret_sdk::BlobRef::new(ratchet_tree_ref).map_err(|error| {
+            MlsRuntimeError::Genesis(format!("invalid ratchet-tree blob ref: {error}"))
+        })?,
+        ratchet_tree_digest: arkret_sdk::Hash::new(ratchet_tree_digest).map_err(|error| {
+            MlsRuntimeError::Genesis(format!("invalid ratchet-tree digest: {error}"))
+        })?,
+        initial_keypackage_refs: None,
+        governance_binding: governance_binding.clone(),
+        created_at: crate::clock::now_utc_canonical(),
+    };
+    payload.validate().map_err(|error| {
+        MlsRuntimeError::Genesis(format!("invalid MLS genesis payload: {error}"))
+    })?;
+    Ok(payload)
+}
+
+/// Publish the exact public epoch-0 MLS material referenced by a genesis
+/// payload. Both uploads are content-address checked before the Event may be
+/// submitted, so an accepted genesis can always service the standard
+/// group-state-material query.
+pub async fn upload_mls_genesis_public_material(
+    api: &crate::transport::TransportClient,
+    summary: &InitialMlsSnapshotSummary,
+) -> Result<(), MlsRuntimeError> {
+    for (label, bytes) in [
+        ("GroupInfo", &summary.group_info_bytes),
+        ("ratchet tree", &summary.ratchet_tree_bytes),
+    ] {
+        let digest = crate::canonical::sha256_digest(bytes);
+        let expected_ref = format!("ak:blob:{digest}");
+        let clients = crate::transport::EndpointClients::new(api.clone());
+        let outcome = clients
+            .blob()
+            .upload_bytes_scoped(
+                bytes.clone(),
+                "application/octet-stream",
+                Some(&summary.realm_id),
+                None,
+            )
+            .await
+            .map_err(|error| {
+                MlsRuntimeError::Genesis(format!("upload MLS {label} material: {error}"))
+            })?;
+        if outcome.blob_ref.as_str() != expected_ref
+            || outcome.content_digest.as_str() != digest
+            || outcome.size_bytes != bytes.len() as u64
+        {
+            return Err(MlsRuntimeError::Genesis(format!(
+                "uploaded MLS {label} material does not match its content address"
+            )));
+        }
+    }
+    Ok(())
 }

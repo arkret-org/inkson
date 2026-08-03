@@ -1022,7 +1022,28 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
                 .await?,
             )
         }
-        Err(error) if managed_agent_initial_seal_required(&error) => Some(
+        Err(error) if managed_agent_initial_seal_required(&error) => Some({
+            // Re-publish the exact genesis before the first Seal. New
+            // servers return the stored duplicate receipt; servers
+            // upgraded from the pre-receipt managed-PCR path use this
+            // idempotent retry to attach the first valid proposal receipt
+            // and rebuild the durable pending index that the atomic Seal
+            // commit consumes.
+            let creates = accepted_events
+                .iter()
+                .filter(|event| {
+                    event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE
+                        && event.realm_id.as_str() == realm_id
+                })
+                .collect::<Vec<_>>();
+            let [create] = creates.as_slice() else {
+                anyhow::bail!(
+                    "managed Agent PCR initial Seal requires exactly one accepted create Event"
+                );
+            };
+            let submission =
+                crate::authorization_lease::standard_initial_submission(http, create).await?;
+            http.events_submit(&submission).await?;
             submit_managed_agent_pcr_seal(
                 http,
                 signer,
@@ -1032,8 +1053,8 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
                 &accepted_events,
                 None,
             )
-            .await?,
-        ),
+            .await?
+        }),
         Err(error) => return Err(error),
     };
 
@@ -1263,6 +1284,9 @@ pub(crate) async fn bootstrap_provisioned_agent(
             arkret_sdk::AuthorizationRef::new(controller_authorization_ref.to_owned())
                 .map_err(anyhow::Error::msg)?,
         );
+        crate::mls::runtime::upload_mls_genesis_public_material(api, &summary)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.user_message()))?;
         match submitter.submit_sdk_event(&genesis).await {
             Ok(_) => state_store
                 .write()

@@ -1,7 +1,5 @@
 //! Device revoke Control Move and MLS epoch builders.
 
-use serde_json::Value;
-
 use super::OperationBuilder;
 
 /// Durable `ak.device.revoke` Control Move on the principal control
@@ -85,31 +83,36 @@ pub fn mls_proposal_with_governance(
 /// the server epoch starts in lockstep with the local snapshot before
 /// the first `ak.mls.commit` bumps it to 1.
 ///
-/// `payload` is the full canonical `mls_genesis_payload` Value (see
-/// [`crate::mls::runtime::build_mls_genesis_payload`]); `group_id` is the
-/// genesis target ref.
+/// `payload` uses the SDK's canonical wire type, so protocol field changes are
+/// compile-time failures in consumers rather than late schema/server errors.
 pub fn mls_genesis_with_governance(
     realm_id: &str,
     actor: &str,
     group_id: &str,
-    payload: &Value,
-) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MlsGenesis)
-        .target_ref(group_id.to_owned())
-        .body(payload.clone())
+    payload: &arkret_sdk::MlsGenesisPayload,
+) -> anyhow::Result<OperationBuilder> {
+    let body = serde_json::to_value(payload)?;
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MlsGenesis)
+            .target_ref(group_id.to_owned())
+            .body(body),
+    )
 }
 
 /// `ak.mls.welcome` event carrying the durable Welcome claim envelope and
-/// opaque Welcome ciphertext. The payload is passed as `Value` so callers can
-/// build from the actual MLS runtime output while still validating against the
-/// registered payload schema before submit.
+/// opaque Welcome ciphertext. As with the other closed MLS payloads, this
+/// boundary accepts only the SDK wire type so schema changes fail at compile
+/// time in consumers.
 pub fn mls_welcome_with_governance(
     realm_id: &str,
     actor: &str,
     group_id: &str,
-    payload: &Value,
-) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MlsWelcome)
-        .target_ref(group_id.to_owned())
-        .body(payload.clone())
+    payload: &arkret_sdk::MlsWelcomePayload,
+) -> anyhow::Result<OperationBuilder> {
+    let body = serde_json::to_value(payload)?;
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MlsWelcome)
+            .target_ref(group_id.to_owned())
+            .body(body),
+    )
 }
