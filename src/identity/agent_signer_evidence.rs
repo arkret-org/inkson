@@ -5,8 +5,8 @@ use arkret_sdk::signatures::agent_evidence::{
     AgentEvidenceCommonContext, AgentEvidenceRejectedReason, AgentEvidenceStateVerificationContext,
     AgentSignerEvidenceVerdict, CurrentAgentSignerEvidenceValidationContext,
     HistoricalAgentSignerEvidenceValidationContext, agent_authorization_dot_matches_event,
-    historical_receipt_verification_method, validate_current_agent_signer_evidence,
-    validate_historical_agent_signer_evidence, verify_agent_evidence_state,
+    validate_current_agent_signer_evidence, validate_historical_agent_signer_evidence,
+    verify_agent_evidence_state,
 };
 use arkret_sdk::signatures::{Ed25519DetachedJwsVerifier, PublicKeyMaterial};
 use arkret_sdk::{
@@ -268,18 +268,6 @@ pub(crate) fn verify_cached_event(
             saw_rejected = true;
             continue;
         }
-        let usage = garth::runtime_journey::SignerEvidenceUse::HistoricalVerification {
-            agent_id: selector.agent_id.clone(),
-            verification_method: selector.verification_method.clone(),
-            now: crate::clock::now_utc(),
-            event_id: selector.event_id.clone(),
-            event_digest: selector.event_digest.clone(),
-            receiver_service_id: selector.receiver_service_id.clone(),
-        };
-        if garth::runtime_journey::admit_signer_evidence(&entry.evidence, &usage).is_err() {
-            saw_rejected = true;
-            continue;
-        }
         let Some(key) = validate_cached_historical(&entry, &selector) else {
             saw_rejected = true;
             continue;
@@ -331,17 +319,9 @@ async fn verify_for_cache(
     };
     let entry =
         materialize_verified_cache_entry(http, anchor, evidence, verification_context).await?;
-    let usage = garth::runtime_journey::SignerEvidenceUse::HistoricalVerification {
-        agent_id: selector.agent_id.clone(),
-        verification_method: selector.verification_method.clone(),
-        now: crate::clock::now_utc(),
-        event_id: selector.event_id.clone(),
-        event_digest: selector.event_digest.clone(),
-        receiver_service_id: selector.receiver_service_id.clone(),
-    };
-    (garth::runtime_journey::admit_signer_evidence(&entry.evidence, &usage).is_ok()
-        && validate_cached_historical(&entry, selector).is_some())
-    .then_some(entry)
+    validate_cached_historical(&entry, selector)
+        .is_some()
+        .then_some(entry)
 }
 
 async fn materialize_verified_cache_entry(
@@ -412,17 +392,6 @@ async fn materialize_verified_cache_entry(
         }
         let key = resolve_method_key(http, anchor, method).await?;
         verification_method_public_keys.insert(method.as_str().to_owned(), key);
-    }
-    if let Some(receipt) = historical_receipt(&evidence) {
-        let receiver_method = historical_receipt_verification_method(receipt).ok()?;
-        let receiver_key = resolve_source_service_method_key(
-            http,
-            anchor,
-            &receipt.receiver_service_id,
-            &receiver_method,
-        )
-        .await?;
-        verification_method_public_keys.insert(receiver_method.as_str().to_owned(), receiver_key);
     }
     let entry = CachedAgentSignerEvidence {
         evidence,
@@ -498,12 +467,6 @@ pub(crate) async fn prefetch_for_signal(
             );
             continue;
         };
-        let Some(usage) = current_signal_evidence_use(envelope, &context) else {
-            continue;
-        };
-        if garth::runtime_journey::admit_signer_evidence(&entry.evidence, &usage).is_err() {
-            continue;
-        }
         if validate_cached_current(&entry, envelope).is_none() {
             continue;
         }
@@ -569,34 +532,6 @@ fn current_evidence_matches_context(
         && current_observation.verifier_id == *verifier_id
         && current_observation.audience == *audience
         && current_observation.challenge == *challenge
-}
-
-fn current_signal_evidence_use(
-    envelope: &arkret_wire::SignalEnvelope,
-    context: &CachedAgentSignerEvidenceContext,
-) -> Option<garth::runtime_journey::SignerEvidenceUse> {
-    let CachedAgentSignerEvidenceContext::CurrentSignal {
-        operation_id,
-        request_digest,
-        verifier_id,
-        audience,
-        challenge,
-    } = context
-    else {
-        return None;
-    };
-    Some(
-        garth::runtime_journey::SignerEvidenceUse::CurrentAdmission {
-            agent_id: envelope.sender_actor_id.clone(),
-            verification_method: envelope.proof.verification_method.clone(),
-            now: crate::clock::now_utc(),
-            operation_id: operation_id.clone(),
-            request_digest: request_digest.clone(),
-            verifier_id: verifier_id.clone(),
-            audience: audience.clone(),
-            challenge: challenge.clone(),
-        },
-    )
 }
 
 fn signal_evidence_query(
@@ -666,11 +601,8 @@ pub(crate) fn resolve_cached_signal_key(
         &envelope.proof.verification_method,
     ) {
         let CachedAgentSignerEvidenceContext::CurrentSignal {
-            operation_id,
             request_digest,
-            verifier_id,
-            audience,
-            challenge,
+            ..
         } = &entry.verification_context
         else {
             continue;
@@ -678,19 +610,6 @@ pub(crate) fn resolve_cached_signal_key(
         if envelope.envelope_digest().ok().as_ref() != Some(request_digest)
             || !current_evidence_matches_context(&entry.evidence, &entry.verification_context)
         {
-            continue;
-        }
-        let usage = garth::runtime_journey::SignerEvidenceUse::CurrentAdmission {
-            agent_id: envelope.sender_actor_id.clone(),
-            verification_method: envelope.proof.verification_method.clone(),
-            now: crate::clock::now_utc(),
-            operation_id: operation_id.clone(),
-            request_digest: request_digest.clone(),
-            verifier_id: verifier_id.clone(),
-            audience: audience.clone(),
-            challenge: challenge.clone(),
-        };
-        if garth::runtime_journey::admit_signer_evidence(&entry.evidence, &usage).is_err() {
             continue;
         }
         let key = validate_cached_current(&entry, envelope)?;
@@ -970,20 +889,12 @@ fn validate_cached_historical(
     entry: &CachedAgentSignerEvidence,
     selector: &EventAgentSelector,
 ) -> Option<[u8; 32]> {
-    let receipt = historical_receipt(&entry.evidence)?;
-    let method = historical_receipt_verification_method(receipt).ok()?;
     let (state, public_key_digest, binding_digest) = verified_evidence_state(entry)?;
     let common = common_validation_context(entry, &state, &public_key_digest, &binding_digest)?;
-    let resolve_receiver = |requested: &DidUrl, accepted_at: chrono::DateTime<chrono::Utc>| {
-        (requested == &method && accepted_at == receipt.accepted_at)
-            .then(|| {
-                entry
-                    .verification_method_public_keys
-                    .get(requested.as_str())
-                    .cloned()
-            })
-            .flatten()
-    };
+    // The ordinary resolver only exposes the current DID/service document.
+    // Until the client has ingested and validated the complete DID history,
+    // it cannot honestly resolve a protected receipt kid at accepted_at.
+    let resolve_receiver = |_: &DidUrl, _: chrono::DateTime<chrono::Utc>| None;
     match validate_historical_agent_signer_evidence(
         Some(&entry.evidence),
         &HistoricalAgentSignerEvidenceValidationContext {
