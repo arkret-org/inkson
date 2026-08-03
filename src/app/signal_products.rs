@@ -207,9 +207,7 @@ impl SignalProductSink for AppSignalProductSink {
             did_cache.set(anchor.into_cache());
             let resolved = crate::identity::agent_signer_evidence::prefetch_for_signal(
                 &http,
-                &envelope.realm_id,
-                &envelope.sender_actor_id,
-                &envelope.proof.verification_method,
+                envelope,
                 &self.state_store,
                 crate::app::runtime_adapter::value_cell(self.did_cache),
             )

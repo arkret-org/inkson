@@ -672,6 +672,7 @@ pub fn author_recovery_publication_submission(
         authorization_lease: Some(lease),
         cba_proof_bundles: Vec::new(),
         control_proposal_receipt,
+        membership_compensation_evidence: None,
     };
     submission.validate_structural()?;
     Ok(submission)

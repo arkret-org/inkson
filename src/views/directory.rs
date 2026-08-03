@@ -294,10 +294,7 @@ pub fn DirectoryPanel(
                                     })
                                     .await
                                     {
-                                        Ok(contact) => contact_state.set(format!(
-                                            "request {:?} {}",
-                                            contact.state, contact.request_event_ref
-                                        )),
+                                        Ok(contact) => contact_state.set(format!("request {contact:?}")),
                                         Err(err) => contact_state
                                             .set(format!("request: {}", err.display())),
                                     }
@@ -309,6 +306,8 @@ pub fn DirectoryPanel(
                     Button {
                         variant: ButtonVariant::Secondary,
                         "data-testid": "accept-contact-button",
+                        disabled: true,
+                        title: "Unavailable until the signed request acceptance receipt is exposed",
                         onclick: {
                             let base = base_url.clone();
                             move |_| {
@@ -321,10 +320,7 @@ pub fn DirectoryPanel(
                                     })
                                     .await
                                     {
-                                        Ok(contact) => contact_state.set(format!(
-                                            "respond {:?} {}",
-                                            contact.state, contact.response_event_ref
-                                        )),
+                                        Ok(()) => contact_state.set("respond accepted".to_owned()),
                                         Err(err) => contact_state
                                             .set(format!("accept: {}", err.display())),
                                     }
@@ -336,6 +332,8 @@ pub fn DirectoryPanel(
                     Button {
                         variant: ButtonVariant::Secondary,
                         "data-testid": "reject-contact-button",
+                        disabled: true,
+                        title: "Unavailable until the signed request acceptance receipt is exposed",
                         onclick: {
                             let base = base_url.clone();
                             move |_| {
@@ -348,10 +346,7 @@ pub fn DirectoryPanel(
                                     })
                                     .await
                                     {
-                                        Ok(contact) => contact_state.set(format!(
-                                            "respond {:?} {}",
-                                            contact.state, contact.response_event_ref
-                                        )),
+                                        Ok(()) => contact_state.set("respond rejected".to_owned()),
                                         Err(err) => contact_state
                                             .set(format!("reject: {}", err.display())),
                                     }
@@ -381,7 +376,7 @@ pub fn DirectoryPanel(
                                                 .map(|contact| {
                                                     format!(
                                                         "{} {}",
-                                                        contact.peer,
+                                                        crate::models::contact_peer_id(contact),
                                                         crate::models::contact_state_wire(contact.state)
                                                     )
                                                 })

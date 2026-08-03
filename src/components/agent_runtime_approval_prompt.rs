@@ -543,7 +543,10 @@ fn pending_runtime_approval_from_view(
     // Only a terminal (deactivated) agent has no pending approval to surface;
     // a pending runtime-key request only exists while a pairing handle is open
     // (key-management.md §3.6.1).
-    if matches!(view.status, arkret_sdk::AgentLifecycleState::Deactivated) {
+    if matches!(
+        view.agent.lifecycle,
+        arkret_sdk::AgentLifecycleState::Deactivated
+    ) {
         return None;
     }
     let key_state = view.key_state.as_ref()?;
@@ -586,7 +589,10 @@ fn pending_runtime_approval_from_view(
         request_json,
         // A replacement pairing is one where the agent already holds an active
         // key — projected as runtime_state replacing (key-management.md §3.6.1).
-        replacement: matches!(view.runtime_state, arkret_sdk::AgentRuntimeState::Replacing),
+        replacement: matches!(
+            crate::views::agents::model::key_state_runtime_state(key_state),
+            arkret_sdk::AgentRuntimeState::Replacing
+        ),
     })
 }
 

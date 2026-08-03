@@ -9,11 +9,10 @@ use std::time::Duration;
 
 use arkret_models_collaboration::agent_operations::{
     AgentDeactivateRequestBody, AgentLifecycleState, AgentPairingMode, AgentPauseRequestBody,
-    AgentPcrRecoveryState, AgentProjection, AgentProvisionOutcome, AgentProvisionRequestBody,
-    AgentRenewPairingOutcome, AgentResumeRequestBody, AgentRuntimeState, AgentView, KeyState,
+    AgentPcrRecoveryState, AgentRenewPairingOutcome, AgentResumeRequestBody, AgentRuntimeState,
+    AgentView, KeyState,
 };
-use arkret_models_collaboration::events_payloads::agent::{AgentKeyRevokePayload, AgentKeyScope};
-use arkret_models_collaboration::governance::agent_artifacts::GrantSnapshot;
+use arkret_models_collaboration::events_payloads::agent::AgentKeyScope;
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::{use_navigator, use_route};
@@ -21,10 +20,11 @@ use dioxus_router::hooks::{use_navigator, use_route};
 use super::model::{
     AgentGrantPreset, AgentServiceScopePreset, agent_lifecycle_wire, agent_runtime_state_wire,
     agent_state_badge_class, agent_state_label, agent_view_from_directory_row,
-    build_agent_pairing_deep_link, build_agent_pairing_handoff_token,
-    build_agent_provision_event_drafts, is_pairing_request_expired, render_agent_pairing_qr_svg,
-    requested_scope_for_presets,
+    build_agent_pairing_deep_link, build_agent_pairing_handoff_token, is_pairing_request_expired,
+    render_agent_pairing_qr_svg,
 };
+#[cfg(test)]
+use super::model::requested_scope_for_presets;
 use crate::components::{QrSharePanel, UiIcon};
 use crate::routes::Route;
 use crate::transport::auth::{with_authed_api, with_authed_sdk_client, with_event_submitter};
@@ -69,7 +69,7 @@ fn agent_field(agent: &AgentView, key: &str) -> String {
             .as_ref()
             .map(|value| value.as_str().to_owned())
             .unwrap_or_default(),
-        "status" => agent_lifecycle_wire(agent.status).to_owned(),
+        "status" => agent_lifecycle_wire(agent.agent.lifecycle).to_owned(),
         "created_at" => agent
             .agent
             .created_at
@@ -197,8 +197,6 @@ mod directory_refresh_tests {
                 AgentLifecycleState::Active,
                 AgentRuntimeState::PendingRuntimeKey,
             ),
-            status: AgentLifecycleState::Active,
-            runtime_state: AgentRuntimeState::PendingRuntimeKey,
             grants: vec![arkret_sdk::GrantSnapshot {
                 grant_id: arkret_sdk::GrantId::new("ak:grant:01964137-0000-7000-8000-000000000010")
                     .unwrap(),
@@ -212,16 +210,17 @@ mod directory_refresh_tests {
         }];
         let directory_rows = vec![AgentView {
             agent: test_agent_projection(AgentLifecycleState::Active, AgentRuntimeState::Ready),
-            status: AgentLifecycleState::Active,
-            runtime_state: AgentRuntimeState::Ready,
             grants: Vec::new(),
             key_state: None,
         }];
 
         replace_agent_directory(&mut rows, directory_rows);
 
-        assert_eq!(rows[0].status, AgentLifecycleState::Active);
-        assert_eq!(rows[0].runtime_state, AgentRuntimeState::Ready);
+        assert_eq!(rows[0].agent.lifecycle, AgentLifecycleState::Active);
+        assert_eq!(
+            crate::views::agents::model::agent_projection_runtime_state(&rows[0].agent),
+            AgentRuntimeState::Ready
+        );
         assert_eq!(
             rows[0].grants[0].grant_id.as_str(),
             "ak:grant:01964137-0000-7000-8000-000000000010"
@@ -231,14 +230,38 @@ mod directory_refresh_tests {
     fn test_agent_projection(
         status: AgentLifecycleState,
         runtime_state: AgentRuntimeState,
-    ) -> AgentProjection {
-        AgentProjection {
+    ) -> arkret_sdk::AgentProjection {
+        arkret_sdk::AgentProjection {
             agent_id: arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
             display_name: None,
             slug: "summary".to_owned(),
             avatar_blob_ref: None,
-            status,
-            runtime_state,
+            lifecycle: status,
+            readiness: arkret_sdk::AgentReadiness {
+                state: if runtime_state == AgentRuntimeState::Ready {
+                    arkret_sdk::AgentReadinessState::Ready
+                } else {
+                    arkret_sdk::AgentReadinessState::NotReady
+                },
+                blockers: match runtime_state {
+                    AgentRuntimeState::Ready => Vec::new(),
+                    AgentRuntimeState::Replacing => {
+                        vec![arkret_sdk::AgentReadinessBlocker::PairingOpen]
+                    }
+                    AgentRuntimeState::PendingRuntimeKey => vec![
+                        arkret_sdk::AgentReadinessBlocker::RuntimeKeyMissing,
+                        arkret_sdk::AgentReadinessBlocker::PairingOpen,
+                    ],
+                    AgentRuntimeState::PairingExpired => {
+                        vec![arkret_sdk::AgentReadinessBlocker::RuntimeKeyMissing]
+                    }
+                },
+            },
+            presence: arkret_sdk::AgentPresence {
+                state: arkret_sdk::AgentPresenceState::Unknown,
+                expires_at: crate::clock::now_utc(),
+                refresh_after: crate::clock::now_utc(),
+            },
             created_at: None,
             updated_at: None,
         }
@@ -304,10 +327,8 @@ mod directory_refresh_tests {
             &AgentServiceScopePreset::DEFAULTS,
         )
         .unwrap();
-        let scope_digest = arkret_signatures::agent::agent_requested_scope_digest(
-            &agent_id,
-            &controller_id,
-            &scope,
+        let scope_digest = arkret_sdk::Hash::new(
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         )
         .unwrap();
         // Keyed agents (ready/replacing) carry an active authorization; never-keyed
@@ -318,8 +339,6 @@ mod directory_refresh_tests {
         };
         AgentView {
             agent: test_agent_projection(status, runtime_state),
-            status,
-            runtime_state,
             grants: Vec::new(),
             key_state: Some(KeyState {
                 agent_id,
@@ -332,15 +351,29 @@ mod directory_refresh_tests {
                     "did:web:agents.example:summary#managed-controller",
                 )
                 .unwrap(),
-                status,
-                runtime_state,
                 pcr_recovery: AgentPcrRecoveryState::Pending,
                 requested_scope: scope,
                 requested_scope_digest: scope_digest,
-                pairing_request_id: None,
-                pairing_mode: None,
-                pairing_code: None,
-                pairing_expires_at: None,
+                pairing_request_id: matches!(
+                    runtime_state,
+                    AgentRuntimeState::PendingRuntimeKey | AgentRuntimeState::Replacing
+                )
+                .then(|| arkret_sdk::OpaqueLocalId::new("pairing-request-1").unwrap()),
+                pairing_mode: match runtime_state {
+                    AgentRuntimeState::PendingRuntimeKey => Some(AgentPairingMode::Bootstrap),
+                    AgentRuntimeState::Replacing => Some(AgentPairingMode::Replacement),
+                    AgentRuntimeState::Ready | AgentRuntimeState::PairingExpired => None,
+                },
+                pairing_code: matches!(
+                    runtime_state,
+                    AgentRuntimeState::PendingRuntimeKey | AgentRuntimeState::Replacing
+                )
+                .then(|| "pairing-code".to_owned()),
+                pairing_expires_at: matches!(
+                    runtime_state,
+                    AgentRuntimeState::PendingRuntimeKey | AgentRuntimeState::Replacing
+                )
+                .then(|| crate::clock::now_utc() + chrono::Duration::hours(1)),
                 approval_request_id: None,
                 pending_runtime_key_request: None,
                 approval_requested_at: None,
@@ -411,11 +444,10 @@ mod directory_refresh_tests {
 
         // Bootstrap re-open preserves the lifecycle intent and moves only the
         // derived runtime_state back to pending_runtime_key.
-        assert_eq!(rows[0].status, AgentLifecycleState::Active);
-        assert_eq!(rows[0].runtime_state, AgentRuntimeState::PendingRuntimeKey);
+        assert_eq!(rows[0].agent.lifecycle, AgentLifecycleState::Active);
         let key_state = rows[0].key_state.as_ref().unwrap();
         assert_eq!(
-            key_state.runtime_state,
+            crate::views::agents::model::key_state_runtime_state(key_state),
             AgentRuntimeState::PendingRuntimeKey
         );
         assert_eq!(key_state.pairing_code.as_deref(), Some("fresh-code"));
@@ -438,11 +470,12 @@ mod directory_refresh_tests {
         // Runtime replacement preserves the lifecycle intent (paused stays
         // paused; an active agent would stay active) and only projects the
         // derived runtime_state as replacing (key-management.md §3.6.1).
-        assert_eq!(rows[0].status, AgentLifecycleState::Paused);
-        assert_eq!(rows[0].runtime_state, AgentRuntimeState::Replacing);
+        assert_eq!(rows[0].agent.lifecycle, AgentLifecycleState::Paused);
         let key_state = rows[0].key_state.as_ref().unwrap();
-        assert_eq!(key_state.status, AgentLifecycleState::Paused);
-        assert_eq!(key_state.runtime_state, AgentRuntimeState::Replacing);
+        assert_eq!(
+            crate::views::agents::model::key_state_runtime_state(key_state),
+            AgentRuntimeState::Replacing
+        );
         assert_eq!(key_state.pairing_code.as_deref(), Some("fresh-code"));
     }
 }
@@ -450,8 +483,7 @@ mod directory_refresh_tests {
 fn update_agent_status(rows: &mut [AgentView], id: &str, status: AgentLifecycleState) {
     for row in rows.iter_mut() {
         if agent_id(row) == id {
-            row.status = status;
-            row.agent.status = status;
+            row.agent.lifecycle = status;
         }
     }
 }
@@ -510,7 +542,7 @@ fn apply_renewed_pairing(
     // to a never-keyed agent, runtime replacement to one already holding an
     // active key — the pairing_mode must agree with the loaded key state.
     let has_active_authorization = !key_state.active_authorizations.is_empty();
-    let runtime_state = match outcome.pairing_mode {
+    match outcome.pairing_mode {
         AgentPairingMode::Bootstrap if !has_active_authorization => {
             AgentRuntimeState::PendingRuntimeKey
         }
@@ -522,9 +554,6 @@ fn apply_renewed_pairing(
             return Err("replacement pairing response conflicts with the loaded Agent key state");
         }
     };
-    key_state.runtime_state = runtime_state;
-    row.runtime_state = runtime_state;
-    row.agent.runtime_state = runtime_state;
     key_state.pcr_recovery = outcome.pcr_recovery.clone();
     key_state.pairing_request_id = Some(outcome.pairing_request_id.clone());
     key_state.pairing_mode = Some(outcome.pairing_mode);
@@ -859,7 +888,6 @@ fn spawn_deactivate_agent(
     controller_id: String,
     status: AgentLifecycleState,
     key_state: Option<KeyState>,
-    grants: Vec<GrantSnapshot>,
     mut agents: Signal<Vec<AgentView>>,
     mut last_op_status: Signal<String>,
     mut deactivate_dialog_open: Signal<bool>,
@@ -897,61 +925,6 @@ fn spawn_deactivate_agent(
                 return;
             }
         };
-        let mut drafts = Vec::new();
-        for authorization in &key_state.active_authorizations {
-            let payload = AgentKeyRevokePayload {
-                agent_id: key_state.agent_id.clone(),
-                key_id: authorization.key_id.clone(),
-                revoked_by: key_state.controller_id.clone(),
-                revoked_at: changed_at,
-                reason: Some(reason.clone()),
-            };
-            // v1 projects `ak.agent.key.revoke` as `or_set_remove_observed`:
-            // the reducer removes every surviving add dot on the target cell
-            // under the frozen pre-state, so the producer no longer enumerates
-            // the authorized Event refs it is retiring.
-            let event = match arkret_event_draft::build_agent_key_revoke_event(
-                &payload,
-                arkret_sdk::EventId::new(arkret_sdk::new_prefixed_uuid7("ak:event:"))
-                    .expect("generated Agent key revoke Event id is valid"),
-                arkret_sdk::ScopeRef::Realm {
-                    realm_id: key_state.principal_control_realm_id.clone(),
-                },
-                key_state.agent_id.clone(),
-                key_state.controller_id.clone(),
-                key_state.controller_authorization_ref.clone(),
-                1,
-                placeholder_hlc.clone(),
-            ) {
-                Ok(event) => event,
-                Err(error) => {
-                    last_op_status.set(format!("Agent key revocation authoring failed: {error}"));
-                    return;
-                }
-            };
-            drafts.push(event);
-        }
-        let key_event_count = drafts.len();
-        for grant in &grants {
-            let event = match crate::operation::ak_ops::capability_revoke(
-                grant.realm_id.as_str(),
-                &controller_id,
-                grant.grant_id.as_str(),
-                Some(&reason),
-            )
-            .and_then(|builder| builder.build_sdk_event("inkson"))
-            {
-                Ok(event) => event,
-                Err(error) => {
-                    last_op_status.set(format!(
-                        "Agent capability revocation authoring failed: {error}"
-                    ));
-                    return;
-                }
-            };
-            drafts.push(event);
-        }
-        let capability_event_count = grants.len();
         let lifecycle_event = match arkret_event_draft::build_agent_deactivate_event(
             key_state.agent_id.clone(),
             key_state.controller_id.clone(),
@@ -971,25 +944,18 @@ fn spawn_deactivate_agent(
                 return;
             }
         };
-        drafts.push(lifecycle_event);
 
         let id_for_status = id.clone();
         let refresh_api_token = api_token.clone();
         let result = with_event_submitter(&base, api_token, move |submitter| async move {
-            let mut prepared = submitter.prepare_initial_submissions(drafts).await?;
-            let lifecycle_event = prepared
+            let lifecycle_event = submitter
+                .prepare_initial_submissions(vec![lifecycle_event])
+                .await?
                 .pop()
                 .ok_or_else(|| anyhow::anyhow!("deactivation lifecycle Event is missing"))?;
-            let capability_revocation_events = prepared.split_off(key_event_count);
-            if capability_revocation_events.len() != capability_event_count {
-                anyhow::bail!("deactivation capability Event count changed during authoring");
-            }
-            let key_revocation_events = prepared;
             let body = AgentDeactivateRequestBody {
                 reason: Some(arkret_sdk::NonEmptyString::new(reason).map_err(anyhow::Error::msg)?),
                 lifecycle_event,
-                key_revocation_events,
-                capability_revocation_events,
             };
             submitter
                 .http()
@@ -1108,13 +1074,19 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                 let rows = agents.read();
                 if rows.iter().any(|agent| {
                     agent_id(agent) == current
-                        && agent_matches_filter(agent_lifecycle_wire(agent.status), &filter)
+                        && agent_matches_filter(
+                            agent_lifecycle_wire(agent.agent.lifecycle),
+                            &filter,
+                        )
                 }) {
                     current.clone()
                 } else {
                     rows.iter()
                         .find(|agent| {
-                            agent_matches_filter(agent_lifecycle_wire(agent.status), &filter)
+                            agent_matches_filter(
+                                agent_lifecycle_wire(agent.agent.lifecycle),
+                                &filter,
+                            )
                         })
                         .map(agent_id)
                         .unwrap_or_default()
@@ -1146,7 +1118,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
             .find(|agent| {
                 agent_id(agent) == selected_id_now
                     && agent_matches_filter(
-                        agent_lifecycle_wire(agent.status),
+                        agent_lifecycle_wire(agent.agent.lifecycle),
                         &active_agent_filter,
                     )
             })
@@ -1154,13 +1126,16 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
         let visible_agents = rows
             .iter()
             .filter(|agent| {
-                agent_matches_filter(agent_lifecycle_wire(agent.status), &active_agent_filter)
+                agent_matches_filter(
+                    agent_lifecycle_wire(agent.agent.lifecycle),
+                    &active_agent_filter,
+                )
             })
             .cloned()
             .collect::<Vec<_>>();
         let has_any_agents = rows
             .iter()
-            .any(|agent| agent_matches_filter(agent_lifecycle_wire(agent.status), "all"));
+            .any(|agent| agent_matches_filter(agent_lifecycle_wire(agent.agent.lifecycle), "all"));
         (selected_agent, visible_agents, has_any_agents)
     };
     let last_op_status_message = last_op_status();
@@ -1179,11 +1154,14 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
     // pause/resume/filters key off the lifecycle axis.
     let selected_status = selected_agent
         .as_ref()
-        .map(|agent| agent_lifecycle_wire(agent.status).to_owned())
+        .map(|agent| agent_lifecycle_wire(agent.agent.lifecycle).to_owned())
         .unwrap_or_default();
     let selected_runtime_state = selected_agent
         .as_ref()
-        .map(|agent| agent_runtime_state_wire(agent.runtime_state).to_owned())
+        .map(|agent| {
+            agent_runtime_state_wire(super::model::agent_projection_runtime_state(&agent.agent))
+                .to_owned()
+        })
         .unwrap_or_default();
     let selected_key_state = selected_agent
         .as_ref()
@@ -1198,11 +1176,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
     let deactivate_key_state = selected_key_state_owned.clone();
     let deactivate_status = selected_agent
         .as_ref()
-        .map(|agent| agent.status)
-        .unwrap_or_default();
-    let deactivate_grants = selected_agent
-        .as_ref()
-        .map(|agent| agent.grants.clone())
+        .map(|agent| agent.agent.lifecycle)
         .unwrap_or_default();
     let selected_pcr_recovery_ready = pairing_material_can_be_exposed(
         selected_key_state.map(|key_state| &key_state.pcr_recovery),
@@ -1379,8 +1353,10 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                             {
                                 let id = agent_id(agent);
                                 let slug_label = agent_slug_label(agent);
-                                let status = agent_lifecycle_wire(agent.status);
-                                let runtime_state = agent_runtime_state_wire(agent.runtime_state);
+                                let status = agent_lifecycle_wire(agent.agent.lifecycle);
+                                let runtime_state = agent_runtime_state_wire(
+                                    super::model::agent_projection_runtime_state(&agent.agent),
+                                );
                                 let id_label = short_protocol_id(&id);
                                 let is_selected = !is_create_mode && selected_id_now == id;
                                 let row_class = if is_selected {
@@ -1531,282 +1507,12 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                     Button {
                                         variant: ButtonVariant::Primary,
                                         "data-testid": "agent-admin-provision-button",
-                                        disabled: new_agent_slug().trim().is_empty(),
-                                        onclick: {
-                                            let base = base_url.clone();
-                                            let controller_id = controller_id.clone();
-                                            move |_| {
-                                                let slug_value = normalize_agent_slug(&new_agent_slug());
-                                                if slug_value.is_empty() {
-                                                    last_op_status.set("Slug is required.".to_owned());
-                                                    return;
-                                                }
-                                                if let Err(error) =
-                                                    arkret_models_identity::validate_agent_slug(&slug_value)
-                                                {
-                                                    last_op_status.set(format!("Slug is invalid: {error}"));
-                                                    return;
-                                                }
-                                                let content_presets = provision_presets.read().clone();
-                                                let service_scopes = provision_service_scopes.read().clone();
-                                                if service_scopes.is_empty() {
-                                                    last_op_status.set("Select at least one runtime service surface.".to_owned());
-                                                    return;
-                                                }
-                                                let controller_id = match arkret_sdk::Did::new(
-                                                    controller_id.trim().to_owned(),
-                                                ) {
-                                                    Ok(controller_id) => controller_id,
-                                                    Err(error) => {
-                                                        last_op_status.set(format!(
-                                                            "Create failed: signed-in controller DID is invalid: {error}"
-                                                        ));
-                                                        return;
-                                                    }
-                                                };
-                                                let requested_scope = match requested_scope_for_presets(
-                                                    &content_presets,
-                                                    &service_scopes,
-                                                ) {
-                                                    Some(scope) => scope,
-                                                    None => {
-                                                        last_op_status.set("Select at least one runtime service surface.".to_owned());
-                                                        return;
-                                                    }
-                                                };
-                                                let avatar_blob_ref = arkret_sdk::BlobRef::new(
-                                                    new_agent_avatar_blob_ref(),
-                                                )
-                                                .ok();
-                                                let body = AgentProvisionRequestBody::Prepare {
-                                                    display_name: None,
-                                                    slug: slug_value.clone(),
-                                                    avatar_blob_ref: avatar_blob_ref.clone(),
-                                                    requested_scope: requested_scope.clone(),
-                                                    pairing_ttl_ms: None,
-                                                };
-                                                let base = base.clone();
-                                                let api_token = token();
-                                                spawn(async move {
-                                                    let preparation = match with_authed_sdk_client(
-                                                        &base,
-                                                        api_token.clone(),
-                                                        move |http| {
-                                                            let body = body.clone();
-                                                            async move { http.agent_provision(&body).await.map_err(anyhow::Error::from) }
-                                                        },
-                                                    )
-                                                    .await
-                                                    {
-                                                        Ok(AgentProvisionOutcome::AwaitingControllerEvents {
-                                                            agent_id,
-                                                            principal_control_realm_id,
-                                                            controller_realm_id,
-                                                            controller_authorization_ref,
-                                                            requested_scope_digest,
-                                                        }) => (
-                                                            agent_id,
-                                                            principal_control_realm_id,
-                                                            controller_realm_id,
-                                                            controller_authorization_ref,
-                                                            requested_scope_digest,
-                                                        ),
-                                                        Ok(AgentProvisionOutcome::Complete { .. }) => {
-                                                            last_op_status.set(
-                                                                "Create failed: prepare returned a completed allocation"
-                                                                    .to_owned(),
-                                                            );
-                                                            return;
-                                                        }
-                                                        Err(err) => {
-                                                            last_op_status.set(format!(
-                                                                "Create failed: {}",
-                                                                err.display()
-                                                            ));
-                                                            return;
-                                                        }
-                                                    };
-                                                    let (
-                                                        allocated_agent_id,
-                                                        principal_control_realm_id,
-                                                        controller_realm_id,
-                                                        _controller_authorization_ref,
-                                                        requested_scope_digest,
-                                                    ) = preparation;
-                                                    let observed_digest = match arkret_signatures::agent::agent_requested_scope_digest(
-                                                        &allocated_agent_id,
-                                                        &controller_id,
-                                                        &requested_scope,
-                                                    ) {
-                                                        Ok(digest) => digest,
-                                                        Err(error) => {
-                                                            last_op_status.set(format!(
-                                                                "Create failed: requested scope digest: {error}"
-                                                            ));
-                                                            return;
-                                                        }
-                                                    };
-                                                    if observed_digest != requested_scope_digest {
-                                                        last_op_status.set(
-                                                            "Create failed: server allocation scope digest mismatch"
-                                                                .to_owned(),
-                                                        );
-                                                        return;
-                                                    }
-                                                    let drafts = match build_agent_provision_event_drafts(
-                                                        &controller_id,
-                                                        &controller_realm_id,
-                                                        &allocated_agent_id,
-                                                        &slug_value,
-                                                    ) {
-                                                        Ok(events) => events,
-                                                        Err(error) => {
-                                                            last_op_status.set(format!(
-                                                                "Create failed: author provision Events: {error}"
-                                                            ));
-                                                            return;
-                                                        }
-                                                    };
-                                                    let signed_events = match with_event_submitter(
-                                                        &base,
-                                                        api_token.clone(),
-                                                        move |submitter| async move {
-                                                            let events = submitter
-                                                                .prepare_initial_submissions(vec![
-                                                                    drafts.accountability_grant,
-                                                                    drafts.selector_claim,
-                                                                ])
-                                                                .await?;
-                                                            let mut events = events.into_iter();
-                                                            Ok(arkret_sdk::AgentProvisionEvents {
-                                                                accountability_grant: events.next().expect("two prepared Events"),
-                                                                selector_claim: events.next().expect("two prepared Events"),
-                                                            })
-                                                        },
-                                                    )
-                                                    .await
-                                                    {
-                                                        Ok(events) => events,
-                                                        Err(error) => {
-                                                            last_op_status.set(format!(
-                                                                "Create failed: sign provision Events: {}",
-                                                                error.display()
-                                                            ));
-                                                            return;
-                                                        }
-                                                    };
-                                                    let commit = AgentProvisionRequestBody::Commit {
-                                                        agent_id: allocated_agent_id,
-                                                        principal_control_realm_id,
-                                                        display_name: None,
-                                                        slug: slug_value.clone(),
-                                                        avatar_blob_ref: avatar_blob_ref.clone(),
-                                                        requested_scope: requested_scope.clone(),
-                                                        provision_events: Box::new(signed_events),
-                                                        pairing_ttl_ms: None,
-                                                    };
-                                                    let outcome = match with_authed_sdk_client(
-                                                        &base,
-                                                        api_token.clone(),
-                                                        move |http| async move {
-                                                            http.agent_provision(&commit)
-                                                                .await
-                                                                .map_err(anyhow::Error::from)
-                                                        },
-                                                    )
-                                                    .await
-                                                    {
-                                                        Ok(AgentProvisionOutcome::Complete { outcome }) => outcome,
-                                                        Ok(AgentProvisionOutcome::AwaitingControllerEvents { .. }) => {
-                                                            last_op_status.set(
-                                                                "Create failed: commit returned another preparation"
-                                                                    .to_owned(),
-                                                            );
-                                                            return;
-                                                        }
-                                                        Err(error) => {
-                                                            last_op_status.set(format!(
-                                                                "Create failed: {}",
-                                                                error.display()
-                                                            ));
-                                                            return;
-                                                        }
-                                                    };
-                                                    let bootstrap_outcome = outcome.clone();
-                                                    if let Err(err) = with_authed_api(
-                                                        &base,
-                                                        api_token.clone(),
-                                                        move |api| async move {
-                                                            super::bootstrap::bootstrap_provisioned_agent(
-                                                                &api,
-                                                                state_store,
-                                                                &bootstrap_outcome.agent_id,
-                                                                &bootstrap_outcome.principal_control_realm_id,
-                                                                &bootstrap_outcome.controller_authorization_ref,
-                                                                None,
-                                                            )
-                                                            .await
-                                                        },
-                                                    )
-                                                    .await
-                                                    {
-                                                        last_op_status.set(format!(
-                                                            "Agent allocated, but PCR recovery setup failed: {}",
-                                                            err.display()
-                                                        ));
-                                                        spawn_refresh_agents(
-                                                            base.clone(),
-                                                            api_token,
-                                                            agents,
-                                                            list_status,
-                                                            agent_list_refresh_epoch,
-                                                        );
-                                                        // The provision commit already succeeded, so
-                                                        // this Active agent is in agent_list even though
-                                                        // PCR recovery setup failed — keep the sidebar
-                                                        // consistent with My Agents.
-                                                        bump_owned_agents_rev(owned_agents_rev);
-                                                        return;
-                                                    }
-                                                    let agent_view = AgentView {
-                                                        agent: AgentProjection {
-                                                            agent_id: outcome.agent_id,
-                                                            display_name: None,
-                                                            slug: slug_value,
-                                                            avatar_blob_ref,
-                                                            // Provisioned agents run by intent
-                                                            // (active) but need first pairing, so
-                                                            // runtime_state is pending_runtime_key
-                                                            // (key-management.md §3.6.1).
-                                                            status: AgentLifecycleState::Active,
-                                                            runtime_state: AgentRuntimeState::PendingRuntimeKey,
-                                                            created_at: None,
-                                                            updated_at: None,
-                                                        },
-                                                        status: AgentLifecycleState::Active,
-                                                        runtime_state: AgentRuntimeState::PendingRuntimeKey,
-                                                        grants: Vec::new(),
-                                                        key_state: None,
-                                                    };
-                                                    let created_id = agent_id(&agent_view);
-                                                    agent_list_refresh_epoch.set(
-                                                        agent_list_refresh_epoch()
-                                                            .saturating_add(1),
-                                                    );
-                                                    agents.with_mut(|rows| upsert_agent_view(rows, agent_view));
-                                                    // Newly provisioned agents are Active, so they belong in
-                                                    // the Contacts sidebar — notify it to re-pull agent_list.
-                                                    bump_owned_agents_rev(owned_agents_rev);
-                                                    selected_agent_id.set(created_id.clone());
-                                                    create_mode.set(false);
-                                                    new_agent_avatar_blob_ref.set(String::new());
-
-                                                    last_op_status.set(format!(
-                                                        "Created {} with recoverable Agent PCR. Add it to a Realm to enable data access.",
-                                                        short_protocol_id(&created_id)
-                                                    ));
-                                                });
-                                            }
+                                        disabled: true,
+                                        onclick: move |_| {
+                                            last_op_status.set(
+                                                "Create is unavailable because Agent provisioning does not expose the participation ceiling required to verify requested_scope_digest."
+                                                    .to_owned(),
+                                            );
                                         },
                                         "Create"
                                     }
@@ -2581,7 +2287,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                 let base = base_url.clone();
                                                 let controller_id = deactivate_controller_id.clone();
                                                 let key_state = deactivate_key_state.clone();
-                                                let grants = deactivate_grants.clone();
                                                 move |_| {
                                                     let id = selected_agent_id();
                                                     if id.is_empty() { return; }
@@ -2592,7 +2297,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                         controller_id.clone(),
                                                         deactivate_status,
                                                         key_state.clone(),
-                                                        grants.clone(),
                                                         agents,
                                                         last_op_status,
                                                         deactivate_dialog_open,

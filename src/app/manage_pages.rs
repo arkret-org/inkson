@@ -5,13 +5,11 @@ pub(super) fn contact_manage_scope_summary(contact: &crate::models::ContactListR
     for scope in contact
         .bidirectional_scopes
         .iter()
-        .chain(contact.effective_scopes.iter())
-        .chain(contact.granted_by_me.iter())
-        .chain(contact.granted_to_me.iter())
+        .chain(contact.effective_scopes.iter().flatten())
+        .chain(contact.granted_to_peer_scopes.iter())
+        .chain(contact.granted_by_peer_scopes.iter())
     {
-        if !scope.trim().is_empty() {
-            seen.insert(scope.clone());
-        }
+        seen.insert(crate::models::contact_scope_wire(*scope).to_owned());
     }
     if seen.is_empty() {
         "No shared scopes".to_owned()
@@ -334,12 +332,17 @@ pub(super) fn ContactsManagePage(
             let scopes = contact_manage_scope_summary(contact);
             let display_name = crate::views::helpers::actor_display_label(
                 &state_store.read(),
-                contact.peer.as_str(),
+                crate::models::contact_peer_id(contact).as_str(),
             );
             let state = crate::models::contact_state_wire(contact.state);
             sidebar_text_matches_query(
                 &normalized_query,
-                &[contact.peer.as_str(), state, &display_name, &scopes],
+                &[
+                    crate::models::contact_peer_id(contact).as_str(),
+                    state,
+                    &display_name,
+                    &scopes,
+                ],
             )
         })
         .cloned()
@@ -386,7 +389,7 @@ pub(super) fn ContactsManagePage(
                                 onclick: {
                                     let peers = filtered_rows
                                         .iter()
-                                        .map(|contact| contact.peer.to_string())
+                                        .map(|contact| crate::models::contact_peer_id(contact).to_string())
                                         .collect::<BTreeSet<_>>();
                                     move |_| selection.set(peers.clone())
                                 },
@@ -406,7 +409,8 @@ pub(super) fn ContactsManagePage(
                                 size: ButtonSize::Sm,
                                 r#type: "button",
                                 "data-testid": "contacts-manage-delete-selected",
-                                disabled: selection_count == 0 || busy() || !has_session,
+                                disabled: true,
+                                title: "Unavailable until the Contact lineage basis is exposed",
                                 onclick: {
                                     let base = base_url.clone();
                                     move |_| {
@@ -534,7 +538,7 @@ pub(super) fn ContactsManagePage(
                             div { class: "workspace-manage-list", "data-testid": "contacts-manage-list",
                                 for contact in filtered_rows {
                                     {
-                                        let peer = contact.peer.to_string();
+                                        let peer = crate::models::contact_peer_id(&contact).to_string();
                                         let checked = selected_ids.contains(&peer);
                                         let peer_label = crate::views::helpers::actor_display_label(
                                             &state_store.read(),

@@ -4,7 +4,8 @@
 //! personal-agent administration surfaces.
 
 use arkret_models_collaboration::agent_operations::{
-    AgentLifecycleState, AgentProjection, AgentRuntimeState, AgentView,
+    AgentLifecycleState, AgentProjection, AgentReadinessBlocker, AgentReadinessState,
+    AgentRuntimeState, AgentView,
 };
 use arkret_models_collaboration::events_payloads::agent::{
     AgentKeyScope, AgentKeyScopeResource, AgentKeyScopeResourceKind,
@@ -16,7 +17,7 @@ use arkret_sdk::{
     AgentRequestedScopeDisclosure, AgentRuntimeApprovalControllerProjection,
     AgentSigningKeyBinding, AgentSigningPublicKey, Did, DidUrl, Event, EventId, GrantConstraint,
     GrantConstraintEffect, GrantConstraintKind, GrantConstraintSubkind, Hash, KeyState,
-    NonEmptyString, OpaqueLocalId, Proof, RealmId, RequestId,
+    NonEmptyString, OpaqueLocalId, RealmId,
 };
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -445,78 +446,14 @@ pub fn into_agent_key_pair_request(
 }
 
 pub fn build_requested_scope_disclosure_for_pairing(
-    controller_id: &str,
-    service_id: &str,
-    key_state: &KeyState,
-    request: &AgentRuntimeApprovalControllerProjection,
+    _controller_id: &str,
+    _service_id: &str,
+    _key_state: &KeyState,
+    _request: &AgentRuntimeApprovalControllerProjection,
 ) -> anyhow::Result<AgentRequestedScopeDisclosure> {
-    let controller_id = Did::new(controller_id.trim().to_owned())?;
-    let agent_id = request.agent_id.clone();
-    if key_state.controller_id != controller_id {
-        anyhow::bail!("agent key_state.controller_id does not match the signed-in controller");
-    }
-    if key_state.agent_id != agent_id {
-        anyhow::bail!("runtime request agent_id does not match this agent key state");
-    }
-    let pairing_request_id = key_state
-        .pairing_request_id
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("agent key_state.pairing_request_id is required"))?;
-    if pairing_request_id != &request.pairing_request_id {
-        anyhow::bail!("runtime request pairing_request_id does not match this agent");
-    }
-    let request_uuid = pairing_request_id
-        .as_str()
-        .strip_prefix("agent_pairing_request:")
-        .ok_or_else(|| anyhow::anyhow!("agent pairing_request_id is invalid"))?;
-    let requested_scope = key_state.requested_scope.clone();
-    let requested_scope_digest = arkret_signatures::agent::agent_requested_scope_digest(
-        &agent_id,
-        &controller_id,
-        &requested_scope,
-    )?;
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("no active device signer is available"))?;
-    let verification_method = arkret_sdk::DidUrl::new(
-        signer
-            .device_id()
-            .map(|device_id| format!("{}#{device_id}", controller_id.as_str()))
-            .unwrap_or_else(|| signer.verification_method().to_owned()),
+    anyhow::bail!(
+        "Agent pairing approval is unavailable because KeyState does not expose the trusted participation_ceiling required by the signed disclosure"
     )
-    .map_err(|error| anyhow::anyhow!("agent disclosure verification method is invalid: {error}"))?;
-    let issued_at = Utc::now();
-    let mut disclosure = AgentRequestedScopeDisclosure {
-        schema: arkret_sdk::SchemaId::AgentRequestedScopeDisclosureV1,
-        request_id: RequestId::new(format!("ak:request:{request_uuid}"))?,
-        agent_id,
-        controller_id,
-        requested_scope,
-        requested_scope_digest,
-        verifier_did: Did::new(service_id.trim().to_owned())?,
-        audience: NonEmptyString::new("ak.gate.account.command.pair_agent_key")
-            .map_err(anyhow::Error::msg)?,
-        challenge: NonEmptyString::new(pairing_request_id.as_str().to_owned())
-            .map_err(anyhow::Error::msg)?,
-        issued_at,
-        expires_at: issued_at + chrono::Duration::minutes(5),
-        proofs: vec![Proof {
-            kind: "detached_jws".to_owned(),
-            alg: signer.algorithm().to_owned(),
-            verification_method: verification_method.clone(),
-            event_digest: Hash::new(format!("sha256:{}", "0".repeat(64)))?,
-            created_at: issued_at,
-            domain: None,
-            audience: None,
-            proof_purpose: None,
-            jws: String::new(),
-        }],
-    };
-    disclosure.proofs[0].event_digest = disclosure.payload_digest()?;
-    let binding = disclosure.canonical_proof_binding_bytes(&disclosure.proofs[0])?;
-    disclosure.proofs[0].jws =
-        signer.detached_jws_over_payload_with_kid(&verification_method, &binding)?;
-    disclosure.validate()?;
-    Ok(disclosure)
 }
 
 pub fn parse_runtime_key_approval_request(
@@ -666,7 +603,7 @@ pub fn build_agent_key_authorization_for_pairing(
         // them exactly. A bootstrap pairing (pending_runtime_key / pairing_expired)
         // legitimately has none.
     } else if matches!(
-        key_state.runtime_state,
+        key_state_runtime_state(key_state),
         AgentRuntimeState::Ready | AgentRuntimeState::Replacing
     ) {
         anyhow::bail!("keyed agent key_state must expose authoritative active_authorizations")
@@ -990,15 +927,35 @@ pub(crate) fn agent_view_from_directory_row(row: AgentProjection) -> Option<Agen
     if row.agent_id.as_str().trim().is_empty() {
         return None;
     }
-    let status = row.status;
-    let runtime_state = row.runtime_state;
     Some(AgentView {
         agent: row,
-        status,
-        runtime_state,
         grants: Vec::new(),
         key_state: None,
     })
+}
+
+pub(crate) fn agent_projection_runtime_state(row: &AgentProjection) -> AgentRuntimeState {
+    if row.readiness.state == AgentReadinessState::Ready {
+        return AgentRuntimeState::Ready;
+    }
+    let key_missing = row
+        .readiness
+        .blockers
+        .contains(&AgentReadinessBlocker::RuntimeKeyMissing);
+    let pairing_open = row
+        .readiness
+        .blockers
+        .contains(&AgentReadinessBlocker::PairingOpen);
+    AgentRuntimeState::derive(!key_missing, pairing_open)
+}
+
+pub(crate) fn key_state_runtime_state(key_state: &KeyState) -> AgentRuntimeState {
+    let has_active_authorization = !key_state.active_authorizations.is_empty();
+    let has_open_pairing = key_state.pairing_request_id.is_some()
+        && key_state
+            .pairing_expires_at
+            .is_some_and(|expires_at| expires_at > crate::clock::now_utc());
+    AgentRuntimeState::derive(has_active_authorization, has_open_pairing)
 }
 
 /// Wire string for the lifecycle intent axis (`status`, schema `agent_status`).
@@ -1025,8 +982,8 @@ pub(crate) fn mentionable_owned_agent_slugs(
             // Terminal lifecycle intent (deactivated) or a never-keyed agent
             // whose bootstrap window lapsed (runtime_state pairing_expired) is
             // not a mention candidate (key-management.md §3.6.1).
-            agent.status != AgentLifecycleState::Deactivated
-                && agent.runtime_state != AgentRuntimeState::PairingExpired
+            agent.lifecycle != AgentLifecycleState::Deactivated
+                && agent_projection_runtime_state(agent) != AgentRuntimeState::PairingExpired
         })
         .filter_map(|agent| {
             let agent_id = agent.agent_id.as_str().trim();

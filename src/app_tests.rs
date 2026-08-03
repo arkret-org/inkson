@@ -4,8 +4,11 @@ use super::*;
 fn direct_route_resolves_agent_peer_independently_of_reply_participation() {
     let contacts: Vec<crate::models::ContactListRow> = serde_json::from_value(serde_json::json!([
         {
-            "peer": "did:web:example.com:users:alice",
+            "peer": {"kind": "human", "principal_id": "did:web:example.com:users:alice"},
             "state": "accepted",
+            "granted_to_peer_scopes": ["direct_message"],
+            "granted_by_peer_scopes": ["direct_message"],
+            "bidirectional_scopes": ["direct_message"],
             "agents": [{
                 "agent_id": "did:web:example.com:agents:aa",
                 "controller_id": "did:web:example.com:users:alice",
@@ -13,7 +16,7 @@ fn direct_route_resolves_agent_peer_independently_of_reply_participation() {
                 "direct_conversation": {
                     "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000020",
                     "main_strand_id": "ak:strand:0196419b-0000-7000-8000-000000000021",
-                    "state": "active"
+                    "state": "found"
                 }
             }]
         }

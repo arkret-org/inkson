@@ -298,6 +298,7 @@ pub fn initial_submission(
         // Standard Control Moves acquire their authority receipt separately;
         // DataEvents and caller-proven anchor units must omit it.
         control_proposal_receipt: None,
+        membership_compensation_evidence: None,
     })
 }
 

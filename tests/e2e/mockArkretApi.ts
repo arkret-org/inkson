@@ -2836,23 +2836,20 @@ export async function mockArkretApi(
       return json(route, {
         contacts: [
           {
-            peer: "did:web:bob.example",
+            peer: { kind: "human", principal_id: "did:web:bob.example" },
             state: "accepted",
             request_event_ref: "ak:event:0196419b-0000-7000-8000-000000000101",
             response_event_ref: "ak:event:0196419b-0000-7000-8000-000000000102",
-            granted_by_me: ["direct_message", "invite"],
-            granted_to_me: ["direct_message", "invite"],
+            granted_to_peer_scopes: ["direct_message", "invite"],
+            granted_by_peer_scopes: ["direct_message", "invite"],
             bidirectional_scopes: ["direct_message", "invite"],
             effective_scopes: ["direct_message", "invite"],
-            // U3 — consent grant the peer gave me for the invite scope.
-            invite_consent_grant_ref:
-              "ak:event:0196419b-0000-7000-8000-000000000102",
             direct_conversation: {
               realm_id: DIRECT_BOB_REALM,
               main_strand_id: DIRECT_BOB_STRAND,
               binding_event_ref:
                 "ak:event:0196419b-0000-7000-8000-000000000103",
-              state: "active",
+              state: "found",
             },
             agents: [
               {
@@ -2867,41 +2864,39 @@ export async function mockArkretApi(
                     "ak:strand:01964137-0000-7000-8000-0000000000b2",
                   binding_event_ref:
                     "ak:event:01964137-0000-7000-8000-0000000000b3",
-                  state: "active",
+                  state: "found",
                 },
               },
             ],
           },
           {
-            peer: "did:web:carol.example",
+            peer: { kind: "human", principal_id: "did:web:carol.example" },
             state: "pending_outgoing",
             request_event_ref: "ak:event:0196419b-0000-7000-8000-000000000104",
-            granted_by_me: ["invite"],
-            granted_to_me: [],
+            granted_to_peer_scopes: ["invite"],
+            granted_by_peer_scopes: [],
             bidirectional_scopes: [],
             effective_scopes: ["invite"],
           },
           {
-            peer: "did:web:dave.example",
+            peer: { kind: "human", principal_id: "did:web:dave.example" },
             state: "pending_incoming",
             request_event_ref: "ak:event:0196419b-0000-7000-8000-000000000105",
-            granted_by_me: [],
-            granted_to_me: ["direct_message"],
+            granted_to_peer_scopes: [],
+            granted_by_peer_scopes: ["direct_message"],
             bidirectional_scopes: [],
             effective_scopes: ["direct_message"],
             // Cross-PS incoming request: respond must reverse-deliver to this PS.
             peer_service_id: "did:web:ps.dave.example",
           },
           {
-            // Accepted contact who granted me `invite` scope but with NO real
-            // consent grant ref — exercises the "对方未授权邀请" disabled row in
-            // the realm-invite-from-contacts picker (no fallback ref).
-            peer: "did:web:erin.example",
+            // Accepted contact with a bidirectional invite scope.
+            peer: { kind: "human", principal_id: "did:web:erin.example" },
             state: "accepted",
             request_event_ref: "ak:event:0196419b-0000-7000-8000-000000000106",
             response_event_ref: "ak:event:0196419b-0000-7000-8000-000000000107",
-            granted_by_me: ["direct_message", "invite"],
-            granted_to_me: ["direct_message", "invite"],
+            granted_to_peer_scopes: ["direct_message", "invite"],
+            granted_by_peer_scopes: ["direct_message", "invite"],
             bidirectional_scopes: ["direct_message", "invite"],
             effective_scopes: ["direct_message", "invite"],
           },

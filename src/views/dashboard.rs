@@ -1,3 +1,4 @@
+use arkret_sdk::protocol_journey::ContactScope;
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
@@ -680,11 +681,12 @@ fn dashboard_contacts_summary(
                     || contact
                         .bidirectional_scopes
                         .iter()
-                        .any(|scope| scope == "direct_message")
+                        .any(|scope| *scope == ContactScope::DirectMessage)
                     || contact
                         .effective_scopes
                         .iter()
-                        .any(|scope| scope == "direct_message")
+                        .flatten()
+                        .any(|scope| *scope == ContactScope::DirectMessage)
                 {
                     summary.direct_ready += 1;
                 }
@@ -772,6 +774,7 @@ fn projection_collection_empty_help_label(
 
 #[cfg(test)]
 mod tests {
+    use arkret_sdk::protocol_journey::ContactScope;
     use serde_json::json;
 
     use super::{
@@ -814,16 +817,17 @@ mod tests {
             direct_ready: bool,
         ) -> ContactListRow {
             ContactListRow {
-                peer: arkret_sdk::Did::new(peer.to_owned()).unwrap(),
+                peer: arkret_sdk::protocol_journey::ContactPeer::Human {
+                    principal_id: arkret_sdk::Did::new(peer.to_owned()).unwrap(),
+                },
                 state,
                 request_event_ref: None,
                 response_event_ref: None,
                 tombstone_event_ref: None,
-                granted_by_me: Vec::new(),
-                granted_to_me: Vec::new(),
+                granted_to_peer_scopes: Vec::new(),
+                granted_by_peer_scopes: Vec::new(),
                 bidirectional_scopes: Vec::new(),
-                effective_scopes: Vec::new(),
-                invite_consent_grant_ref: None,
+                effective_scopes: Some(Vec::new()),
                 peer_service_id: None,
                 direct_conversation: direct_ready.then(|| arkret_sdk::DirectConversationSummary {
                     realm_id: arkret_sdk::RealmId::new(
@@ -835,7 +839,7 @@ mod tests {
                     )
                     .unwrap(),
                     binding_event_ref: None,
-                    state: arkret_sdk::DirectConversationBindingState::Active,
+                    state: arkret_sdk::DirectConversationSummaryState::Found,
                 }),
                 agents: Vec::new(),
             }
@@ -848,7 +852,7 @@ mod tests {
                     arkret_sdk::ContactState::Accepted,
                     false,
                 );
-                row.bidirectional_scopes = vec!["direct_message".to_owned()];
+                row.bidirectional_scopes = vec![ContactScope::DirectMessage];
                 row
             },
             contact(

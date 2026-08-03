@@ -89,11 +89,7 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
     let reason_selected = use_memo(move || Some(reason_code()));
     let mut expiry_choice = use_signal(|| "never".to_owned());
     let expiry_selected = use_memo(move || Some(expiry_choice()));
-    let mut applies_to = use_signal(|| {
-        crate::account_data::DEFAULT_BLOCKLIST_APPLIES_TO
-            .iter()
-            .to_vec()
-    });
+    let mut applies_to = use_signal(|| crate::account_data::DEFAULT_BLOCKLIST_APPLIES_TO.to_vec());
     let mut status = use_signal(String::new);
 
     // Live validation: the identifier must parse as a DID for DID-shaped kinds
@@ -285,11 +281,9 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
                     Label { html_for: "block-applies-to", "Applies to" }
                     div { class: "blocklist-applies-grid", "data-testid": "block-applies-to",
                         for surface in crate::account_data::DEFAULT_BLOCKLIST_APPLIES_TO.iter().copied() {
-                            {
-                            let surface_label = crate::account_data::blocklist_surface_label(surface);
-                            label { class: "metric",
+                            div { class: "metric",
                                 Checkbox {
-                                    "data-testid": "block-applies-{surface_label}",
+                                    "data-testid": "block-applies-{crate::account_data::blocklist_surface_label(surface)}",
                                     checked: if applies_to.read().contains(&surface) {
                                         CheckboxState::Checked
                                     } else {
@@ -307,8 +301,7 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
                                         applies_to.set(next);
                                     },
                                 }
-                                span { "{surface_label}" }
-                            }
+                                span { {crate::account_data::blocklist_surface_label(surface)} }
                             }
                         }
                     }
@@ -380,7 +373,7 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
                                 let expires = expiry_choice_to_rfc3339(&expiry_choice());
                                 let changed = state_store
                                     .write()
-                                    .block_target(&kind, &target, reason, applies, expires);
+                                    .block_target(kind, &target, reason, applies, expires);
                                 let next = state_store.read().client_blocklist();
                                 entries.set(next.clone());
                                 if changed {

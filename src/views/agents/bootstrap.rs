@@ -791,7 +791,7 @@ async fn collect_current_managed_pcr_backup_items(
         }
         let view = http.agent_get(agent.agent_id.as_str()).await?;
         let Some(key_state) = view.key_state else {
-            if agent.status
+            if agent.lifecycle
                 == arkret_models_collaboration::agent_operations::AgentLifecycleState::Deactivated
             {
                 continue;
@@ -802,7 +802,7 @@ async fn collect_current_managed_pcr_backup_items(
             ));
         };
         agent_realm_ids.insert(key_state.principal_control_realm_id.as_str().to_owned());
-        if agent.status
+        if agent.lifecycle
             == arkret_models_collaboration::agent_operations::AgentLifecycleState::Deactivated
         {
             continue;

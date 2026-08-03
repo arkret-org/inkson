@@ -498,87 +498,27 @@ fn should_route_owned_agent_to_sidecar(
 }
 
 async fn ensure_owned_agent_sidecar(
-    base_url: &str,
-    api_token: String,
-    trace_id: &str,
-    controller_id: &str,
-    device_id: &str,
-    realm_id: &str,
-    strand_id: &str,
+    _base_url: &str,
+    _api_token: String,
+    _trace_id: &str,
+    _controller_id: &str,
+    _device_id: &str,
+    _realm_id: &str,
+    _strand_id: &str,
     addressed_agent_ids: &[String],
-    state_store: SyncSignal<LocalStateStore>,
+    _state_store: SyncSignal<LocalStateStore>,
 ) -> anyhow::Result<
     Option<(
         arkret_sdk::AgentSidecarEnsureOutcome,
         arkret_sdk::AgentSidecarView,
     )>,
 > {
-    let addressed_agent_ids = addressed_agent_ids
-        .iter()
-        .cloned()
-        .map(arkret_sdk::Did::new)
-        .collect::<Result<Vec<_>, _>>()?;
     if addressed_agent_ids.is_empty() {
         return Ok(None);
     }
-    let request = arkret_sdk::AgentSidecarEnsureRequestBody {
-        controller_id: arkret_sdk::Did::new(controller_id.to_owned())?,
-        addressed_agent_ids,
-        context_ref: arkret_sdk::AgentSidecarContextRef::strand(
-            arkret_sdk::RealmId::new(realm_id.to_owned())?,
-            arkret_sdk::StrandId::new(strand_id.to_owned())?,
-        ),
-    };
-    tracing::info!(
-        target: "sidecar",
-        event = "sidecar.ensure.started",
-        trace_id,
-        context_ref_kind = "strand",
-        attempt = 1_u8,
-        addressed_agent_count = request.addressed_agent_ids.len(),
-    );
-    let (outcome, view) = crate::transport::auth::with_authed_sdk_client(
-        base_url,
-        api_token.clone(),
-        |http| async move {
-            let outcome = http
-                .agent_sidecar_ensure(&request)
-                .await
-                .map_err(anyhow::Error::from)?;
-            let view = http
-                .agent_sidecar_get(&outcome.sidecar_id)
-                .await
-                .map_err(anyhow::Error::from)?;
-            Ok::<_, anyhow::Error>((outcome, view))
-        },
+    anyhow::bail!(
+        "Agent Sidecar creation is unavailable until the prepare/commit ceremony can author and validate both required Events"
     )
-    .await
-    .map_err(|error| anyhow::anyhow!(error.display()))?;
-    let view = ensure_sidecar_mls_bootstrap(
-        base_url,
-        api_token.clone(),
-        controller_id,
-        device_id,
-        state_store,
-        view,
-    )
-    .await?;
-    let view = reconcile_sidecar_mls_access(
-        base_url,
-        api_token,
-        controller_id,
-        device_id,
-        state_store,
-        view,
-    )
-    .await?;
-    tracing::info!(
-        target: "sidecar",
-        event = "sidecar.ensure.completed",
-        trace_id,
-        pending_reconciliation_count = outcome.pending_access_reconciliations.len(),
-    );
-    Ok(Some((outcome, view)))
 }
 
 // Invariant assertions: each `expect` message names the check that

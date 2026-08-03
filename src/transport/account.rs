@@ -19,10 +19,7 @@
 //! because it resolves contact addressing via the struct-cached
 //! `describe_cached` (see `contact_request_addressing`).
 
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
-use serde::{Deserialize, Serialize};
+use dioxus::prelude::{SyncSignal, WritableExt};
 use serde_json::Value;
 
 use crate::event_submit::EventSubmitter;
@@ -34,24 +31,6 @@ pub(crate) fn did_for_request_field(field: &str, value: &str) -> anyhow::Result<
     let value = value.trim();
     arkret_sdk::Did::new(value.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid {field} DID `{value}`: {err}"))
-}
-
-fn contact_response_action(action: &str) -> anyhow::Result<String> {
-    match action.trim() {
-        "accept" | "reject" => Ok(action.trim().to_owned()),
-        other => anyhow::bail!("unsupported contact response action `{other}`"),
-    }
-}
-
-fn optional_did_for_request_field(
-    field: &str,
-    value: Option<&str>,
-) -> anyhow::Result<Option<arkret_sdk::Did>> {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| did_for_request_field(field, value))
-        .transpose()
 }
 
 pub async fn account_viewer(
@@ -121,28 +100,13 @@ pub async fn update_profile(
 }
 
 pub async fn respond_contact(
-    http: &arkret_sdk::http_client::Client,
+    _http: &arkret_sdk::http_client::Client,
     requester: &str,
     action: &str,
-) -> anyhow::Result<arkret_sdk::ContactRespondOutcome> {
-    respond_contact_with_service(http, requester, action, None).await
-}
-
-async fn contact_request_event_id_for_requester(
-    http: &arkret_sdk::http_client::Client,
-    requester: &str,
-) -> anyhow::Result<String> {
-    let requester = requester.trim();
-    let contacts = contacts(http).await?;
-    contacts
-        .contacts
-        .into_iter()
-        .find(|row| row.peer.as_str() == requester && row.request_event_ref.is_some())
-        .and_then(|row| row.request_event_ref)
-        .map(|event_id| event_id.to_string())
-        .ok_or_else(|| {
-            anyhow::anyhow!("contact request_id is required for responding to `{requester}`")
-        })
+) -> anyhow::Result<()> {
+    anyhow::bail!(
+        "Contact {action} for `{requester}` is unavailable: the Contact projection does not expose the signed request acceptance receipt required by prepare"
+    )
 }
 
 /// Respond to an incoming contact request, optionally carrying the
@@ -153,44 +117,26 @@ async fn contact_request_event_id_for_requester(
 /// empty; cross-PS responses pass the originating PS so soland can route the
 /// accept/reject back. Empty / whitespace-only values are dropped.
 pub async fn respond_contact_with_service(
-    http: &arkret_sdk::http_client::Client,
+    _http: &arkret_sdk::http_client::Client,
     requester: &str,
     action: &str,
-    requester_service_id: Option<&str>,
-) -> anyhow::Result<arkret_sdk::ContactRespondOutcome> {
-    let request_event_ref = contact_request_event_id_for_requester(http, requester).await?;
-    respond_contact_with_request_id_and_service(
-        http,
-        requester,
-        &request_event_ref,
-        action,
-        requester_service_id,
+    _requester_service_id: Option<&str>,
+) -> anyhow::Result<()> {
+    anyhow::bail!(
+        "Contact {action} for `{requester}` is unavailable: the Contact projection does not expose the signed request acceptance receipt required by prepare"
     )
-    .await
 }
 
 pub async fn respond_contact_with_request_id_and_service(
-    http: &arkret_sdk::http_client::Client,
+    _http: &arkret_sdk::http_client::Client,
     requester: &str,
-    request_event_ref: &str,
+    _request_event_ref: &str,
     action: &str,
-    requester_service_id: Option<&str>,
-) -> anyhow::Result<arkret_sdk::ContactRespondOutcome> {
-    let body = arkret_sdk::ContactRespondRequestBody {
-        request_id: arkret_sdk::EventId::new(request_event_ref.trim().to_owned()).map_err(
-            |err| anyhow::anyhow!("invalid contact request_id `{request_event_ref}`: {err}"),
-        )?,
-        requester: did_for_request_field("requester", requester)?,
-        action: contact_response_action(action)?,
-        granted_scopes: Vec::new(),
-        requester_service_id: optional_did_for_request_field(
-            "requester_service_id",
-            requester_service_id,
-        )?,
-    };
-    http.contacts_respond(&body)
-        .await
-        .map_err(anyhow::Error::from)
+    _requester_service_id: Option<&str>,
+) -> anyhow::Result<()> {
+    anyhow::bail!(
+        "Contact {action} for `{requester}` is unavailable: request_event_ref alone is not the signed request acceptance receipt required by prepare"
+    )
 }
 
 pub async fn contacts(http: &arkret_sdk::http_client::Client) -> anyhow::Result<ContactListView> {
@@ -237,90 +183,33 @@ pub async fn direct_conversation_resolve(
     peer: &str,
     create: bool,
     enable_owned_agent_reply: bool,
-) -> anyhow::Result<arkret_sdk::DirectConversationResolveOutcome> {
+) -> anyhow::Result<arkret_sdk::protocol_journey::DirectConversationResolveOutcome> {
+    if create {
+        anyhow::bail!(
+            "Direct Conversation creation is unavailable until the full authorization/materialization ceremony is wired"
+        );
+    }
     let http = api.http();
-    let body = arkret_sdk::DirectConversationResolveRequestBody {
-        peer: did_for_request_field("peer", peer)?,
-        create,
-        idempotency_key: None,
-        peer_claim_request: None,
-    };
-    let mut outcome = http
+    let body = arkret_sdk::protocol_journey::DirectConversationResolveRequestBody::Lookup(
+        arkret_sdk::protocol_journey::DirectConversationLookupRequestBody {
+            peer: arkret_sdk::protocol_journey::ContactPeer::Human {
+                principal_id: did_for_request_field("peer", peer)?,
+            },
+            create: arkret_sdk::protocol_journey::DirectConversationLookupMarker,
+        },
+    );
+    let outcome = http
         .direct_conversation_resolve(&body)
         .await
         .map_err(anyhow::Error::from)?;
-    if outcome.state == arkret_sdk::DirectConversationResolveState::AuthoringRequired
-        && outcome.authoring_kind
-            == Some(arkret_sdk::DirectConversationAuthoringKind::RemoteKeypackageClaim)
-    {
-        let draft = outcome.claim_authorization_draft.take().ok_or_else(|| {
-            anyhow::anyhow!(
-                "direct conversation resolver omitted the remote KeyPackage authorization draft"
-            )
-        })?;
-        let claim_request = sign_peer_keypackage_claim_authorization(http, &draft).await?;
-        let claim_request_id = claim_request.claim_request_id.as_str().to_owned();
-        outcome = http
-            .direct_conversation_resolve(&arkret_sdk::DirectConversationResolveRequestBody {
-                peer: did_for_request_field("peer", peer)?,
-                create: true,
-                idempotency_key: Some(claim_request_id),
-                peer_claim_request: Some(claim_request),
-            })
-            .await
-            .map_err(anyhow::Error::from)?;
-    }
-    if let Some(draft) = outcome.materialization_draft.take() {
-        if outcome.state != arkret_sdk::DirectConversationResolveState::AuthoringRequired
-            || outcome.authoring_kind
-                != Some(
-                    arkret_sdk::DirectConversationAuthoringKind::DirectConversationMaterialization,
-                )
-        {
-            anyhow::bail!(
-                "direct conversation resolver returned a materialization draft outside its authoring_required state"
-            );
-        }
-        materialize_direct_conversation(api, state_store, peer, draft).await?;
-        let confirmed = http
-            .direct_conversation_resolve(&arkret_sdk::DirectConversationResolveRequestBody {
-                peer: did_for_request_field("peer", peer)?,
-                create: false,
-                idempotency_key: None,
-                peer_claim_request: None,
-            })
-            .await
-            .map_err(anyhow::Error::from)?;
-        if confirmed.state != arkret_sdk::DirectConversationResolveState::Found {
-            anyhow::bail!(
-                "canonical direct conversation binding was not projected after signed Event submission"
-            );
-        }
-        if enable_owned_agent_reply {
-            preserve_resolved_direct_conversation(
-                peer,
-                &confirmed,
-                ensure_owned_agent_direct_reply(http, state_store, peer, &confirmed).await,
-            );
-        }
-        remember_direct_conversation_peer(&mut state_store, peer, &confirmed);
-        return Ok(confirmed);
-    }
-    if outcome.state == arkret_sdk::DirectConversationResolveState::AuthoringRequired {
-        anyhow::bail!(
-            "direct conversation resolver requires authoring but omitted the materialization draft"
-        );
-    }
-    if enable_owned_agent_reply
-        && outcome.state == arkret_sdk::DirectConversationResolveState::Found
-    {
+    if enable_owned_agent_reply && direct_conversation_coordinates(&outcome).is_some() {
         preserve_resolved_direct_conversation(
             peer,
             &outcome,
             ensure_owned_agent_direct_reply(http, state_store, peer, &outcome).await,
         );
     }
-    if outcome.state == arkret_sdk::DirectConversationResolveState::Found {
+    if direct_conversation_coordinates(&outcome).is_some() {
         remember_direct_conversation_peer(&mut state_store, peer, &outcome);
     }
     Ok(outcome)
@@ -330,21 +219,43 @@ fn direct_conversation_peer_cache_key(realm_id: &str, strand_id: &str) -> String
     format!("direct_conversation.peer.{realm_id}.{strand_id}")
 }
 
+pub(crate) fn direct_conversation_coordinates(
+    outcome: &arkret_sdk::protocol_journey::DirectConversationResolveOutcome,
+) -> Option<&arkret_sdk::protocol_journey::DirectConversationCoordinates> {
+    match outcome {
+        arkret_sdk::protocol_journey::DirectConversationResolveOutcome::State(
+            arkret_sdk::protocol_journey::DirectConversationResolveStateOutcome::Found {
+                coordinates,
+                ..
+            }
+            | arkret_sdk::protocol_journey::DirectConversationResolveStateOutcome::Suspended {
+                coordinates,
+                ..
+            },
+        ) => Some(coordinates),
+        arkret_sdk::protocol_journey::DirectConversationResolveOutcome::Tombstoned(outcome) => {
+            Some(&outcome.coordinates)
+        }
+        _ => None,
+    }
+}
+
 const DIRECT_CONVERSATION_PEER_CACHE_OBFUSCATION_KEY: &str = "ak.local.direct_conversation.peer.v1";
 
 fn remember_direct_conversation_peer(
     state_store: &mut SyncSignal<crate::state::LocalStateStore>,
     peer: &str,
-    outcome: &arkret_sdk::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::protocol_journey::DirectConversationResolveOutcome,
 ) {
-    let (Some(realm_id), Some(strand_id)) =
-        (outcome.realm_id.as_ref(), outcome.main_strand_id.as_ref())
-    else {
+    let Some(coordinates) = direct_conversation_coordinates(outcome) else {
         return;
     };
     state_store.write().save_private_data(
         DIRECT_CONVERSATION_PEER_CACHE_OBFUSCATION_KEY,
-        direct_conversation_peer_cache_key(realm_id.as_str(), strand_id.as_str()),
+        direct_conversation_peer_cache_key(
+            coordinates.realm_id.as_str(),
+            coordinates.main_strand_id.as_str(),
+        ),
         peer,
     );
 }
@@ -367,15 +278,15 @@ pub(crate) fn cached_direct_conversation_peer(
 /// into an unavailable navigation target.
 fn preserve_resolved_direct_conversation(
     agent_id: &str,
-    outcome: &arkret_sdk::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::protocol_journey::DirectConversationResolveOutcome,
     reply_enablement: anyhow::Result<()>,
 ) {
     if let Err(error) = reply_enablement {
         tracing::warn!(
             error = %error,
             agent_id,
-            realm_id = outcome.realm_id.as_ref().map(ToString::to_string),
-            strand_id = outcome.main_strand_id.as_ref().map(ToString::to_string),
+            realm_id = direct_conversation_coordinates(outcome).map(|value| value.realm_id.to_string()),
+            strand_id = direct_conversation_coordinates(outcome).map(|value| value.main_strand_id.to_string()),
             "owned Agent Direct Conversation resolved, but reply participation could not be enabled"
         );
     }
@@ -385,16 +296,12 @@ async fn ensure_owned_agent_direct_reply(
     http: &arkret_sdk::http_client::Client,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     agent_id: &str,
-    outcome: &arkret_sdk::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::protocol_journey::DirectConversationResolveOutcome,
 ) -> anyhow::Result<()> {
-    let realm_id = outcome
-        .realm_id
-        .clone()
+    let coordinates = direct_conversation_coordinates(outcome)
         .ok_or_else(|| anyhow::anyhow!("owned-Agent Direct Conversation omitted realm_id"))?;
-    let strand_id = outcome
-        .main_strand_id
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("owned-Agent Direct Conversation omitted main_strand_id"))?;
+    let realm_id = coordinates.realm_id.clone();
+    let strand_id = coordinates.main_strand_id.clone();
     let scope = arkret_sdk::AgentParticipationScope::Strand {
         realm_id,
         strand_id,
@@ -581,630 +488,6 @@ fn owned_agent_reply_update_needed(
     !participation_reply_is_effective(outcome, scope)
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct PendingDirectConversationMls {
-    commit: arkret_sdk::Event,
-    welcome: arkret_sdk::Event,
-    binding: Option<arkret_sdk::Event>,
-    snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct PendingDirectConversationBootstrap {
-    events: Vec<arkret_sdk::Event>,
-}
-
-fn pending_direct_conversation_key(materialization_id: &str) -> String {
-    format!("direct_conversation.materialization.{materialization_id}")
-}
-
-fn pending_direct_conversation_bootstrap_key(materialization_id: &str) -> String {
-    format!("direct_conversation.bootstrap.{materialization_id}")
-}
-
-/// Hardened-secure-store key for the resumable signed MLS transaction
-/// (`PendingDirectConversationMls`). Account-scoped so a re-login cannot read a
-/// prior account's pending Commit material.
-fn direct_conversation_pending_secure_key(actor_id: &str, pending_key: &str) -> String {
-    format!("direct_conversation.pending_mls.{actor_id}.{pending_key}")
-}
-
-/// Load the resumable signed MLS transaction from the durable secure store.
-fn load_pending_direct_conversation_mls(
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    pending_secure_key: &str,
-) -> anyhow::Result<Option<PendingDirectConversationMls>> {
-    let Some(raw) = secure_store
-        .get_secret(pending_secure_key)
-        .map_err(|error| anyhow::anyhow!("read pending direct conversation MLS secret: {error}"))?
-    else {
-        return Ok(None);
-    };
-    serde_json::from_str::<PendingDirectConversationMls>(&raw)
-        .map(Some)
-        .map_err(|error| {
-            anyhow::anyhow!("decode pending direct conversation MLS transaction: {error}")
-        })
-}
-
-/// Durably persist the resumable signed MLS transaction to the hardened secure
-/// store (awaited) so a mid-flow reload can replay the exact same Commit /
-/// Welcome / snapshot.
-async fn persist_pending_direct_conversation_mls(
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    pending_secure_key: &str,
-    pending: &PendingDirectConversationMls,
-) -> anyhow::Result<()> {
-    let json = serde_json::to_string(pending)?;
-    secure_store
-        .store_secret_durable(pending_secure_key, &json)
-        .await
-        .map_err(|error| {
-            anyhow::anyhow!("durably persist pending direct conversation MLS transaction: {error}")
-        })
-}
-
-// Invariant assertions: each `expect` message names the check that
-// establishes it a few lines earlier. Rewriting them as `?` would add
-// error paths no caller can reach.
-#[allow(clippy::expect_used)]
-async fn materialize_direct_conversation(
-    api: &crate::transport::TransportClient,
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
-    peer: &str,
-    draft: arkret_sdk::DirectConversationMaterializationDraft,
-) -> anyhow::Result<()> {
-    draft.validate_shape().map_err(|error| {
-        anyhow::anyhow!("invalid direct conversation materialization draft: {error}")
-    })?;
-    if draft.expires_at <= chrono::Utc::now() {
-        anyhow::bail!("direct conversation materialization draft expired");
-    }
-
-    let submitter = api.event_submitter()?;
-    let realm_id = draft.realm_event.realm_id.to_string();
-    let actor_id = draft.realm_event.actor_id.to_string();
-    let signer = crate::event_signer::active_signer().ok_or_else(|| {
-        anyhow::anyhow!("direct conversation materialization requires an active device signer")
-    })?;
-    let device_id = signer.device_id().ok_or_else(|| {
-        anyhow::anyhow!("direct conversation materialization signer has no device id")
-    })?;
-    // contact-and-direct-conversation.md: the peer join rides inside the atomic
-    // genesis batch, so it proves Realm authority with the *staged* root proof
-    // bound to the same batch's `ak.realm.create`. Anything submitted after that
-    // batch is accepted MUST use the accepted-Seal form instead.
-    let staged_root_proof = arkret_policy::realm_bootstrap::staged_root_authorization(
-        &draft.realm_event,
-    )
-    .map_err(|error| {
-        anyhow::anyhow!("direct conversation genesis has no staged root proof: {error}")
-    })?;
-    let mut peer_member_event = draft.peer_member_event.clone();
-    peer_member_event.authorization_ref = Some(
-        arkret_sdk::AuthorizationRef::new(staged_root_proof.authorization_ref())
-            .map_err(anyhow::Error::msg)?,
-    );
-    let bootstrap_key =
-        pending_direct_conversation_bootstrap_key(draft.materialization_id.as_str());
-    let mut accepted = accepted_direct_materialization_events(&submitter, &realm_id).await;
-    if !accepted.contains(draft.realm_event.event_id.as_str()) {
-        let pending_bootstrap = state_store
-            .read()
-            .load_private_data(&actor_id, &bootstrap_key)
-            .map(|raw| serde_json::from_str::<PendingDirectConversationBootstrap>(&raw))
-            .transpose()
-            .map_err(|error| {
-                anyhow::anyhow!("decode pending direct conversation bootstrap: {error}")
-            })?;
-        let pending_bootstrap = match pending_bootstrap {
-            Some(pending) => pending,
-            None => {
-                crate::identity::authoring_generation::resolve_event_authoring_generation(
-                    submitter.http(),
-                    &draft.realm_event,
-                )
-                .await?;
-                let mut bootstrap_events = vec![draft.realm_event.clone()];
-                if let Some(creator_member_event) = &draft.creator_member_event {
-                    bootstrap_events.push(creator_member_event.clone());
-                }
-                bootstrap_events.push(peer_member_event.clone());
-                let pending = PendingDirectConversationBootstrap {
-                    events: submitter.prepare_sdk_events_batch(bootstrap_events).await?,
-                };
-                state_store.write().save_private_data(
-                    &actor_id,
-                    bootstrap_key.clone(),
-                    serde_json::to_string(&pending)?,
-                );
-                pending
-            }
-        };
-        submitter
-            .submit_signed_sdk_events_batch(
-                &pending_bootstrap.events,
-                Some(draft.materialization_id.as_str()),
-            )
-            .await?;
-        state_store.write().remove_private_data(&bootstrap_key);
-        accepted = wait_for_direct_materialization_events(
-            &submitter,
-            &realm_id,
-            pending_bootstrap
-                .events
-                .iter()
-                .map(|event| event.event_id.as_str()),
-        )
-        .await?;
-    } else {
-        state_store.write().remove_private_data(&bootstrap_key);
-    }
-
-    save_direct_conversation_realm_projection(&mut state_store, &realm_id, &actor_id, peer);
-    refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id, None).await?;
-
-    if !accepted.contains(draft.main_strand_event.event_id.as_str()) {
-        let mut main_strand_event = draft.main_strand_event.clone();
-        // Submitted after the genesis batch is canonical accepted: the creator
-        // is already an `ak.realm.owner` whose operational coverage includes
-        // `ak.strand.create`, so this Event names the authority-root cell under
-        // an accepted Seal and MUST NOT reuse the staged genesis proof.
-        main_strand_event.authorization_ref = Some(
-            arkret_sdk::AuthorizationRef::new(
-                arkret_policy::realm_bootstrap::RealmAuthorityRootProof::AcceptedSeal
-                    .authorization_ref(),
-            )
-            .map_err(anyhow::Error::msg)?,
-        );
-        submitter
-            .submit_sdk_event(&main_strand_event)
-            .await
-            .map_err(|error| anyhow::anyhow!("submit direct conversation main Strand: {error}"))?;
-    }
-    tracing::info!(realm_id, "direct conversation main Strand accepted");
-    refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id, None).await?;
-    tracing::info!(realm_id, "direct conversation main Strand Seal refreshed");
-
-    // The signed Commit / Welcome / post-commit MLS snapshot MUST survive a
-    // page reload so a resumed materialization replays the SAME Commit and
-    // ciphertext instead of rebuilding a divergent one (contact-and-direct-
-    // conversation.md: crash recovery MUST replay the same Event id + ciphertext,
-    // MUST NOT generate a second Commit). The plaintext-state `save_private_data`
-    // channel is a wasm no-op before the IndexedDB tier is ready and otherwise a
-    // fire-and-forget enqueue, so a reload mid-flow lost `pending` and the retry
-    // hit `epoch-0 MLS snapshot is unavailable`. Persist it through the hardened
-    // secure store with an awaited durable write instead.
-    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let pending_key = pending_direct_conversation_key(draft.materialization_id.as_str());
-    let pending_secure_key = direct_conversation_pending_secure_key(&actor_id, &pending_key);
-    let mut pending =
-        load_pending_direct_conversation_mls(secure_store.as_ref(), &pending_secure_key)?;
-    tracing::info!(
-        realm_id,
-        resumed = pending.is_some(),
-        "direct conversation pending MLS state loaded"
-    );
-    if pending.is_none() {
-        tracing::info!(
-            realm_id,
-            "direct conversation genesis governance proof starting"
-        );
-        let genesis_request = crate::mls::governance_proof::proof_request(
-            &state_store.read(),
-            &realm_id,
-            None,
-            draft.mls_group_id.as_str().to_owned(),
-            0,
-            0,
-        )
-        .map_err(anyhow::Error::msg)?;
-        let genesis_leaves =
-            crate::mls::governance_proof::singleton_security_frontier_leaf(&actor_id, device_id)
-                .map_err(anyhow::Error::msg)?;
-        crate::mls::governance_proof::fetch_verify_and_cache_proof(
-            api,
-            state_store,
-            &genesis_request,
-            &genesis_leaves,
-        )
-        .await
-        .map_err(anyhow::Error::msg)?;
-        tracing::info!(
-            realm_id,
-            "direct conversation genesis governance proof cached"
-        );
-
-        let fresh_summary = {
-            tracing::info!(
-                realm_id,
-                "direct conversation creator MLS snapshot starting"
-            );
-            let mut store = state_store.write();
-            crate::mls::runtime::ensure_creator_mls_snapshot(
-                &mut store,
-                secure_store.as_ref(),
-                &realm_id,
-                &actor_id,
-                device_id,
-            )
-            .map_err(|error| anyhow::anyhow!(error.user_message()))?
-        };
-        tracing::info!(realm_id, "direct conversation creator MLS snapshot ready");
-        let summary = match fresh_summary {
-            Some(summary) => summary,
-            None => crate::mls::runtime::initial_mls_snapshot_summary_from_existing(
-                &state_store.read(),
-                secure_store.as_ref(),
-                &realm_id,
-                &actor_id,
-                device_id,
-            )
-            .map_err(|error| anyhow::anyhow!(error.user_message()))?
-            .ok_or_else(|| {
-                anyhow::anyhow!("direct conversation epoch-0 MLS snapshot is unavailable")
-            })?,
-        };
-        if summary.group_id != draft.mls_group_id.as_str() {
-            anyhow::bail!(
-                "direct conversation MLS group id differs from immutable materialization draft"
-            );
-        }
-
-        accepted = accepted_direct_materialization_events(&submitter, &realm_id).await;
-        if !accepted.contains(draft.mls_genesis_event_ref.as_str()) {
-            let mut genesis = crate::mls::group_events::build_creator_mls_genesis_event(
-                &mut state_store.write(),
-                &realm_id,
-                &actor_id,
-                device_id,
-                Some(&summary),
-            )
-            .map_err(anyhow::Error::msg)?
-            .ok_or_else(|| {
-                anyhow::anyhow!("direct conversation MLS genesis Event is unavailable")
-            })?;
-            genesis.event_id = draft.mls_genesis_event_ref.clone();
-            submitter.submit_sdk_event(&genesis).await?;
-        }
-        state_store
-            .write()
-            .mark_mls_genesis_emitted_with_event(&realm_id, &draft.mls_genesis_event_ref);
-        refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id, None).await?;
-
-        let commit_request = crate::mls::governance_proof::proof_request(
-            &state_store.read(),
-            &realm_id,
-            None,
-            draft.mls_group_id.as_str().to_owned(),
-            0,
-            1,
-        )
-        .map_err(anyhow::Error::msg)?;
-        let current_leaves = crate::mls::governance_proof::current_security_frontier_leaves(
-            &state_store.read(),
-            &realm_id,
-            None,
-            &actor_id,
-            device_id,
-        )
-        .map_err(anyhow::Error::msg)?;
-        let commit_leaves = crate::mls::governance_proof::security_frontier_with_added_claims(
-            current_leaves,
-            &[&draft.claimed_keypackage],
-        )
-        .map_err(anyhow::Error::msg)?;
-        crate::mls::governance_proof::fetch_verify_and_cache_proof(
-            api,
-            state_store,
-            &commit_request,
-            &commit_leaves,
-        )
-        .await
-        .map_err(anyhow::Error::msg)?;
-
-        let admission = crate::mls::admission::build_realm_mls_admission_events_from_claim(
-            &state_store.read(),
-            secure_store.as_ref(),
-            &realm_id,
-            &actor_id,
-            device_id,
-            &draft.claimed_keypackage,
-            draft.claim_nonce.as_str(),
-            draft.claim_receipt.as_ref(),
-        )
-        .map_err(anyhow::Error::msg)?;
-        let mut commit = admission.commit;
-        let mut welcome = admission.welcome;
-        commit.event_id = draft.mls_commit_event_ref.clone();
-        welcome.event_id = draft.mls_welcome_event_ref.clone();
-        welcome.payload.insert(
-            "commit_ref".to_owned(),
-            Value::String(draft.mls_commit_event_ref.to_string()),
-        );
-        let commit = submitter
-            .prepare_sdk_events_batch(vec![commit])
-            .await?
-            .into_iter()
-            .next()
-            .expect("single Event preparation preserves cardinality");
-        let prepared = PendingDirectConversationMls {
-            commit,
-            welcome,
-            binding: None,
-            snapshot: admission.snapshot,
-        };
-        persist_pending_direct_conversation_mls(
-            secure_store.as_ref(),
-            &pending_secure_key,
-            &prepared,
-        )
-        .await?;
-        pending = Some(prepared);
-    }
-
-    let mut pending = pending.expect("pending direct conversation MLS transaction is initialized");
-    submitter.submit_signed_sdk_event(&pending.commit).await?;
-    state_store
-        .write()
-        .record_mls_group_state_ref_for_effective_scope(
-            realm_id.clone(),
-            None,
-            pending.snapshot.group_id.as_str(),
-            pending.snapshot.epoch,
-            pending.commit.event_id.clone(),
-        )
-        .map_err(anyhow::Error::msg)?;
-    state_store
-        .write()
-        .save_mls_snapshot(realm_id.clone(), pending.snapshot.clone());
-    refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id, None).await?;
-
-    if pending.welcome.proofs.is_empty() {
-        pending.welcome = submitter
-            .prepare_sdk_events_batch(vec![pending.welcome])
-            .await?
-            .into_iter()
-            .next()
-            .expect("single Event preparation preserves cardinality");
-        persist_pending_direct_conversation_mls(
-            secure_store.as_ref(),
-            &pending_secure_key,
-            &pending,
-        )
-        .await?;
-    }
-    submitter.submit_signed_sdk_event(&pending.welcome).await?;
-    refresh_direct_conversation_seal(&submitter, &mut state_store, &realm_id, None).await?;
-
-    if pending.binding.is_none() {
-        pending.binding = Some(
-            submitter
-                .prepare_sdk_events_batch(vec![draft.binding_event.clone()])
-                .await?
-                .into_iter()
-                .next()
-                .expect("single Event preparation preserves cardinality"),
-        );
-        persist_pending_direct_conversation_mls(
-            secure_store.as_ref(),
-            &pending_secure_key,
-            &pending,
-        )
-        .await?;
-    }
-    submitter
-        .submit_signed_sdk_event(
-            pending
-                .binding
-                .as_ref()
-                .expect("pending direct binding is initialized"),
-        )
-        .await?;
-    let _ = secure_store.delete_secret(&pending_secure_key);
-    Ok(())
-}
-
-async fn accepted_direct_materialization_events(
-    submitter: &EventSubmitter,
-    realm_id: &str,
-) -> std::collections::BTreeSet<String> {
-    submitter
-        .backfill(realm_id)
-        .await
-        .map(|view| {
-            view.events
-                .into_iter()
-                .map(|event| event.event_id.to_string())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-async fn wait_for_direct_materialization_events<'a>(
-    submitter: &EventSubmitter,
-    realm_id: &str,
-    expected_event_ids: impl IntoIterator<Item = &'a str>,
-) -> anyhow::Result<std::collections::BTreeSet<String>> {
-    const ATTEMPTS: usize = 40;
-    let expected = expected_event_ids
-        .into_iter()
-        .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
-    for attempt in 0..ATTEMPTS {
-        let accepted = accepted_direct_materialization_events(submitter, realm_id).await;
-        if expected.iter().all(|event_id| accepted.contains(event_id)) {
-            return Ok(accepted);
-        }
-        if attempt + 1 < ATTEMPTS {
-            crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(250)).await;
-        }
-    }
-    anyhow::bail!(
-        "direct conversation bootstrap was accepted but did not become readable before authoring the main Strand"
-    )
-}
-
-async fn refresh_direct_conversation_seal(
-    submitter: &EventSubmitter,
-    state_store: &mut SyncSignal<crate::state::LocalStateStore>,
-    realm_id: &str,
-    previous_frontier: Option<&[String]>,
-) -> anyhow::Result<()> {
-    const ATTEMPTS: usize = 20;
-    for attempt in 0..ATTEMPTS {
-        match submitter.events_frontier_realm_seal_view(realm_id).await {
-            Ok(view) => {
-                if previous_frontier.is_some_and(|frontier| {
-                    frontier
-                        .iter()
-                        .any(|seal_id| seal_id == view.seal_id.as_str())
-                }) {
-                    if attempt + 1 < ATTEMPTS {
-                        crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(250))
-                            .await;
-                        continue;
-                    }
-                    anyhow::bail!(
-                        "direct conversation capability grant was accepted but its Seal did not advance"
-                    );
-                }
-                state_store.write().set_realm_seal_view(
-                    realm_id.to_owned(),
-                    crate::state::LocalSealView {
-                        frontier: vec![view.seal_id.to_string()],
-                        state_root: Some(view.state_root.to_string()),
-                        ..Default::default()
-                    },
-                );
-                return Ok(());
-            }
-            Err(error)
-                if attempt + 1 < ATTEMPTS
-                    && crate::api_error::is_realm_seal_frontier_pending_error(&error) =>
-            {
-                crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(250)).await;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    unreachable!("direct conversation Seal retry loop returns on its final attempt")
-}
-
-fn save_direct_conversation_realm_projection(
-    state_store: &mut SyncSignal<crate::state::LocalStateStore>,
-    realm_id: &str,
-    actor_id: &str,
-    peer: &str,
-) {
-    let projection = crate::realm_tree::OptimisticRealmTreeProjection::realm(
-        crate::realm_tree::RealmProjectionInput {
-            owner: actor_id.to_owned(),
-            admins: vec![actor_id.to_owned()],
-            members: vec![actor_id.to_owned(), peer.to_owned()],
-            title: "Direct conversation".to_owned(),
-            summary: String::new(),
-            discoverability: "invite_only".to_owned(),
-            encryption_profile: "mls_rfc9420".to_owned(),
-            content_scheme: "mls_rfc9420".to_owned(),
-            history_visibility: "joined".to_owned(),
-            plaintext_visible_services: Vec::new(),
-            collaboration_role: Some(arkret_sdk::CollaborationRealmRole::DirectConversation),
-            encryption_floor: Some(
-                crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR.to_owned(),
-            ),
-        },
-    )
-    .into_value();
-    {
-        let mut store = state_store.write();
-        store.save_realm_tree_projection(realm_id.to_owned(), projection);
-        store.save_realm_collaboration_role(
-            realm_id.to_owned(),
-            Some(arkret_sdk::CollaborationRealmRole::DirectConversation),
-        );
-    }
-}
-
-async fn sign_peer_keypackage_claim_authorization(
-    http: &arkret_sdk::http_client::Client,
-    draft: &arkret_sdk::PeerKeyPackagesClaimAuthorizationDraft,
-) -> anyhow::Result<arkret_sdk::PeerKeyPackagesClaimRequestBody> {
-    let signer = crate::event_signer::active_signer().ok_or_else(|| {
-        anyhow::anyhow!("no active signer configured for remote KeyPackage authorization")
-    })?;
-    let requester = draft.request.requester.clone();
-    let device_id = signer.device_id().ok_or_else(|| {
-        anyhow::anyhow!("active signer has no device id for remote KeyPackage authorization")
-    })?;
-    let device_id = arkret_sdk::DeviceId::new(device_id.to_owned())?;
-    let keys =
-        crate::transport::keys::query_keys(http, requester.as_str(), device_id.as_str()).await?;
-    let device = keys
-        .device_keys
-        .get(&requester)
-        .and_then(|devices| devices.get(&device_id))
-        .ok_or_else(|| anyhow::anyhow!("active signing device is absent from the key directory"))?;
-    if device.device_status != Some(arkret_models_crypto::DeviceStatus::Active) {
-        anyhow::bail!("active signing device is not accepted by the key directory");
-    }
-    let device_authorize_event_id = device
-        .device_authorize_event_id
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("active signing device omits device authorization proof"))?;
-    // §2.2: the authorization's `verification_method` is a DID URL; the
-    // signature `kid` is a separate non-empty-string field on the wire.
-    let verification_method = arkret_sdk::DidUrl::new(format!("{}#{}", requester, device_id))
-        .map_err(anyhow::Error::msg)?;
-    let signature_kid = arkret_sdk::NonEmptyString::new(verification_method.as_str())
-        .map_err(anyhow::Error::msg)?;
-    let signed_at = chrono::Utc::now();
-    let mut authorization = arkret_sdk::PeerKeyPackageRequesterAuthorization {
-        verification_method: verification_method.clone(),
-        requester_device_id: Some(device_id),
-        ssk_generation: None,
-        device_authorize_event_id: Some(
-            arkret_sdk::NonEmptyString::new(device_authorize_event_id.as_str())
-                .map_err(anyhow::Error::msg)?,
-        ),
-        signed_at,
-        signature: arkret_sdk::KeyOperationSignature {
-            kid: signature_kid,
-            alg: Some(arkret_sdk::NonEmptyString::new("EdDSA").map_err(anyhow::Error::msg)?),
-            sig: arkret_sdk::Base64UrlString::new("AA").map_err(anyhow::Error::msg)?,
-        },
-    };
-    let signing_bytes =
-        arkret_sdk::peer_keypackage_claim_authorization_signing_bytes(draft, &authorization)?;
-    authorization.signature.sig =
-        arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(signer.sign_raw(&signing_bytes)?))
-            .map_err(anyhow::Error::msg)?;
-
-    let request = &draft.request;
-    let body = arkret_sdk::PeerKeyPackagesClaimRequestBody {
-        claim_request_id: request.claim_request_id.clone(),
-        target_principal_id: request.target_principal_id.clone(),
-        requester: request.requester.clone(),
-        intended_realm_id: request.intended_realm_id.clone(),
-        mls_group_id: request.mls_group_id.clone(),
-        claim_purpose: request.claim_purpose,
-        required_capabilities: request.required_capabilities.clone(),
-        claim_nonce: request.claim_nonce.clone(),
-        expires_at: request.expires_at,
-        target_device_ids: request.target_device_ids.clone(),
-        minimal_metadata_allowed: request.minimal_metadata_allowed,
-        timeout_ms: request.timeout_ms,
-        strand_id: request.strand_id.clone(),
-        pair_key: request.pair_key.clone(),
-        last_resort_allowed: request.last_resort_allowed,
-        requester_authorization: authorization,
-        requester_signing_key_evidence: None,
-    };
-    body.validate_shape()
-        .map_err(|error| anyhow::anyhow!("remote KeyPackage claim shape is invalid: {error}"))?;
-    Ok(body)
-}
-
 /// List the holder-private consent cells visible to the authenticated
 /// actor (cells where the actor is either holder or peer). Spec
 /// `identity/consent-model.md` §3 / OpenAPI `ak.self.consent.query.list`.
@@ -1298,20 +581,13 @@ pub(crate) fn primary_handle_from_viewer(
 /// Protocol contract: `contacts/tombstone` body carries `contact` and an
 /// optional `block_peer: true`.
 pub async fn tombstone_contact(
-    http: &arkret_sdk::http_client::Client,
+    _http: &arkret_sdk::http_client::Client,
     peer: &str,
-    block_peer: bool,
-) -> anyhow::Result<arkret_sdk::ContactTombstone> {
-    let body = arkret_sdk::ContactTombstoneRequestBody {
-        contact: did_for_request_field("contact", peer)?,
-        revoke_scopes: Vec::new(),
-        full_peer_revoke: false,
-        block_peer,
-        peer_service_id: None,
-    };
-    http.contacts_tombstone(&body)
-        .await
-        .map_err(anyhow::Error::from)
+    _block_peer: bool,
+) -> anyhow::Result<()> {
+    anyhow::bail!(
+        "Contact tombstone for `{peer}` is unavailable: the Contact projection does not expose basis_id, version and predecessor_event_ref required by prepare"
+    )
 }
 
 /// Complete the non-blocklist legs of a personal block saga using the
@@ -1319,19 +595,12 @@ pub async fn tombstone_contact(
 /// while the tombstone removes the contact projection; no private endpoint or
 /// receiver-visible block response is introduced.
 pub async fn tombstone_contact_and_revoke_all(
-    http: &arkret_sdk::http_client::Client,
+    _http: &arkret_sdk::http_client::Client,
     peer: &str,
-) -> anyhow::Result<arkret_sdk::ContactTombstone> {
-    let body = arkret_sdk::ContactTombstoneRequestBody {
-        contact: did_for_request_field("contact", peer)?,
-        revoke_scopes: Vec::new(),
-        full_peer_revoke: true,
-        block_peer: true,
-        peer_service_id: None,
-    };
-    http.contacts_tombstone(&body)
-        .await
-        .map_err(anyhow::Error::from)
+) -> anyhow::Result<()> {
+    anyhow::bail!(
+        "Contact tombstone for `{peer}` is unavailable: the Contact projection does not expose basis_id, version and predecessor_event_ref required by prepare"
+    )
 }
 
 /// Grant scoped consent to `peer` from the holder cell. `expires_at` is an
@@ -1832,22 +1101,18 @@ mod tests {
 
     #[test]
     fn reply_enablement_failure_does_not_invalidate_resolved_direct_conversation() {
-        let outcome = arkret_sdk::DirectConversationResolveOutcome {
-            state: arkret_sdk::DirectConversationResolveState::Found,
-            realm_id: Some(
-                arkret_sdk::RealmId::new("ak:realm:01970000-0000-7000-8000-000000000001")
-                    .expect("realm id"),
-            ),
-            main_strand_id: Some(
-                arkret_sdk::StrandId::new("ak:strand:01970000-0000-7000-8000-000000000002")
-                    .expect("strand id"),
-            ),
-            binding_event_ref: None,
-            created: Some(false),
-            authoring_kind: None,
-            claim_authorization_draft: None,
-            materialization_draft: None,
-        };
+        let outcome: arkret_sdk::protocol_journey::DirectConversationResolveOutcome =
+            serde_json::from_value(json!({
+                "state": "found",
+                "coordinates": {
+                    "pair_key": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "realm_id": "ak:realm:01970000-0000-7000-8000-000000000001",
+                    "main_strand_id": "ak:strand:01970000-0000-7000-8000-000000000002",
+                    "binding_event_ref": "ak:event:01970000-0000-7000-8000-000000000003"
+                },
+                "send_blockers": []
+            }))
+            .expect("found Direct Conversation outcome");
 
         preserve_resolved_direct_conversation(
             "did:web:agent.example",
@@ -1855,11 +1120,14 @@ mod tests {
             Err(anyhow::anyhow!("authority_generation_unknown")),
         );
 
+        let coordinates = direct_conversation_coordinates(&outcome).expect("found coordinates");
         assert_eq!(
-            outcome.state,
-            arkret_sdk::DirectConversationResolveState::Found
+            coordinates.realm_id.as_str(),
+            "ak:realm:01970000-0000-7000-8000-000000000001"
         );
-        assert!(outcome.realm_id.is_some());
-        assert!(outcome.main_strand_id.is_some());
+        assert_eq!(
+            coordinates.main_strand_id.as_str(),
+            "ak:strand:01970000-0000-7000-8000-000000000002"
+        );
     }
 }

@@ -816,15 +816,38 @@ pub struct MlsCoverageStale {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "verification_mode",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum CachedAgentSignerEvidenceContext {
+    CurrentSignal {
+        operation_id: arkret_sdk::protocol_journey::ProtocolOperationId,
+        request_digest: arkret_sdk::Hash,
+        verifier_id: arkret_sdk::Did,
+        audience: arkret_sdk::Did,
+        challenge: arkret_sdk::NonEmptyString,
+    },
+    HistoricalEvent {
+        realm_id: arkret_sdk::RealmId,
+        event_id: arkret_sdk::EventId,
+        event_digest: arkret_sdk::Hash,
+        event_admitted_seal_id: arkret_sdk::SealId,
+        receiver_service_id: arkret_sdk::Did,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CachedAgentSignerEvidence {
     pub evidence: arkret_sdk::AgentSignerEvidence,
-    pub controller_public_key: arkret_sdk::signatures::PublicKeyMaterial,
-    pub source_public_key: arkret_sdk::signatures::PublicKeyMaterial,
-    pub seal_signer_public_keys: BTreeMap<String, arkret_sdk::signatures::PublicKeyMaterial>,
+    pub verification_context: CachedAgentSignerEvidenceContext,
+    pub verification_method_public_keys:
+        BTreeMap<String, arkret_sdk::signatures::PublicKeyMaterial>,
     pub cached_at_unix_ms: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
     /// Highest verified `ak.key_backup.active_series` pointer observed per

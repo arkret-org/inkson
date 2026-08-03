@@ -396,7 +396,19 @@ pub fn ordinary_agent_mls_author_view(
             continue;
         };
         for entry in state_store.cached_agent_signer_evidence_for_agent(&signer_id) {
-            let binding = &entry.evidence.signing_key_binding;
+            let binding = match &entry.evidence {
+                arkret_sdk::AgentSignerEvidence::CurrentAdmission {
+                    admission_evidence, ..
+                }
+                | arkret_sdk::AgentSignerEvidence::HistoricalEvent {
+                    admission_evidence, ..
+                } => {
+                    &admission_evidence
+                        .agent_authority_snapshot
+                        .core
+                        .signing_key_binding
+                }
+            };
             let Ok(key) = arkret_sdk::base64url_decode(binding.public_key.key.as_str().as_bytes())
             else {
                 continue;

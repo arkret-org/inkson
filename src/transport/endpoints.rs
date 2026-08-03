@@ -168,32 +168,12 @@ impl MlsEndpoints<'_> {
 
     pub async fn consume_key_package(
         &self,
-        candidate: &crate::mls::runtime::WelcomeConsumeCandidate,
-        consumer_device_id: &str,
+        _candidate: &crate::mls::runtime::WelcomeConsumeCandidate,
+        _consumer_device_id: &str,
     ) -> anyhow::Result<arkret_sdk::KeyPackagesConsumeOutcome> {
-        let key_package_refs = vec![candidate.key_package_id.clone()];
-        let claim_ids = vec![candidate.claim_id.clone()];
-        let unsigned = arkret_sdk::KeyPackagesConsumeUnsignedRequest {
-            key_package_refs,
-            consumer_device_id: arkret_sdk::DeviceId::new(consumer_device_id.to_owned())?,
-            claim_ids,
-            welcome_ref: Some(candidate.welcome_event_id.clone()),
-            realm_id: Some(arkret_sdk::RealmId::new(candidate.realm_id.clone())?),
-            strand_id: candidate
-                .strand_id
-                .as_ref()
-                .map(|strand_id| arkret_sdk::StrandId::new(strand_id.clone()))
-                .transpose()?,
-            mls_group_id: Some(candidate.mls_group_id.clone()),
-            epoch: Some(candidate.epoch),
-        };
-        let signature = crate::mls_api_helpers::sign_keypackage_consume(&unsigned)?;
-        let body = unsigned.into_signed(signature);
-        self.transport
-            .http()
-            .keypackages_consume(&body)
-            .await
-            .map_err(anyhow::Error::from)
+        anyhow::bail!(
+            "KeyPackage consume is unavailable because the accepted Welcome projection does not expose the required recipient durable receipt"
+        )
     }
 
     pub async fn claim_key_package(

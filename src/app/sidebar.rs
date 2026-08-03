@@ -57,9 +57,9 @@ fn active_agents_only(
     agents
         .into_iter()
         .filter(|agent| {
-            matches!(agent.status, arkret_sdk::AgentLifecycleState::Active)
+            matches!(agent.lifecycle, arkret_sdk::AgentLifecycleState::Active)
                 && matches!(
-                    agent.runtime_state,
+                    crate::views::agents::model::agent_projection_runtime_state(agent),
                     arkret_sdk::AgentRuntimeState::Ready | arkret_sdk::AgentRuntimeState::Replacing
                 )
         })
@@ -425,7 +425,7 @@ pub(super) fn delete_sidebar_contact(
                 direct_contact_rows.set(
                     direct_contact_rows()
                         .into_iter()
-                        .filter(|row| row.peer.as_str() != peer)
+                        .filter(|row| crate::models::contact_peer_id(row).as_str() != peer)
                         .collect(),
                 );
                 direct_contacts_loaded.set(true);

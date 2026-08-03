@@ -1,8 +1,72 @@
+use arkret_sdk::protocol_journey::{
+    ContactCommitPhase, ContactCommitRequestBody, ContactOperationOutcome,
+    ContactOperationRequestBody, ContactPeer, ContactPreparePhase, ContactPrepareRequestBody,
+    ContactPreparedEventDraft, ContactPreparedOutcome, ContactScope, ProtocolOpaqueId,
+    ProtocolOperationId,
+};
+
+fn contact_scope(scope: &str) -> anyhow::Result<ContactScope> {
+    match scope.trim() {
+        "invite" => Ok(ContactScope::Invite),
+        "direct_message" => Ok(ContactScope::DirectMessage),
+        "voice_call" => Ok(ContactScope::VoiceCall),
+        "video_call" => Ok(ContactScope::VideoCall),
+        "presence" => Ok(ContactScope::Presence),
+        other => anyhow::bail!("unsupported Contact scope `{other}`"),
+    }
+}
+
+fn prepared_contact_request(
+    outcome: ContactOperationOutcome,
+) -> anyhow::Result<(
+    ProtocolOperationId,
+    ProtocolOpaqueId,
+    ContactPreparedEventDraft,
+)> {
+    match outcome {
+        ContactOperationOutcome::Prepared {
+            outcome:
+                ContactPreparedOutcome::Request {
+                    operation_id,
+                    reservation_handle,
+                    event_draft,
+                    ..
+                },
+        } => Ok((operation_id, reservation_handle, event_draft)),
+        ContactOperationOutcome::Failed { outcome } => {
+            anyhow::bail!("Contact request prepare was rejected: {:?}", outcome.reason)
+        }
+        _ => anyhow::bail!("Contact request prepare returned an invalid result kind"),
+    }
+}
+
+fn sign_prepared_contact_event(
+    draft: &ContactPreparedEventDraft,
+) -> anyhow::Result<arkret_sdk::Event> {
+    let bytes = arkret_sdk::base64url_decode(draft.unsigned_event_bytes.as_str().as_bytes())
+        .map_err(|error| anyhow::anyhow!("invalid prepared Contact Event bytes: {error}"))?;
+    let mut event: arkret_sdk::Event = serde_json::from_slice(&bytes)
+        .map_err(|error| anyhow::anyhow!("invalid prepared Contact Event: {error}"))?;
+    let digest = arkret_sdk::Hash::new(event.event_digest()?)?;
+    if event.event_id != draft.event_id || event.kind != draft.kind || digest != draft.event_digest
+    {
+        anyhow::bail!("prepared Contact Event metadata does not match its canonical bytes");
+    }
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("active device signer is required for Contact commit"))?;
+    signer.sign_sdk_event_with_context(
+        &mut event,
+        crate::event_signer::EventProofContext::default(),
+    )?;
+    let signed_digest = arkret_sdk::Hash::new(event.event_digest()?)?;
+    if signed_digest != draft.event_digest {
+        anyhow::bail!("signing changed the prepared Contact Event digest");
+    }
+    Ok(event)
+}
+
 impl crate::transport::TransportClient {
-    pub async fn request_contact(
-        &self,
-        target: &str,
-    ) -> anyhow::Result<arkret_sdk::ContactRequestOutcome> {
+    pub async fn request_contact(&self, target: &str) -> anyhow::Result<ContactOperationOutcome> {
         self.request_contact_scoped(target, "direct_message").await
     }
 
@@ -10,46 +74,71 @@ impl crate::transport::TransportClient {
         &self,
         target: &str,
         scope: &str,
-    ) -> anyhow::Result<arkret_sdk::ContactRequestOutcome> {
+    ) -> anyhow::Result<ContactOperationOutcome> {
         self.request_contact_with_message(target, &[scope.to_owned()], None, None)
             .await
     }
 
-    /// Send a contact request carrying one or more requested scopes plus an
-    /// optional free-text greeting.
-    ///
-    /// Kept on the transport while contact addressing depends on the cached
-    /// service description and directory evidence assembled by
-    /// `contact_request_addressing`.
+    /// Execute the future-only Contact prepare -> local signature -> commit
+    /// ceremony. The UI's contact-request surface is explicitly human-only;
+    /// Agent contacts require their controller binding and therefore need a
+    /// separate typed UX instead of guessing from a DID string.
     pub async fn request_contact_with_message(
         &self,
         target: &str,
         scopes: &[String],
         message: Option<&str>,
         recipient_service_id: Option<&str>,
-    ) -> anyhow::Result<arkret_sdk::ContactRequestOutcome> {
-        let requested_scopes: Vec<String> = scopes
+    ) -> anyhow::Result<ContactOperationOutcome> {
+        if recipient_service_id.is_some_and(|value| !value.trim().is_empty()) {
+            anyhow::bail!(
+                "the Contact request protocol no longer accepts an unverified recipient service override"
+            );
+        }
+        let mut granted_to_peer_scopes = scopes
             .iter()
-            .map(|scope| scope.trim())
-            .filter(|scope| !scope.is_empty())
-            .map(ToOwned::to_owned)
-            .collect();
-        let addressing = self
-            .contact_request_addressing(target, recipient_service_id)
-            .await?;
-        let body = arkret_sdk::ContactRequestRequestBody {
-            target: addressing.target,
-            requested_scopes,
+            .map(|scope| contact_scope(scope))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        granted_to_peer_scopes.sort();
+        granted_to_peer_scopes.dedup();
+        if granted_to_peer_scopes.is_empty() {
+            anyhow::bail!("at least one Contact scope is required");
+        }
+        let addressing = self.contact_request_addressing(target, None).await?;
+        let nonce = crate::operation::uuid_v7();
+        let operation_id =
+            ProtocolOperationId::new(format!("ak:operation:contact.request.{nonce}"))
+                .map_err(anyhow::Error::msg)?;
+        let idempotency_key = ProtocolOpaqueId::new(nonce).map_err(anyhow::Error::msg)?;
+        let prepare = ContactOperationRequestBody::Prepare(ContactPrepareRequestBody {
+            phase: ContactPreparePhase::Prepare,
+            operation_id: operation_id.clone(),
+            idempotency_key: idempotency_key.clone(),
+            peer: ContactPeer::Human {
+                principal_id: addressing.target,
+            },
+            granted_to_peer_scopes,
+            introduction_evidence: addressing.introduction_evidence,
             message: message
                 .map(str::trim)
                 .filter(|message| !message.is_empty())
                 .map(ToOwned::to_owned),
-            idempotency_key: None,
-            recipient_service_id: addressing.recipient_service_id,
-            introduction_evidence: Some(addressing.introduction_evidence),
-        };
+        });
+        let (prepared_operation_id, reservation_handle, event_draft) =
+            prepared_contact_request(self.sdk_http_client()?.contacts_request(&prepare).await?)?;
+        if prepared_operation_id != operation_id {
+            anyhow::bail!("Contact prepare changed operation_id");
+        }
+        let signed_event = sign_prepared_contact_event(&event_draft)?;
+        let commit = ContactOperationRequestBody::Commit(ContactCommitRequestBody {
+            phase: ContactCommitPhase::Commit,
+            operation_id,
+            idempotency_key,
+            reservation_handle,
+            signed_event,
+        });
         self.sdk_http_client()?
-            .contacts_request(&body)
+            .contacts_request(&commit)
             .await
             .map_err(anyhow::Error::from)
     }

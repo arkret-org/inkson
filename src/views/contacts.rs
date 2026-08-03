@@ -7,6 +7,7 @@
 // the DID Document via `crate::identity::did_resolver::build_default_resolver`
 // instead of relying on the cached binding state surfaced here.
 
+use arkret_sdk::protocol_journey::ContactScope;
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::use_navigator;
@@ -30,13 +31,13 @@ const CONTACT_MESSAGE_MAX: usize = 2000;
 /// i18n key for a contact scope token. Keeps the dropdown values canonical
 /// (`direct_message`, `invite`, …) while the option text is looked up via the
 /// active locale (en is the authoritative default).
-fn scope_label(scope: &str) -> String {
+fn scope_label(scope: &ContactScope) -> String {
     let key = match scope {
-        "direct_message" => "contacts.scope.direct_message",
-        "invite" => "contacts.scope.invite",
-        "voice_call" => "contacts.scope.voice_call",
-        "video_call" => "contacts.scope.video_call",
-        _ => "contacts.scope.direct_message",
+        ContactScope::DirectMessage => "contacts.scope.direct_message",
+        ContactScope::Invite => "contacts.scope.invite",
+        ContactScope::VoiceCall => "contacts.scope.voice_call",
+        ContactScope::VideoCall => "contacts.scope.video_call",
+        ContactScope::Presence => "contacts.scope.presence",
     };
     tr(key)
 }
@@ -105,7 +106,7 @@ pub fn ContactNewPanel(
                         checked: if scope_direct_message() { CheckboxState::Checked } else { CheckboxState::Unchecked },
                         on_checked_change: move |state: CheckboxState| scope_direct_message.set(bool::from(state)),
                     }
-                    span { {scope_label("direct_message")} }
+                    span { {scope_label(&ContactScope::DirectMessage)} }
                 }
                 label {
                     class: "metric",
@@ -115,7 +116,7 @@ pub fn ContactNewPanel(
                         checked: if scope_invite() { CheckboxState::Checked } else { CheckboxState::Unchecked },
                         on_checked_change: move |state: CheckboxState| scope_invite.set(bool::from(state)),
                     }
-                    span { {scope_label("invite")} }
+                    span { {scope_label(&ContactScope::Invite)} }
                 }
             }
             if no_scope {
@@ -227,7 +228,7 @@ fn ContactRow(
     let mut busy = use_signal(|| false);
     let mut confirm_block = use_signal(|| false);
 
-    let peer = contact.peer.to_string();
+    let peer = crate::models::contact_peer_id(&contact).to_string();
     let state = contact.state;
     // Cross-PS source: if the backend exposed the requester's PS in the list
     // row, pass `requester_service_id` through on respond for reverse
@@ -254,6 +255,7 @@ fn ContactRow(
         arkret_sdk::ContactState::Accepted => tr("contacts.state.accepted"),
         arkret_sdk::ContactState::Rejected => tr("contacts.state.rejected"),
         arkret_sdk::ContactState::Tombstoned => tr("contacts.state.tombstoned"),
+        arkret_sdk::ContactState::Expired => tr("contacts.state.expired"),
     };
 
     let row_class = if is_weak {
@@ -294,7 +296,8 @@ fn ContactRow(
                     Button {
                         variant: ButtonVariant::Primary,
                         "data-testid": "contact-accept-{peer}",
-                        disabled: busy(),
+                        disabled: true,
+                        title: "Unavailable until the signed request acceptance receipt is exposed",
                         onclick: {
                             let base = base_url.clone();
                             let peer = peer.clone();
@@ -318,7 +321,8 @@ fn ContactRow(
                     Button {
                         variant: ButtonVariant::Secondary,
                         "data-testid": "contact-reject-{peer}",
-                        disabled: busy(),
+                        disabled: true,
+                        title: "Unavailable until the signed request acceptance receipt is exposed",
                         onclick: {
                             let base = base_url.clone();
                             let peer = peer.clone();
@@ -350,7 +354,8 @@ fn ContactRow(
                     Button {
                         variant: ButtonVariant::Ghost,
                         "data-testid": "contact-withdraw-{peer}",
-                        disabled: busy(),
+                        disabled: true,
+                        title: "Unavailable until the Contact lineage basis is exposed",
                         onclick: {
                             let base = base_url.clone();
                             let peer = peer.clone();
@@ -374,7 +379,8 @@ fn ContactRow(
                     Button {
                         variant: ButtonVariant::Primary,
                         "data-testid": "contact-message-{peer}",
-                        disabled: busy(),
+                        disabled: true,
+                        title: "Unavailable until the Direct Conversation materialization ceremony is wired",
                         onclick: {
                             let base = base_url.clone();
                             let peer = peer.clone();
@@ -397,12 +403,12 @@ fn ContactRow(
                                     .await
                                     {
                                         Ok(outcome) => {
-                                            match (outcome.realm_id, outcome.main_strand_id) {
-                                                (Some(realm_id), Some(strand_id)) => {
+                                            match crate::transport::account::direct_conversation_coordinates(&outcome) {
+                                                Some(coordinates) => {
                                                     row_status.set(String::new());
                                                     nav.push(Route::DirectConversation {
-                                                        realm_id: realm_id.to_string(),
-                                                        strand_id: strand_id.to_string(),
+                                                        realm_id: coordinates.realm_id.to_string(),
+                                                        strand_id: coordinates.main_strand_id.to_string(),
                                                     });
                                                 }
                                                 _ => row_status.set(tr("contacts.dm.not_ready")),
@@ -459,7 +465,8 @@ fn ContactRow(
                     Button {
                         variant: ButtonVariant::Destructive,
                         "data-testid": "contact-block-{peer}",
-                        disabled: busy(),
+                        disabled: true,
+                        title: "Unavailable until the Contact lineage basis is exposed",
                         onclick: move |_| confirm_block.set(true),
                         {tr("contacts.action.block")}
                     }
@@ -700,7 +707,7 @@ pub fn ContactsPanel(token: Signal<String>) -> Element {
                             ul { class: "settings-list",
                                 for contact in contact_rows {
                                     ContactRow {
-                                        key: "{contact.peer}",
+                                        key: "{crate::models::contact_peer_id(&contact)}",
                                         token,
                                         contact: contact.clone(),
                                         on_changed: move |_| reload.set(reload() + 1),

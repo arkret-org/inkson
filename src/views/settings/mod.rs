@@ -280,7 +280,7 @@ pub(crate) fn push_blocklist_account_data(
     base_url: String,
     api_token: String,
     account_did: String,
-    mut state_store: Signal<crate::state::LocalStateStore>,
+    mut state_store: SyncSignal<crate::state::LocalStateStore>,
     entries: Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry>,
 ) {
     if api_token.trim().is_empty() {
@@ -305,7 +305,8 @@ pub(crate) fn push_blocklist_account_data(
                 },
             )
             .await?;
-            for peer in state_store.read().pending_personal_block_sagas() {
+            let pending_peers = state_store.read().pending_personal_block_sagas();
+            for peer in pending_peers {
                 crate::transport::account::tombstone_contact_and_revoke_all(sub.http(), &peer)
                     .await?;
                 state_store.write().complete_personal_block_saga(&peer);

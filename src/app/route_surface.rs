@@ -6,7 +6,7 @@ pub(super) fn direct_conversation_peer_id(
     strand_id: &str,
 ) -> String {
     let matches_route = |summary: &crate::models::DirectConversationSummary| {
-        summary.state == arkret_sdk::DirectConversationBindingState::Active
+        summary.state == arkret_sdk::DirectConversationSummaryState::Found
             && summary.realm_id.as_str() == realm_id
             && summary.main_strand_id.as_str() == strand_id
     };
@@ -16,7 +16,7 @@ pub(super) fn direct_conversation_peer_id(
             .as_ref()
             .is_some_and(&matches_route)
         {
-            return contact.peer.to_string();
+            return crate::models::contact_peer_id(contact).to_string();
         }
         if let Some(agent) = contact.agents.iter().find(|agent| {
             agent

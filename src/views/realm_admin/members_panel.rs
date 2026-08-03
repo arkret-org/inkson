@@ -216,9 +216,11 @@ fn member_agent_row_from_value(
         controller_id,
         display_name,
         slug,
-        status: crate::views::agents::model::agent_lifecycle_wire(row.status).to_owned(),
-        runtime_state: crate::views::agents::model::agent_runtime_state_wire(row.runtime_state)
-            .to_owned(),
+        status: crate::views::agents::model::agent_lifecycle_wire(row.lifecycle).to_owned(),
+        runtime_state: crate::views::agents::model::agent_runtime_state_wire(
+            crate::views::agents::model::agent_projection_runtime_state(&row),
+        )
+        .to_owned(),
         mention_policy: AgentMentionPolicy::Unknown,
         selection: AgentParticipation::NONE,
     })
@@ -3721,8 +3723,8 @@ pub fn RealmMembersPanel(
                                 }
                             }
                             div { class: "modal-body workflow-form",
-                                // U3 — primary, natural path: pull existing contacts
-                                // into the Realm directly via their consent grant.
+                                // Pull existing contacts into the Realm through the
+                                // independent directional Contact invite scope.
                                 div { class: "invite-from-contacts", "data-testid": "realm-invite-from-contacts",
                                     div { class: "event-head",
                                         span { {crate::i18n::tr("realm_admin.invite_from_contacts")} }
@@ -3735,18 +3737,12 @@ pub fn RealmMembersPanel(
                                         div { class: "settings-list",
                                             for contact in invite_contacts.read().clone() {
                                                 {
-                                                    let did = contact.peer.to_string();
+                                                    let did = crate::models::contact_peer_id(&contact).to_string();
                                                     let did_label = actor_display_label(&state_store.read(), &did);
                                                     let checked = selected_contacts.read().contains(&did);
                                                     let eligible =
                                                         crate::models::contact_grants_me_invite(&contact);
-                                                    let has_ref =
-                                                        crate::models::contact_invite_consent_ref(&contact)
-                                                            .is_some();
-                                                    let usable = eligible && has_ref;
-                                                    // Distinguish "peer never authorised invite" (no real
-                                                    // consent grant ref) from other not-yet-usable states so
-                                                    // the badge tells the user why the row is disabled.
+                                                    let usable = eligible;
                                                     let not_authorized = !usable;
                                                     let did_for_toggle = did.clone();
                                                     rsx! {
@@ -3798,18 +3794,18 @@ pub fn RealmMembersPanel(
                                                         let realm = realm.clone();
                                                         let mut state_store = state_store;
                                                         let api_token = token();
-                                                        // Resolve the (did, consent_ref) pairs up front so the
+                                                        // Resolve the destination pairs up front so the
                                                         // async task doesn't borrow the rendered rows.
-                                                        let targets: Vec<(String, Option<String>, String)> = invite_contacts
+                                                        let targets: Vec<(String, Option<String>)> = invite_contacts
                                                             .read()
                                                             .iter()
-                                                            .filter(|c| selected_contacts.read().contains(c.peer.as_str()))
-                                                            .filter_map(|c| {
-                                                                crate::models::contact_invite_consent_ref(c).map(|r| (
-                                                                    c.peer.to_string(),
+                                                            .filter(|c| selected_contacts.read().contains(crate::models::contact_peer_id(c).as_str()))
+                                                            .filter(|c| crate::models::contact_grants_me_invite(c))
+                                                            .map(|c| {
+                                                                (
+                                                                    crate::models::contact_peer_id(c).to_string(),
                                                                     c.peer_service_id.as_ref().map(ToString::to_string),
-                                                                    r.to_owned(),
-                                                                ))
+                                                                )
                                                             })
                                                             .collect();
                                                         if targets.is_empty() {
@@ -3838,14 +3834,13 @@ pub fn RealmMembersPanel(
                                                             let mut mls_ok = 0_usize;
                                                             let mut ok_invites =
                                                                 Vec::<(String, String, String)>::new();
-                                                            for (did, recipient_service_id, consent_ref) in targets {
+                                                            for (did, recipient_service_id) in targets {
                                                                 match api
                                                                     .invite_contact_to_realm(
                                                                         &realm,
                                                                         &actor,
                                                                         &did,
                                                                         recipient_service_id.as_deref(),
-                                                                        &consent_ref,
                                                                     )
                                                                     .await
                                                                 {

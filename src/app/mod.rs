@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use arkret_sdk::protocol_journey::ContactScope;
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::*;
@@ -880,14 +881,15 @@ fn AppBootstrap() -> Element {
         .read()
         .iter()
         .filter(|contact| {
-            let display_name = actor_display_label(&state_store.read(), contact.peer.as_str());
+            let peer_id = crate::models::contact_peer_id(contact);
+            let display_name = actor_display_label(&state_store.read(), peer_id.as_str());
             let scopes = contact
                 .bidirectional_scopes
                 .iter()
-                .chain(contact.effective_scopes.iter())
-                .chain(contact.granted_by_me.iter())
-                .chain(contact.granted_to_me.iter())
-                .cloned()
+                .chain(contact.effective_scopes.iter().flatten())
+                .chain(contact.granted_to_peer_scopes.iter())
+                .chain(contact.granted_by_peer_scopes.iter())
+                .map(|scope| crate::models::contact_scope_wire(*scope))
                 .collect::<Vec<_>>()
                 .join(" ");
             let agent_match = contact.agents.iter().any(|agent| {
@@ -904,7 +906,7 @@ fn AppBootstrap() -> Element {
                 || sidebar_text_matches_query(
                     &direct_sidebar_query_value,
                     &[
-                        contact.peer.as_str(),
+                        peer_id.as_str(),
                         crate::models::contact_state_wire(contact.state),
                         &display_name,
                         &scopes,
@@ -914,18 +916,20 @@ fn AppBootstrap() -> Element {
         .cloned()
         .collect();
     filtered_direct_contact_rows.sort_by(|left, right| {
-        let left_remark = contact_remarks_for_sidebar.get(left.peer.as_str());
-        let right_remark = contact_remarks_for_sidebar.get(right.peer.as_str());
+        let left_peer = crate::models::contact_peer_id(left);
+        let right_peer = crate::models::contact_peer_id(right);
+        let left_remark = contact_remarks_for_sidebar.get(left_peer.as_str());
+        let right_remark = contact_remarks_for_sidebar.get(right_peer.as_str());
         let left_pinned = left_remark.is_some_and(|remark| remark.pinned);
         let right_pinned = right_remark.is_some_and(|remark| remark.pinned);
         let left_label =
-            actor_display_label(&state_store.read(), left.peer.as_str()).to_ascii_lowercase();
+            actor_display_label(&state_store.read(), left_peer.as_str()).to_ascii_lowercase();
         let right_label =
-            actor_display_label(&state_store.read(), right.peer.as_str()).to_ascii_lowercase();
+            actor_display_label(&state_store.read(), right_peer.as_str()).to_ascii_lowercase();
         right_pinned
             .cmp(&left_pinned)
             .then_with(|| left_label.cmp(&right_label))
-            .then_with(|| left.peer.cmp(&right.peer))
+            .then_with(|| left_peer.cmp(right_peer))
     });
     let active_security_scope_id = if active_projection_realm_id.trim().is_empty() {
         active_realm_id.as_str()
@@ -2182,21 +2186,18 @@ fn AppBootstrap() -> Element {
                                                                                     ).await
                                                                                 },
                                                                             ).await {
-                                                                                Ok(response) if matches!(
-                                                                                    response.state,
-                                                                                    arkret_sdk::DirectConversationResolveState::Found
-                                                                                ) => response
-                                                                                    .realm_id
-                                                                                    .zip(response.main_strand_id)
-                                                                                    .map(|(realm_id, strand_id)| Route::DirectConversation {
-                                                                                            realm_id: realm_id.to_string(),
-                                                                                            strand_id: strand_id.to_string(),
-                                                                                        }),
+                                                                                Ok(response) if crate::transport::account::direct_conversation_coordinates(&response).is_some() => {
+                                                                                    let coordinates = crate::transport::account::direct_conversation_coordinates(&response).expect("guarded coordinates");
+                                                                                    Some(Route::DirectConversation {
+                                                                                        realm_id: coordinates.realm_id.to_string(),
+                                                                                        strand_id: coordinates.main_strand_id.to_string(),
+                                                                                    })
+                                                                                },
                                                                                 Ok(response) => {
                                                                                     crate::components::feedback::toast_error(
                                                                                         "feedback.direct_open_failed",
                                                                                         vec![],
-                                                                                        Some(format!("state: {:?}", response.state)),
+                                                                                        Some(format!("outcome: {response:?}")),
                                                                                     );
                                                                                     None
                                                                                 }
@@ -2252,21 +2253,26 @@ fn AppBootstrap() -> Element {
                         } else {
                             for contact in filtered_direct_contact_rows.iter() {
                                 {
-                                    let peer = contact.peer.to_string();
+                                    let peer = crate::models::contact_peer_id(&contact).to_string();
                                     let state_label =
                                         crate::models::contact_state_wire(contact.state).to_owned();
-                                    let scopes_label = contact.bidirectional_scopes.join(", ");
+                                    let scopes_label = contact
+                                        .bidirectional_scopes
+                                        .iter()
+                                        .map(|scope| crate::models::contact_scope_wire(*scope))
+                                        .collect::<Vec<_>>()
+                                        .join(", ");
                                     let direct = contact.direct_conversation.clone();
                                     let has_direct_scope = contact
                                         .bidirectional_scopes
                                         .iter()
-                                        .chain(contact.effective_scopes.iter())
-                                        .any(|scope| scope == "direct_message");
+                                        .chain(contact.effective_scopes.iter().flatten())
+                                        .any(|scope| *scope == ContactScope::DirectMessage);
                                     let has_active_direct = direct
                                         .as_ref()
                                         .is_some_and(|summary| {
                                             summary.state
-                                                == arkret_sdk::DirectConversationBindingState::Active
+                                                == arkret_sdk::DirectConversationSummaryState::Found
                                         });
                                     let can_resolve =
                                         contact.state == arkret_sdk::ContactState::Accepted
@@ -2352,7 +2358,7 @@ fn AppBootstrap() -> Element {
                                                         }
                                                         if let Some(summary) = direct.clone()
                                                             && summary.state
-                                                                == arkret_sdk::DirectConversationBindingState::Active
+                                                                == arkret_sdk::DirectConversationSummaryState::Found
                                                         {
                                                             let _ = navigator.push(Route::DirectConversation {
                                                                 realm_id: summary.realm_id.to_string(),
@@ -2381,21 +2387,16 @@ fn AppBootstrap() -> Element {
                                                             ).await;
                                                             let route = match result {
                                                                 Ok(response) => {
-                                                                    if matches!(
-                                                                        response.state,
-                                                                        arkret_sdk::DirectConversationResolveState::Found
-                                                                    )
-                                                                        && let (Some(realm_id), Some(strand_id)) = (response.realm_id, response.main_strand_id)
-                                                                    {
+                                                                    if let Some(coordinates) = crate::transport::account::direct_conversation_coordinates(&response) {
                                                                         Some(Route::DirectConversation {
-                                                                            realm_id: realm_id.to_string(),
-                                                                            strand_id: strand_id.to_string(),
+                                                                            realm_id: coordinates.realm_id.to_string(),
+                                                                            strand_id: coordinates.main_strand_id.to_string(),
                                                                         })
                                                                     } else {
                                                                         crate::components::feedback::toast_error(
                                                                             "feedback.direct_open_failed",
                                                                             vec![],
-                                                                            Some(format!("state: {:?}", response.state)),
+                                                                            Some(format!("outcome: {response:?}")),
                                                                         );
                                                                         None
                                                                     }
@@ -2541,7 +2542,7 @@ fn AppBootstrap() -> Element {
                                                             "data-testid": "direct-conversation-row-delete-action",
                                                             title: "Delete Contact",
                                                             "aria-label": "Delete Contact",
-                                                            disabled: !has_session,
+                                                            disabled: true,
                                                             onclick: {
                                                                 let peer = peer.clone();
                                                                 move |event: dioxus::events::MouseEvent| {
@@ -2616,7 +2617,7 @@ fn AppBootstrap() -> Element {
                                                                     }
                                                                     if let Some(summary) = agent_direct.clone()
                                                                         && summary.state
-                                                                            == arkret_sdk::DirectConversationBindingState::Active
+                                                                            == arkret_sdk::DirectConversationSummaryState::Found
                                                                     {
                                                                         let _ = navigator.push(Route::DirectConversation {
                                                                             realm_id: summary.realm_id.to_string(),
@@ -2643,21 +2644,18 @@ fn AppBootstrap() -> Element {
                                                                                 ).await
                                                                             },
                                                                         ).await {
-                                                                            Ok(response) if matches!(
-                                                                                response.state,
-                                                                                arkret_sdk::DirectConversationResolveState::Found
-                                                                            ) => response
-                                                                                .realm_id
-                                                                                .zip(response.main_strand_id)
-                                                                                .map(|(realm_id, strand_id)| Route::DirectConversation {
-                                                                                        realm_id: realm_id.to_string(),
-                                                                                        strand_id: strand_id.to_string(),
-                                                                                    }),
+                                                                            Ok(response) if crate::transport::account::direct_conversation_coordinates(&response).is_some() => {
+                                                                                let coordinates = crate::transport::account::direct_conversation_coordinates(&response).expect("guarded coordinates");
+                                                                                Some(Route::DirectConversation {
+                                                                                    realm_id: coordinates.realm_id.to_string(),
+                                                                                    strand_id: coordinates.main_strand_id.to_string(),
+                                                                                })
+                                                                            },
                                                                             Ok(response) => {
                                                                                 crate::components::feedback::toast_error(
                                                                                     "feedback.direct_open_failed",
                                                                                     vec![],
-                                                                                    Some(format!("state: {:?}", response.state)),
+                                                                                    Some(format!("outcome: {response:?}")),
                                                                                 );
                                                                                 None
                                                                             }

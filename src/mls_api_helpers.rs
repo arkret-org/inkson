@@ -141,7 +141,7 @@ pub(crate) fn build_mls_keypackage_claim_request(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned),
-        proofs: [arkret_models_crypto::http_bodies::KeyPackageClaimProof {
+        holder_acceptance_proof: arkret_models_crypto::http_bodies::KeyPackageClaimProof {
             kind: arkret_models_crypto::http_bodies::KeyPackageClaimProofKind::DetachedJws,
             verification_method,
             alg: arkret_models_crypto::http_bodies::KeyPackageClaimProofAlgorithm::EdDsa,
@@ -151,10 +151,10 @@ pub(crate) fn build_mls_keypackage_claim_request(
             proof_purpose:
                 arkret_models_crypto::http_bodies::KeyPackageClaimProofPurpose::HolderAcceptance,
             jws: "eyJhbGciOiJFZERTQSJ9..AA".to_owned(),
-        }],
+        },
     };
-    body.proofs[0].payload_digest = body.payload_digest()?;
+    body.holder_acceptance_proof.payload_digest = body.payload_digest()?;
     let binding = body.proof_binding_bytes()?;
-    body.proofs[0].jws = signer.sign_detached_jws_bytes(&binding)?;
+    body.holder_acceptance_proof.jws = signer.sign_detached_jws_bytes(&binding)?;
     Ok(body)
 }

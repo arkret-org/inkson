@@ -144,6 +144,7 @@ mod tests {
             "realm_id": "ak:realm:01904100-0000-7000-8000-fd3637e8361f",
             "kind": "collection",
             "visibility": "private",
+            "state": "active",
             "renderer": "board",
             "title": "Quarterly plan",
             "query": {"realm_ids": ["ak:realm:01904100-0000-7000-8000-fd3637e8361f"]},
@@ -162,6 +163,20 @@ mod tests {
         let (rebuilt_key, plaintext) = private_view_account_data_plaintext(&view).unwrap();
         assert_eq!(rebuilt_key, key);
         assert_eq!(plaintext["visibility"], "private");
+        assert_eq!(plaintext["state"], "active");
+    }
+
+    #[test]
+    fn private_view_requires_explicit_active_state() {
+        let key = private_view_account_data_key(VIEW_ID).unwrap();
+        let mut plaintext = private_view_plaintext();
+        plaintext.as_object_mut().unwrap().remove("state");
+        assert!(private_view_from_plaintext(&key, &plaintext).is_err());
+
+        let mut tombstoned = private_view_plaintext();
+        tombstoned["state"] = json!("tombstoned");
+        tombstoned["state_changed_at"] = json!("2026-06-02T00:00:00.000Z");
+        assert!(private_view_from_plaintext(&key, &tombstoned).is_err());
     }
 
     #[test]

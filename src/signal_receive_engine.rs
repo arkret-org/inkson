@@ -104,9 +104,7 @@ impl garth::SignalSenderKeyResolver for DirectorySenderKeyResolver {
             | crate::identity::device_directory::CacheLookup::Miss => {
                 self.state_store.read(|store| {
                     crate::identity::agent_signer_evidence::resolve_cached_signal_key(
-                        store,
-                        &envelope.sender_actor_id,
-                        &envelope.proof.verification_method,
+                        store, envelope,
                     )
                 })
             }

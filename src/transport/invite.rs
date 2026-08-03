@@ -74,27 +74,14 @@ fn invite_address(
     ))
 }
 
-/// U3 — build the `consent_grant` introduction evidence for a contact-path
-/// invite and return its canonical digest (the value
-/// `ak_ops::invite_create_structured` stamps into the invite event).
-///
-/// We build the evidence object by hand (matching
-/// `IntroductionEvidence::ConsentGrant`'s `{kind, consent_grant_ref}` wire
-/// shape) rather than through the strict typed enum: the consent event ref
-/// comes straight from the contacts projection and the digest is opaque to the
-/// client — soland re-validates the ref server-side. Going through
-/// `EventId::new` here would reject synthetic refs (e.g. e2e fixtures) before
-/// the server ever gets a chance to check them.
-fn contact_consent_evidence_digest(consent_grant_ref: &str) -> anyhow::Result<String> {
-    let consent_grant_ref = consent_grant_ref.trim();
-    if consent_grant_ref.is_empty() {
-        anyhow::bail!("consent_grant_ref is required for the contacts invite path");
-    }
-    let value = serde_json::json!({
-        "kind": "consent_grant",
-        "consent_grant_ref": consent_grant_ref,
-    });
-    crate::canonical::canonical_sha256(&value)
+/// A Contact scope is not a Consent grant. The direct-DID contact path uses
+/// the protocol's explicit-address introduction evidence and relies on the
+/// independent directional `invite` scope gate; it never fabricates a
+/// `consent_grant_ref` from Contact request/response Events.
+fn contact_explicit_address_evidence_digest() -> anyhow::Result<String> {
+    crate::canonical::canonical_sha256(&serde_json::json!({
+        "kind": "explicit_address",
+    }))
 }
 
 fn invitee_from_principal_locator(
@@ -443,13 +430,9 @@ impl crate::transport::TransportClient {
     }
 
     /// U3 — pull an existing contact into a Realm using their DID directly,
-    /// with `IntroductionEvidence::ConsentGrant` (no locator URL).
-    ///
-    /// `consent_grant_ref` is the event ref of the `invite`-scope consent the
-    /// contact gave me (read from the contact row via
-    /// [`crate::models::ContactListRow::invite_consent_ref`]). The delivery
-    /// target is the contact projection's attested `peer_service_id`; when it
-    /// is absent this fails closed so the UI can fall back to the locator path.
+    /// with explicit-address evidence (no locator URL). The Contact's current
+    /// bidirectional `invite` scope is checked by the caller as an independent
+    /// action gate and is never translated into Consent evidence.
     ///
     /// Returns the submitted invite event id and invite id on success.
     pub async fn invite_contact_to_realm(
@@ -458,7 +441,6 @@ impl crate::transport::TransportClient {
         actor_id: &str,
         contact_did: &str,
         recipient_service_id: Option<&str>,
-        consent_grant_ref: &str,
     ) -> anyhow::Result<(String, String)> {
         let contact_did = contact_did.trim();
         arkret_sdk::Did::new(contact_did.to_owned())
@@ -480,7 +462,7 @@ impl crate::transport::TransportClient {
         invite_delivery_target
             .validate()
             .map_err(|err| anyhow::anyhow!("invalid invite_delivery_target: {err}"))?;
-        let introduction_evidence_digest = contact_consent_evidence_digest(consent_grant_ref)?;
+        let introduction_evidence_digest = contact_explicit_address_evidence_digest()?;
         let invite_id = format!("ak:invite:{}", crate::operation::uuid_v7());
         let event = crate::operation::ak_ops::invite_create_structured(
             realm_id,
