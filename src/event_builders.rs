@@ -1001,23 +1001,7 @@ pub fn build_realm_state_event(
             kind.as_str()
         ));
     }
-    let descriptor = kind
-        .descriptor()
-        .filter(|descriptor| {
-            descriptor.reducer_input
-                && descriptor.lattice == Some("cas_register")
-                && descriptor.cell_subject_rule.is_none()
-        })
-        .ok_or_else(|| anyhow::anyhow!("unsupported Realm state event kind {}", kind.as_str()))?;
-    let cell_family = descriptor.cell_family.ok_or_else(|| {
-        anyhow::anyhow!(
-            "Realm state event kind {} has no registry cell family",
-            kind.as_str()
-        )
-    })?;
     let created_at = event_timestamp();
-    let cell = arkret_wire::null_subject_cell(cell_family);
-    let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
     // For the closed enum facets, route authoring through SDK strong types.
     // The generated registry remains the sole source for the target cell.
     // For `ak.realm.history_visibility` the body is the spec
@@ -1078,13 +1062,60 @@ pub fn build_realm_state_event(
                 })?;
             typed.to_value()?
         }
-        _ => json!({ "value": value }),
+        EventKind::RealmPreviewPolicy => {
+            let typed: arkret_sdk::PreviewPolicyPayloadValue =
+                serde_json::from_value(value.clone()).map_err(|err| {
+                    anyhow::anyhow!("invalid Realm preview_policy {value}: {err}")
+                })?;
+            serde_json::to_value(arkret_sdk::PreviewPolicyPayload {
+                value: typed,
+                reason: None,
+            })
+            .map_err(|err| anyhow::anyhow!("Realm preview_policy payload serialize: {err}"))?
+        }
+        EventKind::RealmSchema => serde_json::to_value(arkret_sdk::StatePayload {
+            value: Some(value),
+            state: None,
+            reason: None,
+        })
+        .map_err(|err| anyhow::anyhow!("Realm schema payload serialize: {err}"))?,
+        _ => unreachable!("unsupported Realm state kind was rejected above"),
     };
-    OperationBuilder::new(realm_id, actor_id, kind)
+    let mut event = OperationBuilder::new(realm_id, actor_id, kind)
         .body(body)
-        .preconditions(preconditions)
         .created_at(created_at)
-        .build_sdk_event("inkson")
+        .build_sdk_event("inkson")?;
+
+    // event-kind-registry.json declares that `cell_writes[]` is the sole
+    // authority for reducer targets; the old flattened descriptor fields are
+    // deliberately absent. Project the complete contract so authoring and
+    // admission resolve exactly the same target. These Realm facet builders
+    // are intentionally single-target: if a future contract becomes
+    // conditional or multi-target, fail closed and require a purpose-built
+    // authoring path instead of silently putting CAS on the wrong cell.
+    let writes = crate::operation::project_registered_cell_writes(&event)
+        .map_err(|error| anyhow::anyhow!("{} cell-write projection failed: {error}", event.kind))?;
+    let [write] = writes.as_slice() else {
+        anyhow::bail!(
+            "Realm state event kind {} must project exactly one cell write, got {}",
+            event.kind.as_str(),
+            writes.len()
+        );
+    };
+    let arkret_sdk::ProjectedOp::Direct(op) = &write.op else {
+        anyhow::bail!(
+            "Realm state event kind {} does not have a direct state write",
+            event.kind.as_str()
+        );
+    };
+    if op.op_type != arkret_sdk::LatticeOpType::Set {
+        anyhow::bail!(
+            "Realm state event kind {} does not have a set contract",
+            event.kind.as_str()
+        );
+    }
+    event.preconditions = vec![head_eq_precondition(write.cell.as_str(), Value::Null)?];
+    Ok(event)
 }
 
 /// Build a `ak.realm.archive` lifecycle facet event. Realm archive is a
@@ -1948,6 +1979,32 @@ mod notary_derivation_tests {
                 .iter()
                 .any(|event| event.kind.as_str() == "ak.realm.plaintext_visible_services")
         );
+
+        // The bundle is a flat SDK-typed payload, and both its target and its
+        // genesis CAS guard come from the canonical registry contract. This is
+        // the regression for clients that still read the removed flattened
+        // EventKindDescriptor fields and rejected `ak.realm.policy_bundle`.
+        let bundle = events
+            .iter()
+            .find(|event| event.kind == arkret_sdk::EventKind::RealmPolicyBundle)
+            .expect("encrypted Realm bootstrap carries policy_bundle");
+        let typed: arkret_sdk::RealmPolicyBundlePayload =
+            serde_json::from_value(serde_json::to_value(&bundle.payload).unwrap()).unwrap();
+        assert_eq!(typed.policy_revision, 1);
+        assert!(bundle.payload.get("value").is_none());
+        let writes = crate::operation::project_registered_cell_writes(bundle).unwrap();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(
+            writes[0].cell.as_str(),
+            "ak:cell:ak.component.realm.policy_bundle.v1:null"
+        );
+        assert_eq!(bundle.preconditions.len(), 1);
+        assert_eq!(bundle.preconditions[0].cell, writes[0].cell);
+        assert_eq!(
+            bundle.preconditions[0].predicate.op,
+            arkret_sdk::PredicateOp::HeadEq
+        );
+        assert_eq!(bundle.preconditions[0].predicate.value, Some(Value::Null));
     }
 
     #[test]
