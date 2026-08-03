@@ -3256,9 +3256,7 @@ fn composer_enter_behavior_matches_chat_conventions_and_protects_ime_input() {
 
 #[test]
 fn participation_visibility_uses_most_specific_effective_scope() {
-    use arkret_models_collaboration::governance::agent_participation::{
-        AgentParticipationEntry,
-    };
+    use arkret_models_collaboration::governance::agent_participation::AgentParticipationEntry;
     use arkret_models_collaboration::protocol_journey::{ParticipationBits, ParticipationScope};
 
     let realm = "ak:realm:0196419b-0000-7000-8000-000000000000";
@@ -3268,8 +3266,7 @@ fn participation_visibility_uses_most_specific_effective_scope() {
             realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
         },
         selection: ParticipationBits::ALL,
-        ceiling: ParticipationBits::ALL,
-        effective: ParticipationBits::ALL,
+        version: 1,
     };
     let circle_entry = AgentParticipationEntry {
         scope: ParticipationScope::Circle {
@@ -3277,8 +3274,7 @@ fn participation_visibility_uses_most_specific_effective_scope() {
             circle_id: arkret_sdk::CircleId::new(circle.to_owned()).unwrap(),
         },
         selection: ParticipationBits::NONE,
-        ceiling: ParticipationBits::NONE,
-        effective: ParticipationBits::NONE,
+        version: 1,
     };
 
     assert!(participation_allows_public_reply(
@@ -3297,9 +3293,7 @@ fn participation_visibility_uses_most_specific_effective_scope() {
 
 #[test]
 fn participation_visibility_can_target_the_synthesized_default_discussion_strand() {
-    use arkret_models_collaboration::governance::agent_participation::{
-        AgentParticipationEntry,
-    };
+    use arkret_models_collaboration::governance::agent_participation::AgentParticipationEntry;
     use arkret_models_collaboration::protocol_journey::{ParticipationBits, ParticipationScope};
 
     let realm = "ak:realm:0196419b-0000-7000-8000-000000000010";
@@ -3309,9 +3303,8 @@ fn participation_visibility_can_target_the_synthesized_default_discussion_strand
             realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
             strand_id: arkret_sdk::StrandId::new(strand.clone()).unwrap(),
         },
-        selection: ParticipationBits::NONE,
-        ceiling: ParticipationBits::ALL,
-        effective: ParticipationBits::ALL,
+        selection: ParticipationBits::ALL,
+        version: 1,
     };
 
     assert!(participation_allows_public_reply(
@@ -3324,9 +3317,7 @@ fn participation_visibility_can_target_the_synthesized_default_discussion_strand
 
 #[test]
 fn mention_only_participation_does_not_expose_agent_in_roster() {
-    use arkret_models_collaboration::governance::agent_participation::{
-        AgentParticipationEntry,
-    };
+    use arkret_models_collaboration::governance::agent_participation::AgentParticipationEntry;
     use arkret_models_collaboration::protocol_journey::{ParticipationBits, ParticipationScope};
 
     let realm = "ak:realm:0196419b-0000-7000-8000-000000000020";
@@ -3342,8 +3333,7 @@ fn mention_only_participation_does_not_expose_agent_in_roster() {
             realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
         },
         selection: mention_only,
-        ceiling: ParticipationBits::ALL,
-        effective: mention_only,
+        version: 1,
     };
 
     assert!(!participation_allows_public_reply(

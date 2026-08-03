@@ -23,7 +23,7 @@ pub use model::{
     build_agent_key_authorize_event_for_pairing, build_agent_pairing_bootstrap_json,
     build_requested_scope_disclosure_for_pairing, content_actions_for_presets, expand_preset_grant,
     into_agent_key_pair_request, is_action_request_expired, is_pairing_request_expired,
-    parse_runtime_key_approval_request, participation_ceiling_reason, requested_scope_for_presets,
+    parse_runtime_key_approval_request, requested_scope_for_presets,
     runtime_key_pairing_error_message, service_actions_for_presets,
     summarize_runtime_key_approval_request,
 };

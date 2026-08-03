@@ -10,14 +10,13 @@ use arkret_models_collaboration::agent_operations::{
 use arkret_models_collaboration::events_payloads::agent::{
     AgentKeyScope, AgentKeyScopeResource, AgentKeyScopeResourceKind,
 };
-use arkret_models_collaboration::protocol_journey::ParticipationBits;
 use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
     AgentKeyPairRequestBody, AgentKeySupersession, AgentPairingBootstrap,
     AgentRequestedScopeDisclosure, AgentRuntimeApprovalControllerProjection,
     AgentSigningKeyBinding, AgentSigningPublicKey, Did, DidUrl, Event, EventId, GrantConstraint,
     GrantConstraintEffect, GrantConstraintKind, GrantConstraintSubkind, Hash, KeyState,
-    NonEmptyString, OpaqueLocalId, RealmId,
+    NonEmptyString, OpaqueLocalId, Proof, RealmId, RequestId,
 };
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -446,14 +445,92 @@ pub fn into_agent_key_pair_request(
 }
 
 pub fn build_requested_scope_disclosure_for_pairing(
-    _controller_id: &str,
-    _service_id: &str,
-    _key_state: &KeyState,
-    _request: &AgentRuntimeApprovalControllerProjection,
+    controller_id: &str,
+    service_id: &str,
+    key_state: &KeyState,
+    request: &AgentRuntimeApprovalControllerProjection,
 ) -> anyhow::Result<AgentRequestedScopeDisclosure> {
-    anyhow::bail!(
-        "Agent pairing approval is unavailable because KeyState does not expose the trusted participation_ceiling required by the signed disclosure"
+    let controller_id = Did::new(controller_id.trim().to_owned())?;
+    let agent_id = request.agent_id.clone();
+    if key_state.controller_id != controller_id {
+        anyhow::bail!("agent key_state.controller_id does not match the signed-in controller");
+    }
+    if key_state.agent_id != agent_id {
+        anyhow::bail!("runtime request agent_id does not match this agent key state");
+    }
+    let pairing_request_id = key_state
+        .pairing_request_id
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("agent key_state.pairing_request_id is required"))?;
+    if pairing_request_id != &request.pairing_request_id {
+        anyhow::bail!("runtime request pairing_request_id does not match this agent");
+    }
+    let request_uuid = pairing_request_id
+        .as_str()
+        .strip_prefix("agent_pairing_request:")
+        .ok_or_else(|| anyhow::anyhow!("agent pairing_request_id is invalid"))?;
+    let requested_scope = key_state.requested_scope.clone();
+    let requested_scope_digest = arkret_signatures::agent::agent_requested_scope_digest(
+        &agent_id,
+        &controller_id,
+        &requested_scope,
+    )?;
+    if requested_scope_digest != key_state.requested_scope_digest {
+        anyhow::bail!("agent key_state requested_scope digest does not match its trusted scope");
+    }
+    let verifier_did = Did::new(service_id.trim().to_owned())?;
+    if request.proof_of_possession.audience != verifier_did {
+        anyhow::bail!("runtime request audience does not match the current service");
+    }
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("no active device signer is available"))?;
+    let verification_method = arkret_sdk::DidUrl::new(
+        signer
+            .device_id()
+            .map(|device_id| format!("{}#{device_id}", controller_id.as_str()))
+            .unwrap_or_else(|| signer.verification_method().to_owned()),
     )
+    .map_err(|error| anyhow::anyhow!("agent disclosure verification method is invalid: {error}"))?;
+    let issued_at = crate::clock::now_utc();
+    let expires_at = std::cmp::min(
+        issued_at + chrono::Duration::minutes(5),
+        request.proof_of_possession.expires_at,
+    );
+    if expires_at <= issued_at {
+        anyhow::bail!("runtime key request has expired");
+    }
+    let mut disclosure = AgentRequestedScopeDisclosure {
+        schema: arkret_sdk::SchemaId::AgentRequestedScopeDisclosureV1,
+        request_id: RequestId::new(format!("ak:request:{request_uuid}"))?,
+        agent_id,
+        controller_id,
+        requested_scope,
+        requested_scope_digest,
+        verifier_did,
+        audience: NonEmptyString::new("ak.gate.account.command.pair_agent_key")
+            .map_err(anyhow::Error::msg)?,
+        challenge: NonEmptyString::new(pairing_request_id.as_str().to_owned())
+            .map_err(anyhow::Error::msg)?,
+        issued_at,
+        expires_at,
+        proofs: vec![Proof {
+            kind: "detached_jws".to_owned(),
+            alg: signer.algorithm().to_owned(),
+            verification_method: verification_method.clone(),
+            event_digest: Hash::new(format!("sha256:{}", "0".repeat(64)))?,
+            created_at: issued_at,
+            domain: None,
+            audience: None,
+            proof_purpose: None,
+            jws: String::new(),
+        }],
+    };
+    disclosure.proofs[0].event_digest = disclosure.payload_digest()?;
+    let binding = disclosure.canonical_proof_binding_bytes(&disclosure.proofs[0])?;
+    disclosure.proofs[0].jws =
+        signer.detached_jws_over_payload_with_kid(&verification_method, &binding)?;
+    disclosure.validate()?;
+    Ok(disclosure)
 }
 
 pub fn parse_runtime_key_approval_request(
@@ -820,28 +897,6 @@ pub fn agent_state_badge_class(state: &str) -> &'static str {
 /// `?filter=deactivated` audit deep link can still reveal those records.
 pub fn agent_state_is_terminal(state: &str) -> bool {
     state == "deactivated"
-}
-
-pub fn participation_ceiling_reason(
-    selection: ParticipationBits,
-    ceiling: ParticipationBits,
-) -> String {
-    let mut blocked = Vec::new();
-    if selection.reply_message && !ceiling.reply_message {
-        blocked.push("reply capped by governance ceiling");
-    }
-    if selection.accept_third_party_mention && !ceiling.accept_third_party_mention {
-        blocked.push("third-party mentions capped by governance ceiling");
-    }
-    if selection.act_on_behalf && !ceiling.act_on_behalf {
-        blocked.push("act-on-behalf capped by governance ceiling");
-    }
-
-    if blocked.is_empty() {
-        "ceiling reason: no selected participation bit is capped".to_owned()
-    } else {
-        format!("ceiling reason: {}", blocked.join("; "))
-    }
 }
 
 /// State machine for the action_approve dialog. The dialog gates the

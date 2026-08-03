@@ -9,21 +9,20 @@ use std::time::Duration;
 
 use arkret_models_collaboration::agent_operations::{
     AgentDeactivateRequestBody, AgentLifecycleState, AgentPairingMode, AgentPauseRequestBody,
-    AgentPcrRecoveryState, AgentRenewPairingOutcome, AgentResumeRequestBody, AgentRuntimeState,
-    AgentView, KeyState,
+    AgentPcrRecoveryState, AgentProvisionOutcome, AgentProvisionRequestBody,
+    AgentRenewPairingOutcome, AgentResumeRequestBody, AgentRuntimeState, AgentView, KeyState,
 };
 use arkret_models_collaboration::events_payloads::agent::AgentKeyScope;
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::{use_navigator, use_route};
 
-#[cfg(test)]
-use super::model::requested_scope_for_presets;
 use super::model::{
     AgentGrantPreset, AgentServiceScopePreset, agent_lifecycle_wire, agent_runtime_state_wire,
     agent_state_badge_class, agent_state_label, agent_view_from_directory_row,
-    build_agent_pairing_deep_link, build_agent_pairing_handoff_token, is_pairing_request_expired,
-    render_agent_pairing_qr_svg,
+    build_agent_pairing_deep_link, build_agent_pairing_handoff_token,
+    build_agent_provision_event_drafts, is_pairing_request_expired, render_agent_pairing_qr_svg,
+    requested_scope_for_presets,
 };
 use crate::components::{QrSharePanel, UiIcon};
 use crate::routes::Route;
@@ -990,6 +989,201 @@ fn spawn_deactivate_agent(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
+fn spawn_provision_agent(
+    base: String,
+    api_token: String,
+    controller_id: String,
+    slug: String,
+    avatar_blob_ref: Option<arkret_sdk::BlobRef>,
+    content_presets: Vec<AgentGrantPreset>,
+    service_scopes: Vec<AgentServiceScopePreset>,
+    agents: Signal<Vec<AgentView>>,
+    list_status: Signal<String>,
+    refresh_epoch: Signal<u64>,
+    mut selected_agent_id: Signal<String>,
+    mut create_mode: Signal<bool>,
+    mut new_agent_avatar_blob_ref: Signal<String>,
+    mut last_op_status: Signal<String>,
+    owned_agents_rev: Signal<u64>,
+    state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
+) {
+    spawn(async move {
+        let slug = normalize_agent_slug(&slug);
+        if slug.is_empty() {
+            last_op_status.set("Slug is required.".to_owned());
+            return;
+        }
+        if let Err(error) = arkret_models_identity::validate_agent_slug(&slug) {
+            last_op_status.set(format!("Slug is invalid: {error}"));
+            return;
+        }
+        let controller_id = match arkret_sdk::Did::new(controller_id.trim().to_owned()) {
+            Ok(value) => value,
+            Err(error) => {
+                last_op_status.set(format!("Create failed: signed-in controller DID: {error}"));
+                return;
+            }
+        };
+        let Some(requested_scope) = requested_scope_for_presets(&content_presets, &service_scopes)
+        else {
+            last_op_status.set("Select at least one runtime service surface.".to_owned());
+            return;
+        };
+        let prepare = AgentProvisionRequestBody::Prepare {
+            display_name: None,
+            slug: slug.clone(),
+            avatar_blob_ref: avatar_blob_ref.clone(),
+            requested_scope: requested_scope.clone(),
+            pairing_ttl_ms: None,
+        };
+        let preparation = match with_authed_sdk_client(&base, api_token.clone(), move |http| {
+            let prepare = prepare.clone();
+            async move {
+                http.agent_provision(&prepare)
+                    .await
+                    .map_err(anyhow::Error::from)
+            }
+        })
+        .await
+        {
+            Ok(AgentProvisionOutcome::AwaitingControllerEvents {
+                agent_id,
+                principal_control_realm_id,
+                controller_realm_id,
+                requested_scope_digest,
+                ..
+            }) => (
+                agent_id,
+                principal_control_realm_id,
+                controller_realm_id,
+                requested_scope_digest,
+            ),
+            Ok(AgentProvisionOutcome::Complete { .. }) => {
+                last_op_status
+                    .set("Create failed: prepare returned a completed allocation".to_owned());
+                return;
+            }
+            Err(error) => {
+                last_op_status.set(format!("Create failed: {}", error.display()));
+                return;
+            }
+        };
+        let (agent_id, principal_control_realm_id, controller_realm_id, expected_digest) =
+            preparation;
+        let observed_digest = match arkret_signatures::agent::agent_requested_scope_digest(
+            &agent_id,
+            &controller_id,
+            &requested_scope,
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                last_op_status.set(format!("Create failed: requested scope digest: {error}"));
+                return;
+            }
+        };
+        if observed_digest != expected_digest {
+            last_op_status.set("Create failed: server allocation scope digest mismatch".to_owned());
+            return;
+        }
+        let drafts = match build_agent_provision_event_drafts(
+            &controller_id,
+            &controller_realm_id,
+            &agent_id,
+            &slug,
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                last_op_status.set(format!("Create failed: author provision Events: {error}"));
+                return;
+            }
+        };
+        let provision_events =
+            match with_event_submitter(&base, api_token.clone(), move |submitter| async move {
+                let mut events = submitter
+                    .prepare_initial_submissions(vec![
+                        drafts.accountability_grant,
+                        drafts.selector_claim,
+                    ])
+                    .await?
+                    .into_iter();
+                Ok(arkret_sdk::AgentProvisionEvents {
+                    accountability_grant: events.next().expect("two prepared provision Events"),
+                    selector_claim: events.next().expect("two prepared provision Events"),
+                })
+            })
+            .await
+            {
+                Ok(value) => value,
+                Err(error) => {
+                    last_op_status.set(format!(
+                        "Create failed: sign provision Events: {}",
+                        error.display()
+                    ));
+                    return;
+                }
+            };
+        let commit = AgentProvisionRequestBody::Commit {
+            agent_id: agent_id.clone(),
+            principal_control_realm_id: principal_control_realm_id.clone(),
+            display_name: None,
+            slug: slug.clone(),
+            avatar_blob_ref,
+            requested_scope,
+            provision_events: Box::new(provision_events),
+            pairing_ttl_ms: None,
+        };
+        let outcome =
+            match with_authed_sdk_client(&base, api_token.clone(), move |http| async move {
+                http.agent_provision(&commit)
+                    .await
+                    .map_err(anyhow::Error::from)
+            })
+            .await
+            {
+                Ok(AgentProvisionOutcome::Complete { outcome }) => outcome,
+                Ok(AgentProvisionOutcome::AwaitingControllerEvents { .. }) => {
+                    last_op_status
+                        .set("Create failed: commit returned another preparation".to_owned());
+                    return;
+                }
+                Err(error) => {
+                    last_op_status.set(format!("Create failed: {}", error.display()));
+                    return;
+                }
+            };
+        let bootstrap_outcome = outcome.clone();
+        if let Err(error) = with_authed_api(&base, api_token.clone(), move |api| async move {
+            super::bootstrap::bootstrap_provisioned_agent(
+                &api,
+                state_store,
+                &bootstrap_outcome.agent_id,
+                &bootstrap_outcome.principal_control_realm_id,
+                &bootstrap_outcome.controller_authorization_ref,
+                None,
+            )
+            .await
+        })
+        .await
+        {
+            last_op_status.set(format!(
+                "Agent allocated, but PCR recovery setup failed: {}",
+                error.display()
+            ));
+        } else {
+            last_op_status.set(format!(
+                "Created {} with recoverable Agent PCR.",
+                short_protocol_id(agent_id.as_str())
+            ));
+        }
+        selected_agent_id.set(agent_id.to_string());
+        create_mode.set(false);
+        new_agent_avatar_blob_ref.set(String::new());
+        bump_owned_agents_rev(owned_agents_rev);
+        spawn_refresh_agents(base, api_token, agents, list_status, refresh_epoch);
+    });
+}
+
 // Invariant assertions: each `expect` message names the check that
 // establishes it a few lines earlier. Rewriting them as `?` would add
 // error paths no caller can reach.
@@ -1507,12 +1701,30 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                     Button {
                                         variant: ButtonVariant::Primary,
                                         "data-testid": "agent-admin-provision-button",
-                                        disabled: true,
-                                        onclick: move |_| {
-                                            last_op_status.set(
-                                                "Create is unavailable because Agent provisioning does not expose the participation ceiling required to verify requested_scope_digest."
-                                                    .to_owned(),
-                                            );
+                                        disabled: new_agent_slug().trim().is_empty(),
+                                        onclick: {
+                                            let base = base_url.clone();
+                                            let controller_id = controller_id.clone();
+                                            move |_| {
+                                                spawn_provision_agent(
+                                                    base.clone(),
+                                                    token(),
+                                                    controller_id.clone(),
+                                                    new_agent_slug(),
+                                                    arkret_sdk::BlobRef::new(new_agent_avatar_blob_ref()).ok(),
+                                                    provision_presets.read().clone(),
+                                                    provision_service_scopes.read().clone(),
+                                                    agents,
+                                                    list_status,
+                                                    agent_list_refresh_epoch,
+                                                    selected_agent_id,
+                                                    create_mode,
+                                                    new_agent_avatar_blob_ref,
+                                                    last_op_status,
+                                                    owned_agents_rev,
+                                                    state_store,
+                                                );
+                                            }
                                         },
                                         "Create"
                                     }

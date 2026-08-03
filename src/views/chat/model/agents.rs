@@ -55,7 +55,7 @@ pub(crate) fn participation_allows_public_reply(
     strand_match
         .or(circle_match)
         .or(realm_match)
-        .is_some_and(|entry| entry.effective.reply_message)
+        .is_some_and(|entry| entry.selection.reply_message)
 }
 
 pub(crate) fn agent_metadata_from_mentions(

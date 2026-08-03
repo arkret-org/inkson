@@ -1,8 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use arkret_models_collaboration::governance::agent_participation::{
-    AgentParticipationEntry,
-};
+use arkret_models_collaboration::governance::agent_participation::AgentParticipationEntry;
 use arkret_models_collaboration::protocol_journey::{ParticipationBits, ParticipationScope};
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
@@ -329,7 +327,7 @@ fn mention_state_from_entries(
             } if entry_realm.as_str() == realm_id => {
                 matched = true;
                 selection = entry.selection;
-                if entry.effective.accept_third_party_mention {
+                if entry.selection.accept_third_party_mention {
                     return (AgentMentionPolicy::Allowed, selection);
                 }
             }
@@ -5677,20 +5675,7 @@ mod tests {
                 accept_third_party_mention: true,
                 act_on_behalf: false,
             },
-            ceiling: ParticipationBits {
-                reply_message: true,
-                reaction_add: true,
-                reaction_remove: false,
-                accept_third_party_mention: true,
-                act_on_behalf: false,
-            },
-            effective: ParticipationBits {
-                reply_message: true,
-                reaction_add: true,
-                reaction_remove: false,
-                accept_third_party_mention: true,
-                act_on_behalf: false,
-            },
+            version: 1,
         }];
 
         let (policy, selection) =
@@ -6140,14 +6125,7 @@ mod tests {
                 accept_third_party_mention: true,
                 act_on_behalf: false,
             },
-            ceiling: ParticipationBits::ALL,
-            effective: ParticipationBits {
-                reply_message: true,
-                reaction_add: true,
-                reaction_remove: false,
-                accept_third_party_mention: true,
-                act_on_behalf: false,
-            },
+            version: 1,
         };
 
         let (policy, selection) = mention_state_from_entries(&[entry], realm);

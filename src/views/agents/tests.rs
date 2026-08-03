@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod personal_agent_tests {
-    use arkret_models_collaboration::protocol_journey::ParticipationBits;
 
     use super::super::*;
     use crate::views::agents::model::{
@@ -97,28 +96,6 @@ mod personal_agent_tests {
         assert_eq!(agent_state_badge_class("active"), "badge green");
         assert_eq!(agent_state_badge_class("paused"), "badge amber");
         assert_eq!(agent_state_badge_class("deactivated"), "badge red");
-    }
-
-    #[test]
-    fn participation_ceiling_reason_names_capped_selected_bits() {
-        let selection = ParticipationBits {
-            reply_message: true,
-            reaction_add: true,
-            reaction_remove: false,
-            accept_third_party_mention: true,
-            act_on_behalf: true,
-        };
-        let ceiling = ParticipationBits {
-            reply_message: true,
-            reaction_add: true,
-            reaction_remove: false,
-            accept_third_party_mention: false,
-            act_on_behalf: false,
-        };
-        let reason = participation_ceiling_reason(selection, ceiling);
-        assert!(reason.contains("third-party mentions capped"));
-        assert!(reason.contains("act-on-behalf capped"));
-        assert!(!reason.contains("reply capped"));
     }
 
     #[test]
@@ -521,6 +498,16 @@ mod personal_agent_tests {
         ));
         let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
         let scope = requested_scope_for_presets(&[], &AgentServiceScopePreset::DEFAULTS).unwrap();
+        let agent_did = arkret_sdk::Did::new(agent.to_owned()).unwrap();
+        let controller_did = arkret_sdk::Did::new(controller.to_owned()).unwrap();
+        let scope_digest = arkret_signatures::agent::agent_requested_scope_digest(
+            &agent_did,
+            &controller_did,
+            &scope,
+        )
+        .unwrap();
+        let created_at = crate::clock::now_utc();
+        let expires_at = created_at + chrono::Duration::minutes(5);
         let key_state: arkret_sdk::KeyState = serde_json::from_value(serde_json::json!({
             "agent_id": agent,
             "controller_id": controller,
@@ -531,9 +518,9 @@ mod personal_agent_tests {
             "pcr_recovery": {"status": "pending"},
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "pairing_code": "12345678",
-            "pairing_expires_at": "2026-07-06T00:15:00.000Z",
+            "pairing_expires_at": expires_at,
             "requested_scope": scope,
-            "requested_scope_digest": format!("sha256:{}", "0".repeat(64)),
+            "requested_scope_digest": scope_digest,
         }))
         .unwrap();
         let pairing_request_id = arkret_wire::OpaqueLocalId::new(
@@ -572,8 +559,8 @@ mod personal_agent_tests {
                         alg: arkret_models_collaboration::agent_operations::AgentRuntimeKeyAlgorithm::EdDsa,
                         challenge: pairing_request_id,
                         audience: arkret_sdk::Did::new(service_id.to_owned()).unwrap(),
-                        created_at: "2026-07-06T00:10:00.000Z".parse().unwrap(),
-                        expires_at: "2026-07-06T00:15:00.000Z".parse().unwrap(),
+                        created_at,
+                        expires_at,
                         runtime_key_binding_digest,
                         transcript_digest: arkret_wire::Hash::new(format!("sha256:{}", "0".repeat(64))).unwrap(),
                         signature: arkret_wire::Base64UrlString::new(
@@ -606,7 +593,7 @@ mod personal_agent_tests {
                 &request.agent_id,
                 &request.pairing_request_id,
                 "12345678",
-                "2026-07-06T00:15:00.000Z".parse().unwrap(),
+                expires_at,
                 &arkret_sdk::Did::new(service_id.to_owned()).unwrap(),
                 &request.proof_of_possession.runtime_key_binding_digest,
                 &request.proof_of_possession,

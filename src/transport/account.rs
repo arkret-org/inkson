@@ -273,7 +273,7 @@ pub(crate) fn cached_direct_conversation_peer(
 
 /// Opening a canonical Direct Conversation and changing an Agent's participation
 /// policy are separate protocol operations.  The latter is best-effort here: a
-/// stale authoring generation or a restrictive participation ceiling may stop
+/// stale selection state or restrictive current target policy may stop
 /// the Agent from replying, but MUST NOT turn an already resolved conversation
 /// into an unavailable navigation target.
 fn preserve_resolved_direct_conversation(
@@ -345,76 +345,21 @@ pub(crate) async fn replace_agent_participation(
     scope: arkret_sdk::protocol_journey::ParticipationScope,
     selection: arkret_sdk::protocol_journey::ParticipationBits,
 ) -> anyhow::Result<arkret_sdk::AgentParticipationOutcome> {
-    let _ = (http, agent_id, scope, selection);
-    anyhow::bail!(
-        "agent participation replacement requires the evidence-bound SDK workflow"
-    );
-}
-
-fn participation_controller_id(
-    viewer: &arkret_models_collaboration::account_lifecycle::AccountView,
-) -> &str {
-    viewer.principal_id.as_str()
-}
-
-fn participation_materialization_event(
-    controller_id: &str,
-    agent_id: &str,
-    scope: &arkret_sdk::protocol_journey::ParticipationScope,
-    effective: arkret_sdk::protocol_journey::ParticipationBits,
-    grant_id: &str,
-) -> anyhow::Result<arkret_sdk::Event> {
-    let mut actions = Vec::new();
-    if effective.reply_message {
-        actions.push("ak.message.create");
-    }
-    if effective.reaction_add {
-        actions.push("ak.reaction.add");
-    }
-    if effective.reaction_remove {
-        actions.push("ak.reaction.remove");
-    }
-    if actions.is_empty() {
-        return crate::operation::ak_ops::capability_revoke(
-            scope.realm_id().as_str(),
-            controller_id,
-            grant_id,
-            Some("agent_participation_disabled"),
-        )?
-        .build_sdk_event("inkson");
-    }
-    let resource = match scope {
-        arkret_sdk::protocol_journey::ParticipationScope::Realm { realm_id } => {
-            serde_json::json!({ "kind": "realm", "realm_id": realm_id })
-        }
-        arkret_sdk::protocol_journey::ParticipationScope::Circle {
-            realm_id,
-            circle_id,
-        } => serde_json::json!({
-            "kind": "circle",
-            "realm_id": realm_id,
-            "circle_id": circle_id
-        }),
-        arkret_sdk::protocol_journey::ParticipationScope::Strand {
-            realm_id,
-            strand_id,
-        } => serde_json::json!({
-            "kind": "strand",
-            "realm_id": realm_id,
-            "strand_id": strand_id
-        }),
+    let current = http.agent_participation_get(agent_id).await?;
+    let expected_version = current
+        .entries
+        .iter()
+        .find(|entry| entry.scope == scope)
+        .map(|entry| entry.version)
+        .unwrap_or(0);
+    let request = arkret_sdk::protocol_journey::ParticipationReplaceRequestBody {
+        target_scope: scope,
+        selection,
+        expected_version,
     };
-    crate::operation::ak_ops::capability_grant_actions_with_resources(
-        scope.realm_id().as_str(),
-        controller_id,
-        grant_id,
-        agent_id,
-        &actions,
-        vec![resource],
-        None,
-        serde_json::Value::Null,
-    )?
-    .build_sdk_event("inkson")
+    http.agent_participation_replace(agent_id, &request)
+        .await
+        .map_err(Into::into)
 }
 
 fn participation_reply_is_effective(
@@ -424,7 +369,7 @@ fn participation_reply_is_effective(
     outcome
         .entries
         .iter()
-        .any(|entry| &entry.scope == scope && entry.effective.reply_message)
+        .any(|entry| &entry.scope == scope && entry.selection.reply_message)
 }
 
 fn owned_agent_reply_update_needed(
@@ -932,77 +877,6 @@ mod tests {
     }
 
     #[test]
-    fn reply_participation_builds_scoped_capability_grant() {
-        let realm_id = arkret_sdk::RealmId::new("ak:realm:01970000-0000-7000-8000-000000000001")
-            .expect("realm id");
-        let strand_id = arkret_sdk::StrandId::new("ak:strand:01970000-0000-7000-8000-000000000002")
-            .expect("strand id");
-        let grant_id = "ak:grant:01970000-0000-7000-8000-000000000003";
-        let event = participation_materialization_event(
-            "did:web:alice.example",
-            "did:web:agent.example",
-            &arkret_sdk::protocol_journey::ParticipationScope::Strand {
-                realm_id: realm_id.clone(),
-                strand_id: strand_id.clone(),
-            },
-            arkret_sdk::protocol_journey::ParticipationBits {
-                reply_message: true,
-                reaction_add: true,
-                reaction_remove: false,
-                ..Default::default()
-            },
-            grant_id,
-        )
-        .expect("reply grant");
-
-        assert_eq!(event.kind.as_str(), "ak.capability.grant");
-        assert_eq!(event.realm_id, realm_id);
-        assert_eq!(event.payload["grant_id"], grant_id);
-        assert_eq!(
-            event.payload["grant"]["actions"],
-            json!(["ak.message.create", "ak.reaction.add"])
-        );
-        assert_eq!(
-            event.payload["grant"]["resources"],
-            json!([{
-                "kind": "strand",
-                "realm_id": "ak:realm:01970000-0000-7000-8000-000000000001",
-                "strand_id": strand_id
-            }])
-        );
-        assert_eq!(
-            event.payload["grant"]["issuer_authority_refs"],
-            json!([{
-                "kind": "realm_root",
-                "realm_id": realm_id,
-                "cell_ref": "ak:cell:ak.component.realm.authority_root.v1:null",
-                "controller_epoch_at_issuance": 0,
-                "authority_generation": 0
-            }])
-        );
-    }
-
-    #[test]
-    fn reply_participation_uses_authenticated_account_principal_not_device_key_subject() {
-        let viewer: arkret_models_collaboration::account_lifecycle::AccountView =
-            serde_json::from_value(json!({
-                "principal_id": "did:web:alice.example",
-                "state": "active",
-                "devices": []
-            }))
-            .expect("account viewer shape");
-
-        assert_eq!(
-            participation_controller_id(&viewer),
-            "did:web:alice.example"
-        );
-        assert_ne!(
-            participation_controller_id(&viewer),
-            "did:key:z6MkDeviceSigningKey"
-        );
-    }
-
-    #[test]
     fn effective_owned_agent_reply_does_not_request_another_governance_write() {
         let scope = arkret_sdk::protocol_journey::ParticipationScope::Strand {
             realm_id: arkret_sdk::RealmId::new("ak:realm:01970000-0000-7000-8000-000000000001")
@@ -1014,37 +888,20 @@ mod tests {
             "ok": true,
             "agent_id": "did:web:agent.example",
             "entries": [{
-                "participation_scope": scope,
-                "selection": {"reply": true, "accept_third_party_mention": false, "act_on_behalf": false},
-                "ceiling": {"reply": true, "accept_third_party_mention": false, "act_on_behalf": false},
-                "effective": {"reply": true, "accept_third_party_mention": false, "act_on_behalf": false}
+                "target_scope": scope,
+                "selection": {
+                    "reply_message": true,
+                    "reaction_add": false,
+                    "reaction_remove": false,
+                    "accept_third_party_mention": false,
+                    "act_on_behalf": false
+                },
+                "version": 1
             }]
         }))
         .expect("participation outcome");
 
         assert!(!owned_agent_reply_update_needed(&outcome, &scope));
-    }
-
-    #[test]
-    fn disabled_reply_participation_builds_capability_revoke() {
-        let realm_id = arkret_sdk::RealmId::new("ak:realm:01970000-0000-7000-8000-000000000001")
-            .expect("realm id");
-        let grant_id = "ak:grant:01970000-0000-7000-8000-000000000003";
-        let event = participation_materialization_event(
-            "did:web:alice.example",
-            "did:web:agent.example",
-            &arkret_sdk::protocol_journey::ParticipationScope::Realm { realm_id },
-            arkret_sdk::protocol_journey::ParticipationBits::NONE,
-            grant_id,
-        )
-        .expect("reply revoke");
-
-        assert_eq!(event.kind.as_str(), "ak.capability.revoke");
-        assert_eq!(event.payload["grant_id"], grant_id);
-        assert_eq!(
-            event.payload["reason"],
-            json!("agent_participation_disabled")
-        );
     }
 
     #[test]
