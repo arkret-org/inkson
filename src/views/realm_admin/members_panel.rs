@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use arkret_models_collaboration::governance::agent_participation::{
-    AgentParticipation, AgentParticipationEntry, AgentParticipationScope,
+    AgentParticipationEntry,
 };
+use arkret_models_collaboration::protocol_journey::{ParticipationBits, ParticipationScope};
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::{Value, json};
@@ -99,7 +100,7 @@ struct MemberAgentRow {
     /// Derived runtime readiness wire value (key-management.md §3.6.1).
     runtime_state: String,
     mention_policy: AgentMentionPolicy,
-    selection: AgentParticipation,
+    selection: ParticipationBits,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -222,7 +223,7 @@ fn member_agent_row_from_value(
         )
         .to_owned(),
         mention_policy: AgentMentionPolicy::Unknown,
-        selection: AgentParticipation::NONE,
+        selection: ParticipationBits::NONE,
     })
 }
 
@@ -270,7 +271,7 @@ fn spawn_set_agent_realm_behavior(
     api_token: String,
     realm: String,
     agent_id: String,
-    selection: AgentParticipation,
+    selection: ParticipationBits,
     mut owned_agents: Signal<Vec<MemberAgentRow>>,
     mut status_msg: Signal<String>,
 ) {
@@ -282,7 +283,7 @@ fn spawn_set_agent_realm_behavior(
                 return;
             }
         };
-        let scope = AgentParticipationScope::Realm { realm_id };
+        let scope = ParticipationScope::Realm { realm_id };
         match crate::transport::auth::with_authed_sdk_client(&base, api_token, |http| {
             let scope = scope.clone();
             let agent_id = agent_id.clone();
@@ -318,12 +319,12 @@ fn spawn_set_agent_realm_behavior(
 fn mention_state_from_entries(
     entries: &[AgentParticipationEntry],
     realm_id: &str,
-) -> (AgentMentionPolicy, AgentParticipation) {
-    let mut selection = AgentParticipation::NONE;
+) -> (AgentMentionPolicy, ParticipationBits) {
+    let mut selection = ParticipationBits::NONE;
     let mut matched = false;
     for entry in entries {
         match &entry.scope {
-            AgentParticipationScope::Realm {
+            ParticipationScope::Realm {
                 realm_id: entry_realm,
             } if entry_realm.as_str() == realm_id => {
                 matched = true;
@@ -338,7 +339,7 @@ fn mention_state_from_entries(
     if matched {
         (AgentMentionPolicy::OwnerOnly, selection)
     } else {
-        (AgentMentionPolicy::OwnerOnly, AgentParticipation::NONE)
+        (AgentMentionPolicy::OwnerOnly, ParticipationBits::NONE)
     }
 }
 
@@ -4580,7 +4581,7 @@ pub fn RealmMembersPanel(
                                                                                 label { class: "member-agent-behavior-toggle",
                                                                                     Checkbox {
                                                                                         "data-testid": "member-agent-reply-toggle",
-                                                                                        checked: if owned_agent.selection.reply { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                                                                        checked: if owned_agent.selection.reply_message { CheckboxState::Checked } else { CheckboxState::Unchecked },
                                                                                         disabled: !can_enable,
                                                                                         on_checked_change: {
                                                                                             let base = base_url.clone();
@@ -4590,7 +4591,7 @@ pub fn RealmMembersPanel(
                                                                                             move |state: CheckboxState| {
                                                                                                 spawn_set_agent_realm_behavior(
                                                                                                     base.clone(), token(), realm.clone(), agent_id.clone(),
-                                                                                                    AgentParticipation { reply: bool::from(state), ..previous },
+                                                                                                    ParticipationBits { reply_message: bool::from(state), ..previous },
                                                                                                     owned_agents, status_msg,
                                                                                                 );
                                                                                             }
@@ -4611,7 +4612,7 @@ pub fn RealmMembersPanel(
                                                                                             move |state: CheckboxState| {
                                                                                                 spawn_set_agent_realm_behavior(
                                                                                                     base.clone(), token(), realm.clone(), agent_id.clone(),
-                                                                                                    AgentParticipation { accept_third_party_mention: bool::from(state), ..previous },
+                                                                                                    ParticipationBits { accept_third_party_mention: bool::from(state), ..previous },
                                                                                                     owned_agents, status_msg,
                                                                                                 );
                                                                                             }
@@ -4632,7 +4633,7 @@ pub fn RealmMembersPanel(
                                                                                             move |state: CheckboxState| {
                                                                                                 spawn_set_agent_realm_behavior(
                                                                                                     base.clone(), token(), realm.clone(), agent_id.clone(),
-                                                                                                    AgentParticipation { act_on_behalf: bool::from(state), ..previous },
+                                                                                                    ParticipationBits { act_on_behalf: bool::from(state), ..previous },
                                                                                                     owned_agents, status_msg,
                                                                                                 );
                                                                                             }
@@ -4732,8 +4733,10 @@ mod tests {
             status: "active".to_owned(),
             runtime_state: "ready".to_owned(),
             mention_policy: AgentMentionPolicy::Allowed,
-            selection: AgentParticipation {
-                reply: false,
+            selection: ParticipationBits {
+                reply_message: false,
+                reaction_add: false,
+                reaction_remove: false,
                 accept_third_party_mention: true,
                 act_on_behalf: false,
             },
@@ -5666,19 +5669,25 @@ mod tests {
             arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001".to_owned())
                 .unwrap();
         let entries = vec![AgentParticipationEntry {
-            scope: AgentParticipationScope::Realm { realm_id },
-            selection: AgentParticipation {
-                reply: true,
+            scope: ParticipationScope::Realm { realm_id },
+            selection: ParticipationBits {
+                reply_message: true,
+                reaction_add: true,
+                reaction_remove: false,
                 accept_third_party_mention: true,
                 act_on_behalf: false,
             },
-            ceiling: AgentParticipation {
-                reply: true,
+            ceiling: ParticipationBits {
+                reply_message: true,
+                reaction_add: true,
+                reaction_remove: false,
                 accept_third_party_mention: true,
                 act_on_behalf: false,
             },
-            effective: AgentParticipation {
-                reply: true,
+            effective: ParticipationBits {
+                reply_message: true,
+                reaction_add: true,
+                reaction_remove: false,
                 accept_third_party_mention: true,
                 act_on_behalf: false,
             },
@@ -6123,15 +6132,19 @@ mod tests {
         let realm = "ak:realm:0196419b-0000-7000-8000-000000000000";
         let realm_id = arkret_sdk::RealmId::new(realm.to_owned()).unwrap();
         let entry = AgentParticipationEntry {
-            scope: AgentParticipationScope::Realm { realm_id },
-            selection: AgentParticipation {
-                reply: true,
+            scope: ParticipationScope::Realm { realm_id },
+            selection: ParticipationBits {
+                reply_message: true,
+                reaction_add: true,
+                reaction_remove: false,
                 accept_third_party_mention: true,
                 act_on_behalf: false,
             },
-            ceiling: AgentParticipation::ALL,
-            effective: AgentParticipation {
-                reply: true,
+            ceiling: ParticipationBits::ALL,
+            effective: ParticipationBits {
+                reply_message: true,
+                reaction_add: true,
+                reaction_remove: false,
                 accept_third_party_mention: true,
                 act_on_behalf: false,
             },

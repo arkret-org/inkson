@@ -27,7 +27,7 @@ pub(crate) fn participation_allows_public_reply(
     let strand_match = entries.iter().find(|entry| {
         matches!(
             &entry.scope,
-            arkret_models_collaboration::governance::agent_participation::AgentParticipationScope::Strand {
+            arkret_models_collaboration::protocol_journey::ParticipationScope::Strand {
                 realm_id: entry_realm,
                 strand_id: entry_strand,
             } if entry_realm.as_str() == realm_id && entry_strand.as_str() == strand_id
@@ -36,7 +36,7 @@ pub(crate) fn participation_allows_public_reply(
     let realm_match = entries.iter().find(|entry| {
         matches!(
             &entry.scope,
-            arkret_models_collaboration::governance::agent_participation::AgentParticipationScope::Realm {
+            arkret_models_collaboration::protocol_journey::ParticipationScope::Realm {
                 realm_id: entry_realm,
             } if entry_realm.as_str() == realm_id
         )
@@ -45,7 +45,7 @@ pub(crate) fn participation_allows_public_reply(
         entries.iter().find(|entry| {
             matches!(
                 &entry.scope,
-                arkret_models_collaboration::governance::agent_participation::AgentParticipationScope::Circle {
+                arkret_models_collaboration::protocol_journey::ParticipationScope::Circle {
                     realm_id: entry_realm,
                     circle_id: entry_circle,
                 } if entry_realm.as_str() == realm_id && entry_circle.as_str() == circle_id
@@ -55,7 +55,7 @@ pub(crate) fn participation_allows_public_reply(
     strand_match
         .or(circle_match)
         .or(realm_match)
-        .is_some_and(|entry| entry.effective.reply)
+        .is_some_and(|entry| entry.effective.reply_message)
 }
 
 pub(crate) fn agent_metadata_from_mentions(

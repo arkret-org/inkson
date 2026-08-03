@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod personal_agent_tests {
-    use arkret_models_collaboration::governance::agent_participation::AgentParticipation;
+    use arkret_models_collaboration::protocol_journey::ParticipationBits;
 
     use super::super::*;
     use crate::views::agents::model::{
@@ -101,13 +101,17 @@ mod personal_agent_tests {
 
     #[test]
     fn participation_ceiling_reason_names_capped_selected_bits() {
-        let selection = AgentParticipation {
-            reply: true,
+        let selection = ParticipationBits {
+            reply_message: true,
+            reaction_add: true,
+            reaction_remove: false,
             accept_third_party_mention: true,
             act_on_behalf: true,
         };
-        let ceiling = AgentParticipation {
-            reply: true,
+        let ceiling = ParticipationBits {
+            reply_message: true,
+            reaction_add: true,
+            reaction_remove: false,
             accept_third_party_mention: false,
             act_on_behalf: false,
         };

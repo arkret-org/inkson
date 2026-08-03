@@ -3257,27 +3257,28 @@ fn composer_enter_behavior_matches_chat_conventions_and_protects_ime_input() {
 #[test]
 fn participation_visibility_uses_most_specific_effective_scope() {
     use arkret_models_collaboration::governance::agent_participation::{
-        AgentParticipation, AgentParticipationEntry, AgentParticipationScope,
+        AgentParticipationEntry,
     };
+    use arkret_models_collaboration::protocol_journey::{ParticipationBits, ParticipationScope};
 
     let realm = "ak:realm:0196419b-0000-7000-8000-000000000000";
     let circle = "ak:circle:0196419b-0000-7000-8000-000000000001";
     let realm_entry = AgentParticipationEntry {
-        scope: AgentParticipationScope::Realm {
+        scope: ParticipationScope::Realm {
             realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
         },
-        selection: AgentParticipation::ALL,
-        ceiling: AgentParticipation::ALL,
-        effective: AgentParticipation::ALL,
+        selection: ParticipationBits::ALL,
+        ceiling: ParticipationBits::ALL,
+        effective: ParticipationBits::ALL,
     };
     let circle_entry = AgentParticipationEntry {
-        scope: AgentParticipationScope::Circle {
+        scope: ParticipationScope::Circle {
             realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
             circle_id: arkret_sdk::CircleId::new(circle.to_owned()).unwrap(),
         },
-        selection: AgentParticipation::NONE,
-        ceiling: AgentParticipation::NONE,
-        effective: AgentParticipation::NONE,
+        selection: ParticipationBits::NONE,
+        ceiling: ParticipationBits::NONE,
+        effective: ParticipationBits::NONE,
     };
 
     assert!(participation_allows_public_reply(
@@ -3297,19 +3298,20 @@ fn participation_visibility_uses_most_specific_effective_scope() {
 #[test]
 fn participation_visibility_can_target_the_synthesized_default_discussion_strand() {
     use arkret_models_collaboration::governance::agent_participation::{
-        AgentParticipation, AgentParticipationEntry, AgentParticipationScope,
+        AgentParticipationEntry,
     };
+    use arkret_models_collaboration::protocol_journey::{ParticipationBits, ParticipationScope};
 
     let realm = "ak:realm:0196419b-0000-7000-8000-000000000010";
     let strand = default_discussion_strand_id(realm);
     let entry = AgentParticipationEntry {
-        scope: AgentParticipationScope::Strand {
+        scope: ParticipationScope::Strand {
             realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
             strand_id: arkret_sdk::StrandId::new(strand.clone()).unwrap(),
         },
-        selection: AgentParticipation::NONE,
-        ceiling: AgentParticipation::ALL,
-        effective: AgentParticipation::ALL,
+        selection: ParticipationBits::NONE,
+        ceiling: ParticipationBits::ALL,
+        effective: ParticipationBits::ALL,
     };
 
     assert!(participation_allows_public_reply(
@@ -3323,21 +3325,24 @@ fn participation_visibility_can_target_the_synthesized_default_discussion_strand
 #[test]
 fn mention_only_participation_does_not_expose_agent_in_roster() {
     use arkret_models_collaboration::governance::agent_participation::{
-        AgentParticipation, AgentParticipationEntry, AgentParticipationScope,
+        AgentParticipationEntry,
     };
+    use arkret_models_collaboration::protocol_journey::{ParticipationBits, ParticipationScope};
 
     let realm = "ak:realm:0196419b-0000-7000-8000-000000000020";
-    let mention_only = AgentParticipation {
-        reply: false,
+    let mention_only = ParticipationBits {
+        reply_message: false,
+        reaction_add: false,
+        reaction_remove: false,
         accept_third_party_mention: true,
         act_on_behalf: false,
     };
     let entry = AgentParticipationEntry {
-        scope: AgentParticipationScope::Realm {
+        scope: ParticipationScope::Realm {
             realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
         },
         selection: mention_only,
-        ceiling: AgentParticipation::ALL,
+        ceiling: ParticipationBits::ALL,
         effective: mention_only,
     };
 
