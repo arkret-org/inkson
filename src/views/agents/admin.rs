@@ -21,7 +21,7 @@ use super::model::{
     AgentGrantPreset, AgentServiceScopePreset, agent_lifecycle_wire, agent_runtime_state_wire,
     agent_state_badge_class, agent_state_label, agent_view_from_directory_row,
     build_agent_pairing_deep_link, build_agent_pairing_handoff_token,
-    build_agent_provision_event_drafts, is_pairing_request_expired, render_agent_pairing_qr_svg,
+    build_agent_provision_event_draft, is_pairing_request_expired, render_agent_pairing_qr_svg,
     requested_scope_for_presets,
 };
 use crate::components::{QrSharePanel, UiIcon};
@@ -995,7 +995,7 @@ fn spawn_provision_agent(
     api_token: String,
     controller_id: String,
     slug: String,
-    avatar_blob_ref: Option<arkret_sdk::BlobRef>,
+    _avatar_blob_ref: Option<arkret_sdk::BlobRef>,
     content_presets: Vec<AgentGrantPreset>,
     service_scopes: Vec<AgentServiceScopePreset>,
     agents: Signal<Vec<AgentView>>,
@@ -1030,10 +1030,27 @@ fn spawn_provision_agent(
             last_op_status.set("Select at least one runtime service surface.".to_owned());
             return;
         };
+        let nonce = crate::operation::uuid_v7();
+        let operation_id = match arkret_sdk::ProtocolOperationId::new(format!(
+            "ak:operation:agent.provision.{nonce}"
+        )) {
+            Ok(value) => value,
+            Err(error) => {
+                last_op_status.set(format!("Create failed: operation id: {error}"));
+                return;
+            }
+        };
+        let idempotency_key = match arkret_sdk::ProtocolOpaqueId::new(nonce) {
+            Ok(value) => value,
+            Err(error) => {
+                last_op_status.set(format!("Create failed: idempotency key: {error}"));
+                return;
+            }
+        };
         let prepare = AgentProvisionRequestBody::Prepare {
-            display_name: None,
+            operation_id: operation_id.clone(),
+            idempotency_key: idempotency_key.clone(),
             slug: slug.clone(),
-            avatar_blob_ref: avatar_blob_ref.clone(),
             requested_scope: requested_scope.clone(),
             pairing_ttl_ms: None,
         };
@@ -1047,16 +1064,19 @@ fn spawn_provision_agent(
         })
         .await
         {
-            Ok(AgentProvisionOutcome::AwaitingControllerEvents {
+            Ok(AgentProvisionOutcome::AwaitingControllerEvent {
                 agent_id,
                 principal_control_realm_id,
                 controller_realm_id,
+                allocation_handle,
+                controller_authorization_ref,
                 requested_scope_digest,
-                ..
             }) => (
                 agent_id,
                 principal_control_realm_id,
                 controller_realm_id,
+                allocation_handle,
+                controller_authorization_ref,
                 requested_scope_digest,
             ),
             Ok(AgentProvisionOutcome::Complete { .. }) => {
@@ -1069,8 +1089,14 @@ fn spawn_provision_agent(
                 return;
             }
         };
-        let (agent_id, principal_control_realm_id, controller_realm_id, expected_digest) =
-            preparation;
+        let (
+            agent_id,
+            principal_control_realm_id,
+            controller_realm_id,
+            allocation_handle,
+            controller_authorization_ref,
+            expected_digest,
+        ) = preparation;
         let observed_digest = match arkret_signatures::agent::agent_requested_scope_digest(
             &agent_id,
             &controller_id,
@@ -1086,51 +1112,50 @@ fn spawn_provision_agent(
             last_op_status.set("Create failed: server allocation scope digest mismatch".to_owned());
             return;
         }
-        let drafts = match build_agent_provision_event_drafts(
+        let draft = match build_agent_provision_event_draft(
             &controller_id,
             &controller_realm_id,
             &agent_id,
+            &principal_control_realm_id,
+            &controller_authorization_ref,
             &slug,
+            &expected_digest,
         ) {
             Ok(value) => value,
             Err(error) => {
-                last_op_status.set(format!("Create failed: author provision Events: {error}"));
+                last_op_status.set(format!("Create failed: author provision Event: {error}"));
                 return;
             }
         };
-        let provision_events =
+        let provision_event =
             match with_event_submitter(&base, api_token.clone(), move |submitter| async move {
-                let mut events = submitter
-                    .prepare_initial_submissions(vec![
-                        drafts.accountability_grant,
-                        drafts.selector_claim,
-                    ])
+                submitter
+                    .prepare_initial_submissions(vec![draft])
                     .await?
-                    .into_iter();
-                Ok(arkret_sdk::AgentProvisionEvents {
-                    accountability_grant: events.next().expect("two prepared provision Events"),
-                    selector_claim: events.next().expect("two prepared provision Events"),
-                })
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("prepared provision Event is missing"))
             })
             .await
             {
                 Ok(value) => value,
                 Err(error) => {
                     last_op_status.set(format!(
-                        "Create failed: sign provision Events: {}",
+                        "Create failed: sign provision Event: {}",
                         error.display()
                     ));
                     return;
                 }
             };
         let commit = AgentProvisionRequestBody::Commit {
+            operation_id,
+            idempotency_key,
             agent_id: agent_id.clone(),
             principal_control_realm_id: principal_control_realm_id.clone(),
-            display_name: None,
+            allocation_handle,
             slug: slug.clone(),
-            avatar_blob_ref,
             requested_scope,
-            provision_events: Box::new(provision_events),
+            provision_event: Box::new(provision_event),
             pairing_ttl_ms: None,
         };
         let outcome =
@@ -1142,7 +1167,7 @@ fn spawn_provision_agent(
             .await
             {
                 Ok(AgentProvisionOutcome::Complete { outcome }) => outcome,
-                Ok(AgentProvisionOutcome::AwaitingControllerEvents { .. }) => {
+                Ok(AgentProvisionOutcome::AwaitingControllerEvent { .. }) => {
                     last_op_status
                         .set("Create failed: commit returned another preparation".to_owned());
                     return;

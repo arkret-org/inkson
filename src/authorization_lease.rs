@@ -886,6 +886,7 @@ mod tests {
             controller_id,
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
+            arkret_sdk::EventId::new("ak:event:01964137-0000-7000-8000-000000000098").unwrap(),
         )
         .unwrap();
         let mut target = event();
@@ -923,6 +924,7 @@ mod tests {
             controller_id.as_str(),
             authorization_ref.as_str(),
             "ak:trust_domain:did.web.example",
+            arkret_sdk::EventId::new("ak:event:01964137-0000-7000-8000-000000000098").unwrap(),
         )
         .unwrap();
         accepted.push(

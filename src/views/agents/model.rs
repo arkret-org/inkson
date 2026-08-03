@@ -10,6 +10,7 @@ use arkret_models_collaboration::agent_operations::{
 use arkret_models_collaboration::events_payloads::agent::{
     AgentKeyScope, AgentKeyScopeResource, AgentKeyScopeResourceKind,
 };
+use arkret_models_identity::handle::HandleVisibility;
 use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
     AgentKeyPairRequestBody, AgentKeySupersession, AgentPairingBootstrap,
@@ -21,37 +22,37 @@ use arkret_sdk::{
 use chrono::Utc;
 use serde_json::{Value, json};
 
-pub fn build_agent_provision_event_drafts(
+pub fn build_agent_provision_event_draft(
     controller_id: &Did,
     controller_realm_id: &RealmId,
     agent_id: &Did,
+    principal_control_realm_id: &RealmId,
+    controller_authorization_ref: &DidUrl,
     agent_slug: &str,
-) -> anyhow::Result<arkret_bootstrap::AgentProvisionEventDrafts> {
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("no active controller signer"))?;
+    requested_scope_digest: &Hash,
+) -> anyhow::Result<Event> {
     let created_at = crate::clock::now_utc();
-    let accountability_hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
+    let hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
         controller_id.as_str(),
         controller_realm_id.as_str(),
     )?;
-    let selector_hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
-        controller_id.as_str(),
-        controller_realm_id.as_str(),
-    )?;
-    let move_signer = signer.payload_signer_adapter_for_principal(controller_id)?;
-    Ok(arkret_bootstrap::build_agent_provision_event_drafts(
+    Ok(arkret_bootstrap::build_agent_provision_event_draft(
         controller_id,
         controller_realm_id,
         agent_id,
+        principal_control_realm_id,
+        controller_authorization_ref,
         agent_slug,
+        requested_scope_digest,
+        HandleVisibility::Private,
+        None,
         arkret_bootstrap::AgentProvisionEventDraftOptions {
             created_at,
-            accountability_actor_seq: 0,
-            accountability_hlc,
-            selector_actor_seq: 0,
-            selector_hlc,
+            actor_seq: 0,
+            hlc,
+            prev_refs: Vec::new(),
+            seal_basis: None,
         },
-        &move_signer,
     )?)
 }
 

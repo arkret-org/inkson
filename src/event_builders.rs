@@ -609,14 +609,18 @@ pub fn build_managed_agent_pcr_bootstrap_events(
     controller_id: &str,
     controller_authorization_ref: &str,
     trust_domain: &str,
+    provision_event_id: arkret_sdk::EventId,
 ) -> anyhow::Result<Vec<arkret_sdk::Event>> {
-    let create = build_managed_agent_pcr_create_event(
+    let mut create = build_managed_agent_pcr_create_event(
         realm_id,
         agent_id,
         controller_id,
         controller_authorization_ref,
         trust_domain,
     )?;
+    create.refs = vec![arkret_bootstrap::managed_agent_provision_ref(
+        provision_event_id,
+    )];
     let events = vec![create];
     arkret_bootstrap::materialize_managed_agent_pcr_control(
         &events,
@@ -1831,6 +1835,7 @@ mod notary_derivation_tests {
             "did:web:alice.example",
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
+            arkret_sdk::EventId::new("ak:event:01964137-0000-7000-8000-000000000098").unwrap(),
         )
         .unwrap();
 

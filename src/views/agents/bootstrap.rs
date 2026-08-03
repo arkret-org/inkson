@@ -1159,6 +1159,26 @@ pub(crate) async fn bootstrap_provisioned_agent(
 
     let mut accepted_events = submitter.backfill(realm_id).await?.events;
     if !has_managed_agent_pcr_create(&accepted_events) {
+        let controller_realm_id =
+            arkret_models_identity::did_document::principal_control_realm_id(&controller_did);
+        let provision_event_id = http
+            .events_query_all_pages(controller_realm_id.as_str())
+            .await?
+            .events
+            .into_iter()
+            .find_map(|event| {
+                (event.kind == arkret_sdk::EventKind::AGENT_PROVISION)
+                    .then(|| {
+                        arkret_sdk::AgentProvisionPayload::try_from(&event)
+                            .ok()
+                            .filter(|payload| payload.agent_id.as_str() == agent_id)
+                            .map(|_| event.event_id)
+                    })
+                    .flatten()
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!("accepted Agent provision Event is missing from the controller PCR")
+            })?;
         let describe = submitter.events_describe().await?;
         let bootstrap = crate::event_builders::build_managed_agent_pcr_bootstrap_events(
             realm_id,
@@ -1166,6 +1186,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
             &controller_id,
             controller_authorization_ref,
             describe.trust_domain.as_str(),
+            provision_event_id,
         )?;
         submitter
             .submit_sdk_events_batch(realm_id, bootstrap, None)
