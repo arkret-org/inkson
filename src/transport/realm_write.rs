@@ -23,7 +23,7 @@ use crate::event_builders::{
 };
 use crate::event_submit::EventSubmitter;
 use crate::models::{RealmCreateResult, RealmPolicyResult, SpaceCreateResult, SubmitEventResult};
-use crate::operation::{EventKind, ak_ops, uuid_v7};
+use crate::operation::{EventKind, ak_ops};
 use crate::realm_helpers::{patch_touches_create_locked_encryption_profile, validate_join_rule_v1};
 
 /// Build + submit the spec-canonical `ak.realm.create` event bundle
@@ -78,7 +78,7 @@ pub async fn create_realm(
         return Err(anyhow::anyhow!("title is required for ak.realm.create"));
     }
 
-    let realm_id = format!("ak:realm:{}", uuid_v7());
+    let realm_id = arkret_sdk::RealmId::new_v7_at(crate::clock::now_unix_ms()).into_string();
     let join_rule = validate_join_rule_v1(join_rule)?;
     let notary_did = submitter.service_id().await?;
     let resolved_invitees = parse_realm_bootstrap_members(&invitees)?;
@@ -106,7 +106,8 @@ pub async fn create_realm(
     // `ak.realm.create` precondition asserts `head_eq null`; follow-up
     // facet events in the same batch are admitted after soland
     // materialises the creator membership from the create event.
-    let idempotency_key = format!("ak:operation:{}", uuid_v7());
+    let idempotency_key =
+        arkret_sdk::OperationId::new_v7_at(crate::clock::now_unix_ms()).into_string();
     submitter
         .submit_sdk_events_batch(&realm_id, events, Some(&idempotency_key))
         .await?;
@@ -117,7 +118,7 @@ pub async fn create_realm(
         if invitee.actor_id == actor_id {
             continue;
         }
-        let invite_id = format!("ak:invite:{}", uuid_v7());
+        let invite_id = arkret_sdk::InviteId::new_v7_at(crate::clock::now_unix_ms()).into_string();
         let delivery_target = arkret_sdk::InviteDeliveryTarget::principal_server(
             arkret_sdk::Did::new(notary_did.clone())
                 .map_err(|error| anyhow::anyhow!("invalid notary service DID: {error}"))?,
@@ -181,7 +182,7 @@ pub async fn create_space_under_realm(
             "realm_id is required for ak.space.create — Space must live inside a Realm"
         ));
     }
-    let space_id = format!("ak:space:{}", uuid_v7());
+    let space_id = arkret_sdk::SpaceId::new_v7_at(crate::clock::now_unix_ms()).into_string();
     let event = build_space_create_event(
         &space_id,
         realm_id,
@@ -777,7 +778,7 @@ pub async fn appeal_modify_atomic(
     new_reason_code: &str,
     appeal_reason_text_ref: &str,
 ) -> anyhow::Result<(String, arkret_sdk::EventsSubmitOutcome)> {
-    let new_decision_id = format!("ak:event:{}", crate::operation::uuid_v7());
+    let new_decision_id = arkret_sdk::EventId::new_v7_at(crate::clock::now_unix_ms()).into_string();
     let mut new_decision =
         ak_ops::moderation_decision(realm_id, actor_id, target_ref, new_verdict, new_reason_code)?
             .build_sdk_event("inkson")?;

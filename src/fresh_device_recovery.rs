@@ -885,7 +885,7 @@ pub fn prepare_joint_principal_bootstrap(
     device_id: &str,
     recovery_words: &str,
 ) -> anyhow::Result<JointPrincipalBootstrapPreparation> {
-    let request_id = arkret_sdk::identifiers::new_prefixed_uuid7("ak:request:");
+    let request_id = arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()).into_string();
     let handoff = crate::state::PendingAccountHandoff {
         principal_server_url: principal_server_url.to_owned(),
         gate_account_base: gate_account_base.to_owned(),

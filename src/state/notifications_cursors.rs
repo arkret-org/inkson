@@ -281,11 +281,11 @@ impl LocalStateStore {
 
     // ── Manual presence preference (profiles-presence.md §3.6) ─
 
-    pub fn presence_preference(&self) -> PresencePreferenceState {
+    pub fn presence_preference(&self) -> PresencePreference {
         self.load().presence_preference
     }
 
-    pub fn set_presence_preference(&mut self, preference: PresencePreferenceState) {
+    pub fn set_presence_preference(&mut self, preference: PresencePreference) {
         self.ensure_cached_loaded();
         self.cached.presence_preference = preference;
         let _ = self.flush();

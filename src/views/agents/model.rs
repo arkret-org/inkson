@@ -610,7 +610,7 @@ pub fn build_agent_key_authorization_for_pairing(
     } else {
         Vec::new()
     };
-    let authorize_event_id = EventId::new(arkret_sdk::new_prefixed_uuid7("ak:event:"))?;
+    let authorize_event_id = EventId::new_v7_at(crate::clock::now_unix_ms());
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("no active controller signer is available"))?;
     let controller_verification_method = DidUrl::new(

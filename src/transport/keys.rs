@@ -66,7 +66,8 @@ pub async fn send_device_message_envelope(
     expires_at: &str,
     content: serde_json::Value,
 ) -> anyhow::Result<DeviceMessagesSendOutcome> {
-    let message_id = arkret_sdk::new_prefixed_uuid7("ak:device_message:");
+    let message_id =
+        arkret_sdk::DeviceMessageId::new_v7_at(crate::clock::now_unix_ms()).into_string();
     let payload = build_device_message_envelope(
         &message_id,
         target_actor,

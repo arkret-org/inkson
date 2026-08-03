@@ -319,7 +319,8 @@ impl OperationBuilder {
         deps: Vec<String>,
     ) -> anyhow::Result<arkret_sdk::Event> {
         let _ = node_id;
-        let operation_id = typed_operation_id(&uuid_v7());
+        let operation_id =
+            arkret_sdk::OperationId::new_v7_at(crate::clock::now_unix_ms()).into_string();
         let mut unsigned = BTreeMap::new();
         unsigned.insert(
             "local_operation_idempotency_alias".to_owned(),
@@ -516,23 +517,15 @@ impl EventExt for Event {
     }
 }
 
-fn typed_operation_id(operation_id: &str) -> String {
-    if operation_id.starts_with("ak:operation:") {
-        operation_id.to_owned()
-    } else {
-        format!("ak:operation:{operation_id}")
-    }
-}
-
-/// Generate a canonical UUIDv7 string for typed protocol identifiers.
+/// Generate a bare UUIDv7 for local opaque correlation values.
 ///
-/// Thin wrapper over the SDK's `new_prefixed_uuid7` (RFC 9562 UUIDv7 via the
-/// `uuid` crate, with same-millisecond monotonicity) called with an empty
-/// prefix. Callers add their own typed prefix (`ak:operation:`, `ak:device:`,
-/// etc.). Replaces the previous hand-rolled bit-packing helper, which had no
-/// same-millisecond monotonic guarantee.
+/// The returned value is not itself an Arkret wire identifier.
+/// Protocol identifiers must use the SDK's concrete typed constructors (for
+/// example `RealmId::new_v7_at`) instead of adding a wire prefix to this value.
+/// The SDK still owns UUID layout and monotonicity; Inkson supplies only its
+/// platform-safe clock reading.
 pub fn uuid_v7() -> String {
-    arkret_sdk::identifiers::new_prefixed_uuid7("")
+    arkret_sdk::identifiers::uuid_v7_at(crate::clock::now_unix_ms()).to_string()
 }
 
 /// Canonical helper constructors used by the current UI.

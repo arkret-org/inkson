@@ -47,8 +47,8 @@ pub fn prepare_registration_checkpoint(
             },
         },
     )?;
-    let bootstrap_create_event_id = arkret_sdk::identifiers::new_prefixed_uuid7("ak:event:");
-    arkret_sdk::EventId::new(bootstrap_create_event_id.clone())?;
+    let bootstrap_create_event_id =
+        arkret_sdk::EventId::new_v7_at(crate::clock::now_unix_ms()).into_string();
     let draft_actor = arkret_sdk::Did::new(draft.did.clone())?;
     let draft_realm = arkret_sdk::principal_control_realm_id(&draft_actor);
     let bootstrap_hlc = crate::signing_stamp::issue_protocol_hlc_with_secret(
@@ -196,7 +196,7 @@ pub async fn complete_account_handoff_binding(
             .context("persisted identity reservation is invalid")?,
     };
     let challenge_request = garth::identity_binding_challenge_request(
-        arkret_sdk::RequestId::new(arkret_sdk::identifiers::new_prefixed_uuid7("ak:request:"))?,
+        arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
         &lease,
         did_operation.clone(),
     )?;

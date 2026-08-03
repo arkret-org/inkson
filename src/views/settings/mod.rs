@@ -70,10 +70,10 @@ use crate::workflows::blocked_release_workflows;
 /// (profiles-presence.md §3.6). Send-side enforced; pushed encrypted —
 /// servers MUST NOT require a projection of this key.
 
-/// Resolve the relative expiry picker choice into an absolute RFC 3339
-/// UTC `clears_at` (profiles-presence.md §3.6). `never` (and anything
-/// unrecognized) means no expiry.
-pub(crate) fn presence_expiry_to_clears_at(choice: &str) -> Option<String> {
+/// Resolve the relative expiry picker choice into a typed UTC `clears_at`
+/// (profiles-presence.md §3.6). `never` (and anything unrecognized) means no
+/// expiry; canonical wire formatting remains owned by the SDK serializer.
+pub(crate) fn presence_expiry_to_clears_at(choice: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     let now = chrono::Utc::now();
     let clears_at = match choice {
         "30m" => now + chrono::Duration::minutes(30),
@@ -84,7 +84,7 @@ pub(crate) fn presence_expiry_to_clears_at(choice: &str) -> Option<String> {
         }
         _ => return None,
     };
-    Some(arkret_sdk::canonical::format_timestamp_canonical(clears_at))
+    Some(clears_at)
 }
 
 /// A4a — push the current `ak.client.ui_state` payload (theme + sidebar
@@ -504,15 +504,16 @@ pub fn SettingsPanel(
     let initial_presence_preference = {
         let preference = state_store.read().presence_preference();
         if !preference.is_empty() && !preference.is_active(chrono::Utc::now()) {
-            crate::state::PresencePreferenceState::default()
+            crate::state::PresencePreference::default()
         } else {
             preference
         }
     };
     let initial_presence_manual_state = initial_presence_preference
         .manual_state
-        .clone()
-        .unwrap_or_else(|| "auto".to_owned());
+        .map(arkret_sdk::PresenceStatus::as_wire)
+        .unwrap_or("auto")
+        .to_owned();
     let initial_presence_status_message = initial_presence_preference
         .status_message
         .clone()
@@ -2201,7 +2202,7 @@ pub fn SettingsPanel(
                             value: Some(presence_visibility_selected.into()),
                             on_value_change: move |v: Option<String>| {
                                 let Some(v) = v else { return; };
-                                let visibility = match crate::state::PresenceVisibility::try_from_wire(&v) {
+                                let visibility = match crate::state::PresenceVisibility::parse_wire(&v) {
                                     Some(visibility) => visibility,
                                     None => return,
                                 };
@@ -2267,9 +2268,21 @@ pub fn SettingsPanel(
                                     );
                                     return;
                                 }
-                                let has_preference = manual_state != "auto" || !message.is_empty();
-                                let preference = crate::state::PresencePreferenceState {
-                                    manual_state: (manual_state != "auto").then_some(manual_state),
+                                let typed_manual_state = match manual_state.as_str() {
+                                    "auto" => None,
+                                    "online" => Some(arkret_sdk::PresenceStatus::Online),
+                                    "idle" => Some(arkret_sdk::PresenceStatus::Idle),
+                                    "dnd" => Some(arkret_sdk::PresenceStatus::Dnd),
+                                    _ => {
+                                        presence_status_feedback.set(
+                                            "Status state is not in the protocol closed set.".to_owned(),
+                                        );
+                                        return;
+                                    }
+                                };
+                                let has_preference = typed_manual_state.is_some() || !message.is_empty();
+                                let preference = crate::state::PresencePreference {
+                                    manual_state: typed_manual_state,
                                     status_message: (!message.is_empty()).then_some(message),
                                     clears_at: has_preference
                                         .then(|| {
@@ -2300,7 +2313,7 @@ pub fn SettingsPanel(
                                 presence_status_message.set(String::new());
                                 presence_expiry_choice.set("never".to_owned());
                                 state_store.write().set_presence_preference(
-                                    crate::state::PresencePreferenceState::default(),
+                                    crate::state::PresencePreference::default(),
                                 );
                                 presence_status_feedback.set("Status cleared.".to_owned());
                                 push_presence_preference_account_data(

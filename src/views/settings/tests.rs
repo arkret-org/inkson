@@ -107,10 +107,10 @@ fn presence_preference_account_data_matches_spec() {
         AccountDataKey::PRESENCE_PREFERENCE,
         "ak.presence.preference"
     );
-    let body = build_presence_preference_body(&crate::state::PresencePreferenceState {
-        manual_state: Some("dnd".to_owned()),
+    let body = build_presence_preference_body(&crate::state::PresencePreference {
+        manual_state: Some(arkret_sdk::PresenceStatus::Dnd),
         status_message: Some("In a meeting".to_owned()),
-        clears_at: Some("2026-07-03T12:00:00.000Z".to_owned()),
+        clears_at: Some("2026-07-03T12:00:00.000Z".parse().unwrap()),
     });
     assert_eq!(body["manual_state"], "dnd");
     assert_eq!(body["status_message"], "In a meeting");
@@ -126,11 +126,8 @@ fn presence_expiry_choice_resolves_to_future_clears_at() {
     for choice in ["30m", "1h", "today"] {
         let clears_at = presence_expiry_to_clears_at(choice)
             .unwrap_or_else(|| panic!("{choice} must resolve to a clears_at"));
-        let parsed: chrono::DateTime<chrono::Utc> = clears_at
-            .parse()
-            .unwrap_or_else(|_| panic!("{choice} clears_at must be RFC 3339 UTC: {clears_at}"));
         assert!(
-            parsed > chrono::Utc::now(),
+            clears_at > chrono::Utc::now(),
             "{choice} must be in the future"
         );
     }

@@ -1400,7 +1400,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         .as_ref()
                                         .and_then(|content| content.get("presence_visibility"))
                                         .and_then(serde_json::Value::as_str)
-                                        .and_then(crate::state::PresenceVisibility::try_from_wire)
+                                        .and_then(crate::state::PresenceVisibility::parse_wire)
                                     else {
                                         tracing::warn!(
                                             "ignoring malformed ak.presence.visibility account_data"

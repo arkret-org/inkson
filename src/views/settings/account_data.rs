@@ -9,7 +9,7 @@ use serde_json::json;
 
 use super::build_read_receipt_preferences_body;
 use crate::notification_rules::{WatchLevel, parse_dnd_settings};
-use crate::state::{LocalStateStore, PresencePreferenceState, PresenceVisibility};
+use crate::state::{LocalStateStore, PresencePreference, PresenceVisibility};
 use crate::transport::auth::with_event_submitter;
 use crate::views::helpers::short_protocol_id;
 
@@ -82,20 +82,8 @@ pub(super) fn push_read_receipt_account_data(
     });
 }
 
-pub(super) fn build_presence_preference_body(
-    preference: &PresencePreferenceState,
-) -> serde_json::Value {
-    let mut body = serde_json::Map::new();
-    if let Some(state) = preference.manual_state.as_deref() {
-        body.insert("manual_state".into(), json!(state));
-    }
-    if let Some(message) = preference.status_message.as_deref() {
-        body.insert("status_message".into(), json!(message));
-    }
-    if let Some(clears_at) = preference.clears_at.as_deref() {
-        body.insert("clears_at".into(), json!(clears_at));
-    }
-    serde_json::Value::Object(body)
+pub(super) fn build_presence_preference_body(preference: &PresencePreference) -> serde_json::Value {
+    serde_json::to_value(preference).expect("SDK PresencePreference must serialize")
 }
 
 /// Best-effort cross-device sync of `ak.presence.preference`
@@ -162,9 +150,10 @@ pub(super) fn push_presence_preference_account_data(
 }
 
 pub(super) fn build_presence_visibility_body(visibility: PresenceVisibility) -> serde_json::Value {
-    json!({
-        "presence_visibility": visibility.as_wire()
+    serde_json::to_value(arkret_sdk::PresenceVisibilityPreference {
+        presence_visibility: visibility,
     })
+    .expect("SDK PresenceVisibilityPreference must serialize")
 }
 
 pub(super) fn push_presence_visibility_account_data(

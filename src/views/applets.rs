@@ -230,7 +230,7 @@ fn build_formal_applet_install_events(
         .map_err(|error| anyhow::anyhow!("load capability action registry digest: {error}"))?;
     let mut grant_events = Vec::with_capacity(actions.len());
     for action in actions {
-        let grant_id = arkret_sdk::GrantId::new(arkret_sdk::new_prefixed_uuid7("ak:grant:"))?;
+        let grant_id = arkret_sdk::GrantId::new_v7_at(crate::clock::now_unix_ms());
         let grant = arkret_sdk::CapabilityGrant {
             id: grant_id.clone(),
             schema: arkret_wire::SchemaId::CAPABILITY_V1.to_owned(),

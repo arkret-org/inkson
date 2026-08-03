@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use arkret_sdk::EncryptedPayload;
-pub use arkret_sdk::{ReadCursorPosition, ReadCursorScope as ReadScope};
+pub use arkret_sdk::{
+    PresencePreference, PresenceVisibility, ReadCursorPosition, ReadCursorScope as ReadScope,
+};
 use chime::PushRegistrationState;
 use chrono::{DateTime, Utc};
 use ed25519_dalek::SigningKey;
@@ -251,109 +253,6 @@ impl ReadReceiptPolicySnapshot {
 
 fn default_true() -> bool {
     true
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PresenceVisibility {
-    #[default]
-    Public,
-    ContactsOnly,
-    Nobody,
-}
-
-impl PresenceVisibility {
-    pub fn as_wire(self) -> &'static str {
-        match self {
-            Self::Public => "public",
-            Self::ContactsOnly => "contacts_only",
-            Self::Nobody => "nobody",
-        }
-    }
-
-    pub fn from_wire(value: &str) -> Self {
-        Self::try_from_wire(value).unwrap_or_default()
-    }
-
-    pub fn try_from_wire(value: &str) -> Option<Self> {
-        match value {
-            "public" => Some(Self::Public),
-            "contacts_only" => Some(Self::ContactsOnly),
-            "nobody" => Some(Self::Nobody),
-            _ => None,
-        }
-    }
-
-    pub fn allows_presence_send(self) -> bool {
-        !matches!(self, Self::Nobody)
-    }
-}
-
-/// Local mirror of the `ak.presence.preference` account-data payload
-/// (profiles-presence.md §3.6): the user's pinned manual presence state,
-/// transient status message and expiry. Enforced on the send side — the
-/// broadcast loop reads this before every `ak.presence`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PresencePreferenceState {
-    /// `online` / `idle` / `dnd`; `None` = automatic detection.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub manual_state: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status_message: Option<String>,
-    /// RFC 3339 UTC expiry; past it the whole preference reads as absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub clears_at: Option<String>,
-}
-
-impl PresencePreferenceState {
-    pub fn is_empty(&self) -> bool {
-        self.manual_state.is_none() && self.status_message.is_none()
-    }
-
-    pub fn is_active(&self, now: chrono::DateTime<chrono::Utc>) -> bool {
-        match self.clears_at.as_deref() {
-            None => true,
-            Some(raw) => match chrono::DateTime::parse_from_rfc3339(raw) {
-                Ok(clears_at) => now < clears_at.with_timezone(&chrono::Utc),
-                // Unparseable expiry fails closed to "expired" so a
-                // corrupted value can never pin a stale manual state.
-                Err(_) => false,
-            },
-        }
-    }
-
-    pub fn next_clears_at(
-        &self,
-        now: chrono::DateTime<chrono::Utc>,
-    ) -> Option<chrono::DateTime<chrono::Utc>> {
-        let raw = self.clears_at.as_deref()?;
-        let clears_at = chrono::DateTime::parse_from_rfc3339(raw)
-            .ok()?
-            .with_timezone(&chrono::Utc);
-        (now < clears_at).then_some(clears_at)
-    }
-
-    /// The state to pin broadcasts to at `now`, if the preference is
-    /// active and carries a valid manual state.
-    pub fn effective_manual_state(&self, now: chrono::DateTime<chrono::Utc>) -> Option<&str> {
-        if !self.is_active(now) {
-            return None;
-        }
-        self.manual_state
-            .as_deref()
-            .filter(|state| matches!(*state, "online" | "idle" | "dnd"))
-    }
-
-    /// The status-message override to broadcast at `now`, if any.
-    pub fn effective_status_message(&self, now: chrono::DateTime<chrono::Utc>) -> Option<&str> {
-        if !self.is_active(now) {
-            return None;
-        }
-        self.status_message
-            .as_deref()
-            .map(str::trim)
-            .filter(|message| !message.is_empty())
-    }
 }
 
 pub(crate) fn raw_operation_kind(payload: &Value) -> Option<&str> {
@@ -897,7 +796,7 @@ pub struct ClientLocalState {
     /// profiles-presence.md §3.6). Local state is authoritative; the
     /// account-data push is best-effort and encrypted.
     #[serde(default)]
-    pub presence_preference: PresencePreferenceState,
+    pub presence_preference: PresencePreference,
     /// Persisted per-device to-device inbox. Both account.subscribe
     /// `delta.to_device.messages[]` and explicit `device_messages` pulls are
     /// funneled through this queue before protocol-specific handlers consume
@@ -1408,7 +1307,7 @@ impl Default for ClientLocalState {
             notification_projection: Vec::new(),
             presence_projection: Vec::new(),
             presence_visibility: PresenceVisibility::Public,
-            presence_preference: PresencePreferenceState::default(),
+            presence_preference: PresencePreference::default(),
             to_device_inbox: Vec::new(),
             to_device_receipts: BTreeMap::new(),
             notification_client_state: BTreeMap::new(),

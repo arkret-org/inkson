@@ -289,12 +289,13 @@ pub(super) fn ChatEffects(
             if !preference.is_empty() && !preference.is_active(now) {
                 state_store_for_presence
                     .write()
-                    .set_presence_preference(crate::state::PresencePreferenceState::default());
-                preference = crate::state::PresencePreferenceState::default();
+                    .set_presence_preference(crate::state::PresencePreference::default());
+                preference = crate::state::PresencePreference::default();
             }
             let state = preference
                 .effective_manual_state(now)
-                .unwrap_or("online")
+                .unwrap_or(arkret_sdk::PresenceStatus::Online)
+                .as_wire()
                 .to_owned();
             let status_message = preference.effective_status_message(now).map(str::to_owned);
             let api_token = token();

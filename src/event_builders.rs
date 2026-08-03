@@ -1560,9 +1560,9 @@ pub const DEVICE_VERIFICATION_PROOF_TYPE: &str = "ak.device.verification.proof.v
 /// This shape is deliberately **local** rather than an SDK type. `arkret-spec`
 /// leaves `device-message.schema.json#/properties/content` open and registers
 /// no verification-transcript `$defs`, so an SDK type would invent a wire shape
-/// the spec does not define — the same rule that keeps
-/// `ak.realm.policy_bundle` a hand-built value (arkret-work
-/// `review/spec-open/2026-07-30-realm-policy-payload-shape-gaps.md`).
+/// the spec does not define. This differs from `ak.realm.policy_bundle`, whose
+/// normative payload is now represented by the SDK-owned
+/// [`arkret_sdk::RealmPolicyBundlePayload`].
 ///
 /// What the struct does buy is the property this task is about: the transcript
 /// can no longer gain or lose a member by accident, because the bytes handed to

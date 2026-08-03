@@ -23,17 +23,20 @@ fn presence_preference_persists_and_expires() {
     let mut store = LocalStateStore::with_path(path.clone());
     assert!(store.presence_preference().is_empty());
 
-    store.set_presence_preference(PresencePreferenceState {
-        manual_state: Some("dnd".to_owned()),
+    store.set_presence_preference(PresencePreference {
+        manual_state: Some(arkret_sdk::PresenceStatus::Dnd),
         status_message: Some("In a meeting".to_owned()),
-        clears_at: Some("2026-07-03T12:00:00.000Z".to_owned()),
+        clears_at: Some("2026-07-03T12:00:00.000Z".parse().unwrap()),
     });
 
     let reader = LocalStateStore::with_path(path);
     let preference = reader.presence_preference();
     let before: chrono::DateTime<chrono::Utc> = "2026-07-03T11:59:59.000Z".parse().unwrap();
     let after: chrono::DateTime<chrono::Utc> = "2026-07-03T12:00:00.000Z".parse().unwrap();
-    assert_eq!(preference.effective_manual_state(before), Some("dnd"));
+    assert_eq!(
+        preference.effective_manual_state(before),
+        Some(arkret_sdk::PresenceStatus::Dnd)
+    );
     assert_eq!(
         preference.effective_status_message(before),
         Some("In a meeting")
@@ -46,19 +49,16 @@ fn presence_preference_persists_and_expires() {
 }
 
 #[test]
-fn presence_preference_fails_closed_on_bad_values() {
-    // `offline` is not a pinnable manual state.
-    let offline = PresencePreferenceState {
-        manual_state: Some("offline".to_owned()),
-        ..Default::default()
-    };
-    let now = chrono::Utc::now();
-    assert_eq!(offline.effective_manual_state(now), None);
-    // A corrupted clears_at expires the preference instead of pinning it.
-    let corrupted = PresencePreferenceState {
-        manual_state: Some("dnd".to_owned()),
-        status_message: None,
-        clears_at: Some("not-a-timestamp".to_owned()),
-    };
-    assert_eq!(corrupted.effective_manual_state(now), None);
+fn presence_preference_rejects_bad_wire_values() {
+    let offline: PresencePreference = serde_json::from_value(serde_json::json!({
+        "manual_state": "offline"
+    }))
+    .unwrap();
+    assert!(offline.validate().is_err());
+
+    let corrupted = serde_json::from_value::<PresencePreference>(serde_json::json!({
+        "manual_state": "dnd",
+        "clears_at": "not-a-timestamp"
+    }));
+    assert!(corrupted.is_err());
 }

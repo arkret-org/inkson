@@ -861,10 +861,7 @@ async fn finish_oidc_callback(
     }
     let handoff_request = garth::oidc_account_handoff_request(
         OidcAccountHandoffInput {
-            request_id: arkret_sdk::RequestId::new(arkret_sdk::identifiers::new_prefixed_uuid7(
-                "ak:request:",
-            ))
-            .map_err(|error| format!("account handoff request id failed: {error}"))?,
+            request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
             audience: principal_audience.clone(),
             issuer: scaffold.issuer.clone(),
             client_id: scaffold.client_id.clone(),

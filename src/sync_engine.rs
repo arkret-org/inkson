@@ -2938,7 +2938,7 @@ pub(crate) fn apply_account_data_entries(
             .as_ref()
             .and_then(|content| content.get("presence_visibility"))
             .and_then(Value::as_str)
-            .and_then(crate::state::PresenceVisibility::try_from_wire) else {
+            .and_then(crate::state::PresenceVisibility::parse_wire) else {
                 tracing::warn!(
                     "sync engine: ignoring malformed ak.presence.visibility account_data"
                 );

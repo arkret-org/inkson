@@ -188,8 +188,7 @@ pub fn build_call_recording_start(
     mode: arkret_sdk::RecordingMode,
     visible_notice: bool,
 ) -> OperationBuilder {
-    let event_id = arkret_sdk::EventId::new(arkret_sdk::new_prefixed_uuid7("ak:event:"))
-        .expect("generated recording start Event id must be canonical");
+    let event_id = arkret_sdk::EventId::new_v7_at(crate::clock::now_unix_ms());
     let start_ref_field = match capture_kind {
         arkret_sdk::RecordingCaptureKind::Recording => "recording_start_event_id",
         arkret_sdk::RecordingCaptureKind::Transcript => "transcript_start_event_id",

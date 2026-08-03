@@ -399,9 +399,10 @@ fn ingress_receipts(input: Value) -> Result<Value> {
         let event_digest = arkret_sdk::Hash::new(submission.event.event_digest()?)
             .context("construct ingress Event digest")?;
         let received_at = authorization_lease.issued_at;
+        let receipt_unix_ms = u64::try_from(received_at.timestamp_millis())
+            .context("ingress receipt time predates the Unix epoch")?;
         let mut receipt = arkret_wire::IngressReceipt {
-            receipt_id: arkret_wire::ReceiptId::new(arkret_wire::new_prefixed_uuid7("ak:receipt:"))
-                .context("construct ingress receipt id")?,
+            receipt_id: arkret_wire::ReceiptId::new_v7_at(receipt_unix_ms),
             event_digest: event_digest.clone(),
             authorization_lease_id: authorization_lease.authorization_lease_id.clone(),
             received_at,
