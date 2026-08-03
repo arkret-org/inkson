@@ -435,9 +435,24 @@ pub async fn bootstrap_principal(
         .sign_self_principal_bootstrap_seal(&create, &authorize, seal_hlc)
         .map_err(|error| anyhow!(error.to_string()))?;
     let expected_digests = seal.delta.clone();
+    // A self-principal genesis has no accepted notary yet. The Principal
+    // Server therefore pre-admits the complete ordered pair, issues one
+    // anchor-unit authorization lease per Event, and mints the proposal
+    // receipts atomically during submit. Sending the pair as plain online
+    // submissions skips that pre-admission and is rejected by the server.
+    let submissions = principal_client
+        .prepare_initial_submissions(&[create, authorize])
+        .await?;
+    let [create_submission, authorize_submission]: [arkret_wire::EventInitialSubmission; 2] =
+        submissions.try_into().map_err(|submissions: Vec<_>| {
+            anyhow!(
+                "self principal bootstrap preparation returned {} submissions, expected 2",
+                submissions.len()
+            )
+        })?;
     let batch = arkret_bootstrap::self_principal_bootstrap_submit_request(
-        arkret_wire::EventInitialSubmission::online(create),
-        arkret_wire::EventInitialSubmission::online(authorize),
+        create_submission,
+        authorize_submission,
         &crate::operation::cell_write_projector,
     )?;
     let arkret_sdk::EventsSubmitRequestBody::Batch(batch) = batch else {
