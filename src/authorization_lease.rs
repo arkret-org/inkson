@@ -535,7 +535,7 @@ async fn resolve_proposal_authority_route(
             // continue to resolve the same immutable authority from accepted
             // genesis history.
             let authority_set_ref = if is_managed_agent_pcr_genesis(event) {
-                arkret_bootstrap::ManagedAgentPcrGenesisAuthority::from_accepted_create(
+                arkret_bootstrap::ManagedAgentPcrGenesisAuthority::from_delegated_create(
                     event,
                     &crate::operation::cell_write_projector,
                 )
