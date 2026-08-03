@@ -58,7 +58,7 @@ pub fn prepare_registration_checkpoint(
         &key_material.root_seed,
     )?
     .to_string();
-    Ok(PendingPrincipalRegistration {
+    let mut checkpoint = PendingPrincipalRegistration {
         principal_server_url: handoff.principal_server_url.clone(),
         gate_account_base: handoff.gate_account_base.clone(),
         handoff_request_id: handoff.request_id.clone(),
@@ -81,11 +81,15 @@ pub fn prepare_registration_checkpoint(
         recovery_key_fingerprint: crate::recovery_crypto::fingerprint_recovery_key(recovery_key),
         did_operation: serde_json::to_value(draft.submit_body)?,
         bootstrap_create_event_id,
+        bootstrap_create_event: None,
         bootstrap_created_at: arkret_sdk::canonical::format_timestamp_canonical(created_at),
         bootstrap_hlc,
         binding_receipt: None,
         stage: PendingPrincipalRegistrationStage::CustodyConfirmed,
-    })
+    };
+    let create = build_bootstrap_create_event(&checkpoint, &key_material)?;
+    checkpoint.bootstrap_create_event = Some(serde_json::to_value(create)?);
+    Ok(checkpoint)
 }
 
 pub fn validate_checkpoint_recovery_key(
@@ -258,16 +262,11 @@ pub async fn complete_account_handoff_binding(
     })
 }
 
-pub async fn bootstrap_principal(
+fn build_bootstrap_create_event_with_registry(
     checkpoint: &PendingPrincipalRegistration,
-    recovery_key: &str,
-    device_public_key: String,
-    hpke_key: String,
-    device_signer: &crate::event_signer::InksonEventSigner,
-    account_client: &arkret_sdk::http_client::Client,
-    principal_client: &arkret_sdk::http_client::Client,
-) -> anyhow::Result<()> {
-    let key_material = validate_checkpoint_recovery_key(checkpoint, recovery_key)?;
+    key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
+    capability_action_registry_digest: arkret_sdk::Hash,
+) -> anyhow::Result<arkret_sdk::Event> {
     let principal_id = arkret_sdk::Did::new(checkpoint.did.clone())?;
     let realm_id = arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&principal_id))?;
     let created_at = chrono::DateTime::parse_from_rfc3339(&checkpoint.bootstrap_created_at)
@@ -275,17 +274,14 @@ pub async fn bootstrap_principal(
         .with_timezone(&Utc);
     let mut create = arkret_bootstrap::build_self_principal_pcr_create(
         arkret_bootstrap::SelfPrincipalPcrCreateInput {
-            principal_id: principal_id.clone(),
-            realm_id: realm_id.clone(),
+            principal_id,
+            realm_id,
             trust_domain: arkret_sdk::TypedTrustDomainId::new(checkpoint.trust_domain.clone())?,
             did_inception_ref: arkret_sdk::EventRef::new(
                 checkpoint.version_id.clone(),
                 arkret_bootstrap::DID_INCEPTION_REF_ROLE,
             ),
-            capability_action_registry_digest:
-                arkret_sdk::current_capability_action_registry_digest().map_err(|error| {
-                    anyhow::anyhow!("load capability action registry digest: {error}")
-                })?,
+            capability_action_registry_digest,
             event_id: arkret_sdk::EventId::new(checkpoint.bootstrap_create_event_id.clone())?,
             created_at,
             hlc: arkret_sdk::Hlc::new(checkpoint.bootstrap_hlc.clone())?,
@@ -294,9 +290,6 @@ pub async fn bootstrap_principal(
     )?;
     let root_did =
         arkret_sdk::Did::new(format!("did:key:{}", checkpoint.root_public_key_multibase))?;
-    // §2.2: the signer takes a typed DID URL. The checkpoint stores the
-    // inception draft's value verbatim, so it is validated here rather than
-    // being passed through as an unchecked `String`.
     let root_verification_method =
         arkret_sdk::DidUrl::new(checkpoint.root_verification_method.clone())
             .map_err(anyhow::Error::msg)?;
@@ -318,6 +311,105 @@ pub async fn bootstrap_principal(
         digest_suite,
         arkret_sdk::signatures::SignEventOptions::new().with_created_at(created_at),
     )?;
+    Ok(create)
+}
+
+fn build_bootstrap_create_event(
+    checkpoint: &PendingPrincipalRegistration,
+    key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
+) -> anyhow::Result<arkret_sdk::Event> {
+    let registry_digest = arkret_sdk::current_capability_action_registry_digest()
+        .map_err(|error| anyhow::anyhow!("load capability action registry digest: {error}"))?;
+    build_bootstrap_create_event_with_registry(checkpoint, key_material, registry_digest)
+}
+
+fn validate_persisted_bootstrap_create_event(
+    checkpoint: &PendingPrincipalRegistration,
+    key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
+    create: &arkret_sdk::Event,
+) -> anyhow::Result<()> {
+    let create_value = serde_json::to_value(create)?;
+    let registry_digest = create_value
+        .pointer("/payload/object/capability_action_registry_digest")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow!("persisted bootstrap create Event has no registry basis"))?;
+    let expected = build_bootstrap_create_event_with_registry(
+        checkpoint,
+        key_material,
+        arkret_sdk::Hash::new(registry_digest.to_owned())?,
+    )?;
+    if crate::canonical::canonical_json_bytes(&expected)?
+        != crate::canonical::canonical_json_bytes(create)?
+    {
+        anyhow::bail!("persisted bootstrap create Event does not match the saved identity draft");
+    }
+    Ok(())
+}
+
+async fn load_bootstrap_create_event(
+    checkpoint: &PendingPrincipalRegistration,
+    key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
+    principal_client: &arkret_sdk::http_client::Client,
+) -> anyhow::Result<arkret_sdk::Event> {
+    if let Some(value) = checkpoint.bootstrap_create_event.as_ref() {
+        let create: arkret_sdk::Event = serde_json::from_value(value.clone())
+            .context("persisted bootstrap create Event is invalid")?;
+        validate_persisted_bootstrap_create_event(checkpoint, key_material, &create)?;
+        return Ok(create);
+    }
+
+    // Legacy checkpoints stored only the create inputs. Those inputs are not
+    // sufficient for an exact retry after the embedded registry advances, so
+    // recover the already accepted canonical Event by its transaction-bound
+    // ID. The founding credential explicitly permits this closed resolve.
+    let event_id = arkret_sdk::EventId::new(checkpoint.bootstrap_create_event_id.clone())?;
+    let outcome = principal_client
+        .events_resolve(&arkret_sdk::EventsResolveRequestBody {
+            event_ids: vec![event_id.clone()],
+            event_digests: Vec::new(),
+            seal_refs: Vec::new(),
+            include_payload: Some(true),
+        })
+        .await
+        .context("resolve persisted bootstrap create Event")?;
+    if outcome.events.len() == 1 {
+        let create = outcome
+            .events
+            .into_iter()
+            .next()
+            .expect("length checked above");
+        validate_persisted_bootstrap_create_event(checkpoint, key_material, &create)?;
+        return Ok(create);
+    }
+    if !outcome.events.is_empty() {
+        anyhow::bail!("bootstrap create resolve returned more than one Event");
+    }
+    if !outcome.unauthorized.is_empty() {
+        anyhow::bail!("bootstrap credential cannot resolve its reserved create Event");
+    }
+    if outcome
+        .missing
+        .iter()
+        .any(|missing| missing == event_id.as_str())
+    {
+        return build_bootstrap_create_event(checkpoint, key_material);
+    }
+    anyhow::bail!("bootstrap create resolve omitted the requested Event outcome")
+}
+
+pub async fn bootstrap_principal(
+    checkpoint: &PendingPrincipalRegistration,
+    recovery_key: &str,
+    device_public_key: String,
+    hpke_key: String,
+    device_signer: &crate::event_signer::InksonEventSigner,
+    account_client: &arkret_sdk::http_client::Client,
+    principal_client: &arkret_sdk::http_client::Client,
+) -> anyhow::Result<()> {
+    let key_material = validate_checkpoint_recovery_key(checkpoint, recovery_key)?;
+    let principal_id = arkret_sdk::Did::new(checkpoint.did.clone())?;
+    let realm_id = arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&principal_id))?;
+    let create = load_bootstrap_create_event(checkpoint, &key_material, principal_client).await?;
 
     let request = crate::identity::device_enrollment::DeviceEnrollmentRequest {
         device_id: checkpoint.device_id.clone(),
@@ -385,7 +477,7 @@ mod tests {
             device_id: "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
             enrollment_authority_did: "did:key:z6MkrJVnaZkeFzdQyKjzgRHjhBfE6ZscXDFHq8T7TYNy9v1t"
                 .to_owned(),
-            trust_domain: "ak:trust-domain:test".to_owned(),
+            trust_domain: "ak:trust_domain:test".to_owned(),
         };
         let first_key = crate::recovery_crypto::generate_recovery_key().unwrap();
         let second_key = crate::recovery_crypto::generate_recovery_key().unwrap();
@@ -425,7 +517,7 @@ mod tests {
             device_id: "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
             enrollment_authority_did: "did:key:z6MkrJVnaZkeFzdQyKjzgRHjhBfE6ZscXDFHq8T7TYNy9v1t"
                 .to_owned(),
-            trust_domain: "ak:trust-domain:test".to_owned(),
+            trust_domain: "ak:trust_domain:test".to_owned(),
         };
         let checkpoint = prepare_registration_checkpoint(
             &handoff,
@@ -443,14 +535,27 @@ mod tests {
         arkret_sdk::canonical::validate_timestamp_canonical(&checkpoint.bootstrap_created_at)
             .unwrap();
         validate_checkpoint_recovery_key(&checkpoint, &recovery_key).unwrap();
+        let persisted_create: arkret_sdk::Event = serde_json::from_value(
+            checkpoint
+                .bootstrap_create_event
+                .clone()
+                .expect("new checkpoints persist the signed create Event"),
+        )
+        .unwrap();
+        validate_persisted_bootstrap_create_event(
+            &checkpoint,
+            &validate_checkpoint_recovery_key(&checkpoint, &recovery_key).unwrap(),
+            &persisted_create,
+        )
+        .unwrap();
 
         let mut legacy_value = serde_json::to_value(&checkpoint).unwrap();
-        legacy_value
-            .as_object_mut()
-            .unwrap()
-            .remove("account_handle");
+        let legacy_object = legacy_value.as_object_mut().unwrap();
+        legacy_object.remove("account_handle");
+        legacy_object.remove("bootstrap_create_event");
         let legacy: PendingPrincipalRegistration = serde_json::from_value(legacy_value).unwrap();
         assert!(legacy.account_handle.is_empty());
+        assert!(legacy.bootstrap_create_event.is_none());
 
         let another_key = crate::recovery_crypto::generate_recovery_key().unwrap();
         assert!(validate_checkpoint_recovery_key(&checkpoint, &another_key).is_err());

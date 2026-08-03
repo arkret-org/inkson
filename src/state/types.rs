@@ -771,6 +771,10 @@ pub struct PendingPrincipalRegistration {
     /// Typed `DidOperationSubmitRequestBody` serialized as public wire JSON.
     pub did_operation: Value,
     pub bootstrap_create_event_id: String,
+    /// The first signed `ak.realm.create` wire Event. Its registry basis is
+    /// immutable even when a later client embeds a newer registry snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap_create_event: Option<Value>,
     pub bootstrap_created_at: String,
     pub bootstrap_hlc: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
