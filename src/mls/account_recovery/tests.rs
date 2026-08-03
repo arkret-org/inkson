@@ -363,6 +363,45 @@ fn prompt_not_required_when_local_history_is_current_and_decryptable() {
 }
 
 #[test]
+fn first_device_does_not_prompt_during_its_account_backup_verification_race() {
+    let store = MemorySecureKeyStore::new();
+    crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
+    let mut state = temp_state_store("prompt-first-device-upload-race");
+    let envelope = history_envelope("ak:realm:first", "group-first", 0, ACCOUNT_SECRET);
+    state.save_mls_snapshot(envelope.realm_id.clone(), envelope.clone());
+    let payload =
+        payload_with_inferred_active_series(vec![recovery_hpke_backup(), history_body(&envelope)]);
+
+    assert!(
+        !crate::mls::runtime::account_mls_secret_verified(&store, ACTOR).unwrap(),
+        "fixture must cover the gap before the uploader persists its verified marker"
+    );
+    assert!(
+        !mls_restore_prompt_required(&payload, &state, &store, ACTOR, DEVICE),
+        "the device that created the current decryptable backup has no history to restore"
+    );
+}
+
+#[test]
+fn unverified_secret_still_prompts_when_account_backup_came_from_another_device() {
+    let store = MemorySecureKeyStore::new();
+    crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
+    let mut state = temp_state_store("prompt-other-device-account-backup");
+    let envelope = history_envelope("ak:realm:other", "group-other", 0, ACCOUNT_SECRET);
+    state.save_mls_snapshot(envelope.realm_id.clone(), envelope.clone());
+    let mut account_backup = recovery_hpke_backup();
+    account_backup["device_id"] =
+        serde_json::json!("ak:device:01964137-0000-7000-8000-000000000002");
+    let payload =
+        payload_with_inferred_active_series(vec![account_backup, history_body(&envelope)]);
+
+    assert!(
+        mls_restore_prompt_required(&payload, &state, &store, ACTOR, DEVICE),
+        "decryptable local history must not bless another device's account-secret backup"
+    );
+}
+
+#[test]
 fn verify_series_chain_accepts_single_genesis() {
     let genesis = wrap();
     assert_eq!(backup_series_seq(&genesis), 0);

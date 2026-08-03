@@ -213,6 +213,26 @@ fn mls_history_backup_needs_restore(
     crate::mls::persistence::decrypt_envelope(&local_snapshot, local_secret).is_err()
 }
 
+fn mls_history_backup_is_current_and_decryptable(
+    body: &Value,
+    state_store: &crate::state::LocalStateStore,
+    local_secret: &str,
+) -> bool {
+    let Ok(envelope) = crate::mls::runtime::decode_mls_history_backup_envelope(body, local_secret)
+    else {
+        return false;
+    };
+    if crate::mls::persistence::decrypt_envelope(&envelope, local_secret).is_err() {
+        return false;
+    }
+    let Some(local_snapshot) = state_store.mls_snapshot_for(&envelope.realm_id) else {
+        return false;
+    };
+    local_snapshot.group_id == envelope.group_id
+        && local_snapshot.epoch >= envelope.epoch
+        && crate::mls::persistence::decrypt_envelope(&local_snapshot, local_secret).is_ok()
+}
+
 /// Decide whether the app should ask the user for their Recovery Key to unlock
 /// MLS history.
 ///
@@ -229,24 +249,45 @@ pub fn mls_restore_prompt_required(
     actor_id: &str,
     device_id: &str,
 ) -> bool {
-    if select_preferred_mls_account_secret_backup(list_payload).is_none() {
+    let Some(account_secret_backup) = select_preferred_mls_account_secret_backup(list_payload)
+    else {
         return false;
-    }
-    // A local secret may have been generated speculatively by fresh-device
-    // bootstrap before backup discovery. Presence alone does not prove that it
-    // belongs to the server recovery chain. Only a successful upload/import
-    // sets the verified marker; until then the server backup must win.
-    if !crate::mls::runtime::account_mls_secret_verified(secure_store, actor_id).unwrap_or(false) {
-        return true;
-    }
+    };
+    let account_secret_verified =
+        crate::mls::runtime::account_mls_secret_verified(secure_store, actor_id).unwrap_or(false);
     let local_secret =
         crate::mls::runtime::load_device_snapshot_secret(secure_store, actor_id, device_id).ok();
     let Some(local_secret) = local_secret.filter(|secret| !secret.trim().is_empty()) else {
         return true;
     };
-    select_mls_history_backups(list_payload)
-        .iter()
-        .any(|body| mls_history_backup_needs_restore(body, state_store, &local_secret))
+    if account_secret_verified {
+        return select_mls_history_backups(list_payload)
+            .iter()
+            .any(|body| mls_history_backup_needs_restore(body, state_store, &local_secret));
+    }
+    // A local secret may have been generated speculatively by fresh-device
+    // bootstrap before backup discovery. Presence alone does not prove that it
+    // belongs to the server recovery chain. Usually a successful upload/import
+    // sets the verified marker. There is one legitimate race: first-Realm
+    // creation uploads its current local history and account-secret backup
+    // before the upload path can persist that marker. If this same device
+    // authored the account backup and at least one server history backup is
+    // already current and decryptable locally, those facts are equivalent
+    // readiness proof and the first device must not be shown a restore modal.
+    //
+    // Keep failing closed for an empty history set or a backup authored by a
+    // different device. Those are the speculative fresh-device cases where the
+    // local secret still cannot be tied to the server recovery chain.
+    let history_backups = select_mls_history_backups(list_payload);
+    let same_device_authored_account_backup = account_secret_backup
+        .get("device_id")
+        .and_then(Value::as_str)
+        == Some(device_id);
+    !(same_device_authored_account_backup
+        && !history_backups.is_empty()
+        && history_backups.iter().all(|body| {
+            mls_history_backup_is_current_and_decryptable(body, state_store, &local_secret)
+        }))
 }
 
 /// Counts returned by [`auto_restore_mls_history_with_passphrase`].
