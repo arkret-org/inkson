@@ -370,15 +370,7 @@ fn inkson_accepts_server_contract_payloads() {
             "resources": [
                 {"kind": "realm", "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001"}
             ],
-            "issued_at": "2026-04-28T12:00:00.000Z",
-            "proofs": [],
-            "issuer_authority_refs": [{
-                "kind": "realm_root",
-                "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
-                "cell_ref": "ak:cell:ak.component.realm.authority_root.v1:null",
-                "controller_epoch_at_issuance": 0,
-                "authority_generation": 0
-            }]
+            "issued_at": "2026-04-28T12:00:00.000Z"
         }],
         "state_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         "evaluated_at": "2026-04-28T12:00:00.000Z"
