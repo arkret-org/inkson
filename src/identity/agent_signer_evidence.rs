@@ -600,10 +600,8 @@ pub(crate) fn resolve_cached_signal_key(
         &envelope.sender_actor_id,
         &envelope.proof.verification_method,
     ) {
-        let CachedAgentSignerEvidenceContext::CurrentSignal {
-            request_digest,
-            ..
-        } = &entry.verification_context
+        let CachedAgentSignerEvidenceContext::CurrentSignal { request_digest, .. } =
+            &entry.verification_context
         else {
             continue;
         };

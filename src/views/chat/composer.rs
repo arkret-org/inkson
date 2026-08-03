@@ -1229,7 +1229,13 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         )
                                         .await;
                                         match sidecar_outcome {
-                                            Ok(Some((sidecar, sidecar_view))) => {
+                                            Ok(Some(sidecar)) => {
+                                                let OwnedAgentSidecarEnsureResult {
+                                                    sidecar_id,
+                                                    private_strand_id,
+                                                    private_relation_id,
+                                                    view: sidecar_view,
+                                                } = sidecar;
                                                 let backing_scope_circle_id =
                                                     sidecar_view.sidecar.backing_circle_id.clone();
                                                 let addressed_agent_ids = owned_agent_ids_from_mentions(
@@ -1240,8 +1246,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     &addressed_agent_ids,
                                                     &participants_for_sidecar,
                                                 );
-                                                let private_strand_id =
-                                                    sidecar.private_strand_id.to_string();
+                                                let private_strand_id = private_strand_id.to_string();
                                                 status_msg
                                                     .set("Private Sidecar ready".to_owned());
                                                 sidecar_session.set(Some(crate::sidecar::HostedSidecarState {
@@ -1251,10 +1256,10 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     addressed_agent_label,
                                                     source_realm_id: realm.clone(),
                                                     source_strand_id: strand_id.clone(),
-                                                    sidecar_id: sidecar.sidecar_id.clone(),
+                                                    sidecar_id,
                                                     backing_scope_circle_id,
                                                     private_strand_id,
-                                                    private_relation_id: sidecar.private_relation_id.to_string(),
+                                                    private_relation_id: private_relation_id.to_string(),
                                                     access_readiness: sidecar_view.access_readiness,
                                                     pending_access_reconciliations: sidecar_view.pending_access_reconciliations.clone(),
                                                     mls_context: sidecar_view.mls_context,
@@ -1644,7 +1649,13 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         )
                                         .await;
                                         match sidecar_outcome {
-                                            Ok(Some((sidecar, sidecar_view))) => {
+                                            Ok(Some(sidecar)) => {
+                                                let OwnedAgentSidecarEnsureResult {
+                                                    sidecar_id,
+                                                    private_strand_id,
+                                                    private_relation_id,
+                                                    view: sidecar_view,
+                                                } = sidecar;
                                                 let backing_scope_circle_id =
                                                     sidecar_view.sidecar.backing_circle_id.clone();
                                                 let addressed_agent_ids = owned_agent_ids_from_mentions(
@@ -1655,8 +1666,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     &addressed_agent_ids,
                                                     &participants_for_sidecar,
                                                 );
-                                                let private_strand_id =
-                                                    sidecar.private_strand_id.to_string();
+                                                let private_strand_id = private_strand_id.to_string();
                                                 status_msg
                                                     .set("Private Sidecar ready".to_owned());
                                                 sidecar_session.set(Some(crate::sidecar::HostedSidecarState {
@@ -1666,10 +1676,10 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     addressed_agent_label,
                                                     source_realm_id: realm_for_sidecar.clone(),
                                                     source_strand_id: strand_for_sidecar.clone(),
-                                                    sidecar_id: sidecar.sidecar_id.clone(),
+                                                    sidecar_id,
                                                     backing_scope_circle_id,
                                                     private_strand_id,
-                                                    private_relation_id: sidecar.private_relation_id.to_string(),
+                                                    private_relation_id: private_relation_id.to_string(),
                                                     access_readiness: sidecar_view.access_readiness,
                                                     pending_access_reconciliations: sidecar_view.pending_access_reconciliations.clone(),
                                                     mls_context: sidecar_view.mls_context,

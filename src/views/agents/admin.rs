@@ -17,14 +17,14 @@ use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::{use_navigator, use_route};
 
+#[cfg(test)]
+use super::model::requested_scope_for_presets;
 use super::model::{
     AgentGrantPreset, AgentServiceScopePreset, agent_lifecycle_wire, agent_runtime_state_wire,
     agent_state_badge_class, agent_state_label, agent_view_from_directory_row,
     build_agent_pairing_deep_link, build_agent_pairing_handoff_token, is_pairing_request_expired,
     render_agent_pairing_qr_svg,
 };
-#[cfg(test)]
-use super::model::requested_scope_for_presets;
 use crate::components::{QrSharePanel, UiIcon};
 use crate::routes::Route;
 use crate::transport::auth::{with_authed_api, with_authed_sdk_client, with_event_submitter};

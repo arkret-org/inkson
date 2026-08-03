@@ -497,28 +497,522 @@ fn should_route_owned_agent_to_sidecar(
         && (has_owned_agent_ids || has_self_agent_selector)
 }
 
+#[derive(Clone, Debug)]
+struct OwnedAgentSidecarEnsureResult {
+    sidecar_id: arkret_sdk::SidecarId,
+    private_strand_id: arkret_sdk::StrandId,
+    private_relation_id: arkret_sdk::RelationId,
+    view: arkret_sdk::AgentSidecarView,
+}
+
+fn sign_prepared_sidecar_event(
+    draft: &arkret_sdk::protocol_journey::SidecarPreparedEventDraft,
+    expected_kind: &str,
+    controller_id: &arkret_sdk::Did,
+    device_id: &str,
+    source_realm_id: &arkret_sdk::RealmId,
+) -> anyhow::Result<arkret_sdk::Event> {
+    if draft.kind.as_str() != expected_kind {
+        anyhow::bail!(
+            "prepared Sidecar Event kind mismatch: expected {expected_kind}, got {}",
+            draft.kind.as_str()
+        );
+    }
+    let unsigned_bytes =
+        arkret_sdk::base64url_decode(draft.unsigned_event_bytes.as_str().as_bytes())
+            .map_err(|error| anyhow::anyhow!("invalid prepared Sidecar Event bytes: {error}"))?;
+    let mut digest_payload: Value = serde_json::from_slice(&unsigned_bytes)
+        .map_err(|error| anyhow::anyhow!("invalid prepared Sidecar Event payload: {error}"))?;
+    let canonical_bytes = arkret_sdk::canonical::canonical_json_bytes(&digest_payload)?;
+    if canonical_bytes != unsigned_bytes {
+        anyhow::bail!("prepared Sidecar Event bytes are not canonical JSON");
+    }
+    let object = digest_payload
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("prepared Sidecar Event payload is not an object"))?;
+    if object.contains_key("proofs")
+        || object.contains_key("unsigned")
+        || object.contains_key("actor_kind")
+    {
+        anyhow::bail!("prepared Sidecar Event payload contains a non-digest field");
+    }
+    object.insert("proofs".to_owned(), Value::Array(Vec::new()));
+    let mut event: arkret_sdk::Event = serde_json::from_value(digest_payload)
+        .map_err(|error| anyhow::anyhow!("invalid prepared Sidecar Event: {error}"))?;
+    let digest = arkret_sdk::Hash::new(event.event_digest()?)?;
+    if event.event_id != draft.event_id
+        || event.kind != draft.kind
+        || event.realm_id != *source_realm_id
+        || event.actor_id != *controller_id
+        || digest != draft.event_digest
+        || !event.proofs.is_empty()
+        || !event.unsigned.is_empty()
+        || event.actor_kind.is_some()
+    {
+        anyhow::bail!("prepared Sidecar Event metadata does not match its canonical bytes");
+    }
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("active device signer is required for Sidecar commit"))?;
+    let expected_verification_method =
+        arkret_sdk::DidUrl::new(format!("{controller_id}#{device_id}"))
+            .map_err(anyhow::Error::msg)?;
+    if signer.device_id() != Some(device_id)
+        || signer.verification_method_for_principal(controller_id)? != expected_verification_method
+    {
+        anyhow::bail!("active Sidecar signer is not bound to the authenticated controller device");
+    }
+    signer.sign_sdk_event_with_context(
+        &mut event,
+        crate::event_signer::EventProofContext::default(),
+    )?;
+    let signed_digest = arkret_sdk::Hash::new(event.event_digest()?)?;
+    if signed_digest != draft.event_digest
+        || event.proofs.is_empty()
+        || event.proofs.iter().any(|proof| {
+            proof.event_digest != draft.event_digest
+                || proof.verification_method != expected_verification_method
+        })
+    {
+        anyhow::bail!("signed Sidecar Event no longer matches its reservation draft");
+    }
+    Ok(event)
+}
+
+fn validate_prepared_sidecar_binding(
+    create_event: Option<&arkret_sdk::Event>,
+    context_attach_event: &arkret_sdk::Event,
+    sidecar_id: &arkret_sdk::SidecarId,
+    backing_circle_id: &arkret_sdk::CircleId,
+    private_strand_id: &arkret_sdk::StrandId,
+    private_relation_id: &arkret_sdk::RelationId,
+    source_strand_id: &arkret_sdk::StrandId,
+    controller_id: &arkret_sdk::Did,
+    source_realm_id: &arkret_sdk::RealmId,
+) -> anyhow::Result<()> {
+    if let Some(create_event) = create_event {
+        if !matches!(
+            &create_event.scope_ref,
+            arkret_sdk::ScopeRef::Realm { realm_id } if realm_id == source_realm_id
+        ) {
+            anyhow::bail!("Sidecar create draft has the wrong security scope");
+        }
+        let sidecar: arkret_sdk::AgentSidecar = serde_json::from_value(
+            create_event
+                .payload
+                .get("object")
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("Sidecar create draft omitted object"))?,
+        )?;
+        sidecar.validate()?;
+        if sidecar.id != *sidecar_id
+            || sidecar.realm_id != *source_realm_id
+            || sidecar.controller_id != *controller_id
+            || sidecar.backing_circle_id != *backing_circle_id
+            || sidecar.state != arkret_sdk::AgentSidecarState::Active
+        {
+            anyhow::bail!("Sidecar create draft object differs from its reservation");
+        }
+    }
+    if !matches!(
+        &context_attach_event.scope_ref,
+        arkret_sdk::ScopeRef::Circle {
+            realm_id,
+            circle_id,
+        } if realm_id == source_realm_id && circle_id == backing_circle_id
+    ) {
+        anyhow::bail!("Sidecar context attach draft has the wrong security scope");
+    }
+    let private_strand = context_attach_event
+        .payload
+        .get("private_strand")
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow::anyhow!("Sidecar context attach omitted private_strand"))?;
+    let relation = context_attach_event
+        .payload
+        .get("relation")
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow::anyhow!("Sidecar context attach omitted relation"))?;
+    if context_attach_event
+        .payload
+        .get("sidecar_id")
+        .and_then(Value::as_str)
+        != Some(sidecar_id.as_str())
+        || context_attach_event
+            .payload
+            .get("version")
+            .and_then(Value::as_u64)
+            != Some(1)
+        || private_strand.get("id").and_then(Value::as_str) != Some(private_strand_id.as_str())
+        || private_strand.get("realm_id").and_then(Value::as_str) != Some(source_realm_id.as_str())
+        || private_strand
+            .get("scope_circle_id")
+            .and_then(Value::as_str)
+            != Some(backing_circle_id.as_str())
+        || private_strand.get("created_by").and_then(Value::as_str) != Some(controller_id.as_str())
+        || relation.get("id").and_then(Value::as_str) != Some(private_relation_id.as_str())
+        || relation.get("kind").and_then(Value::as_str) != Some("agent_sidecar_of")
+        || relation.get("from_ref").and_then(Value::as_str) != Some(private_strand_id.as_str())
+        || relation.get("to_ref").and_then(Value::as_str) != Some(source_strand_id.as_str())
+        || relation.get("scope_circle_id").and_then(Value::as_str)
+            != Some(backing_circle_id.as_str())
+        || relation.get("created_by").and_then(Value::as_str) != Some(controller_id.as_str())
+    {
+        anyhow::bail!(
+            "Sidecar context attach draft differs from its reservation or source context"
+        );
+    }
+    Ok(())
+}
+
+fn accepted_sidecar_coordinates(
+    outcome: &arkret_sdk::protocol_journey::SidecarEnsureOutcome,
+    expected_operation_id: &arkret_sdk::protocol_journey::ProtocolOperationId,
+    expected_phase: arkret_sdk::protocol_journey::SidecarAcceptedPhase,
+) -> anyhow::Result<(
+    arkret_sdk::SidecarId,
+    arkret_sdk::StrandId,
+    arkret_sdk::RelationId,
+)> {
+    outcome.validate()?;
+    match outcome {
+        arkret_sdk::protocol_journey::SidecarEnsureOutcome::Accepted {
+            operation_id,
+            accepted_phase,
+            sidecar_id,
+            private_strand_id,
+            private_relation_id,
+            access_readiness,
+            ..
+        } if operation_id == expected_operation_id && *accepted_phase == expected_phase => {
+            if *access_readiness == arkret_sdk::protocol_journey::SidecarAccessReadiness::Failed {
+                anyhow::bail!("Sidecar ceremony completed with failed access readiness");
+            }
+            Ok((
+                sidecar_id.clone(),
+                private_strand_id.clone(),
+                private_relation_id.clone(),
+            ))
+        }
+        arkret_sdk::protocol_journey::SidecarEnsureOutcome::Accepted { .. } => {
+            anyhow::bail!("Sidecar accepted outcome changed its operation or phase binding")
+        }
+        arkret_sdk::protocol_journey::SidecarEnsureOutcome::Prepared { .. } => {
+            anyhow::bail!("Sidecar commit returned another prepared outcome")
+        }
+    }
+}
+
 async fn ensure_owned_agent_sidecar(
-    _base_url: &str,
-    _api_token: String,
-    _trace_id: &str,
-    _controller_id: &str,
-    _device_id: &str,
-    _realm_id: &str,
-    _strand_id: &str,
+    base_url: &str,
+    api_token: String,
+    trace_id: &str,
+    controller_id: &str,
+    device_id: &str,
+    realm_id: &str,
+    strand_id: &str,
     addressed_agent_ids: &[String],
-    _state_store: SyncSignal<LocalStateStore>,
-) -> anyhow::Result<
-    Option<(
-        arkret_sdk::AgentSidecarEnsureOutcome,
-        arkret_sdk::AgentSidecarView,
-    )>,
-> {
+    state_store: SyncSignal<LocalStateStore>,
+) -> anyhow::Result<Option<OwnedAgentSidecarEnsureResult>> {
     if addressed_agent_ids.is_empty() {
         return Ok(None);
     }
-    anyhow::bail!(
-        "Agent Sidecar creation is unavailable until the prepare/commit ceremony can author and validate both required Events"
+    let controller_id = arkret_sdk::Did::new(controller_id.to_owned())?;
+    let source_realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())?;
+    let source_strand_id = arkret_sdk::StrandId::new(strand_id.to_owned())?;
+    let mut addressed_agent_ids = addressed_agent_ids
+        .iter()
+        .cloned()
+        .map(arkret_sdk::Did::new)
+        .collect::<Result<Vec<_>, _>>()?;
+    addressed_agent_ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    addressed_agent_ids.dedup();
+    if addressed_agent_ids
+        .iter()
+        .any(|agent_id| agent_id == &controller_id)
+    {
+        anyhow::bail!("Sidecar addressed Agents must exclude the controller");
+    }
+    let nonce = uuid_v7();
+    let operation_id = arkret_sdk::protocol_journey::ProtocolOperationId::new(format!(
+        "ak:operation:sidecar.ensure.{nonce}"
+    ))
+    .map_err(anyhow::Error::msg)?;
+    let prepare_idempotency_key =
+        arkret_sdk::protocol_journey::ProtocolOpaqueId::new(nonce).map_err(anyhow::Error::msg)?;
+    let prepare = arkret_sdk::protocol_journey::SidecarEnsureRequestBody::Prepare(
+        arkret_sdk::protocol_journey::SidecarEnsurePrepareRequestBody {
+            phase: arkret_sdk::protocol_journey::SidecarPreparePhase::Prepare,
+            operation_id: operation_id.clone(),
+            idempotency_key: prepare_idempotency_key,
+            source_realm_id: source_realm_id.clone(),
+            controller_id: controller_id.clone(),
+            context_ref: arkret_sdk::protocol_journey::SidecarContextRef::Strand {
+                strand_id: source_strand_id.clone(),
+            },
+        },
+    );
+    tracing::info!(
+        target: "sidecar",
+        event = "sidecar.ensure.started",
+        trace_id,
+        operation_id = %operation_id,
+        addressed_agent_count = addressed_agent_ids.len(),
+    );
+    let base_url_owned = base_url.to_owned();
+    let ceremony_token = api_token.clone();
+    let ceremony_operation_id = operation_id.clone();
+    let ceremony_controller_id = controller_id.clone();
+    let ceremony_realm_id = source_realm_id.clone();
+    let ceremony_source_strand_id = source_strand_id.clone();
+    let ceremony_device_id = device_id.to_owned();
+    let (sidecar_id, private_strand_id, private_relation_id, mut view) =
+        crate::transport::auth::with_authed_sdk_client(
+            &base_url_owned,
+            ceremony_token,
+            move |http| async move {
+                let prepared_or_accepted = http
+                    .agent_sidecar_ensure(&prepare)
+                    .await
+                    .map_err(anyhow::Error::from)?;
+                let (outcome, expected_phase, prepared_coordinates) = match prepared_or_accepted {
+                    outcome @ arkret_sdk::protocol_journey::SidecarEnsureOutcome::Accepted { .. } => {
+                        (
+                            outcome,
+                            arkret_sdk::protocol_journey::SidecarAcceptedPhase::Attach,
+                            None,
+                        )
+                    }
+                    arkret_sdk::protocol_journey::SidecarEnsureOutcome::Prepared { prepared } => {
+                        let commit_idempotency_key =
+                            arkret_sdk::protocol_journey::ProtocolOpaqueId::new(uuid_v7())
+                                .map_err(anyhow::Error::msg)?;
+                        match prepared {
+                            arkret_sdk::protocol_journey::SidecarPreparedOutcome::New {
+                                operation_id: prepared_operation_id,
+                                reservation_handle,
+                                expires_at,
+                                sidecar_id,
+                                backing_circle_id,
+                                private_strand_id,
+                                private_relation_id,
+                                create_event_id,
+                                context_attach_event_id,
+                                create_event_draft,
+                                context_attach_event_draft,
+                                ..
+                            } => {
+                                if prepared_operation_id != ceremony_operation_id
+                                    || expires_at <= crate::clock::now_utc()
+                                    || create_event_id != create_event_draft.event_id
+                                    || context_attach_event_id
+                                        != context_attach_event_draft.event_id
+                                {
+                                    anyhow::bail!(
+                                        "new Sidecar prepare returned inconsistent reservation bindings"
+                                    );
+                                }
+                                let create_event = sign_prepared_sidecar_event(
+                                    &create_event_draft,
+                                    arkret_sdk::EventKind::SIDECAR_CREATE,
+                                    &ceremony_controller_id,
+                                    &ceremony_device_id,
+                                    &ceremony_realm_id,
+                                )?;
+                                let context_attach_event = sign_prepared_sidecar_event(
+                                    &context_attach_event_draft,
+                                    arkret_sdk::EventKind::SIDECAR_CONTEXT_ATTACH,
+                                    &ceremony_controller_id,
+                                    &ceremony_device_id,
+                                    &ceremony_realm_id,
+                                )?;
+                                validate_prepared_sidecar_binding(
+                                    Some(&create_event),
+                                    &context_attach_event,
+                                    &sidecar_id,
+                                    &backing_circle_id,
+                                    &private_strand_id,
+                                    &private_relation_id,
+                                    &ceremony_source_strand_id,
+                                    &ceremony_controller_id,
+                                    &ceremony_realm_id,
+                                )?;
+                                let request = arkret_sdk::protocol_journey::SidecarEnsureRequestBody::Commit(
+                                    arkret_sdk::protocol_journey::SidecarEnsureCommitRequestBody {
+                                        phase: arkret_sdk::protocol_journey::SidecarCommitPhase::Commit,
+                                        operation_id: ceremony_operation_id.clone(),
+                                        idempotency_key: commit_idempotency_key,
+                                        reservation_handle,
+                                        create_event,
+                                        context_attach_event,
+                                    },
+                                );
+                                let outcome = http
+                                    .agent_sidecar_ensure(&request)
+                                    .await
+                                    .map_err(anyhow::Error::from)?;
+                                (
+                                    outcome,
+                                    arkret_sdk::protocol_journey::SidecarAcceptedPhase::Commit,
+                                    Some((
+                                        sidecar_id,
+                                        backing_circle_id,
+                                        private_strand_id,
+                                        private_relation_id,
+                                    )),
+                                )
+                            }
+                            arkret_sdk::protocol_journey::SidecarPreparedOutcome::Existing {
+                                operation_id: prepared_operation_id,
+                                reservation_handle,
+                                expires_at,
+                                sidecar_id,
+                                backing_circle_id,
+                                private_strand_id,
+                                private_relation_id,
+                                context_attach_event_id,
+                                context_attach_event_draft,
+                                ..
+                            } => {
+                                if prepared_operation_id != ceremony_operation_id
+                                    || expires_at <= crate::clock::now_utc()
+                                    || context_attach_event_id
+                                        != context_attach_event_draft.event_id
+                                {
+                                    anyhow::bail!(
+                                        "existing Sidecar prepare returned inconsistent reservation bindings"
+                                    );
+                                }
+                                let context_attach_event = sign_prepared_sidecar_event(
+                                    &context_attach_event_draft,
+                                    arkret_sdk::EventKind::SIDECAR_CONTEXT_ATTACH,
+                                    &ceremony_controller_id,
+                                    &ceremony_device_id,
+                                    &ceremony_realm_id,
+                                )?;
+                                validate_prepared_sidecar_binding(
+                                    None,
+                                    &context_attach_event,
+                                    &sidecar_id,
+                                    &backing_circle_id,
+                                    &private_strand_id,
+                                    &private_relation_id,
+                                    &ceremony_source_strand_id,
+                                    &ceremony_controller_id,
+                                    &ceremony_realm_id,
+                                )?;
+                                let request = arkret_sdk::protocol_journey::SidecarEnsureRequestBody::Attach(
+                                    arkret_sdk::protocol_journey::SidecarEnsureAttachRequestBody {
+                                        phase: arkret_sdk::protocol_journey::SidecarAttachPhase::Attach,
+                                        operation_id: ceremony_operation_id.clone(),
+                                        idempotency_key: commit_idempotency_key,
+                                        reservation_handle,
+                                        context_attach_event,
+                                    },
+                                );
+                                let outcome = http
+                                    .agent_sidecar_ensure(&request)
+                                    .await
+                                    .map_err(anyhow::Error::from)?;
+                                (
+                                    outcome,
+                                    arkret_sdk::protocol_journey::SidecarAcceptedPhase::Attach,
+                                    Some((
+                                        sidecar_id,
+                                        backing_circle_id,
+                                        private_strand_id,
+                                        private_relation_id,
+                                    )),
+                                )
+                            }
+                        }
+                    }
+                };
+                let coordinates = accepted_sidecar_coordinates(
+                    &outcome,
+                    &ceremony_operation_id,
+                    expected_phase,
+                )?;
+                if let Some((
+                    prepared_sidecar_id,
+                    _prepared_backing_circle_id,
+                    prepared_private_strand_id,
+                    prepared_private_relation_id,
+                )) = &prepared_coordinates
+                    && (prepared_sidecar_id != &coordinates.0
+                        || prepared_private_strand_id != &coordinates.1
+                        || prepared_private_relation_id != &coordinates.2)
+                {
+                    anyhow::bail!(
+                        "Sidecar accepted coordinates differ from its signed reservation"
+                    );
+                }
+                let view = http
+                    .agent_sidecar_get(&coordinates.0)
+                    .await
+                    .map_err(anyhow::Error::from)?;
+                view.validate()?;
+                if view.sidecar.id != coordinates.0
+                    || view.sidecar.realm_id != ceremony_realm_id
+                    || view.sidecar.controller_id != ceremony_controller_id
+                    || prepared_coordinates.as_ref().is_some_and(|prepared| {
+                        view.sidecar.backing_circle_id != prepared.1
+                    })
+                {
+                    anyhow::bail!("Sidecar View does not match the accepted ceremony binding");
+                }
+                Ok::<_, anyhow::Error>((coordinates.0, coordinates.1, coordinates.2, view))
+            },
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!(error.display()))?;
+    if addressed_agent_ids
+        .iter()
+        .any(|agent_id| !view.desired_agent_ids.contains(agent_id))
+    {
+        anyhow::bail!("an addressed Agent is absent from the accepted Sidecar desired access");
+    }
+    view = ensure_sidecar_mls_bootstrap(
+        base_url,
+        api_token.clone(),
+        controller_id.as_str(),
+        device_id,
+        state_store,
+        view,
     )
+    .await?;
+    view = reconcile_sidecar_mls_access(
+        base_url,
+        api_token,
+        controller_id.as_str(),
+        device_id,
+        state_store,
+        view,
+    )
+    .await?;
+    view.validate()?;
+    if view.sidecar.id != sidecar_id
+        || view.sidecar.realm_id != source_realm_id
+        || view.sidecar.controller_id != controller_id
+        || addressed_agent_ids
+            .iter()
+            .any(|agent_id| !view.desired_agent_ids.contains(agent_id))
+    {
+        anyhow::bail!("reconciled Sidecar View changed its ceremony or desired-access binding");
+    }
+    tracing::info!(
+        target: "sidecar",
+        event = "sidecar.ensure.completed",
+        trace_id,
+        operation_id = %operation_id,
+        sidecar_id = %sidecar_id,
+        access_readiness = ?view.access_readiness,
+    );
+    Ok(Some(OwnedAgentSidecarEnsureResult {
+        sidecar_id,
+        private_strand_id,
+        private_relation_id,
+        view,
+    }))
 }
 
 // Invariant assertions: each `expect` message names the check that
