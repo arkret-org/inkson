@@ -493,13 +493,13 @@ export async function mockArkretApi(
   const managedPcrSealHeads = new Map<string, Record<string, unknown>>();
   const managedPcrSealPaths = new Map<string, Array<Record<string, unknown>>>();
   let personalAgentCounter = 0;
-  // Two orthogonal axes (key-management.md §3.6.1). The fixtures store a single
-  // legacy status; project it into the lifecycle intent (status) and the
-  // derived runtime readiness (runtime_state) at serve time.
+  // Two orthogonal axes (key-management.md §3.6.1). Store lifecycle intent on
+  // the Agent projection and derive runtime readiness only from key/pairing
+  // facts, matching the public SDK model.
   const projectAgentAxes = (
     agentId: string,
   ): { lifecycle: string; runtime_state: string } => {
-    const stored = String(personalAgents.get(agentId)?.status ?? "active");
+    const stored = String(personalAgents.get(agentId)?.lifecycle ?? "active");
     if (stored === "deactivated") {
       return { lifecycle: "deactivated", runtime_state: "pairing_expired" };
     }
@@ -514,14 +514,50 @@ export async function mockArkretApi(
         (Array.isArray(ks.active_authorizations) &&
           ks.active_authorizations.length > 0)),
     );
+    const pairingMode = String(ks?.pairing_mode ?? "");
+    const pairingExpiresAt = String(ks?.pairing_expires_at ?? "");
+    const pairingOpen =
+      Boolean(ks?.pairing_request_id) &&
+      pairingExpiresAt > "2026-08-03T00:00:00.000Z" &&
+      (pairingMode === "replacement" || !keyed);
+    if (keyed) {
+      return {
+        lifecycle,
+        runtime_state: pairingOpen ? "replacing" : "ready",
+      };
+    }
     return {
       lifecycle,
-      runtime_state: keyed ? "ready" : "pending_runtime_key",
+      runtime_state: pairingOpen ? "pending_runtime_key" : "pairing_expired",
     };
   };
-  // Keep consumed bootstrap material in this active Agent fixture. The
-  // settings UI must trust lifecycle state, not the mere presence of a stale
-  // handle, when deciding whether pairing credentials may be displayed.
+  const projectAgent = (agentId: string): Record<string, unknown> => {
+    const axes = projectAgentAxes(agentId);
+    const readiness =
+      axes.lifecycle === "active" && axes.runtime_state === "ready"
+        ? { state: "ready", blockers: [] }
+        : {
+            state: "not_ready",
+            blockers: [
+              axes.runtime_state === "pending_runtime_key"
+                ? "runtime_key_missing"
+                : axes.runtime_state === "replacing"
+                  ? "pairing_open"
+                  : "session_missing",
+            ],
+          };
+    return {
+      ...personalAgents.get(agentId),
+      lifecycle: axes.lifecycle,
+      readiness,
+      presence: {
+        state: "unknown",
+        expires_at: "2099-01-01T00:00:30.000Z",
+        refresh_after: "2099-01-01T00:00:00.000Z",
+      },
+    };
+  };
+  // A consumed bootstrap handle is absent from the public key-state DTO.
   const activeAssistantId = "did:web:agents.example:assistant";
   const activeAssistantScope = {
     actions: ["ak.event.read"],
@@ -532,7 +568,6 @@ export async function mockArkretApi(
     controller_id: accountPrincipalId,
     principal_control_realm_id: "ak:realm:01964137-0000-7000-8000-000000000006",
     controller_authorization_ref: `${activeAssistantId}#managed-controller`,
-    status: "active",
     pcr_recovery: {
       status: "ready",
       backup_id: "ak:backup:01964137-0000-7000-8000-0000000000c1",
@@ -553,9 +588,6 @@ export async function mockArkretApi(
       kind: "ak.agent.requested_scope_commitment.v1",
       requested_scope: activeAssistantScope,
     }),
-    pairing_request_id: "pair-consumed-active-1",
-    pairing_code: "246810",
-    pairing_expires_at: "2099-07-06T00:20:00.000Z",
     authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000a600",
     active_authorizations: [
       {
@@ -571,7 +603,7 @@ export async function mockArkretApi(
       display_name: "Alice Assistant",
       slug: "assistant",
       avatar_blob_ref: DEMO_BLOB_REF,
-      status: "active",
+      lifecycle: "active",
       created_at: "2026-07-06T00:00:00.000Z",
       updated_at: "2026-07-06T00:05:00.000Z",
     });
@@ -580,7 +612,7 @@ export async function mockArkretApi(
   for (const agent of options.additionalActiveAgents ?? []) {
     personalAgents.set(agent.agent_id, {
       ...agent,
-      status: "active",
+      lifecycle: "active",
       created_at: "2026-07-06T00:00:00.000Z",
       updated_at: "2026-07-06T00:05:00.000Z",
     });
@@ -602,7 +634,7 @@ export async function mockArkretApi(
     agent_id: "did:web:agents.example:deactivated",
     display_name: "Deactivated Agent",
     slug: "deactivated",
-    status: "deactivated",
+    lifecycle: "deactivated",
     created_at: "2026-07-05T00:00:00.000Z",
     updated_at: "2026-07-06T00:10:00.000Z",
   });
@@ -634,7 +666,7 @@ export async function mockArkretApi(
     personalAgents.set(expiredAgentId, {
       agent_id: expiredAgentId,
       slug: "summary",
-      status: "pairing_expired",
+      lifecycle: "active",
       created_at: "2026-07-06T00:00:00.000Z",
       updated_at: "2026-07-06T00:10:00.000Z",
     });
@@ -643,7 +675,6 @@ export async function mockArkretApi(
       controller_id: accountPrincipalId,
       principal_control_realm_id: expiredRealmId,
       controller_authorization_ref: `${expiredAgentId}#managed-controller`,
-      status: "pairing_expired",
       pcr_recovery: {
         status: "ready",
         backup_id: "ak:backup:01964137-0000-7000-8000-0000000000b1",
@@ -657,9 +688,6 @@ export async function mockArkretApi(
           mls_epoch: 0,
         },
       },
-      pairing_request_id: "pair-expired-1",
-      pairing_code: "246810",
-      pairing_expires_at: personalAgentPairingExpiresAt,
       requested_scope: expiredScope,
       requested_scope_digest: expiredScopeDigest,
     });
@@ -3138,14 +3166,7 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       return json(route, {
-        agents: Array.from(personalAgents.keys()).map((id) => {
-          const axes = projectAgentAxes(id);
-          return {
-            ...personalAgents.get(id),
-            status: axes.lifecycle,
-            runtime_state: axes.runtime_state,
-          };
-        }),
+        agents: Array.from(personalAgents.keys()).map(projectAgent),
         has_more: false,
       });
     }
@@ -3350,10 +3371,11 @@ export async function mockArkretApi(
         personalAgentCounter += 1;
         managedPcrRealmIds.add(principalControlRealmId);
         return json(route, {
-          status: "awaiting_controller_events",
+          status: "awaiting_controller_event",
           agent_id: agentId,
           principal_control_realm_id: principalControlRealmId,
           controller_realm_id: controllerRealmId,
+          allocation_handle: `agent-provision-allocation-${personalAgentCounter}.e2e.signature`,
           controller_authorization_ref: controllerAuthorizationRef,
           requested_scope_digest: requestedScopeDigest,
         });
@@ -3371,16 +3393,28 @@ export async function mockArkretApi(
           400,
         );
       }
+      const provisionEvent =
+        typeof body.provision_event === "object" && body.provision_event !== null
+          ? (body.provision_event as Record<string, unknown>)
+          : {};
+      const event =
+        typeof provisionEvent.event === "object" && provisionEvent.event !== null
+          ? (provisionEvent.event as Record<string, unknown>)
+          : {};
+      const payload =
+        typeof event.payload === "object" && event.payload !== null
+          ? (event.payload as Record<string, unknown>)
+          : {};
       const agent = {
         agent_id: agentId,
-        ...(typeof body.display_name === "string"
-          ? { display_name: body.display_name }
+        ...(typeof payload.display_name === "string"
+          ? { display_name: payload.display_name }
           : {}),
         slug,
-        ...(typeof body.avatar_blob_ref === "string"
-          ? { avatar_blob_ref: body.avatar_blob_ref }
+        ...(typeof payload.avatar_blob_ref === "string"
+          ? { avatar_blob_ref: payload.avatar_blob_ref }
           : {}),
-        status: "pending_runtime_key",
+        lifecycle: "active",
         created_at: "2026-07-06T00:00:00.000Z",
         updated_at: "2026-07-06T00:00:00.000Z",
       };
@@ -3389,8 +3423,8 @@ export async function mockArkretApi(
         controller_id: accountPrincipalId,
         principal_control_realm_id: principalControlRealmId,
         controller_authorization_ref: controllerAuthorizationRef,
-        status: "pending_runtime_key",
         pcr_recovery: { status: "pending" },
+        pairing_mode: "bootstrap",
         pairing_request_id: `pair-${personalAgentCounter}`,
         pairing_code: "246810",
         pairing_expires_at: personalAgentPairingExpiresAt,
@@ -3473,9 +3507,8 @@ export async function mockArkretApi(
           400,
         );
       }
-      agent.status = expectedTo;
+      agent.lifecycle = expectedTo;
       agent.updated_at = "2026-07-19T08:00:00.000Z";
-      keyState.status = expectedTo;
       return json(route, { ok: true, status: expectedTo });
     }
 
@@ -3514,7 +3547,7 @@ export async function mockArkretApi(
         ? keyState.active_authorizations
         : [];
       const activeGrants = personalAgentGrants.get(agentId) ?? [];
-      const previousStatus = String(agent.status ?? "active");
+      const previousStatus = String(agent.lifecycle ?? "active");
       const suppliedKeyIds = new Set(
         keyEvents.map((candidate: Record<string, any>) =>
           String(candidate?.event?.payload?.key_id ?? ""),
@@ -3560,9 +3593,8 @@ export async function mockArkretApi(
           412,
         );
       }
-      agent.status = "deactivated";
+      agent.lifecycle = "deactivated";
       agent.updated_at = "2026-07-19T08:00:00.000Z";
-      keyState.status = "deactivated";
       keyState.active_authorizations = [];
       personalAgentGrants.set(agentId, []);
       return json(route, { ok: true, status: "deactivated" });
@@ -3607,8 +3639,6 @@ export async function mockArkretApi(
       const pairingMode = renewKeyed ? "replacement" : "bootstrap";
       const keyState = {
         ...(personalAgentKeyStates.get(agentId) ?? {}),
-        status: renewAxes.lifecycle,
-        runtime_state: renewKeyed ? "replacing" : "pending_runtime_key",
         pairing_mode: pairingMode,
         pairing_request_id: `pair-renew-${personalAgentCounter}`,
         pairing_code: "135791",
@@ -3679,24 +3709,11 @@ export async function mockArkretApi(
           404,
         );
       }
-      const axes = projectAgentAxes(agentId);
       const storedKeyState = personalAgentKeyStates.get(agentId);
       return json(route, {
-        agent: {
-          ...agent,
-          status: axes.lifecycle,
-          runtime_state: axes.runtime_state,
-        },
-        status: axes.lifecycle,
-        runtime_state: axes.runtime_state,
+        agent: projectAgent(agentId),
         grants: personalAgentGrants.get(agentId) ?? [],
-        key_state: storedKeyState
-          ? {
-              ...storedKeyState,
-              status: axes.lifecycle,
-              runtime_state: axes.runtime_state,
-            }
-          : null,
+        key_state: storedKeyState ?? null,
       });
     }
 
@@ -3722,14 +3739,11 @@ export async function mockArkretApi(
       }
       const authorizedEventRef =
         "ak:event:01964137-0000-7000-8000-00000000a601";
-      agent.status = "active";
+      agent.lifecycle = "active";
       agent.updated_at = "2026-07-06T00:05:00.000Z";
       const previousKeyState = personalAgentKeyStates.get(agentId) ?? {};
-      personalAgentKeyStates.set(agentId, {
+      const nextKeyState: Record<string, unknown> = {
         ...previousKeyState,
-        status: "active",
-        verification_method: body.verification_method,
-        public_key: body.public_key,
         authorized_event_ref: authorizedEventRef,
         active_authorizations: [
           {
@@ -3741,13 +3755,18 @@ export async function mockArkretApi(
             authorized_event_ref: authorizedEventRef,
           },
         ],
-      });
+      };
+      delete nextKeyState.pairing_request_id;
+      delete nextKeyState.pairing_mode;
+      delete nextKeyState.pairing_code;
+      delete nextKeyState.pairing_expires_at;
+      personalAgentKeyStates.set(agentId, nextKeyState);
       return json(route, {
         ok: true,
         agent_id: agentId,
-        status: "active",
-        authorized_event_ref: authorizedEventRef,
-        verification_method: body.verification_method,
+        activation_state: "active",
+        authorize_event_ref: authorizedEventRef,
+        signing_key_binding: body.signing_key_binding,
       });
     }
 
