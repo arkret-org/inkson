@@ -1,11 +1,15 @@
 fn main() {
     init_tracing();
+    if let Err(error) = inkson::build_info::publish_browser_build_identity() {
+        panic!("build identity publication failed: {error}");
+    }
     // First console line: which wasm bundle the browser actually loaded. If this
     // id is older than your last rebuild, the browser is running STALE cached
     // wasm — hard-reload or use a fresh profile. (Stamped by `build.rs`.)
     tracing::warn!(
         target: "build",
         build_id = inkson::build_info::build_id(),
+        event_kind_registry_sha256 = inkson::build_info::event_kind_registry_sha256(),
         "inkson build loaded"
     );
     if let Err(err) = inkson::event_signer::bootstrap_default_signer("inkson") {
