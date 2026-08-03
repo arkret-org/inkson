@@ -883,6 +883,8 @@ fn managed_agent_pcr_genesis_leaves_history_sharing_policy_to_the_profile() {
         TEST_ACTOR_ID,
         "did:web:alice.example#delegation-0",
         "ak:trust_domain:server.example",
+        arkret_sdk::EventId::new("ak:event:01964137-0000-7000-8000-000000000098")
+            .expect("fixture provision Event id"),
     )
     .expect("build_managed_agent_pcr_bootstrap_events succeeds");
 
