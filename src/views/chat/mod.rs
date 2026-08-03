@@ -612,6 +612,18 @@ fn validate_prepared_sidecar_binding(
         {
             anyhow::bail!("Sidecar create draft object differs from its reservation");
         }
+        if context_attach_event.refs.len() != 1
+            || context_attach_event.refs[0].id != create_event.event_id.as_str()
+            || context_attach_event.refs[0].role != "after"
+            || !context_attach_event.refs[0].critical
+            || context_attach_event.refs[0].proof.is_some()
+        {
+            anyhow::bail!(
+                "Sidecar context attach draft does not exactly follow its reserved create Event"
+            );
+        }
+    } else if !context_attach_event.refs.is_empty() {
+        anyhow::bail!("existing Sidecar context attach draft has unexpected Event refs");
     }
     if !matches!(
         &context_attach_event.scope_ref,
@@ -765,7 +777,7 @@ async fn ensure_owned_agent_sidecar(
     let ceremony_realm_id = source_realm_id.clone();
     let ceremony_source_strand_id = source_strand_id.clone();
     let ceremony_device_id = device_id.to_owned();
-    let (sidecar_id, private_strand_id, private_relation_id, mut view) =
+    let (sidecar_id, backing_circle_id, private_strand_id, private_relation_id, mut view) =
         crate::transport::auth::with_authed_sdk_client(
             &base_url_owned,
             ceremony_token,
@@ -775,11 +787,9 @@ async fn ensure_owned_agent_sidecar(
                     .await
                     .map_err(anyhow::Error::from)?;
                 let (outcome, expected_phase, prepared_coordinates) = match prepared_or_accepted {
-                    outcome @ arkret_sdk::protocol_journey::SidecarEnsureOutcome::Accepted { .. } => {
-                        (
-                            outcome,
-                            arkret_sdk::protocol_journey::SidecarAcceptedPhase::Attach,
-                            None,
+                    arkret_sdk::protocol_journey::SidecarEnsureOutcome::Accepted { .. } => {
+                        anyhow::bail!(
+                            "Sidecar prepare returned Accepted without a signed reservation ceremony"
                         )
                     }
                     arkret_sdk::protocol_journey::SidecarEnsureOutcome::Prepared { prepared } => {
@@ -946,6 +956,10 @@ async fn ensure_owned_agent_sidecar(
                         "Sidecar accepted coordinates differ from its signed reservation"
                     );
                 }
+                let prepared_backing_circle_id = prepared_coordinates
+                    .as_ref()
+                    .map(|prepared| prepared.1.clone())
+                    .ok_or_else(|| anyhow::anyhow!("Sidecar ceremony omitted prepared coordinates"))?;
                 let view = http
                     .agent_sidecar_get(&coordinates.0)
                     .await
@@ -960,7 +974,13 @@ async fn ensure_owned_agent_sidecar(
                 {
                     anyhow::bail!("Sidecar View does not match the accepted ceremony binding");
                 }
-                Ok::<_, anyhow::Error>((coordinates.0, coordinates.1, coordinates.2, view))
+                Ok::<_, anyhow::Error>((
+                    coordinates.0,
+                    prepared_backing_circle_id,
+                    coordinates.1,
+                    coordinates.2,
+                    view,
+                ))
             },
         )
         .await
@@ -993,6 +1013,7 @@ async fn ensure_owned_agent_sidecar(
     if view.sidecar.id != sidecar_id
         || view.sidecar.realm_id != source_realm_id
         || view.sidecar.controller_id != controller_id
+        || view.sidecar.backing_circle_id != backing_circle_id
         || addressed_agent_ids
             .iter()
             .any(|agent_id| !view.desired_agent_ids.contains(agent_id))
