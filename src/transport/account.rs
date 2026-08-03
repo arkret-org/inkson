@@ -323,7 +323,7 @@ async fn ensure_owned_agent_direct_reply(
         .find(|entry| entry.scope == scope)
         .map(|entry| entry.selection)
         .unwrap_or_default();
-    selection.reply = true;
+    selection.reply_message = true;
     let updated = replace_agent_participation(http, agent_id, scope.clone(), selection).await?;
     if !participation_reply_is_effective(&updated, &scope) {
         anyhow::bail!("owned-Agent Direct Conversation reply participation remains disabled");
@@ -426,7 +426,7 @@ fn participation_materialization_event(
     effective: arkret_sdk::AgentParticipation,
     grant_id: &str,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    if !effective.reply {
+    if !effective.reply_message {
         return crate::operation::ak_ops::capability_revoke(
             scope.realm_id().as_str(),
             controller_id,
@@ -478,7 +478,7 @@ fn participation_reply_is_effective(
     outcome
         .entries
         .iter()
-        .any(|entry| &entry.scope == scope && entry.effective.reply)
+        .any(|entry| &entry.scope == scope && entry.effective.reply_message)
 }
 
 fn owned_agent_reply_update_needed(
@@ -1000,7 +1000,7 @@ mod tests {
                 strand_id: strand_id.clone(),
             },
             arkret_sdk::AgentParticipation {
-                reply: true,
+                reply_message: true,
                 ..Default::default()
             },
             grant_id,

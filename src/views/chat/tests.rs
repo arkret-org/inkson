@@ -3328,7 +3328,9 @@ fn mention_only_participation_does_not_expose_agent_in_roster() {
 
     let realm = "ak:realm:0196419b-0000-7000-8000-000000000020";
     let mention_only = AgentParticipation {
-        reply: false,
+        reply_message: false,
+        reaction_add: false,
+        reaction_remove: false,
         accept_third_party_mention: true,
         act_on_behalf: false,
     };

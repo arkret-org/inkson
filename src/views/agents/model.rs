@@ -827,7 +827,7 @@ pub fn participation_ceiling_reason(
     ceiling: AgentParticipation,
 ) -> String {
     let mut blocked = Vec::new();
-    if selection.reply && !ceiling.reply {
+    if selection.reply_message && !ceiling.reply_message {
         blocked.push("reply capped by governance ceiling");
     }
     if selection.accept_third_party_mention && !ceiling.accept_third_party_mention {

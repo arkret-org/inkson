@@ -127,7 +127,7 @@ fn inkson_accepts_server_contract_payloads() {
             "ak.self.moderation.command.report"
         ],
         "supported_bindings": [{"kind": "http_json", "base_url": "/_arkret"}],
-        "supported_reducer_profiles": ["ak.reducer.v1"],
+        "supported_reducer_profiles": ["ak.reducer.core.v1"],
         "supported_schema_profiles": ["ak.schema.core.v1"],
         "auth_metadata": {"mode": "development"},
         "limits": {"storage": "memory", "max_limit": 100},

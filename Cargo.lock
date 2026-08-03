@@ -574,6 +574,7 @@ dependencies = [
  "arkret-identifiers",
  "arkret-models-collaboration",
  "arkret-models-crypto",
+ "arkret-policy",
  "arkret-wire",
  "chrono",
  "hex",

@@ -91,7 +91,7 @@ pub(crate) fn proof_request(
         previous_epoch,
         next_epoch,
         binding_profile: arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1.to_owned(),
-        reducer_profile: "ak.reducer.v1".to_owned(),
+        reducer_profile: arkret_sdk::CORE_REDUCER_PROFILE.to_owned(),
         trusted_anchor_seal_id: state_store
             .trusted_mls_governance_anchor(realm_id.as_str())
             .or_else(|| {

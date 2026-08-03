@@ -4580,7 +4580,7 @@ pub fn RealmMembersPanel(
                                                                                 label { class: "member-agent-behavior-toggle",
                                                                                     Checkbox {
                                                                                         "data-testid": "member-agent-reply-toggle",
-                                                                                        checked: if owned_agent.selection.reply { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                                                                        checked: if owned_agent.selection.reply_message { CheckboxState::Checked } else { CheckboxState::Unchecked },
                                                                                         disabled: !can_enable,
                                                                                         on_checked_change: {
                                                                                             let base = base_url.clone();
@@ -4590,7 +4590,7 @@ pub fn RealmMembersPanel(
                                                                                             move |state: CheckboxState| {
                                                                                                 spawn_set_agent_realm_behavior(
                                                                                                     base.clone(), token(), realm.clone(), agent_id.clone(),
-                                                                                                    AgentParticipation { reply: bool::from(state), ..previous },
+                                                                                                    AgentParticipation { reply_message: bool::from(state), ..previous },
                                                                                                     owned_agents, status_msg,
                                                                                                 );
                                                                                             }
@@ -4733,7 +4733,9 @@ mod tests {
             runtime_state: "ready".to_owned(),
             mention_policy: AgentMentionPolicy::Allowed,
             selection: AgentParticipation {
-                reply: false,
+                reply_message: false,
+                reaction_add: false,
+                reaction_remove: false,
                 accept_third_party_mention: true,
                 act_on_behalf: false,
             },
@@ -5668,17 +5670,23 @@ mod tests {
         let entries = vec![AgentParticipationEntry {
             scope: AgentParticipationScope::Realm { realm_id },
             selection: AgentParticipation {
-                reply: true,
+                reply_message: true,
+                reaction_add: false,
+                reaction_remove: false,
                 accept_third_party_mention: true,
                 act_on_behalf: false,
             },
             ceiling: AgentParticipation {
-                reply: true,
+                reply_message: true,
+                reaction_add: false,
+                reaction_remove: false,
                 accept_third_party_mention: true,
                 act_on_behalf: false,
             },
             effective: AgentParticipation {
-                reply: true,
+                reply_message: true,
+                reaction_add: false,
+                reaction_remove: false,
                 accept_third_party_mention: true,
                 act_on_behalf: false,
             },
@@ -6125,13 +6133,17 @@ mod tests {
         let entry = AgentParticipationEntry {
             scope: AgentParticipationScope::Realm { realm_id },
             selection: AgentParticipation {
-                reply: true,
+                reply_message: true,
+                reaction_add: false,
+                reaction_remove: false,
                 accept_third_party_mention: true,
                 act_on_behalf: false,
             },
             ceiling: AgentParticipation::ALL,
             effective: AgentParticipation {
-                reply: true,
+                reply_message: true,
+                reaction_add: false,
+                reaction_remove: false,
                 accept_third_party_mention: true,
                 act_on_behalf: false,
             },

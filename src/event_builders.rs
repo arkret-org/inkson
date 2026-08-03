@@ -52,7 +52,6 @@ fn event_requirements_with_schema(schema_ref: &str) -> EventRequirements {
             arkret_sdk::ProfileRef::new(schema_ref.to_owned())
                 .expect("event builder schema profile ref must be valid"),
         ],
-        reducer_profile_ref: None,
         required_features: Vec::new(),
         critical_extensions: Vec::new(),
     }
@@ -403,6 +402,7 @@ fn build_realm_genesis_object(
         title,
         created_by,
         trust_domain_typed,
+        arkret_sdk::CORE_REDUCER_PROFILE,
         notary_profile_typed,
         notary,
         capability_action_registry_digest,
