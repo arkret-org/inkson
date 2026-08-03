@@ -294,8 +294,10 @@ pub fn build_cross_signing_recovery_events(
     let accepted_basis = session.accepted_seal_frontier.as_ref().ok_or_else(|| {
         anyhow::anyhow!("verified recovery session has no accepted Seal frontier")
     })?;
-    let digest_suite =
-        crate::event_signer::digest_suite_from_trusted_hash(&accepted_basis.state_root)?;
+    let trusted_leaf = accepted_basis.leaves.first().ok_or_else(|| {
+        anyhow::anyhow!("verified recovery session has an empty accepted Seal frontier")
+    })?;
+    let digest_suite = crate::event_signer::digest_suite_from_trusted_seal_id(trusted_leaf)?;
     for event in [&mut authorize, &mut list_update] {
         arkret_sdk::signatures::sign_event_with_digest_suite(
             event,

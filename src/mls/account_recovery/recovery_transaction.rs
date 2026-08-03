@@ -584,8 +584,10 @@ pub(crate) async fn prepare_enrollment_authority_recovery(
         .ok_or_else(|| {
             anyhow::anyhow!("verified recovery session has no accepted Seal frontier")
         })?;
-    let digest_suite =
-        crate::event_signer::digest_suite_from_trusted_hash(&accepted_basis.state_root)?;
+    let trusted_leaf = accepted_basis.leaves.first().ok_or_else(|| {
+        anyhow::anyhow!("verified recovery session has an empty accepted Seal frontier")
+    })?;
+    let digest_suite = crate::event_signer::digest_suite_from_trusted_seal_id(trusted_leaf)?;
     let reanchor_payload =
         arkret_models_collaboration::events_payloads::device_identity::DeviceReanchorPayload {
             principal_id: verified_session.principal_id.clone(),
