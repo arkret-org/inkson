@@ -29,11 +29,7 @@ pub(super) struct MlsRuntimeEffectState {
     pub realm_key_answer_backoff_until: Signal<crate::keyed_cooldown::KeyedCooldown>,
     pub mls_welcome_bootstrap_key_seen: Signal<Option<String>>,
     pub crypto_state: Signal<String>,
-    pub needs_mls_unlock: Signal<bool>,
     pub needs_mls_backup: Signal<bool>,
-    pub needs_mls_recovery_setup: Signal<bool>,
-    pub mls_restore_payload_cache: Signal<Option<Value>>,
-    pub account_recovery_configured: Signal<Option<bool>>,
 }
 
 #[component]
@@ -64,11 +60,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         realm_key_answer_backoff_until,
         mls_welcome_bootstrap_key_seen,
         crypto_state,
-        needs_mls_unlock,
         needs_mls_backup,
-        needs_mls_recovery_setup,
-        mls_restore_payload_cache,
-        account_recovery_configured,
     } = state;
     let SessionContext {
         state_store,
@@ -869,12 +861,8 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         let state_store_for_bootstrap = state_store;
         let crypto_state_for_bootstrap = crypto_state;
         let last_error_for_bootstrap = last_error;
-        let mut needs_mls_unlock_for_bootstrap = needs_mls_unlock;
-        let mut needs_mls_backup_for_bootstrap = needs_mls_backup;
-        let mut needs_mls_recovery_setup_for_bootstrap = needs_mls_recovery_setup;
-        let mut restore_payload_cache_for_bootstrap = mls_restore_payload_cache;
+        let needs_mls_backup_for_bootstrap = needs_mls_backup;
         let secure_store_ready_for_bootstrap = secure_store_bootstrap_ready;
-        let account_recovery_configured_for_bootstrap = account_recovery_configured;
         let welcome_device_queue = device_queue;
         let coverage_repair_in_flight = mls_coverage_repair_in_flight;
         use_effect(move || {
@@ -899,7 +887,6 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             let actor = account_did();
             let device = device_id();
             let description = server_description();
-            let account_recovery_configured_value = account_recovery_configured_for_bootstrap();
             let Some(bootstrap_key) = mls_welcome_bootstrap_key(
                 &base,
                 &session,
@@ -954,7 +941,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             .map(|secret| secret.is_some())
             .unwrap_or(false);
             let bootstrap_key = format!(
-                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|welcome={local_pending_welcome_hint}|coverage={coverage_repair_hint}|recovery={account_recovery_configured_value:?}"
+                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|welcome={local_pending_welcome_hint}|coverage={coverage_repair_hint}"
             );
             if seen_bootstrap_key().as_deref() == Some(bootstrap_key.as_str()) {
                 return;
@@ -974,7 +961,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             let detect_actor = actor.clone();
             let detect_device = device.clone();
             let creator_bootstrap_realm_id = bootstrap_realm_id.clone();
-            let mut state_store_for_probe = state_store_for_bootstrap;
+            let state_store_for_probe = state_store_for_bootstrap;
             let mut coverage_repair_in_flight_for_probe = coverage_repair_in_flight;
             spawn(async move {
                 match bootstrap_mls_welcome_for_realm(
@@ -1137,198 +1124,12 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     }
                 }
 
-                // Step-3 detection: if this device has no local account MLS
-                // secret yet OR local MLS history is missing/stale, and the
-                // server holds recovery material, flag the unlock prompt.
-                // Detection errors must NOT block or fail boot — log and
-                // leave the flag false.
-                let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
-                    crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
-                    &detect_actor,
-                )
-                .map(|secret| secret.is_some())
-                .unwrap_or(false);
-                let actor_for_sidecar_restore = detect_actor.clone();
-                let device_for_sidecar_restore = detect_device.clone();
-                match crate::transport::auth::with_authed_api(
-                    &detect_base,
-                    detect_session.clone(),
-                    |api| async move {
-                        let payload = crate::mls::account_recovery::fetch_mls_restore_payload(
-                            &api,
-                            &actor_for_sidecar_restore,
-                        )
-                        .await?;
-                        let history_payload_for_local_restore = if has_local_account_secret {
-                            Some(
-                                crate::mls::account_recovery::fetch_mls_history_restore_payload_with_unlock_proof(
-                                    &api,
-                                    &payload,
-                                    &actor_for_sidecar_restore,
-                                    &device_for_sidecar_restore,
-                                )
-                                .await?,
-                            )
-                        } else {
-                            None
-                        };
-                        let sidecar_body_for_local_restore = if has_local_account_secret {
-                            crate::mls::account_recovery::fetch_mls_private_plaintext_backup_body(
-                                &api,
-                                &actor_for_sidecar_restore,
-                                &device_for_sidecar_restore,
-                            )
-                            .await
-                            .ok()
-                            .flatten()
-                        } else {
-                            None
-                        };
-                        Ok((
-                            payload,
-                            history_payload_for_local_restore,
-                            sidecar_body_for_local_restore,
-                        ))
-                    },
-                )
-                .await
-                {
-                    Ok((
-                        payload,
-                        history_payload_for_local_restore,
-                        sidecar_body_for_local_restore,
-                    )) => {
-                        if seen_bootstrap_key_for_probe().as_deref() != Some(bootstrap_key.as_str())
-                        {
-                            return;
-                        }
-                        let secure_store =
-                            crate::secure_key_store::default_secure_key_store("inkson");
-                        let configured_backup_id =
-                            crate::mls::account_recovery::select_preferred_mls_account_secret_backup(
-                                &payload,
-                            )
-                            .and_then(|backup| {
-                                backup
-                                    .get("backup_id")
-                                    .and_then(serde_json::Value::as_str)
-                                    .map(str::to_owned)
-                            });
-                        {
-                            let mut store = state_store_for_probe.write();
-                            if let Some(backup_id) = configured_backup_id.as_deref() {
-                                crate::components::mark_mls_recovery_backup_configured(
-                                    &mut store,
-                                    &detect_actor,
-                                    backup_id,
-                                );
-                            }
-                            if let Some(history_payload) =
-                                history_payload_for_local_restore.as_ref()
-                            {
-                                let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
-                                    history_payload,
-                                    &mut store,
-                                    secure_store.as_ref(),
-                                    &detect_actor,
-                                    &detect_device,
-                                );
-                                if report.failed > 0 {
-                                    tracing::warn!(
-                                        failed = report.failed,
-                                        restored = report.restored,
-                                        first_error = ?report.first_error,
-                                        "mls history restore from local secret failed"
-                                    );
-                                }
-                            }
-                            if let Some(sidecar_body) = sidecar_body_for_local_restore.as_ref() {
-                                let sidecar_payload =
-                                    serde_json::json!({ "backups": [sidecar_body.clone()] });
-                                let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
-                                    &sidecar_payload,
-                                    &mut store,
-                                    secure_store.as_ref(),
-                                    &detect_actor,
-                                    &detect_device,
-                                );
-                                if report.failed > 0 {
-                                    tracing::warn!(
-                                        failed = report.failed,
-                                        restored = report.restored,
-                                        first_error = ?report.first_error,
-                                        "mls sidecar restore from local secret failed"
-                                    );
-                                }
-                            }
-                        }
-                        let should_unlock = {
-                            let store = state_store_for_probe.read();
-                            crate::mls::account_recovery::mls_restore_prompt_required(
-                                history_payload_for_local_restore.as_ref().unwrap_or(&payload),
-                                &store,
-                                secure_store.as_ref(),
-                                &detect_actor,
-                                &detect_device,
-                            )
-                        };
-                        // Mutual exclusion (task X3): restore (unlock) wins.
-                        // Otherwise, if the user just created an encrypted
-                        // realm (local secret now exists) but has no server
-                        // backup, flag the one-time backup prompt instead.
-                        if should_unlock {
-                            restore_payload_cache_for_bootstrap.set(Some(payload.clone()));
-                            needs_mls_unlock_for_bootstrap.set(true);
-                            needs_mls_backup_for_bootstrap.set(false);
-                            needs_mls_recovery_setup_for_bootstrap.set(false);
-                        } else if needs_mls_unlock_for_bootstrap() {
-                            // Keep an already-rendered unlock modal stable when
-                            // the boot-time and per-Realm probes resolve out of
-                            // order with different payload freshness.
-                            needs_mls_backup_for_bootstrap.set(false);
-                            needs_mls_recovery_setup_for_bootstrap.set(false);
-                        } else {
-                            let should_backup =
-                                crate::mls::account_recovery::mls_backup_prompt_required(
-                                    &payload,
-                                    secure_store.as_ref(),
-                                    &detect_actor,
-                                    &detect_device,
-                                );
-                            if should_backup {
-                                crate::components::maybe_auto_backup_mls_after_encrypted_write(
-                                    detect_base.clone(),
-                                    detect_session.clone(),
-                                    detect_actor.clone(),
-                                    detect_device.clone(),
-                                    state_store_for_probe,
-                                    needs_mls_backup_for_bootstrap,
-                                )
-                                .await;
-                            } else {
-                                needs_mls_backup_for_bootstrap.set(false);
-                            }
-                            let should_recovery_setup = {
-                                let store = state_store_for_probe.read();
-                                mls_recovery_setup_missing(
-                                    &payload,
-                                    &store,
-                                    secure_store.as_ref(),
-                                    &detect_actor,
-                                    account_recovery_configured_value,
-                                )
-                            };
-                            needs_mls_recovery_setup_for_bootstrap
-                                .set(!should_backup && should_recovery_setup);
-                        }
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            error = %error.display(),
-                            "MLS account-secret unlock detection failed"
-                        );
-                    }
-                }
+                // Account-wide recovery detection is intentionally centralized
+                // in `MlsRecoveryEffects`. This Realm bootstrap used to repeat
+                // the same asynchronous probe and write the same global prompt
+                // signals. The two independent writers could observe different
+                // projection moments during first-Realm creation and made a
+                // transient `needs_mls_unlock=true` permanently sticky.
             });
         });
     }

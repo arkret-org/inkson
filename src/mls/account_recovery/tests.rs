@@ -10,7 +10,7 @@ use super::backup_body::{
     is_mls_private_plaintext_backup,
 };
 use super::restore::{
-    mls_backup_prompt_required, mls_restore_prompt_required,
+    encrypted_restore_projection_complete, mls_backup_prompt_required, mls_restore_prompt_required,
     restore_mls_history_with_passphrase_from_payload,
     restore_mls_history_with_recovery_key_from_payload,
 };
@@ -363,21 +363,35 @@ fn prompt_not_required_when_local_history_is_current_and_decryptable() {
 }
 
 #[test]
-fn first_device_does_not_prompt_during_its_account_backup_verification_race() {
+fn first_device_unlock_probe_converges_after_backup_projection_race() {
     let store = MemorySecureKeyStore::new();
     crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
     let mut state = temp_state_store("prompt-first-device-upload-race");
     let envelope = history_envelope("ak:realm:first", "group-first", 0, ACCOUNT_SECRET);
     state.save_mls_snapshot(envelope.realm_id.clone(), envelope.clone());
-    let payload =
-        payload_with_inferred_active_series(vec![recovery_hpke_backup(), history_body(&envelope)]);
+    let account_backup = recovery_hpke_backup();
+    let account_backup_only = payload_with_inferred_active_series(vec![account_backup.clone()]);
+    let projected_history =
+        payload_with_inferred_active_series(vec![account_backup, history_body(&envelope)]);
 
     assert!(
         !crate::mls::runtime::account_mls_secret_verified(&store, ACTOR).unwrap(),
         "fixture must cover the gap before the uploader persists its verified marker"
     );
     assert!(
-        !mls_restore_prompt_required(&payload, &state, &store, ACTOR, DEVICE),
+        mls_restore_prompt_required(&account_backup_only, &state, &store, ACTOR, DEVICE),
+        "the first projection can conservatively look like a device missing history"
+    );
+    assert!(
+        !encrypted_restore_projection_complete(&account_backup_only),
+        "the UI must not classify a half-projected first-device recovery set"
+    );
+    assert!(
+        encrypted_restore_projection_complete(&projected_history),
+        "account and history backups together form a classifiable projection"
+    );
+    assert!(
+        !mls_restore_prompt_required(&projected_history, &state, &store, ACTOR, DEVICE),
         "the device that created the current decryptable backup has no history to restore"
     );
 }

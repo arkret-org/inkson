@@ -1324,11 +1324,7 @@ fn AppBootstrap() -> Element {
                     realm_key_answer_backoff_until,
                     mls_welcome_bootstrap_key_seen,
                     crypto_state,
-                    needs_mls_unlock,
                     needs_mls_backup,
-                    needs_mls_recovery_setup,
-                    mls_restore_payload_cache,
-                    account_recovery_configured,
                 }
             }
             ShellEffects {

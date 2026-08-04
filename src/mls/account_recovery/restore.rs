@@ -411,6 +411,35 @@ pub async fn fetch_mls_restore_payload_after_projection(
     Ok(payload)
 }
 
+pub(super) fn encrypted_restore_projection_complete(payload: &Value) -> bool {
+    select_preferred_mls_account_secret_backup(payload).is_some()
+        && !select_mls_history_backups(payload).is_empty()
+}
+
+/// First-Realm creation publishes the account-secret backup and the first
+/// `mls_history` backup through separate server projections. When this browser
+/// already has encrypted local state, seeing only the account backup is not a
+/// complete recovery view: classifying that half-projected payload can
+/// transiently report that the creator device needs to restore its own keys.
+///
+/// Give both projections the same bounded convergence window before the UI is
+/// allowed to classify the result. A genuinely incomplete recovery set still
+/// returns after five retries and therefore remains fail-closed.
+pub async fn fetch_mls_restore_payload_after_encrypted_projection(
+    api: &crate::transport::TransportClient,
+    actor_id: &str,
+) -> Result<Value> {
+    let mut payload = fetch_mls_restore_payload(api, actor_id).await?;
+    for _ in 0..5 {
+        if encrypted_restore_projection_complete(&payload) {
+            break;
+        }
+        crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(1)).await;
+        payload = fetch_mls_restore_payload(api, actor_id).await?;
+    }
+    Ok(payload)
+}
+
 async fn fetch_authoritative_active_series(
     api: &crate::transport::TransportClient,
     actor_id: &str,

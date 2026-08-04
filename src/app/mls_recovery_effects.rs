@@ -127,8 +127,13 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
             )
             .map(|secret| secret.is_some())
             .unwrap_or(false);
+            let local_account_secret_verified = crate::mls::runtime::account_mls_secret_verified(
+                crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
+                &actor,
+            )
+            .unwrap_or(false);
             let detection_key = format!(
-                "{generation}|{base}|{actor}|{device}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|recovery={account_recovery_configured_value:?}"
+                "{generation}|{base}|{actor}|{device}|sec={has_local_account_secret}|verified={local_account_secret_verified}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|recovery={account_recovery_configured_value:?}"
             );
             if seen_detection_key().as_deref() == Some(detection_key.as_str()) {
                 return;
@@ -137,7 +142,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
             // DIAG (describe-storm): this effect re-fetches backups (+ sidecar)
             // whenever `detection_key` changes. On a wedged-recovery account it
             // storms; log the full key so consecutive values reveal which
-            // component (sec/snap/enc/epoch/rk/recovery/generation) keeps
+            // component (sec/verified/snap/enc/epoch/rk/recovery/generation) keeps
             // flipping. Remove once the driver is fixed.
             tracing::debug!(target: "recovery_diag", key = %detection_key, "mls_unlock detection re-fetch (backups)");
             let seen_detection_key_for_result = seen_detection_key;
@@ -155,10 +160,11 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                     session.clone(),
                     |api| async move {
                         let payload = if should_wait_for_projection {
-                            crate::mls::account_recovery::fetch_mls_restore_payload_after_projection(
+                            crate::mls::account_recovery::fetch_mls_restore_payload_after_encrypted_projection(
                                 &api,
                                 &actor_for_sidecar_restore,
-                            ).await?
+                            )
+                            .await?
                         } else {
                             // A brand-new account has no MLS material whose
                             // projection could be racing. One list is enough;
@@ -289,14 +295,17 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                             needs_mls_unlock.set(true);
                             needs_mls_backup.set(false);
                             needs_mls_recovery_setup.set(false);
-                        } else if needs_mls_unlock() {
-                            // Multiple detection effects can race with different
-                            // restore-payload snapshots. Once one detects a real
-                            // unlock requirement, keep the modal open until the
-                            // user restores successfully or the session resets.
-                            needs_mls_backup.set(false);
-                            needs_mls_recovery_setup.set(false);
                         } else {
+                            // This is the sole background writer of the unlock
+                            // requirement. `seen_detection_key_for_result` above
+                            // rejects an older result from this effect, so a
+                            // newer complete probe must be allowed to clear a
+                            // transient positive result. In particular, first
+                            // Realm creation briefly exposes the account backup
+                            // before the uploader's local verification fence is
+                            // observed; making `true` sticky turns that harmless
+                            // projection window into a permanent restore modal
+                            // on the device that owns the keys.
                             restore_payload_cache.set(None);
                             needs_mls_unlock.set(false);
                             let should_backup =
