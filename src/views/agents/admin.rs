@@ -21,8 +21,8 @@ use super::model::{
     AgentGrantPreset, AgentServiceScopePreset, agent_lifecycle_wire, agent_runtime_state_wire,
     agent_state_badge_class, agent_state_label, agent_view_from_directory_row,
     build_agent_pairing_deep_link, build_agent_pairing_handoff_token,
-    build_agent_provision_event_draft, is_pairing_request_expired, render_agent_pairing_qr_svg,
-    requested_scope_for_presets,
+    build_agent_provision_event_draft, is_pairing_request_expired, key_state_runtime_state,
+    render_agent_pairing_qr_svg, requested_scope_for_presets,
 };
 use crate::components::{QrSharePanel, UiIcon};
 use crate::routes::Route;
@@ -140,6 +140,14 @@ fn requested_scope_matches_service_preset(
 
 fn pairing_material_can_be_exposed(pcr_recovery: Option<&AgentPcrRecoveryState>) -> bool {
     pcr_recovery.is_some_and(AgentPcrRecoveryState::is_ready)
+}
+
+fn agent_view_runtime_state(agent: &AgentView) -> AgentRuntimeState {
+    agent
+        .key_state
+        .as_ref()
+        .map(key_state_runtime_state)
+        .unwrap_or_else(|| super::model::agent_projection_runtime_state(&agent.agent))
 }
 
 fn upsert_agent_view(rows: &mut Vec<AgentView>, view: AgentView) {
@@ -313,6 +321,23 @@ mod directory_refresh_tests {
             &AgentPcrRecoveryState::Pending
         )));
         assert!(!pairing_material_can_be_exposed(None));
+    }
+
+    #[test]
+    fn live_pairing_detail_overrides_lossy_directory_runtime_summary() {
+        let mut row = test_pairing_view(
+            AgentLifecycleState::Active,
+            AgentRuntimeState::PendingRuntimeKey,
+        );
+        row.agent = test_agent_projection(
+            AgentLifecycleState::Active,
+            AgentRuntimeState::PairingExpired,
+        );
+
+        assert_eq!(
+            agent_view_runtime_state(&row),
+            AgentRuntimeState::PendingRuntimeKey
+        );
     }
 
     fn test_pairing_view(
@@ -1375,16 +1400,17 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
         .as_ref()
         .map(|agent| agent_lifecycle_wire(agent.agent.lifecycle).to_owned())
         .unwrap_or_default();
-    let selected_runtime_state = selected_agent
-        .as_ref()
-        .map(|agent| {
-            agent_runtime_state_wire(super::model::agent_projection_runtime_state(&agent.agent))
-                .to_owned()
-        })
-        .unwrap_or_default();
     let selected_key_state = selected_agent
         .as_ref()
         .and_then(|agent| agent.key_state.as_ref());
+    // The detailed key-state projection carries the authoritative live pairing
+    // handle and expiry. Prefer it over reconstructing the runtime axis from
+    // directory readiness blockers, which are intentionally a summary and can
+    // otherwise turn a live bootstrap handle into a false `pairing_expired`.
+    let selected_runtime_state = selected_agent
+        .as_ref()
+        .map(|agent| agent_runtime_state_wire(agent_view_runtime_state(agent)).to_owned())
+        .unwrap_or_default();
     let selected_key_state_owned = selected_key_state.cloned();
     // Separate clones for the replace-runtime "Pause first" affordance, which is
     // rendered after the lifecycle switch closure has already moved the
