@@ -32,29 +32,6 @@ pub(crate) fn sign_keypackage_upload_batch(
     sign_keypackage_upload_batch_with_signer(&signer, unsigned)
 }
 
-pub(crate) fn sign_keypackage_consume(
-    unsigned: &arkret_sdk::KeyPackagesConsumeUnsignedRequest,
-) -> anyhow::Result<arkret_sdk::KeyOperationSignature> {
-    let signer = crate::event_signer::active_signer().ok_or_else(|| {
-        anyhow::anyhow!(
-            "keypackages/consume signature requires an active event-signer (fail-closed)"
-        )
-    })?;
-    let input = arkret_sdk::keypackages_consume_signing_input(unsigned)?;
-    let signature = signer
-        .sign_raw(&input)
-        .map_err(|error| anyhow::anyhow!("keypackages/consume signature failed: {error}"))?;
-    Ok(arkret_sdk::KeyOperationSignature {
-        kid: arkret_sdk::NonEmptyString::new(signer.verification_method())
-            .map_err(anyhow::Error::msg)?,
-        signature_algorithm: Some(
-            arkret_sdk::NonEmptyString::new(signer.algorithm()).map_err(anyhow::Error::msg)?,
-        ),
-        sig: arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(signature))
-            .map_err(anyhow::Error::msg)?,
-    })
-}
-
 /// Convert a local `MlsKeyPackageRecord` into the typed wire entry for
 /// `keypackages/upload`
 /// (`keypackage-operations.schema.json#/$defs/keypackage_upload_entry`).
