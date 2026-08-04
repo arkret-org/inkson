@@ -454,6 +454,19 @@ fn projected_member_profiles_for_realm(
             upsert_member_profile(&mut rows, profile);
         }
     }
+    // Ownership is not a roster decoration. The only authorization-grade
+    // source is the Realm authority-root cell derived from the accepted
+    // `ak.realm.create` Event, so classify the owner from that projected Event
+    // rather than the discarded `owners` / `admins` presentation mirrors.
+    if let Some(owner_id) = crate::security_state::realm_authority_root_controller_for_realm(
+        &state.realm_tree_projections,
+        realm_id,
+    ) {
+        let mut owner = MemberProfile::bare(owner_id);
+        owner.membership = Some("join".to_owned());
+        owner.is_owner = true;
+        upsert_member_profile(&mut rows, owner);
+    }
     let invitee_by_invite_id =
         local_invitee_by_invite_id_for_realm(&state.raw_operations, realm_id);
     for record in &state.raw_operations {
@@ -5110,6 +5123,36 @@ mod tests {
         assert_eq!(alice.handles, vec!["alice:acme.example"]);
         assert_eq!(alice.avatar_blob_ref, None);
         assert!(!alice.is_admin);
+    }
+
+    #[test]
+    fn projected_member_profiles_classify_authority_root_controller_as_owner() {
+        let realm_id = "ak:realm:test";
+        let mut store = temp_store("authority-root-owner");
+        store.save_realm_tree_projection(
+            realm_id.to_owned(),
+            serde_json::json!({
+                "members": [{
+                    "actor_id": "did:web:alice.example",
+                    "membership": "join"
+                }],
+                "state": {"events": [{
+                    "kind": "ak.realm.create",
+                    "payload": {"object": {
+                        "created_by": "did:web:alice.example"
+                    }}
+                }]}
+            }),
+        );
+
+        let profiles = projected_member_profiles_for_realm(&store, realm_id);
+        let alice = profiles
+            .iter()
+            .find(|profile| profile.actor_id == "did:web:alice.example")
+            .expect("authority-root controller is present");
+        assert!(alice.is_owner);
+        assert_eq!(alice.membership.as_deref(), Some("join"));
+        assert_eq!(profiles.len(), 1);
     }
 
     #[test]
