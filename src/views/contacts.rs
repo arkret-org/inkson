@@ -7,7 +7,7 @@
 // the DID Document via `crate::identity::did_resolver::build_default_resolver`
 // instead of relying on the cached binding state surfaced here.
 
-use arkret_sdk::protocol_journey::ContactScope;
+use arkret_sdk::contact_operations::ContactScope;
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::use_navigator;

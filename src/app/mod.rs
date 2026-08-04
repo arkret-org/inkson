@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use arkret_sdk::protocol_journey::ContactScope;
+use arkret_sdk::contact_operations::ContactScope;
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::*;

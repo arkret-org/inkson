@@ -1,9 +1,9 @@
-use arkret_sdk::protocol_journey::{
+use arkret_sdk::contact_operations::{
     ContactCommitPhase, ContactCommitRequestBody, ContactOperationOutcome,
     ContactOperationRequestBody, ContactPeer, ContactPreparePhase, ContactPrepareRequestBody,
-    ContactPreparedEventDraft, ContactPreparedOutcome, ContactScope, ProtocolOpaqueId,
-    ProtocolOperationId,
+    ContactPreparedEventDraft, ContactPreparedOutcome, ContactScope,
 };
+use arkret_sdk::{IdempotencyKey, ProtocolOperationId, ReservationHandle};
 
 fn contact_scope(scope: &str) -> anyhow::Result<ContactScope> {
     match scope.trim() {
@@ -20,7 +20,7 @@ fn prepared_contact_request(
     outcome: ContactOperationOutcome,
 ) -> anyhow::Result<(
     ProtocolOperationId,
-    ProtocolOpaqueId,
+    ReservationHandle,
     ContactPreparedEventDraft,
 )> {
     match outcome {
@@ -101,7 +101,7 @@ impl crate::transport::TransportClient {
         let operation_id =
             ProtocolOperationId::new(format!("ak:operation:contact.request.{nonce}"))
                 .map_err(anyhow::Error::msg)?;
-        let idempotency_key = ProtocolOpaqueId::new(nonce).map_err(anyhow::Error::msg)?;
+        let idempotency_key = IdempotencyKey::new(nonce).map_err(anyhow::Error::msg)?;
         let prepare = ContactOperationRequestBody::Prepare(ContactPrepareRequestBody {
             phase: ContactPreparePhase::Prepare,
             operation_id: operation_id.clone(),

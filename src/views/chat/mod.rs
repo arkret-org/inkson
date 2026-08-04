@@ -506,7 +506,7 @@ struct OwnedAgentSidecarEnsureResult {
 }
 
 fn sign_prepared_sidecar_event(
-    draft: &arkret_sdk::protocol_journey::SidecarPreparedEventDraft,
+    draft: &arkret_sdk::sidecar_operations::SidecarPreparedEventDraft,
     expected_kind: &str,
     controller_id: &arkret_sdk::Did,
     device_id: &str,
@@ -677,9 +677,9 @@ fn validate_prepared_sidecar_binding(
 }
 
 fn accepted_sidecar_coordinates(
-    outcome: &arkret_sdk::protocol_journey::SidecarEnsureOutcome,
-    expected_operation_id: &arkret_sdk::protocol_journey::ProtocolOperationId,
-    expected_phase: arkret_sdk::protocol_journey::SidecarAcceptedPhase,
+    outcome: &arkret_sdk::sidecar_operations::SidecarEnsureOutcome,
+    expected_operation_id: &arkret_sdk::ProtocolOperationId,
+    expected_phase: arkret_sdk::sidecar_operations::SidecarAcceptedPhase,
 ) -> anyhow::Result<(
     arkret_sdk::SidecarId,
     arkret_sdk::StrandId,
@@ -687,7 +687,7 @@ fn accepted_sidecar_coordinates(
 )> {
     outcome.validate()?;
     match outcome {
-        arkret_sdk::protocol_journey::SidecarEnsureOutcome::Accepted {
+        arkret_sdk::sidecar_operations::SidecarEnsureOutcome::Accepted {
             operation_id,
             accepted_phase,
             sidecar_id,
@@ -696,7 +696,7 @@ fn accepted_sidecar_coordinates(
             access_readiness,
             ..
         } if operation_id == expected_operation_id && *accepted_phase == expected_phase => {
-            if *access_readiness == arkret_sdk::protocol_journey::SidecarAccessReadiness::Failed {
+            if *access_readiness == arkret_sdk::AgentSidecarAccessReadiness::Failed {
                 anyhow::bail!("Sidecar ceremony completed with failed access readiness");
             }
             Ok((
@@ -705,10 +705,10 @@ fn accepted_sidecar_coordinates(
                 private_relation_id.clone(),
             ))
         }
-        arkret_sdk::protocol_journey::SidecarEnsureOutcome::Accepted { .. } => {
+        arkret_sdk::sidecar_operations::SidecarEnsureOutcome::Accepted { .. } => {
             anyhow::bail!("Sidecar accepted outcome changed its operation or phase binding")
         }
-        arkret_sdk::protocol_journey::SidecarEnsureOutcome::Prepared { .. } => {
+        arkret_sdk::sidecar_operations::SidecarEnsureOutcome::Prepared { .. } => {
             anyhow::bail!("Sidecar commit returned another prepared outcome")
         }
     }
@@ -745,20 +745,19 @@ async fn ensure_owned_agent_sidecar(
         anyhow::bail!("Sidecar addressed Agents must exclude the controller");
     }
     let nonce = uuid_v7();
-    let operation_id = arkret_sdk::protocol_journey::ProtocolOperationId::new(format!(
-        "ak:operation:sidecar.ensure.{nonce}"
-    ))
-    .map_err(anyhow::Error::msg)?;
+    let operation_id =
+        arkret_sdk::ProtocolOperationId::new(format!("ak:operation:sidecar.ensure.{nonce}"))
+            .map_err(anyhow::Error::msg)?;
     let prepare_idempotency_key =
-        arkret_sdk::protocol_journey::ProtocolOpaqueId::new(nonce).map_err(anyhow::Error::msg)?;
-    let prepare = arkret_sdk::protocol_journey::SidecarEnsureRequestBody::Prepare(
-        arkret_sdk::protocol_journey::SidecarEnsurePrepareRequestBody {
-            phase: arkret_sdk::protocol_journey::SidecarPreparePhase::Prepare,
+        arkret_sdk::IdempotencyKey::new(nonce).map_err(anyhow::Error::msg)?;
+    let prepare = arkret_sdk::sidecar_operations::SidecarEnsureRequestBody::Prepare(
+        arkret_sdk::sidecar_operations::SidecarEnsurePrepareRequestBody {
+            phase: arkret_sdk::sidecar_operations::SidecarPreparePhase::Prepare,
             operation_id: operation_id.clone(),
             idempotency_key: prepare_idempotency_key,
             source_realm_id: source_realm_id.clone(),
             controller_id: controller_id.clone(),
-            context_ref: arkret_sdk::protocol_journey::SidecarContextRef::Strand {
+            context_ref: arkret_sdk::sidecar_operations::SidecarContextRef::Strand {
                 strand_id: source_strand_id.clone(),
             },
         },
@@ -787,17 +786,17 @@ async fn ensure_owned_agent_sidecar(
                     .await
                     .map_err(anyhow::Error::from)?;
                 let (outcome, expected_phase, prepared_coordinates) = match prepared_or_accepted {
-                    arkret_sdk::protocol_journey::SidecarEnsureOutcome::Accepted { .. } => {
+                    arkret_sdk::sidecar_operations::SidecarEnsureOutcome::Accepted { .. } => {
                         anyhow::bail!(
                             "Sidecar prepare returned Accepted without a signed reservation ceremony"
                         )
                     }
-                    arkret_sdk::protocol_journey::SidecarEnsureOutcome::Prepared { prepared } => {
+                    arkret_sdk::sidecar_operations::SidecarEnsureOutcome::Prepared { prepared } => {
                         let commit_idempotency_key =
-                            arkret_sdk::protocol_journey::ProtocolOpaqueId::new(uuid_v7())
+                            arkret_sdk::IdempotencyKey::new(uuid_v7())
                                 .map_err(anyhow::Error::msg)?;
                         match prepared {
-                            arkret_sdk::protocol_journey::SidecarPreparedOutcome::New {
+                            arkret_sdk::sidecar_operations::SidecarPreparedOutcome::New {
                                 operation_id: prepared_operation_id,
                                 reservation_handle,
                                 expires_at,
@@ -846,9 +845,9 @@ async fn ensure_owned_agent_sidecar(
                                     &ceremony_controller_id,
                                     &ceremony_realm_id,
                                 )?;
-                                let request = arkret_sdk::protocol_journey::SidecarEnsureRequestBody::Commit(
-                                    arkret_sdk::protocol_journey::SidecarEnsureCommitRequestBody {
-                                        phase: arkret_sdk::protocol_journey::SidecarCommitPhase::Commit,
+                                let request = arkret_sdk::sidecar_operations::SidecarEnsureRequestBody::Commit(
+                                    arkret_sdk::sidecar_operations::SidecarEnsureCommitRequestBody {
+                                        phase: arkret_sdk::sidecar_operations::SidecarCommitPhase::Commit,
                                         operation_id: ceremony_operation_id.clone(),
                                         idempotency_key: commit_idempotency_key,
                                         reservation_handle,
@@ -862,7 +861,7 @@ async fn ensure_owned_agent_sidecar(
                                     .map_err(anyhow::Error::from)?;
                                 (
                                     outcome,
-                                    arkret_sdk::protocol_journey::SidecarAcceptedPhase::Commit,
+                                    arkret_sdk::sidecar_operations::SidecarAcceptedPhase::Commit,
                                     Some((
                                         sidecar_id,
                                         backing_circle_id,
@@ -871,7 +870,7 @@ async fn ensure_owned_agent_sidecar(
                                     )),
                                 )
                             }
-                            arkret_sdk::protocol_journey::SidecarPreparedOutcome::Existing {
+                            arkret_sdk::sidecar_operations::SidecarPreparedOutcome::Existing {
                                 operation_id: prepared_operation_id,
                                 reservation_handle,
                                 expires_at,
@@ -910,9 +909,9 @@ async fn ensure_owned_agent_sidecar(
                                     &ceremony_controller_id,
                                     &ceremony_realm_id,
                                 )?;
-                                let request = arkret_sdk::protocol_journey::SidecarEnsureRequestBody::Attach(
-                                    arkret_sdk::protocol_journey::SidecarEnsureAttachRequestBody {
-                                        phase: arkret_sdk::protocol_journey::SidecarAttachPhase::Attach,
+                                let request = arkret_sdk::sidecar_operations::SidecarEnsureRequestBody::Attach(
+                                    arkret_sdk::sidecar_operations::SidecarEnsureAttachRequestBody {
+                                        phase: arkret_sdk::sidecar_operations::SidecarAttachPhase::Attach,
                                         operation_id: ceremony_operation_id.clone(),
                                         idempotency_key: commit_idempotency_key,
                                         reservation_handle,
@@ -925,7 +924,7 @@ async fn ensure_owned_agent_sidecar(
                                     .map_err(anyhow::Error::from)?;
                                 (
                                     outcome,
-                                    arkret_sdk::protocol_journey::SidecarAcceptedPhase::Attach,
+                                    arkret_sdk::sidecar_operations::SidecarAcceptedPhase::Attach,
                                     Some((
                                         sidecar_id,
                                         backing_circle_id,

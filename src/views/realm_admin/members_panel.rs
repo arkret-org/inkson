@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use arkret_models_collaboration::governance::agent_participation::AgentParticipationEntry;
-use arkret_models_collaboration::protocol_journey::{ParticipationBits, ParticipationScope};
+use arkret_models_collaboration::governance::agent_participation::{
+    ParticipationBits, ParticipationScope,
+};
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::{Value, json};

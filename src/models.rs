@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use arkret_sdk::protocol_journey::ContactScope;
+use arkret_sdk::contact_operations::ContactScope;
 pub use arkret_sdk::{
     ClaimedProfileEntry, CompatSurfaceEntry, ContactAgentProjection as ContactAgentRow,
     ContactList as ContactListView, ContactListRow, DirectConversationSummary, ServiceDescribe,
@@ -453,7 +453,7 @@ pub fn projection_realm_id_for_known_node(
 
 #[cfg(test)]
 mod tests {
-    use arkret_sdk::protocol_journey::ContactScope;
+    use arkret_sdk::contact_operations::ContactScope;
     use arkret_wire::SchemaId;
 
     use super::{
@@ -667,7 +667,7 @@ mod tests {
     #[test]
     fn contact_row_invite_gate_uses_directional_contact_scopes() {
         let row = super::ContactListRow {
-            peer: arkret_sdk::protocol_journey::ContactPeer::Human {
+            peer: arkret_sdk::contact_operations::ContactPeer::Human {
                 principal_id: arkret_sdk::Did::new("did:web:bob.example".to_owned()).unwrap(),
             },
             state: arkret_sdk::ContactState::Accepted,

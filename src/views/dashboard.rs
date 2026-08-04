@@ -1,4 +1,4 @@
-use arkret_sdk::protocol_journey::ContactScope;
+use arkret_sdk::contact_operations::ContactScope;
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
@@ -774,7 +774,7 @@ fn projection_collection_empty_help_label(
 
 #[cfg(test)]
 mod tests {
-    use arkret_sdk::protocol_journey::ContactScope;
+    use arkret_sdk::contact_operations::ContactScope;
     use serde_json::json;
 
     use super::{
@@ -817,7 +817,7 @@ mod tests {
             direct_ready: bool,
         ) -> ContactListRow {
             ContactListRow {
-                peer: arkret_sdk::protocol_journey::ContactPeer::Human {
+                peer: arkret_sdk::contact_operations::ContactPeer::Human {
                     principal_id: arkret_sdk::Did::new(peer.to_owned()).unwrap(),
                 },
                 state,

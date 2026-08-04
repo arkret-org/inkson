@@ -1056,7 +1056,7 @@ fn spawn_provision_agent(
             return;
         };
         let nonce = crate::operation::uuid_v7();
-        let operation_id = match arkret_sdk::protocol_journey::ProtocolOperationId::new(format!(
+        let operation_id = match arkret_sdk::ProtocolOperationId::new(format!(
             "ak:operation:agent.provision.{nonce}"
         )) {
             Ok(value) => value,
@@ -1065,7 +1065,7 @@ fn spawn_provision_agent(
                 return;
             }
         };
-        let idempotency_key = match arkret_sdk::protocol_journey::ProtocolOpaqueId::new(nonce) {
+        let idempotency_key = match arkret_sdk::IdempotencyKey::new(nonce) {
             Ok(value) => value,
             Err(error) => {
                 last_op_status.set(format!("Create failed: idempotency key: {error}"));

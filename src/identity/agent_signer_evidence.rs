@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use arkret_sdk::protocol_journey::ProtocolOperationId;
+use arkret_sdk::ProtocolOperationId;
 use arkret_sdk::signatures::agent_evidence::{
     AgentEvidenceCommonContext, AgentEvidenceRejectedReason, AgentEvidenceStateVerificationContext,
     AgentSignerEvidenceVerdict, CurrentAgentSignerEvidenceValidationContext,

@@ -183,19 +183,19 @@ pub async fn direct_conversation_resolve(
     peer: &str,
     create: bool,
     enable_owned_agent_reply: bool,
-) -> anyhow::Result<arkret_sdk::protocol_journey::DirectConversationResolveOutcome> {
+) -> anyhow::Result<arkret_sdk::operation_control::DirectConversationResolveOutcome> {
     if create {
         anyhow::bail!(
             "Direct Conversation creation is unavailable until the full authorization/materialization ceremony is wired"
         );
     }
     let http = api.http();
-    let body = arkret_sdk::protocol_journey::DirectConversationResolveRequestBody::Lookup(
-        arkret_sdk::protocol_journey::DirectConversationLookupRequestBody {
-            peer: arkret_sdk::protocol_journey::ContactPeer::Human {
+    let body = arkret_sdk::operation_control::DirectConversationResolveRequestBody::Lookup(
+        arkret_sdk::operation_control::DirectConversationLookupRequestBody {
+            peer: arkret_sdk::contact_operations::ContactPeer::Human {
                 principal_id: did_for_request_field("peer", peer)?,
             },
-            create: arkret_sdk::protocol_journey::DirectConversationLookupMarker,
+            create: arkret_sdk::operation_control::DirectConversationLookupMarker,
         },
     );
     let outcome = http
@@ -220,20 +220,20 @@ fn direct_conversation_peer_cache_key(realm_id: &str, strand_id: &str) -> String
 }
 
 pub(crate) fn direct_conversation_coordinates(
-    outcome: &arkret_sdk::protocol_journey::DirectConversationResolveOutcome,
-) -> Option<&arkret_sdk::protocol_journey::DirectConversationCoordinates> {
+    outcome: &arkret_sdk::operation_control::DirectConversationResolveOutcome,
+) -> Option<&arkret_sdk::operation_control::DirectConversationCoordinates> {
     match outcome {
-        arkret_sdk::protocol_journey::DirectConversationResolveOutcome::State(
-            arkret_sdk::protocol_journey::DirectConversationResolveStateOutcome::Found {
+        arkret_sdk::operation_control::DirectConversationResolveOutcome::State(
+            arkret_sdk::operation_control::DirectConversationResolveStateOutcome::Found {
                 coordinates,
                 ..
             }
-            | arkret_sdk::protocol_journey::DirectConversationResolveStateOutcome::Suspended {
+            | arkret_sdk::operation_control::DirectConversationResolveStateOutcome::Suspended {
                 coordinates,
                 ..
             },
         ) => Some(coordinates),
-        arkret_sdk::protocol_journey::DirectConversationResolveOutcome::Tombstoned(outcome) => {
+        arkret_sdk::operation_control::DirectConversationResolveOutcome::Tombstoned(outcome) => {
             Some(&outcome.coordinates)
         }
         _ => None,
@@ -245,7 +245,7 @@ const DIRECT_CONVERSATION_PEER_CACHE_OBFUSCATION_KEY: &str = "ak.local.direct_co
 fn remember_direct_conversation_peer(
     state_store: &mut SyncSignal<crate::state::LocalStateStore>,
     peer: &str,
-    outcome: &arkret_sdk::protocol_journey::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::operation_control::DirectConversationResolveOutcome,
 ) {
     let Some(coordinates) = direct_conversation_coordinates(outcome) else {
         return;
@@ -278,7 +278,7 @@ pub(crate) fn cached_direct_conversation_peer(
 /// into an unavailable navigation target.
 fn preserve_resolved_direct_conversation(
     agent_id: &str,
-    outcome: &arkret_sdk::protocol_journey::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::operation_control::DirectConversationResolveOutcome,
     reply_enablement: anyhow::Result<()>,
 ) {
     if let Err(error) = reply_enablement {
@@ -296,13 +296,13 @@ async fn ensure_owned_agent_direct_reply(
     http: &arkret_sdk::http_client::Client,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     agent_id: &str,
-    outcome: &arkret_sdk::protocol_journey::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::operation_control::DirectConversationResolveOutcome,
 ) -> anyhow::Result<()> {
     let coordinates = direct_conversation_coordinates(outcome)
         .ok_or_else(|| anyhow::anyhow!("owned-Agent Direct Conversation omitted realm_id"))?;
     let realm_id = coordinates.realm_id.clone();
     let strand_id = coordinates.main_strand_id.clone();
-    let scope = arkret_sdk::protocol_journey::ParticipationScope::Strand {
+    let scope = arkret_sdk::ParticipationScope::Strand {
         realm_id,
         strand_id,
     };
@@ -342,8 +342,8 @@ async fn ensure_owned_agent_direct_reply(
 pub(crate) async fn replace_agent_participation(
     http: &arkret_sdk::http_client::Client,
     agent_id: &str,
-    scope: arkret_sdk::protocol_journey::ParticipationScope,
-    selection: arkret_sdk::protocol_journey::ParticipationBits,
+    scope: arkret_sdk::ParticipationScope,
+    selection: arkret_sdk::ParticipationBits,
 ) -> anyhow::Result<arkret_sdk::AgentParticipationOutcome> {
     let current = http.agent_participation_get(agent_id).await?;
     let expected_version = current
@@ -352,7 +352,7 @@ pub(crate) async fn replace_agent_participation(
         .find(|entry| entry.scope == scope)
         .map(|entry| entry.version)
         .unwrap_or(0);
-    let request = arkret_sdk::protocol_journey::ParticipationReplaceRequestBody {
+    let request = arkret_sdk::ParticipationReplaceRequestBody {
         target_scope: scope,
         selection,
         expected_version,
@@ -364,7 +364,7 @@ pub(crate) async fn replace_agent_participation(
 
 fn participation_reply_is_effective(
     outcome: &arkret_sdk::AgentParticipationOutcome,
-    scope: &arkret_sdk::protocol_journey::ParticipationScope,
+    scope: &arkret_sdk::ParticipationScope,
 ) -> bool {
     outcome
         .entries
@@ -374,7 +374,7 @@ fn participation_reply_is_effective(
 
 fn owned_agent_reply_update_needed(
     outcome: &arkret_sdk::AgentParticipationOutcome,
-    scope: &arkret_sdk::protocol_journey::ParticipationScope,
+    scope: &arkret_sdk::ParticipationScope,
 ) -> bool {
     !participation_reply_is_effective(outcome, scope)
 }
@@ -878,7 +878,7 @@ mod tests {
 
     #[test]
     fn effective_owned_agent_reply_does_not_request_another_governance_write() {
-        let scope = arkret_sdk::protocol_journey::ParticipationScope::Strand {
+        let scope = arkret_sdk::ParticipationScope::Strand {
             realm_id: arkret_sdk::RealmId::new("ak:realm:01970000-0000-7000-8000-000000000001")
                 .expect("realm id"),
             strand_id: arkret_sdk::StrandId::new("ak:strand:01970000-0000-7000-8000-000000000002")
@@ -906,7 +906,7 @@ mod tests {
 
     #[test]
     fn reply_enablement_failure_does_not_invalidate_resolved_direct_conversation() {
-        let outcome: arkret_sdk::protocol_journey::DirectConversationResolveOutcome =
+        let outcome: arkret_sdk::operation_control::DirectConversationResolveOutcome =
             serde_json::from_value(json!({
                 "state": "found",
                 "coordinates": {

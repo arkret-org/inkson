@@ -726,7 +726,7 @@ pub struct MlsCoverageStale {
 )]
 pub enum CachedAgentSignerEvidenceContext {
     CurrentSignal {
-        operation_id: arkret_sdk::protocol_journey::ProtocolOperationId,
+        operation_id: arkret_sdk::ProtocolOperationId,
         request_digest: arkret_sdk::Hash,
         verifier_id: arkret_sdk::Did,
         audience: arkret_sdk::Did,
