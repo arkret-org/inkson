@@ -396,6 +396,7 @@ fn ContactRow(
                                             &api,
                                             state_store,
                                             &peer,
+                                            None,
                                             true,
                                             false,
                                         ).await

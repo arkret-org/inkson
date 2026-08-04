@@ -129,8 +129,12 @@ test("owned agent opens an independent two-principal Direct Conversation Realm",
   await ownedAgentRow.click();
   await expect((await directResponse).ok()).toBeTruthy();
   expect(directRequestBody).toEqual({
-    peer: "did:web:agents.example:assistant",
-    create: true,
+    peer: {
+      agent_id: "did:web:agents.example:assistant",
+      controller_id: "did:web:alice.example",
+      kind: "agent",
+    },
+    create: false,
   });
   await expect(page).toHaveURL(/\/direct\/.*0000000000a1\/.*0000000000a2$/);
   await expect(shell.getByTestId("chat-panel")).toHaveCount(1);

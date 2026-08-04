@@ -2156,6 +2156,7 @@ fn AppBootstrap() -> Element {
                                                                 onclick: {
                                                                     let base = base_url();
                                                                     let agent_id = agent_id.clone();
+                                                                    let controller_id = controller_id.clone();
                                                                     let opening_key = opening_key.clone();
                                                                     move |event: dioxus::events::MouseEvent| {
                                                                         event.prevent_default();
@@ -2167,6 +2168,7 @@ fn AppBootstrap() -> Element {
                                                                         let api_token = token();
                                                                         let base = base.clone();
                                                                         let agent_id = agent_id.clone();
+                                                                        let controller_id = controller_id.clone();
                                                                         spawn(async move {
                                                                             let agent_id_for_log = agent_id.clone();
                                                                             let route = match crate::transport::auth::with_authed_api(
@@ -2177,6 +2179,7 @@ fn AppBootstrap() -> Element {
                                                                                         &api,
                                                                                         state_store,
                                                                                         &agent_id,
+                                                                                        Some(&controller_id),
                                                                                         true,
                                                                                         true,
                                                                                     ).await
@@ -2376,6 +2379,7 @@ fn AppBootstrap() -> Element {
                                                                         &api,
                                                                         state_store,
                                                                         &peer_for_task,
+                                                                        None,
                                                                         true,
                                                                         false,
                                                                     ).await
@@ -2604,6 +2608,7 @@ fn AppBootstrap() -> Element {
                                                                 let base = base_url();
                                                                 let agent_id = agent_id.clone();
                                                                 let agent_direct = agent_direct.clone();
+                                                                let controller = controller.clone();
                                                                 let opening_key = opening_key.clone();
                                                                 move |event: dioxus::events::MouseEvent| {
                                                                     event.prevent_default();
@@ -2625,6 +2630,7 @@ fn AppBootstrap() -> Element {
                                                                     let api_token = token();
                                                                     let base = base.clone();
                                                                     let agent_id = agent_id.clone();
+                                                                    let controller = controller.clone();
                                                                     spawn(async move {
                                                                         let agent_id_for_log = agent_id.clone();
                                                                         let route = match crate::transport::auth::with_authed_api(
@@ -2635,6 +2641,7 @@ fn AppBootstrap() -> Element {
                                                                                     &api,
                                                                                     state_store,
                                                                                     &agent_id,
+                                                                                    Some(&controller),
                                                                                     true,
                                                                                     false,
                                                                                 ).await

@@ -1259,7 +1259,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
     let mut provision_presets =
         use_signal(|| vec![AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent]);
     let mut provision_service_scopes = use_signal(|| AgentServiceScopePreset::DEFAULTS.to_vec());
-    let mut agent_list_refresh_epoch = use_signal(|| 0_u64);
+    let agent_list_refresh_epoch = use_signal(|| 0_u64);
     let mut deactivate_confirm = use_signal(String::new);
     let mut deactivate_dialog_open = use_signal(|| false);
     // Replacing a runtime atomically revokes the current key and takes the
@@ -1296,6 +1296,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
         let base = base_url.clone();
         use_effect(move || {
             let _ = approval_projection_version();
+            let _ = owned_agents_rev();
             let api_token = token();
             if api_token.trim().is_empty() {
                 return;
@@ -1345,6 +1346,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
     {
         let base = base_url.clone();
         use_effect(move || {
+            let _ = owned_agents_rev();
             let id = selected_agent_id();
             if id.is_empty() {
                 return;
@@ -1853,10 +1855,8 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                     "Setup incomplete"
                                 } else if selected_pairing_is_expired {
                                     "Expired"
-                                } else if selected_is_replacement_pairing {
-                                    "Awaiting replacement runtime"
                                 } else {
-                                    "Awaiting runtime"
+                                    agent_state_label(&selected_runtime_state)
                                 };
                                 let replacement_agent_slug = selected_slug.clone();
                                 let pcr_bootstrap_target = selected_pcr_bootstrap_target.clone();
@@ -2257,7 +2257,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                     div { class: "agent-admin-lifecycle-toggle-control",
                                         // Two orthogonal axes (key-management.md §3.6.1): the
                                         // lifecycle intent badge and the derived runtime
-                                        // readiness badge (e.g. "Active · Replacing runtime").
+                                        // readiness badge (e.g. "Active · Awaiting replacement runtime").
                                         span { class: if selected_status == "active" { "badge green" } else { "badge amber" },
                                             if selected_status == "active" { "Active" } else { "Paused" }
                                         }

@@ -85,7 +85,11 @@ mod personal_agent_tests {
 
     #[test]
     fn agent_state_badges_cover_management_lifecycle() {
-        assert_eq!(agent_state_label("pending_runtime_key"), "Pending");
+        assert_eq!(agent_state_label("pending_runtime_key"), "Awaiting runtime");
+        assert_eq!(
+            agent_state_label("replacing"),
+            "Awaiting replacement runtime"
+        );
         assert_eq!(agent_state_label("active"), "Active");
         assert_eq!(agent_state_label("paused"), "Paused");
         assert_eq!(agent_state_label("deactivated"), "Deactivated");

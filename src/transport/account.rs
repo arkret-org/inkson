@@ -181,20 +181,15 @@ pub async fn direct_conversation_resolve(
     api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     peer: &str,
+    peer_controller: Option<&str>,
     create: bool,
     enable_owned_agent_reply: bool,
 ) -> anyhow::Result<arkret_sdk::operation_control::DirectConversationResolveOutcome> {
-    if create {
-        anyhow::bail!(
-            "Direct Conversation creation is unavailable until the full authorization/materialization ceremony is wired"
-        );
-    }
     let http = api.http();
+    let peer_descriptor = direct_conversation_peer_descriptor(peer, peer_controller)?;
     let body = arkret_sdk::operation_control::DirectConversationResolveRequestBody::Lookup(
         arkret_sdk::operation_control::DirectConversationLookupRequestBody {
-            peer: arkret_sdk::contact_operations::ContactPeer::Human {
-                principal_id: did_for_request_field("peer", peer)?,
-            },
+            peer: peer_descriptor,
             create: arkret_sdk::operation_control::DirectConversationLookupMarker,
         },
     );
@@ -202,6 +197,18 @@ pub async fn direct_conversation_resolve(
         .direct_conversation_resolve(&body)
         .await
         .map_err(anyhow::Error::from)?;
+    if create
+        && matches!(
+            &outcome,
+            arkret_sdk::operation_control::DirectConversationResolveOutcome::State(
+                arkret_sdk::operation_control::DirectConversationResolveStateOutcome::CreationRequired
+            )
+        )
+    {
+        anyhow::bail!(
+            "Direct Conversation creation is unavailable until the full authorization/materialization ceremony is wired"
+        );
+    }
     if enable_owned_agent_reply && direct_conversation_coordinates(&outcome).is_some() {
         preserve_resolved_direct_conversation(
             peer,
@@ -213,6 +220,21 @@ pub async fn direct_conversation_resolve(
         remember_direct_conversation_peer(&mut state_store, peer, &outcome);
     }
     Ok(outcome)
+}
+
+fn direct_conversation_peer_descriptor(
+    peer: &str,
+    peer_controller: Option<&str>,
+) -> anyhow::Result<arkret_sdk::contact_operations::ContactPeer> {
+    Ok(match peer_controller {
+        Some(controller_id) => arkret_sdk::contact_operations::ContactPeer::Agent {
+            agent_id: did_for_request_field("peer.agent_id", peer)?,
+            controller_id: did_for_request_field("peer.controller_id", controller_id)?,
+        },
+        None => arkret_sdk::contact_operations::ContactPeer::Human {
+            principal_id: did_for_request_field("peer", peer)?,
+        },
+    })
 }
 
 fn direct_conversation_peer_cache_key(realm_id: &str, strand_id: &str) -> String {
@@ -933,6 +955,24 @@ mod tests {
         assert_eq!(
             coordinates.main_strand_id.as_str(),
             "ak:strand:01970000-0000-7000-8000-000000000002"
+        );
+    }
+
+    #[test]
+    fn owned_agent_direct_peer_keeps_its_controller_binding() {
+        let peer = direct_conversation_peer_descriptor(
+            "did:web:agents.example:assistant",
+            Some("did:web:alice.example"),
+        )
+        .expect("owned Agent peer");
+
+        assert_eq!(
+            serde_json::to_value(peer).expect("serialize peer"),
+            json!({
+                "kind": "agent",
+                "agent_id": "did:web:agents.example:assistant",
+                "controller_id": "did:web:alice.example"
+            })
         );
     }
 }

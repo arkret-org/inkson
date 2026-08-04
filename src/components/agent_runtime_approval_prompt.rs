@@ -44,6 +44,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
     let mut status = use_signal(String::new);
     let mut approving = use_signal(|| false);
     let state_store = crate::app::SessionContext::get().state_store;
+    let mut owned_agents_rev = crate::app::SessionContext::get().owned_agents_rev;
 
     {
         let token = token;
@@ -427,6 +428,8 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                     Ok((outcome, recovery_refresh_error)) => {
                                         handled.write().insert(request_key);
                                         pending.set(None);
+                                        let next = owned_agents_rev.peek().saturating_add(1);
+                                        owned_agents_rev.set(next);
                                         status.set(if let Some(error) = recovery_refresh_error {
                                             format!(
                                                 "Runtime key approved: {}. Agent PCR recovery refresh failed: {error}",

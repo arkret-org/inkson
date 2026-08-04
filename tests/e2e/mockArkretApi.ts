@@ -3014,17 +3014,29 @@ export async function mockArkretApi(
         string,
         unknown
       >;
-      const ownedAgent = body.peer === "did:web:agents.example:assistant";
+      const peer = body.peer as
+        | string
+        | { agent_id?: string; principal_id?: string }
+        | undefined;
+      const peerId =
+        typeof peer === "string"
+          ? peer
+          : (peer?.agent_id ?? peer?.principal_id ?? "");
+      const ownedAgent = peerId === "did:web:agents.example:assistant";
       return json(route, {
         state: "found",
-        realm_id: ownedAgent ? DIRECT_OWN_AGENT_REALM : DIRECT_BOB_REALM,
-        main_strand_id: ownedAgent
-          ? DIRECT_OWN_AGENT_STRAND
-          : DIRECT_BOB_STRAND,
-        binding_event_ref: ownedAgent
-          ? "ak:event:0196419b-0000-7000-8000-0000000000a3"
-          : "ak:event:0196419b-0000-7000-8000-000000000103",
-        created: false,
+        coordinates: {
+          pair_key:
+            "sha256:a97a411daac39d8fe9c29755109c5785e86b83e9f966c65363bafcf02654790b",
+          realm_id: ownedAgent ? DIRECT_OWN_AGENT_REALM : DIRECT_BOB_REALM,
+          main_strand_id: ownedAgent
+            ? DIRECT_OWN_AGENT_STRAND
+            : DIRECT_BOB_STRAND,
+          binding_event_ref: ownedAgent
+            ? "ak:event:0196419b-0000-7000-8000-0000000000a3"
+            : "ak:event:0196419b-0000-7000-8000-000000000103",
+        },
+        send_blockers: [],
       });
     }
 

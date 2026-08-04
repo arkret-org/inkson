@@ -851,9 +851,9 @@ pub fn expand_preset_grant(
 /// values fall through so future state additions are still legible.
 pub fn agent_state_label(state: &str) -> &str {
     match state {
-        "pending" | "pending_runtime_key" => "Pending",
+        "pending" | "pending_runtime_key" => "Awaiting runtime",
         "ready" => "Ready",
-        "replacing" => "Replacing runtime",
+        "replacing" => "Awaiting replacement runtime",
         "active" => "Active",
         "pairing_expired" => "Pairing expired",
         "paused" => "Paused",
