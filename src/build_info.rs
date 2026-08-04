@@ -16,6 +16,11 @@ pub fn event_kind_registry_sha256() -> &'static str {
     arkret_wire::EVENT_KIND_REGISTRY_SHA256
 }
 
+/// Exact shared SDK source identity compiled into this bundle.
+pub fn sdk_source_sha256() -> &'static str {
+    arkret_wire::SDK_SOURCE_SHA256
+}
+
 /// Publish the loaded bundle identity where browser automation and operators
 /// can verify it before exercising any product flow.
 #[cfg(target_arch = "wasm32")]
@@ -31,6 +36,8 @@ pub fn publish_browser_build_identity() -> Result<(), &'static str> {
         event_kind_registry_sha256(),
     )
     .map_err(|_| "failed to publish Arkret registry digest")?;
+    root.set_attribute("data-arkret-sdk-source-sha256", sdk_source_sha256())
+        .map_err(|_| "failed to publish Arkret SDK source digest")?;
     Ok(())
 }
 

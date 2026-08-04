@@ -1042,6 +1042,27 @@ impl EventSubmitter {
             .map_err(|error| anyhow::anyhow!("server describe: {error}"))
     }
 
+    /// A dev server can be restarted against a newer shared SDK while this
+    /// browser keeps an older WASM bundle alive. The Rust types are shared in
+    /// both builds, but they are not necessarily the same build. Refuse to
+    /// author or sign an Event across that boundary.
+    async fn ensure_development_sdk_build_matches(&self) -> anyhow::Result<()> {
+        #[cfg(debug_assertions)]
+        {
+            let description = self.describe().await?;
+            if description.development_mode {
+                description
+                    .validate_current_arkret_build_identity()
+                    .map_err(|error| {
+                        anyhow::anyhow!(
+                            "stale or mixed Arkret SDK build; refusing to author Event: {error}. Rebuild/reload Inkson and restart Soland from the same SDK checkout"
+                        )
+                    })?;
+            }
+        }
+        Ok(())
+    }
+
     async fn ensure_recovery_material_ready(
         &self,
         event: &arkret_sdk::Event,
@@ -1964,6 +1985,7 @@ impl EventSubmitter {
         event: &arkret_sdk::Event,
         authoring: SemanticAuthoring,
     ) -> anyhow::Result<(arkret_sdk::Event, String)> {
+        self.ensure_development_sdk_build_matches().await?;
         let mut signed = event.clone();
         self.refresh_unsigned_sdk_event_actor_frontier(&mut signed)
             .await?;
@@ -2253,6 +2275,7 @@ impl EventSubmitter {
         &self,
         mut events: Vec<arkret_sdk::Event>,
     ) -> anyhow::Result<Vec<arkret_sdk::Event>> {
+        self.ensure_development_sdk_build_matches().await?;
         let first_is_realm_create = events
             .first()
             .is_some_and(|event| event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE);
