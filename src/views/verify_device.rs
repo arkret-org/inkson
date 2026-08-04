@@ -121,7 +121,7 @@ mod verification_key_poll_tests {
                         "device_envelope": {
                             "local_public_key": "signed-pub-b64=="
                         },
-                        "signature": {"alg": "EdDSA", "jws": "a.b.c"}
+                        "signature": {"jws": "a.b.c"}
                     }
                 }
             ]

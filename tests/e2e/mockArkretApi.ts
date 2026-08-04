@@ -991,12 +991,12 @@ export async function mockArkretApi(
       proofs: [
         {
           kind: "detached_jws",
-          alg: "EdDSA",
+          alg: "Ed25519",
           verification_method: `${historyActor}#device`,
           event_digest:
             "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
           created_at: "2026-04-28T12:30:00.000Z",
-          jws: "eyJhbGciOiJFZERTQSJ9..AA",
+          jws: "eyJhbGciOiJFZDI1NTE5In0..AA",
         },
       ],
     });
@@ -1075,7 +1075,7 @@ export async function mockArkretApi(
       authorizedEvent.proofs = [
         {
           kind: "detached_jws",
-          alg: "EdDSA",
+          alg: "Ed25519",
           verification_method: ENROLLMENT_AUTHORITY_VM,
           event_digest: eventDigest,
           created_at: "2026-06-22T00:00:00.000Z",
@@ -1727,7 +1727,7 @@ export async function mockArkretApi(
           proofs: [
             {
               kind: "detached_jws",
-              alg: "EdDSA",
+              alg: "Ed25519",
               verification_method: verificationMethod,
               payload_digest: canonicalSha256(leaseWithoutProofs),
               created_at: issuedAt,
@@ -2548,7 +2548,7 @@ export async function mockArkretApi(
             proof: {
               kind: "detached_jws",
               verification_method: "did:web:server.local#server-key-1",
-              alg: "EdDSA",
+              alg: "Ed25519",
               payload_digest: `sha256:${"2".repeat(64)}`,
               created_at: "2026-06-07T00:00:00.000Z",
               jws: "header..sig",
@@ -3811,7 +3811,7 @@ export async function mockArkretApi(
         new_device_pubkey: {
           kty: "OKP",
           kid: "ak:device:01964137-0000-7000-8000-0000000000b2",
-          alg: "EdDSA",
+          alg: "Ed25519",
           key: "z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
         },
         client_nonce: "Y290ZXN0LWRldmljZS1wYWlyaW5nLW5vbmNl",
@@ -3935,7 +3935,7 @@ export async function mockArkretApi(
         refresh_lead_seconds: 150,
         issued_at: "2026-05-19T00:00:00.000Z",
         signature: {
-          alg: "EdDSA",
+          alg: "Ed25519",
           kid: "did:web:server.local#media-ice",
           sig: "placeholder",
         },

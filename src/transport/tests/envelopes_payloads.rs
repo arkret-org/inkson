@@ -760,7 +760,7 @@ fn device_verification_proof_requires_signed_envelope() {
         proof["device_envelope"]["type"].as_str(),
         Some("ak.device.verification.proof.v1")
     );
-    assert_eq!(proof["signature"]["alg"].as_str(), Some("EdDSA"));
+    assert!(proof["signature"].get("alg").is_none());
     assert!(
         proof["signature"]["event_digest"]
             .as_str()

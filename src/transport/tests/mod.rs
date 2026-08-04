@@ -10,7 +10,6 @@ mod endpoints_urls;
 mod envelopes_payloads;
 mod errors;
 mod handles;
-mod keys;
 mod mls;
 mod parsing_sync;
 mod retry_requests;

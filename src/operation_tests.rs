@@ -732,7 +732,6 @@ fn sign_ed25519_attaches_typed_proof() {
     op.sign_ed25519("did:web:alice", "did:web:alice#k1", &signing_key)
         .expect("sign ok");
     let proof = op.proofs.first().expect("proof present");
-    assert_eq!(proof.alg, "EdDSA");
     assert_eq!(proof.verification_method, "did:web:alice#device");
     assert!(proof.event_digest.as_str().starts_with("sha256:"));
     // JWS layout: header.. (detached) ..sig — 3 parts separated by '.'.

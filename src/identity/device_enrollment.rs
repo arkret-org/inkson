@@ -209,7 +209,6 @@ mod tests {
             },
             "proofs": [{
                 "kind": "detached_jws",
-                "alg": "EdDSA",
                 "verification_method": "did:webvh:example:auth-server#enroll-key-1",
                 "event_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
                 "created_at": "2026-06-17T00:00:00.000Z",
@@ -264,7 +263,6 @@ mod tests {
             },
             "proofs": [{
                 "kind": "detached_jws",
-                "alg": "EdDSA",
                 "verification_method": "did:web:auth.local.host#enroll-key-1",
                 "event_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
                 "created_at": "2026-06-22T00:00:00.000Z",

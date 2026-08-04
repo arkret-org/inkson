@@ -1221,10 +1221,10 @@ impl RootIndex {
 /// G3.Y0 — persisted shape of the per-device DPoP signing key. The
 /// private seed is stored as base64url-no-pad of 32 raw ed25519 bytes.
 ///
-/// We intentionally use ed25519 (EdDSA) rather than ES256 because every
+/// We intentionally use ed25519 (Ed25519) rather than ES256 because every
 /// other signing path in inkson is already ed25519 (cross-signing,
 /// move-signing, session-grant introspection proofs) and coauth's
-/// `DpopVerifier` accepts the `EdDSA`
+/// `DpopVerifier` accepts the `Ed25519`
 /// algorithm out of the box. Sticking with ed25519 keeps a single
 /// key-format story across the client.
 ///

@@ -245,7 +245,10 @@ mod tests {
             body["subject_proof"]["verification_method"],
             "did:web:alice.example#device-0001"
         );
-        assert_eq!(body["subject_proof"]["alg"], "EdDSA");
+        assert_eq!(
+            body["subject_proof"]["signature_algorithm"],
+            "Ed25519"
+        );
         assert_eq!(
             body["subject_proof"]["transcript_digest"],
             expected_transcript_digest.as_str()

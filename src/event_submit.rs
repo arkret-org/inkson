@@ -3601,14 +3601,13 @@ mod tests {
             for event in &prepared {
                 for proof in &event.proofs {
                     println!(
-                        "prepared {} proof vm={:?} kind={:?} alg={:?}",
+                        "prepared {} proof vm={:?} kind={:?}",
                         event.kind.as_str(),
                         proof.verification_method,
                         proof.kind,
-                        proof.alg,
                     );
                     // Local replica of the server's dev-mode verification
-                    // (`verify_eddsa_detached_jws_proof` + deterministic key)
+                    // (`verify_ed25519_detached_jws_proof` + deterministic key)
                     // to split "bad signature" from "server key selection".
                     let digest_payload = event
                         .digest_payload()
@@ -3622,7 +3621,7 @@ mod tests {
                             .to_bytes()
                             .to_vec(),
                     };
-                    let local = arkret_signatures::verify_eddsa_detached_jws_proof(
+                    let local = arkret_signatures::verify_ed25519_detached_jws_proof(
                         proof,
                         &envelope_bytes,
                         &event.actor_id,

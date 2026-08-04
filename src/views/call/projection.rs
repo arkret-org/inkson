@@ -787,7 +787,7 @@ mod tests {
                     "duration_ms": 42000,
                     "media_type": "video/mp4",
                     "encryption": {
-                        "alg": "mls_exporter_aead_xchacha20poly1305_stream",
+                        "encryption_algorithm": "mls_exporter_aead_xchacha20poly1305_stream",
                         "exporter_label": "ak.rtc-recording-key/v1",
                         "context": {
                             "realm_id": realm_id,

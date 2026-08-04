@@ -72,86 +72,88 @@ pub async fn upload_mls_snapshot_backup(
     Ok(backup_id)
 }
 
-pub fn decode_mls_history_backup_envelope(
-    body: &Value,
-    account_secret: &str,
-) -> Result<crate::mls::persistence::MlsSnapshotEnvelope, MlsRuntimeError> {
+pub fn parse_mls_history_backup(body: &Value) -> Result<arkret_sdk::KeyBackup, MlsRuntimeError> {
     crate::key_backup::validate_key_backup_envelope(
         body,
         Some(crate::key_backup::BackupKind::MlsHistory),
     )
     .map_err(MlsRuntimeError::BackupDecode)?;
+    serde_json::from_value(body.clone()).map_err(|error| {
+        MlsRuntimeError::BackupDecode(format!("typed MLS-history backup: {error}"))
+    })
+}
+
+pub fn decode_mls_history_backup_envelope(
+    backup: &arkret_sdk::KeyBackup,
+    account_secret: &str,
+) -> Result<crate::mls::persistence::MlsSnapshotEnvelope, MlsRuntimeError> {
+    if backup.backup_kind != crate::key_backup::BackupKind::MlsHistory {
+        return Err(MlsRuntimeError::BackupDecode(
+            "typed backup is not mls_history".to_owned(),
+        ));
+    }
+    if backup.encryption.recipient_method != arkret_sdk::KeyBackupRecipientMethod::SecretStorageKey
+    {
+        return Err(MlsRuntimeError::BackupDecode(format!(
+            "local account-secret decoder requires recipient_method=secret_storage_key, got {:?}",
+            backup.encryption.recipient_method
+        )));
+    }
     let wrap_key = derive_mls_history_backup_key(account_secret)
         .map_err(|error| MlsRuntimeError::BackupDecode(error.user_message()))?;
     let aead_aad = serde_json::from_value(
-        body.pointer("/domain_separation/aead_aad")
-            .cloned()
-            .ok_or_else(|| {
-                MlsRuntimeError::BackupDecode("domain_separation.aead_aad is required".to_owned())
-            })?,
+        serde_json::to_value(&backup.domain_separation.aead_aad).map_err(|error| {
+            MlsRuntimeError::BackupDecode(format!("key-backup AAD encode: {error}"))
+        })?,
     )
     .map_err(|error| MlsRuntimeError::BackupDecode(format!("key-backup AAD: {error}")))?;
     let binding = arkret_crypto::backup::VaultBinding {
-        backup_id: arkret_sdk::BackupId::new(
-            body.get("backup_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-        )
-        .map_err(|error| MlsRuntimeError::BackupDecode(format!("backup_id: {error}")))?,
-        subdomain: body
-            .pointer("/domain_separation/subdomain")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                MlsRuntimeError::BackupDecode("domain_separation.subdomain is required".to_owned())
-            })?
-            .to_owned(),
+        backup_id: backup.backup_id.clone(),
+        subdomain: backup.domain_separation.subdomain.clone(),
         aead_aad,
     };
-    let nonce = body
-        .pointer("/encryption/aead/nonce")
-        .and_then(Value::as_str)
-        .ok_or_else(|| MlsRuntimeError::BackupDecode("nonce is required".to_owned()))?;
-    let ciphertext = body
-        .get("ciphertext")
-        .and_then(Value::as_str)
-        .ok_or_else(|| MlsRuntimeError::BackupDecode("ciphertext is required".to_owned()))?;
-    let ciphertext_digest = body
-        .get("ciphertext_digest")
-        .and_then(Value::as_str)
-        .ok_or_else(|| MlsRuntimeError::BackupDecode("ciphertext_digest is required".to_owned()))?;
+    let nonce = backup.encryption.aead.nonce.as_ref().ok_or_else(|| {
+        MlsRuntimeError::BackupDecode(
+            "typed secret_storage_key backup invariant violated: nonce is required".to_owned(),
+        )
+    })?;
     let bytes = arkret_crypto::backup::decrypt_with_secret_storage_key(
         &wrap_key,
         &binding,
-        nonce,
-        ciphertext,
-        ciphertext_digest,
+        nonce.as_str(),
+        &backup.ciphertext,
+        &backup.ciphertext_digest,
     )
     .map_err(|error| MlsRuntimeError::BackupDecode(error.to_string()))?;
     let envelope: crate::mls::persistence::MlsSnapshotEnvelope = serde_json::from_slice(&bytes)
         .map_err(|err| MlsRuntimeError::BackupDecode(format!("snapshot envelope json: {err}")))?;
 
-    let contents = body
-        .get("contents")
-        .and_then(Value::as_array)
-        .ok_or_else(|| MlsRuntimeError::BackupDecode("contents must be an array".to_owned()))?;
-    let Some(group_state) = contents
+    let Some(group_state) = backup
+        .contents
         .iter()
-        .find(|item| item.get("item_kind").and_then(Value::as_str) == Some("mls_group_state"))
+        .find(|item| item.item_kind == "mls_group_state")
     else {
         return Err(MlsRuntimeError::BackupDecode(
             "contents must include mls_group_state".to_owned(),
         ));
     };
-    require_backup_str(group_state, "realm_id", &envelope.realm_id)?;
-    require_backup_str(group_state, "mls_group_id", &envelope.group_id)?;
-    require_backup_u64(group_state, "epoch", envelope.epoch)?;
-    let public_group_state_event_id = group_state.get("last_event_id").and_then(Value::as_str);
+    require_backup_str(
+        "realm_id",
+        group_state.realm_id.as_ref().map(|value| value.as_str()),
+        &envelope.realm_id,
+    )?;
+    require_backup_str(
+        "mls_group_id",
+        group_state.mls_group_id.as_deref(),
+        &envelope.group_id,
+    )?;
+    require_backup_u64("epoch", group_state.epoch, envelope.epoch)?;
+    let public_group_state_event_id = group_state.last_event_id.as_ref().map(ToString::to_string);
     let encrypted_group_state_event_id = envelope
         .group_state_event_id
         .as_ref()
         .map(ToString::to_string);
-    if public_group_state_event_id != encrypted_group_state_event_id.as_deref() {
+    if public_group_state_event_id.as_deref() != encrypted_group_state_event_id.as_deref() {
         return Err(MlsRuntimeError::BackupDecode(
             "contents.last_event_id does not match encrypted group-state Event reference"
                 .to_owned(),
@@ -197,17 +199,15 @@ pub fn restore_mls_history_backup_with_device_snapshot(
     device_id: &str,
     body: &Value,
 ) -> Result<MlsHistoryRestoreSummary, MlsRuntimeError> {
+    let backup = parse_mls_history_backup(body)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let envelope = decode_mls_history_backup_envelope(body, &secret)?;
+    let envelope = decode_mls_history_backup_envelope(&backup, &secret)?;
     let epoch_floor = mls_restore_epoch_floor(state_store, &envelope.realm_id);
     crate::mls::persistence::restore_envelope(&envelope, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let summary = MlsHistoryRestoreSummary {
-        backup_id: body
-            .get("backup_id")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned),
+        backup_id: Some(backup.backup_id.to_string()),
         realm_id: envelope.realm_id.clone(),
         group_id: envelope.group_id.clone(),
         envelope_epoch: envelope.epoch,
@@ -228,8 +228,12 @@ pub fn restore_mls_history_backup_with_device_snapshot(
     Ok(summary)
 }
 
-fn require_backup_str(body: &Value, key: &str, expected: &str) -> Result<(), MlsRuntimeError> {
-    match body.get(key).and_then(Value::as_str) {
+fn require_backup_str(
+    key: &str,
+    actual: Option<&str>,
+    expected: &str,
+) -> Result<(), MlsRuntimeError> {
+    match actual {
         Some(actual) if actual == expected => Ok(()),
         Some(actual) => Err(MlsRuntimeError::BackupDecode(format!(
             "{key} mismatch: expected {expected} got {actual}"
@@ -238,8 +242,12 @@ fn require_backup_str(body: &Value, key: &str, expected: &str) -> Result<(), Mls
     }
 }
 
-fn require_backup_u64(body: &Value, key: &str, expected: u64) -> Result<(), MlsRuntimeError> {
-    match body.get(key).and_then(Value::as_u64) {
+fn require_backup_u64(
+    key: &str,
+    actual: Option<u64>,
+    expected: u64,
+) -> Result<(), MlsRuntimeError> {
+    match actual {
         Some(actual) if actual == expected => Ok(()),
         Some(actual) => Err(MlsRuntimeError::BackupDecode(format!(
             "{key} mismatch: expected {expected} got {actual}"

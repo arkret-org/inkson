@@ -127,7 +127,7 @@ fn build_pair_payload(
         "new_device_pubkey": {
             "kty": "OKP",
             "kid": requesting_device_id,
-            "alg": "EdDSA",
+            "algorithm": "Ed25519",
             // Spec-canonical `PublicKey` names the key material `key`
             // (`agent-operations.schema.json#/$defs/public_key`); the gate
             // `AccountDevicePairRequestBody` denies unknown fields, so emitting
@@ -1138,7 +1138,7 @@ fn render_pair_strand(
                                     "new_device_pubkey": {
                                         "kty": "OKP",
                                         "kid": requesting_device_id.clone(),
-                                        "alg": "EdDSA",
+                                        "algorithm": "Ed25519",
                                         "key": public_key_material.clone(),
                                     },
                                     "client_nonce": client_nonce.clone(),
@@ -1215,7 +1215,7 @@ fn render_pair_strand(
                                     arkret_sdk::base64url_encode(signature),
                                 ),
                             ) {
-                                (Ok(kid), Ok(alg), Ok(signature)) => {
+                                (Ok(kid), Ok(signature_algorithm), Ok(signature)) => {
                                     arkret_sdk::DevicePairingChallengeProof {
                                         transcript: arkret_sdk::DevicePairingChallengeTranscriptKind::ServerMediated,
                                         // Device-local selector, not a DID URL —
@@ -1223,7 +1223,7 @@ fn render_pair_strand(
                                         // `verification_method` precisely to stop
                                         // the two being confused.
                                         kid,
-                                        alg,
+                                        signature_algorithm,
                                         transcript_digest,
                                         signature,
                                     }
@@ -1643,7 +1643,7 @@ mod tests {
         serde_json::from_value(json!({
             "transcript": "ak.device-pairing.challenge.v1",
             "kid": "ak:device:01964137-0000-7000-8000-0000000000c1",
-            "alg": "EdDSA",
+            "signature_algorithm": "Ed25519",
             "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
         }))
@@ -1774,13 +1774,13 @@ mod tests {
             "pairing_code": "7H2K9M4Q",
             "new_device_pubkey": {
                 "kid": "ak:device:new",
-                "alg": "EdDSA",
+                "algorithm": "Ed25519",
                 "public_key": "abc-123"
             },
             "challenge_proof": {
                 "transcript": "ak.device-pairing.challenge.v1",
                 "kid": "ak:device:01964137-0000-7000-8000-0000000000c1",
-                "alg": "EdDSA",
+                "signature_algorithm": "Ed25519",
                 "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
             },

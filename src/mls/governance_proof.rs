@@ -1179,11 +1179,6 @@ where
             ));
         }
     };
-    if signature.alg != "EdDSA" {
-        return Err(arkret_sdk::Error::Protocol(
-            "MLS governance Seal signature must use EdDSA".to_owned(),
-        ));
-    }
     let signer = verification_method_did(&signature.verification_method)?;
     if !notary.includes_signer_as_primary(&signer) && delegated_controller != Some(&signer) {
         return Err(arkret_sdk::Error::Protocol(format!(
@@ -1253,11 +1248,6 @@ pub(crate) fn verify_managed_agent_pcr_seal_head(
             ));
         }
     };
-    if signature.alg != "EdDSA" {
-        return Err(arkret_sdk::Error::Protocol(
-            "managed Agent PCR Seal head signature must use EdDSA".to_owned(),
-        ));
-    }
     let signer = verification_method_did(&signature.verification_method)?;
     if &signer != controller {
         return Err(arkret_sdk::Error::Protocol(format!(
@@ -1326,7 +1316,6 @@ mod tests {
     fn proof(verification_method: &str) -> arkret_sdk::Proof {
         arkret_sdk::Proof {
             kind: "detached_jws".to_owned(),
-            alg: "EdDSA".to_owned(),
             verification_method: arkret_sdk::DidUrl::new(verification_method.to_owned()).unwrap(),
             event_digest: arkret_sdk::Hash::new(
                 "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -1455,7 +1444,6 @@ mod tests {
             previous_state_root: None,
             previous_digest_algorithm: None,
             notary_signature: arkret_sdk::NotarySig::Single(arkret_wire::PayloadSignature {
-                alg: "EdDSA".to_owned(),
                 verification_method: arkret_sdk::DidUrl::new(format!("{controller}#{device}"))
                     .unwrap(),
                 payload_digest: root,
@@ -1587,7 +1575,6 @@ mod tests {
                 previous_state_root: None,
                 previous_digest_algorithm: None,
                 notary_signature: arkret_sdk::NotarySig::Single(arkret_wire::PayloadSignature {
-                    alg: "EdDSA".to_owned(),
                     verification_method: arkret_sdk::DidUrl::new("did:web:notary.example#key-1")
                         .unwrap(),
                     payload_digest: root,

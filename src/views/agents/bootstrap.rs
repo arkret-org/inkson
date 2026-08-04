@@ -1691,7 +1691,7 @@ mod tests {
                 }],
                 "recovery_key_agreements": [{
                     "key_agreement_ref": recipient,
-                    "alg": "X25519",
+                    "key_agreement_algorithm": "X25519",
                     "public_key_multibase": public_multikey,
                     "hpke_suites": ["ak.hpke_x25519_aead_chacha20poly1305.v1"],
                     "use": "backup_hpke",

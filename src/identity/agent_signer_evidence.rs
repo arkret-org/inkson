@@ -646,8 +646,7 @@ fn verify_seal_signature(
             .verification_method
             .split_once('#')
             .map_or(signature.verification_method.as_str(), |(did, _)| did);
-        signature.alg == "EdDSA"
-            && signature.payload_digest == expected_digest
+        signature.payload_digest == expected_digest
             && allowed.contains(&controller)
             && entry
                 .verification_method_public_keys

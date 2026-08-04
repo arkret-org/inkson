@@ -146,7 +146,7 @@ pub fn key_backup_delete_principal_signing_proof(
     // Detached JWS over the canonical transcript bytes, alg-only protected
     // header — the shape `EventSigner::detached_jws_over` produces and the one
     // the receiver splits on `..`.
-    let header = serde_json::to_vec(&serde_json::json!({ "alg": "EdDSA" }))
+    let header = serde_json::to_vec(&serde_json::json!({ "alg": "Ed25519" }))
         .map_err(|error| anyhow::anyhow!("delete proof header encode: {error}"))?;
     let signature = principal_key.sign(&canonical).to_bytes();
     let jws = format!(
@@ -158,7 +158,6 @@ pub fn key_backup_delete_principal_signing_proof(
     Ok(arkret_sdk::KeyBackupDeleteProof::PrincipalSigning {
         proof: arkret_sdk::PayloadProof {
             kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
-            alg: "EdDSA".to_owned(),
             verification_method: arkret_sdk::DidUrl::new(verification_method.to_owned()).map_err(
                 |error| {
                     anyhow::anyhow!("delete proof verification method is not a DID URL: {error}")

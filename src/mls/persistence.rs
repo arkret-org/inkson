@@ -676,7 +676,9 @@ mod tests {
         assert!(body.get("envelope_meta").is_none());
         // The outer key-backup ciphertext is authenticated encryption, and the
         // runtime owner can open it back to the original snapshot envelope.
-        let parsed = crate::mls::runtime::decode_mls_history_backup_envelope(&body, "passw")
+        let typed = crate::mls::runtime::parse_mls_history_backup(&body)
+            .expect("MLS history backup should parse to the SDK type");
+        let parsed = crate::mls::runtime::decode_mls_history_backup_envelope(&typed, "passw")
             .expect("MLS history backup should decrypt");
         assert_eq!(parsed.realm_id, "ak:realm:demo");
         assert_eq!(parsed.epoch, 42);

@@ -433,13 +433,13 @@ mod personal_agent_tests {
             "public_key": {
                 "kty": "OKP",
                 "kid": verification_method,
-                "alg": "EdDSA",
+                "algorithm": "Ed25519",
                 "key": arkret_sdk::base64url_encode([9u8; 32]),
             },
             "proof_of_possession": {
                 "kind": "agent_runtime_key_possession",
                 "verification_method": verification_method,
-                "alg": "EdDSA",
+                "signature_algorithm": "Ed25519",
                 "challenge": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
                 "audience": "did:web:arkret.example",
                 "created_at": "2026-07-06T00:10:00.000Z",
@@ -506,15 +506,16 @@ mod personal_agent_tests {
             &scope,
         )
         .unwrap();
-        let created_at = crate::clock::now_utc();
+        let created_at = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
+            crate::clock::now_utc().timestamp_millis(),
+        )
+        .unwrap();
         let expires_at = created_at + chrono::Duration::minutes(5);
         let key_state: arkret_sdk::KeyState = serde_json::from_value(serde_json::json!({
             "agent_id": agent,
             "controller_id": controller,
             "principal_control_realm_id": "ak:realm:01964137-0000-7000-8000-000000000005",
             "controller_authorization_ref": "did:web:controller.example#controller-authorization",
-            "status": "active",
-            "runtime_state": "pending_runtime_key",
             "pcr_recovery": {"status": "pending"},
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "pairing_code": "12345678",
@@ -532,7 +533,7 @@ mod personal_agent_tests {
         let public_key = arkret_models_collaboration::governance::agent_artifacts::PublicKey {
             kty: arkret_wire::NonEmptyString::new("OKP").unwrap(),
             kid: arkret_wire::NonEmptyString::new(verification_method.as_str()).unwrap(),
-            alg: arkret_wire::NonEmptyString::new("EdDSA").unwrap(),
+            algorithm: arkret_wire::NonEmptyString::new("Ed25519").unwrap(),
             key: arkret_wire::Base64UrlString::new(arkret_sdk::base64url_encode([9u8; 32]))
                 .unwrap(),
             key_digest: None,
@@ -556,7 +557,7 @@ mod personal_agent_tests {
                     arkret_models_collaboration::agent_operations::AgentRuntimeKeyPossessionProof {
                         kind: arkret_models_collaboration::agent_operations::AgentRuntimeKeyPossessionProofKind::AgentRuntimeKeyPossession,
                         verification_method: verification_method.clone(),
-                        alg: arkret_models_collaboration::agent_operations::AgentRuntimeKeyAlgorithm::EdDsa,
+                        signature_algorithm: arkret_models_collaboration::agent_operations::AgentRuntimeKeyAlgorithm::Ed25519,
                         challenge: pairing_request_id,
                         audience: arkret_sdk::Did::new(service_id.to_owned()).unwrap(),
                         created_at,
@@ -610,11 +611,20 @@ mod personal_agent_tests {
             verification_method.as_str()
         );
         let authorize_public_key_digest =
-            arkret_signatures::agent_evidence::agent_signing_public_key_runtime_digest(
+            arkret_signatures::agent_evidence::agent_signing_public_key_digest(
+                &signing_key_binding.public_key,
+            )
+            .unwrap();
+        let runtime_request_public_key_digest =
+            arkret_signatures::agent_evidence::agent_signing_public_key_runtime_request_digest(
                 &request.verification_method,
                 &signing_key_binding.public_key,
             )
             .unwrap();
+        assert_ne!(
+            authorize_public_key_digest, runtime_request_public_key_digest,
+            "the public authorization and private runtime-request digest domains must stay distinct"
+        );
         assert_eq!(
             event.payload["public_key_digest"],
             authorize_public_key_digest.as_str()
@@ -742,13 +752,13 @@ mod personal_agent_tests {
             "public_key": {
                 "kty": "OKP",
                 "kid": verification_method,
-                "alg": "EdDSA",
+                "algorithm": "Ed25519",
                 "key": arkret_sdk::base64url_encode([9u8; 32]),
             },
             "proof_of_possession": {
                 "kind": "agent_runtime_key_possession",
                 "verification_method": verification_method,
-                "alg": "EdDSA",
+                "signature_algorithm": "Ed25519",
                 "challenge": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
                 "audience": service_id,
                 "created_at": "2026-07-06T00:10:00.000Z",

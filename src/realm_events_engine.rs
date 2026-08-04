@@ -353,7 +353,6 @@ mod tests {
             kind: "detached_jws".to_owned(),
             verification_method: arkret_sdk::DidUrl::new(format!("{ACTOR_ID}#{DEVICE_ID}"))
                 .unwrap(),
-            alg: "EdDSA".to_owned(),
             event_digest,
             created_at: event.created_at,
             domain: None,

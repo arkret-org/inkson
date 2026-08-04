@@ -527,7 +527,6 @@ pub fn seal_signal_envelope(
         proof: arkret_wire::SignalProof {
             kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
             verification_method: verification_method.clone(),
-            alg: signer.algorithm().to_owned(),
             envelope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))?,
             // `signal.md` §1: proof created_at MUST equal the outer sent_at.
             created_at: header.sent_at,
@@ -604,7 +603,6 @@ pub(crate) mod test_support {
                     header.sender_actor_id, header.sender_device_id
                 ))
                 .unwrap(),
-                alg: "EdDSA".to_owned(),
                 envelope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))
                     .unwrap(),
                 created_at: header.sent_at,
@@ -884,7 +882,6 @@ mod tests {
                 kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
                 verification_method: arkret_sdk::DidUrl::new(format!("{actor_id}#{device_id}"))
                     .unwrap(),
-                alg: "EdDSA".to_owned(),
                 envelope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))
                     .unwrap(),
                 created_at: header.sent_at,

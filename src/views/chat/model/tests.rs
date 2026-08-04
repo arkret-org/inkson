@@ -51,7 +51,6 @@ mod device_identity_proof_tests {
         let did = arkret_sdk::Did::new(actor_id.to_owned()).unwrap();
         let mut proof = arkret_sdk::Proof {
             kind: "detached_jws".to_owned(),
-            alg: signer.algorithm().to_owned(),
             verification_method: verification_method.clone(),
             event_digest: arkret_sdk::Hash::new(event_digest).unwrap(),
             created_at: proof_created_at,
@@ -286,7 +285,6 @@ mod device_identity_proof_tests {
         let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
         envelope["proofs"] = json!([{
             "kind": "detached_jws",
-            "alg": "EdDSA",
             "verification_method": format!("{executor}#applet-service-key"),
             "event_digest": event_digest,
             "created_at": "2026-06-16T00:00:00.000Z",

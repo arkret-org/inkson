@@ -213,7 +213,8 @@ pub fn build_cross_signing_recovery_events(
             recovered_ssk_signer.verification_method().to_owned(),
         )
         .map_err(anyhow::Error::msg)?,
-        alg: NonEmptyString::new("EdDSA".to_owned()).map_err(anyhow::Error::msg)?,
+        signature_algorithm: NonEmptyString::new("Ed25519".to_owned())
+            .map_err(anyhow::Error::msg)?,
         ssk_generation: std::num::NonZeroU64::new(generation)
             .ok_or_else(|| anyhow::anyhow!("SSK generation must be positive"))?,
         signature: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
@@ -234,7 +235,7 @@ pub fn build_cross_signing_recovery_events(
             .collect::<Result<Vec<_>, _>>()
             .map_err(anyhow::Error::msg)?,
         device_key_algorithm: Some(
-            NonEmptyString::new("EdDSA".to_owned()).map_err(anyhow::Error::msg)?,
+            NonEmptyString::new("Ed25519".to_owned()).map_err(anyhow::Error::msg)?,
         ),
         authorized_by: DeviceOrPrincipalRef::DeviceId(session.requesting_device_id.clone()),
         scopes: None,
@@ -449,7 +450,6 @@ pub fn sign_recovery_session_lease(
     };
     let mut proof = PayloadProof {
         kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
-        alg: "EdDSA".to_owned(),
         // §2.2: validate the caller-supplied issuer method into a typed DID URL.
         verification_method: arkret_sdk::DidUrl::new(issuer_verification_method.to_owned())
             .map_err(|error| {
@@ -462,7 +462,7 @@ pub fn sign_recovery_session_lease(
         proof_purpose: None,
         jws: String::new(),
     };
-    proof.jws = arkret_signatures::sign_eddsa_detached_jws(
+    proof.jws = arkret_signatures::sign_ed25519_detached_jws(
         issuer_key,
         &lease.proof_binding_bytes(&proof)?,
     )?;
@@ -644,7 +644,6 @@ pub fn author_recovery_publication_submission(
         })?;
     let mut proof = PayloadProof {
         kind: proof_kind::DETACHED_JWS.to_owned(),
-        alg: "EdDSA".to_owned(),
         verification_method: arkret_sdk::DidUrl::new(verification_method.to_owned()).map_err(
             |error| anyhow::anyhow!("recovery authority verification method is invalid: {error}"),
         )?,
@@ -659,7 +658,7 @@ pub fn author_recovery_publication_submission(
     let signature = authority_signer.sign_raw(&binding)?;
     proof.jws = format!(
         "{}..{}",
-        arkret_sdk::base64url_encode(br#"{"alg":"EdDSA"}"#),
+        arkret_sdk::base64url_encode(br#"{"alg":"Ed25519"}"#),
         arkret_sdk::base64url_encode(signature)
     );
     lease.proofs.push(proof);
@@ -1416,7 +1415,7 @@ pub fn sign_terminal_receipt_continue(
         artifact,
         auth_data: ClientStepAttestationAuthData {
             verification_method: replacement_verification_method,
-            alg: "EdDSA".to_owned(),
+            signature_algorithm: "Ed25519".to_owned(),
             signature: String::new(),
             signed_fields: CLIENT_STEP_ATTESTATION_SIGNED_FIELDS
                 .into_iter()

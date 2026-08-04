@@ -151,7 +151,6 @@ fn range_completeness(input: Value) -> Result<Value> {
     let mut payload_proof = Proof {
         kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
         verification_method: verification_method.clone(),
-        alg: "EdDSA".to_owned(),
         event_digest: Hash::new(arkret_sdk::canonical::sha256_digest(&canonical_payload))?,
         created_at: observed_at,
         domain: None,
@@ -161,7 +160,6 @@ fn range_completeness(input: Value) -> Result<Value> {
     };
     let binding = payload_proof.canonical_binding_bytes(&issuer)?;
     let signature = signer.sign_payload(&binding)?;
-    payload_proof.alg = signature.alg;
     payload_proof.jws = signature.jws;
     payload.proofs.push(payload_proof);
     let Value::Object(payload) = serde_json::to_value(payload)? else {
@@ -350,7 +348,6 @@ fn proposal_receipt(input: Value) -> Result<Value> {
         absolute_due_at: received_at + policy.absolute_horizon,
         authority_set_ref,
         signature: arkret_wire::PayloadSignature {
-            alg: "EdDSA".to_owned(),
             verification_method: arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
                 .map_err(|error| {
                 anyhow::anyhow!("proposal verification method: {error}")
@@ -370,7 +367,7 @@ fn proposal_receipt(input: Value) -> Result<Value> {
         .context("digest proposal member receipt")?;
     member.signature.jws = format!(
         "{}..{}",
-        arkret_sdk::base64url_encode(br#"{"alg":"EdDSA"}"#),
+        arkret_sdk::base64url_encode(br#"{"alg":"Ed25519"}"#),
         arkret_sdk::base64url_encode(
             signer
                 .sign_raw(&signing_bytes)
@@ -413,7 +410,6 @@ fn ingress_receipts(input: Value) -> Result<Value> {
         };
         let mut proof = arkret_wire::PayloadProof {
             kind: "detached_jws".to_owned(),
-            alg: "EdDSA".to_owned(),
             verification_method: arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
                 .map_err(|error| {
                 anyhow::anyhow!("ingress receipt verification method: {error}")
@@ -430,7 +426,7 @@ fn ingress_receipts(input: Value) -> Result<Value> {
             .context("materialize ingress receipt proof transcript")?;
         proof.jws = format!(
             "{}..{}",
-            arkret_sdk::base64url_encode(br#"{"alg":"EdDSA"}"#),
+            arkret_sdk::base64url_encode(br#"{"alg":"Ed25519"}"#),
             arkret_sdk::base64url_encode(
                 signer
                     .sign_raw(&binding)

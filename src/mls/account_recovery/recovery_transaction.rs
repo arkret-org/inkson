@@ -174,7 +174,7 @@ pub(crate) async fn prepare_cross_signing_recovery(
     )?;
     let cross_signing_binding = DeviceCrossSigningBinding {
         verification_method: DidUrl::new(recovered.kid.clone()).map_err(anyhow::Error::msg)?,
-        alg: NonEmptyString::new("EdDSA").map_err(anyhow::Error::msg)?,
+        signature_algorithm: NonEmptyString::new("Ed25519").map_err(anyhow::Error::msg)?,
         ssk_generation: generation,
         signature: Base64UrlString::new(arkret_sdk::base64url_encode(
             ed25519_dalek::Signer::sign(&recovered.signing_key, &binding_input).to_bytes(),
@@ -188,7 +188,7 @@ pub(crate) async fn prepare_cross_signing_recovery(
         device_public_key: NonEmptyString::new(device_public_key).map_err(anyhow::Error::msg)?,
         hpke_key: NonEmptyString::new(hpke_key).map_err(anyhow::Error::msg)?,
         algorithms,
-        device_key_algorithm: Some(NonEmptyString::new("EdDSA").map_err(anyhow::Error::msg)?),
+        device_key_algorithm: Some(NonEmptyString::new("Ed25519").map_err(anyhow::Error::msg)?),
         authorized_by: DeviceOrPrincipalRef::Did(verified_session.principal_id.clone()),
         scopes: None,
         not_before: now,
@@ -482,7 +482,7 @@ pub(crate) async fn prepare_enrollment_authority_recovery(
             .map_err(anyhow::Error::msg)?,
         hpke_key: NonEmptyString::new(hpke_key.clone()).map_err(anyhow::Error::msg)?,
         algorithms,
-        device_key_algorithm: Some(NonEmptyString::new("EdDSA").map_err(anyhow::Error::msg)?),
+        device_key_algorithm: Some(NonEmptyString::new("Ed25519").map_err(anyhow::Error::msg)?),
         authorized_by: DeviceOrPrincipalRef::Did(enrollment_authority_did.clone()),
         scopes: None,
         not_before,
@@ -497,7 +497,7 @@ pub(crate) async fn prepare_enrollment_authority_recovery(
     let possession_proof = ReplacementDevicePossessionProof {
         verification_method: device_signer
             .verification_method_for_principal(&verified_session.principal_id)?,
-        alg: "EdDSA".to_owned(),
+        signature_algorithm: "Ed25519".to_owned(),
         transcript_digest: Hash::new(arkret_sdk::canonical::sha256_digest(&possession_input))?,
         signature: arkret_sdk::base64url_encode(device_signer.sign_raw(&possession_input)?),
     };

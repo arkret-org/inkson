@@ -15,9 +15,9 @@ use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
     AgentKeyPairRequestBody, AgentKeySupersession, AgentPairingBootstrap,
     AgentRequestedScopeDisclosure, AgentRuntimeApprovalControllerProjection,
-    AgentSigningKeyBinding, AgentSigningPublicKey, Did, DidUrl, Event, EventId, GrantConstraint,
-    GrantConstraintEffect, GrantConstraintKind, GrantConstraintSubkind, Hash, KeyState,
-    NonEmptyString, OpaqueLocalId, Proof, RealmId, RequestId,
+    AgentSigningKeyBinding, Did, DidUrl, Event, EventId, GrantConstraint, GrantConstraintEffect,
+    GrantConstraintKind, GrantConstraintSubkind, Hash, KeyState, NonEmptyString, OpaqueLocalId,
+    Proof, RealmId, RequestId,
 };
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -516,7 +516,6 @@ pub fn build_requested_scope_disclosure_for_pairing(
         expires_at,
         proofs: vec![Proof {
             kind: "detached_jws".to_owned(),
-            alg: signer.algorithm().to_owned(),
             verification_method: verification_method.clone(),
             event_digest: Hash::new(format!("sha256:{}", "0".repeat(64)))?,
             created_at: issued_at,
@@ -554,8 +553,11 @@ pub fn summarize_runtime_key_approval_request(
     raw: &str,
 ) -> anyhow::Result<RuntimeKeyApprovalSummary> {
     let request = parse_runtime_key_approval_request(raw)?;
-    let public_key_fingerprint =
-        arkret_signatures::agent::agent_runtime_public_key_digest(&request.public_key)?;
+    let public_key_fingerprint = arkret_signatures::agent::validate_agent_runtime_public_key(
+        &request.public_key,
+        &request.verification_method,
+    )?
+    .runtime_request_digest;
     let proof_expires_at =
         arkret_sdk::canonical::format_timestamp_canonical(request.proof_of_possession.expires_at);
     Ok(RuntimeKeyApprovalSummary {
@@ -623,12 +625,10 @@ pub fn build_agent_key_authorization_for_pairing(
         .pairing_expires_at
         .ok_or_else(|| anyhow::anyhow!("agent key_state.pairing_expires_at is required"))?;
     let requested_scope = key_state.requested_scope.clone();
-    let runtime_public_key_digest =
-        arkret_signatures::agent::agent_runtime_public_key_digest(&request.public_key)?;
-    let runtime_public_key = request.public_key.clone();
-    if runtime_public_key.kid.as_str() != request.verification_method.as_str() {
-        anyhow::bail!("runtime request public_key.kid does not match verification_method");
-    }
+    let validated_runtime_public_key = arkret_signatures::agent::validate_agent_runtime_public_key(
+        &request.public_key,
+        &request.verification_method,
+    )?;
     let endpoint_fragment = request
         .verification_method
         .as_str()
@@ -652,7 +652,8 @@ pub fn build_agent_key_authorization_for_pairing(
             &request.proof_of_possession.runtime_key_binding_digest,
             &request.proof_of_possession,
         )?;
-    let issued_at = Utc::now();
+    let issued_at = chrono::DateTime::<Utc>::from_timestamp_millis(Utc::now().timestamp_millis())
+        .expect("current UTC timestamp must fit the canonical millisecond wire range");
     let runtime_attestation = request.runtime_attestation.clone();
     // Runtime replacement re-pairing (key-management §3.6.1): the new key
     // supersedes EVERY currently-accepted active authorization of this agent.
@@ -700,48 +701,32 @@ pub fn build_agent_key_authorization_for_pairing(
     .map_err(anyhow::Error::msg)?;
     let agent_key_id = NonEmptyString::new(request.verification_method.as_str().to_owned())
         .map_err(anyhow::Error::msg)?;
-    let binding_public_key = AgentSigningPublicKey {
-        kty: request.public_key.kty.clone(),
-        // The runtime approval JWK uses the JOSE algorithm name `EdDSA`,
-        // while the signing-key binding registry names the concrete key
-        // algorithm `Ed25519`.
-        alg: NonEmptyString::new("Ed25519").map_err(anyhow::Error::msg)?,
-        key: request.public_key.key.clone(),
-    };
-    let binding_public_key_digest =
-        arkret_signatures::agent_evidence::agent_signing_public_key_digest(
-            &request.verification_method,
-            &binding_public_key,
+    let mut signing_key_binding =
+        arkret_signatures::agent_evidence::prepare_agent_signing_key_binding(
+            request.agent_id.clone(),
+            agent_key_id.clone(),
+            request.verification_method.clone(),
+            &request.public_key,
+            authorize_event_id.clone(),
+            issued_at,
+            None,
+            controller.clone(),
+            controller_verification_method.clone(),
         )
         .map_err(|reason| anyhow::anyhow!(reason.as_str()))?;
-    let mut signing_key_binding = AgentSigningKeyBinding {
-        schema: NonEmptyString::new(arkret_sdk::SchemaId::AGENT_SIGNING_KEY_BINDING_V1.to_owned())
-            .map_err(anyhow::Error::msg)?,
-        agent_id: request.agent_id.clone(),
-        agent_key_id: agent_key_id.clone(),
-        verification_method: request.verification_method.clone(),
-        public_key: binding_public_key,
-        public_key_digest: binding_public_key_digest,
-        agent_key_authorize_event_id: authorize_event_id.clone(),
-        issued_at,
-        expires_at: None,
-        controller_id: controller.clone(),
-        controller_proof: arkret_sdk::AgentControllerProof {
-            kind: NonEmptyString::new("detached_jws").map_err(anyhow::Error::msg)?,
-            verification_method: controller_verification_method.clone(),
-            jws: NonEmptyString::new("pending").map_err(anyhow::Error::msg)?,
-        },
-    };
     let binding_bytes = arkret_signatures::agent_evidence::agent_signing_key_binding_signing_bytes(
         &signing_key_binding,
     )
     .map_err(|reason| anyhow::anyhow!(reason.as_str()))?;
-    signing_key_binding.controller_proof.jws =
-        NonEmptyString::new(signer.detached_jws_over_payload_with_kid(
-            controller_verification_method.as_str(),
-            &binding_bytes,
-        )?)
-        .map_err(anyhow::Error::msg)?;
+    let controller_jws = signer.detached_jws_over_payload_with_kid(
+        controller_verification_method.as_str(),
+        &binding_bytes,
+    )?;
+    arkret_signatures::agent_evidence::finish_agent_signing_key_binding(
+        &mut signing_key_binding,
+        &controller_jws,
+    )
+    .map_err(|reason| anyhow::anyhow!(reason.as_str()))?;
     let signing_key_binding_digest =
         arkret_signatures::agent_evidence::agent_signing_key_binding_digest(&signing_key_binding)
             .map_err(|reason| anyhow::anyhow!(reason.as_str()))?;
@@ -749,7 +734,7 @@ pub fn build_agent_key_authorization_for_pairing(
         agent_id: request.agent_id.clone(),
         key_id: agent_key_id.clone(),
         verification_method: request.verification_method.clone(),
-        public_key_digest: Hash::new(runtime_public_key_digest.as_str().to_owned())?,
+        public_key_digest: validated_runtime_public_key.authorization_digest,
         signing_key_binding_digest,
         accountable_principal_id: controller.clone(),
         agent_key_scope: requested_scope,

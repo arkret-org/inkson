@@ -481,7 +481,7 @@ impl CrossSigningExecutor {
             // A published cross-signing key is a controller key, so its `kid` is
             // the full verification-method DID URL, not a bare label.
             kid: arkret_sdk::DidUrl::new(psk_kid.clone()).map_err(anyhow::Error::msg)?,
-            alg: non_empty("EdDSA")?,
+            algorithm: non_empty("Ed25519")?,
             public_key: non_empty(encode_ed25519_did_key_multibase(&psk.verifying_key()))?,
             key_format: KeyFormat::Multibase,
         };
@@ -499,7 +499,7 @@ impl CrossSigningExecutor {
             principal_signing_key: psk_record.clone(),
             self_signing_key: SubordinateSignedKey {
                 kid: arkret_sdk::DidUrl::new(ssk_kid).map_err(anyhow::Error::msg)?,
-                alg: non_empty("EdDSA")?,
+                algorithm: non_empty("Ed25519")?,
                 public_key: non_empty(encode_ed25519_did_key_multibase(&ssk.verifying_key()))?,
                 key_format: KeyFormat::Multibase,
                 binding: SubordinateSignedKeyBinding {
@@ -508,19 +508,19 @@ impl CrossSigningExecutor {
                     // it is typed `DidUrl`, not a bare non-empty string.
                     verification_method: arkret_sdk::DidUrl::new(psk_kid.clone())
                         .map_err(anyhow::Error::msg)?,
-                    alg: non_empty("EdDSA")?,
+                    signature_algorithm: non_empty("Ed25519")?,
                     signature: non_empty("pending")?,
                 },
             },
             user_signing_key: SubordinateSignedKey {
                 kid: arkret_sdk::DidUrl::new(usk_kid).map_err(anyhow::Error::msg)?,
-                alg: non_empty("EdDSA")?,
+                algorithm: non_empty("Ed25519")?,
                 public_key: non_empty(encode_ed25519_did_key_multibase(&usk.verifying_key()))?,
                 key_format: KeyFormat::Multibase,
                 binding: SubordinateSignedKeyBinding {
                     verification_method: arkret_sdk::DidUrl::new(psk_kid)
                         .map_err(anyhow::Error::msg)?,
-                    alg: non_empty("EdDSA")?,
+                    signature_algorithm: non_empty("Ed25519")?,
                     signature: non_empty("pending")?,
                 },
             },

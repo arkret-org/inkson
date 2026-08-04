@@ -88,10 +88,10 @@ fn session_grant_proof_signs_canonical_claims() {
         session_grant_jwt_hash("eyJ.opaque-grant.jwt"),
         "grant_jwt_hash must be sha256(grant_jwt) hex prefixed"
     );
-    // Header claim is `EdDSA` + `JWT`.
+    // Header claim is `Ed25519` + `JWT`.
     let header_bytes = URL_SAFE_NO_PAD.decode(parts[0]).unwrap();
     let header: Value = serde_json::from_slice(&header_bytes).unwrap();
-    assert_eq!(header.get("alg").and_then(|v| v.as_str()), Some("EdDSA"));
+    assert_eq!(header.get("alg").and_then(|v| v.as_str()), Some("Ed25519"));
     assert_eq!(header.get("typ").and_then(|v| v.as_str()), Some("JWT"));
 }
 

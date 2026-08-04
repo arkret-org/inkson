@@ -13,7 +13,9 @@ pub(crate) fn sign_keypackage_upload_batch_with_signer(
     Ok(arkret_sdk::KeyOperationSignature {
         kid: arkret_sdk::NonEmptyString::new(signer.verification_method())
             .map_err(anyhow::Error::msg)?,
-        alg: Some(arkret_sdk::NonEmptyString::new(signer.algorithm()).map_err(anyhow::Error::msg)?),
+        signature_algorithm: Some(
+            arkret_sdk::NonEmptyString::new(signer.algorithm()).map_err(anyhow::Error::msg)?,
+        ),
         sig: arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(sig))
             .map_err(anyhow::Error::msg)?,
     })
@@ -45,7 +47,9 @@ pub(crate) fn sign_keypackage_consume(
     Ok(arkret_sdk::KeyOperationSignature {
         kid: arkret_sdk::NonEmptyString::new(signer.verification_method())
             .map_err(anyhow::Error::msg)?,
-        alg: Some(arkret_sdk::NonEmptyString::new(signer.algorithm()).map_err(anyhow::Error::msg)?),
+        signature_algorithm: Some(
+            arkret_sdk::NonEmptyString::new(signer.algorithm()).map_err(anyhow::Error::msg)?,
+        ),
         sig: arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(signature))
             .map_err(anyhow::Error::msg)?,
     })
@@ -144,13 +148,12 @@ pub(crate) fn build_mls_keypackage_claim_request(
         holder_acceptance_proof: arkret_models_crypto::http_bodies::KeyPackageClaimProof {
             kind: arkret_models_crypto::http_bodies::KeyPackageClaimProofKind::DetachedJws,
             verification_method,
-            alg: arkret_models_crypto::http_bodies::KeyPackageClaimProofAlgorithm::EdDsa,
             payload_digest: arkret_wire::Hash::new(format!("sha256:{}", "0".repeat(64)))?,
             created_at,
             audience: authority_service_id,
             proof_purpose:
                 arkret_models_crypto::http_bodies::KeyPackageClaimProofPurpose::HolderAcceptance,
-            jws: "eyJhbGciOiJFZERTQSJ9..AA".to_owned(),
+            jws: "eyJhbGciOiJFZDI1NTE5In0..AA".to_owned(),
         },
     };
     body.holder_acceptance_proof.payload_digest = body.payload_digest()?;

@@ -83,7 +83,7 @@ pub fn build_session_grant_introspection_proof(
         issued_at: now,
         expires_at: now + chrono::Duration::seconds(60),
     };
-    sign_compact_jws_eddsa(&claims, signing_key)
+    sign_compact_jws_ed25519(&claims, signing_key)
 }
 
 /// Hash the grant JWT bytes per coauth's `session_grant_jwt_hash`
@@ -95,16 +95,16 @@ pub fn session_grant_jwt_hash(grant_jwt: &str) -> String {
 
 /// Internal helper: serialize claims to canonical JSON, base64url-encode
 /// header + payload, sign with Ed25519, return the compact JWS.
-fn sign_compact_jws_eddsa<C: Serialize>(
+fn sign_compact_jws_ed25519<C: Serialize>(
     claims: &C,
     signing_key: &ed25519_dalek::SigningKey,
 ) -> anyhow::Result<String> {
     use ed25519_dalek::Signer;
-    // Compact JWS header (`alg=EdDSA`). The optional `typ=JWT` claim
+    // Compact JWS header (`alg=Ed25519`). The optional `typ=JWT` claim
     // tells generic JWT verifiers this is a JWT proof token; coauth's
     // verifier doesn't require it but adding it improves cross-provider
     // tooling round-trips.
-    let header_json = br#"{"alg":"EdDSA","typ":"JWT"}"#;
+    let header_json = br#"{"alg":"Ed25519","typ":"JWT"}"#;
     let header_b64 = URL_SAFE_NO_PAD.encode(header_json);
     let payload_json = serde_json::to_vec(claims)?;
     let payload_b64 = URL_SAFE_NO_PAD.encode(&payload_json);

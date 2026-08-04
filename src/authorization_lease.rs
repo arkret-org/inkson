@@ -719,7 +719,6 @@ pub(crate) mod test_support {
     ) -> arkret_sdk::PayloadProof {
         arkret_sdk::PayloadProof {
             kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
-            alg: "EdDSA".to_owned(),
             verification_method: arkret_sdk::DidUrl::new(verification_method.to_owned())
                 .expect("test verification method is a DID URL"),
             payload_digest,

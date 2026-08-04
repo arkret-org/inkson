@@ -79,7 +79,7 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
             checked_at: created_at,
             witness_attestations: Vec::new(),
         },
-        signature: arkret_sdk::DetachedJwsProof::eddsa(
+        signature: arkret_sdk::DetachedJwsProof::ed25519(
             arkret_sdk::DidUrl::new("did:web:server.local#snapshot").unwrap(),
             snapshot_contract_hash(2),
             created_at,
@@ -404,7 +404,7 @@ fn inkson_accepts_server_contract_payloads() {
                         "algorithm": "signed_curve25519",
                         "signature": {
                             "kid": "did:web:alice.example#device-key",
-                            "alg": "EdDSA",
+                            "signature_algorithm": "Ed25519",
                             "sig": "c2ln"
                         },
                         "key_id": "alice-otk-1"
@@ -461,7 +461,7 @@ fn inkson_accepts_server_contract_payloads() {
             "issuer_service_id": "did:web:server.local",
             "signature": {
                 "kid": "did:web:server.local",
-                "alg": "EdDSA",
+                "signature_algorithm": "Ed25519",
                 "sig": "c2ln"
             }
         }

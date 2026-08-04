@@ -41,7 +41,7 @@ fn keypackage_upload_device_signature_is_raw_signature_tuple() {
     let signature = mls_api_helpers::sign_keypackage_upload_batch_with_signer(&signer, &unsigned)
         .expect("KeyPackage upload signature builds");
 
-    assert_eq!(signature.alg.as_deref(), Some("EdDSA"));
+    assert_eq!(signature.signature_algorithm.as_deref(), Some("Ed25519"));
     assert_eq!(signature.kid.as_str(), "did:web:alice.example#device");
     let sig = signature.sig.as_str();
     assert_eq!(sig.len(), 86);

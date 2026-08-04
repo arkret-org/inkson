@@ -169,7 +169,7 @@ export function mockArkretContract(req) {
       new_device_pubkey: {
         kty: "OKP",
         kid: "ak:device:01964137-0000-7000-8000-0000000000b2",
-        alg: "EdDSA",
+        alg: "Ed25519",
         key: "z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
       },
       client_nonce: "Y290ZXN0LWRldmljZS1wYWlyaW5nLW5vbmNl",

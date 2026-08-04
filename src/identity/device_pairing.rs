@@ -215,13 +215,13 @@ mod tests {
                 "new_device_pubkey": {
                     "kty": "OKP",
                     "kid": "ak:device:01904100-0000-7000-8000-000000000001",
-                    "alg": "EdDSA",
+                    "algorithm": "Ed25519",
                     "key": "abc-123"
                 },
                 "challenge_proof": {
                     "transcript": "ak.device-pairing.challenge.v1",
                     "kid": "ak:device:01904100-0000-7000-8000-000000000001",
-                    "alg": "EdDSA",
+                    "signature_algorithm": "Ed25519",
                     "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
                 },
@@ -311,7 +311,7 @@ mod tests {
             "challenge_proof": {
                 "transcript": "ak.device-pairing.challenge.v1",
                 "kid": "ak:device:01904100-0000-7000-8000-000000000001",
-                "alg": "EdDSA",
+                "signature_algorithm": "Ed25519",
                 "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
             },
@@ -319,7 +319,7 @@ mod tests {
             "new_device_pubkey": {
                 "kty": "OKP",
                 "kid": "ak:device:01904100-0000-7000-8000-000000000001",
-                "alg": "EdDSA",
+                "algorithm": "Ed25519",
                 "key": "abc-123"
             }
         });
@@ -335,7 +335,7 @@ mod tests {
             "challenge_proof": {
                 "transcript": "ak.device-pairing.challenge.v1",
                 "kid": "ak:device:01904100-0000-7000-8000-000000000001",
-                "alg": "EdDSA",
+                "signature_algorithm": "Ed25519",
                 "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
             },
@@ -343,7 +343,7 @@ mod tests {
             "new_device_pubkey": {
                 "kty": "OKP",
                 "kid": "ak:device:01904100-0000-7000-8000-000000000001",
-                "alg": "EdDSA",
+                "algorithm": "Ed25519",
                 "public_key": "abc-123"
             }
         });
@@ -357,7 +357,7 @@ mod tests {
             "challenge_proof": {
                 "transcript": "ak.device-pairing.challenge.v1",
                 "kid": "ak:device:01904100-0000-7000-8000-000000000001",
-                "alg": "EdDSA",
+                "signature_algorithm": "Ed25519",
                 "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
             },

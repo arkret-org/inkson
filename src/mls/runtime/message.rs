@@ -1227,7 +1227,7 @@ fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Re
     };
     let envelope: arkret_sdk::MlsWelcomeClaimEnvelope = serde_json::from_value(claim_value.clone())
         .map_err(|err| format!("claim_envelope decode: {err}"))?;
-    // Shape validation: non-empty kid/sig and alg in {EdDSA, Ed25519}.
+    // Shape validation: non-empty kid/sig and alg in {Ed25519, Ed25519}.
     envelope
         .validate_signature_shape()
         .map_err(|reason| format!("claim_envelope signature shape: {reason}"))?;

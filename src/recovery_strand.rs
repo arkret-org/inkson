@@ -350,14 +350,14 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
             )
             .map_err(|error| anyhow::anyhow!(error))?,
             key_agreement_ref: backup_hpke_ref.clone(),
-            alg: RecoveryKeySignatureAlgorithm::Ed25519,
+            signature_algorithm: RecoveryKeySignatureAlgorithm::Ed25519,
             not_before: issued_at,
             expires_at: key_expires_at,
             revoked_at: None,
         }]),
         recovery_key_agreements: Some(vec![RecoveryKeyAgreementEntry {
             key_agreement_ref: backup_hpke_ref,
-            alg: RecoveryKeyAgreementAlgorithm::X25519,
+            key_agreement_algorithm: RecoveryKeyAgreementAlgorithm::X25519,
             public_key_multibase: NonEmptyString::new(
                 key_material.backup_hpke_public_key_multikey.clone(),
             )
@@ -779,7 +779,7 @@ pub fn build_recovery_directed_ssk_backup_body(
         .iter()
         .find(|entry| {
             entry.usage == RecoveryKeyAgreementUse::BackupHpke
-                && entry.alg == RecoveryKeyAgreementAlgorithm::X25519
+                && entry.key_agreement_algorithm == RecoveryKeyAgreementAlgorithm::X25519
                 && entry
                     .hpke_suites
                     .contains(&RecoveryHpkeSuite::X25519ChaCha20Poly1305)

@@ -292,17 +292,17 @@ fn publish_content_from_directory(
 }
 
 /// Convert the per-device directory `cross_signing_binding`
-/// ([`QueryDeviceCrossSigningBinding`], `alg` optional) into the SDK chain
-/// input [`DeviceTrustBinding`] (`alg` required). `alg` defaults to `EdDSA`
+/// ([`QueryDeviceCrossSigningBinding`], `signature_algorithm` optional) into the SDK chain
+/// input [`DeviceTrustBinding`] (`signature_algorithm` required). It defaults to `Ed25519`
 /// (the v1 core signature algorithm) when the directory omits it.
 fn trust_binding_from_directory(binding: &QueryDeviceCrossSigningBinding) -> DeviceTrustBinding {
     DeviceTrustBinding {
         verification_method: binding.verification_method.clone(),
-        alg: binding
-            .alg
+        signature_algorithm: binding
+            .signature_algorithm
             .as_ref()
-            .map(|alg| alg.as_str().to_owned())
-            .unwrap_or_else(|| "EdDSA".to_owned()),
+            .map(|algorithm| algorithm.as_str().to_owned())
+            .unwrap_or_else(|| "Ed25519".to_owned()),
         ssk_generation: binding.ssk_generation,
         signature: binding.signature.as_str().to_owned(),
     }
@@ -581,7 +581,7 @@ fn verification_method_controller(verification_method: &str) -> &str {
 ///
 /// Checks, in order, fail-closed on any miss:
 ///   1. `proof.verification_method` controller DID == `actor_id` (byte-equal);
-///   2. SDK [`verify_eddsa_detached_jws_proof`] — recomputes the canonical envelope digest,
+///   2. SDK [`verify_ed25519_detached_jws_proof`] — recomputes the canonical envelope digest,
 ///      compares it to `proof.event_digest`, rebuilds the binding object `{event_digest, actor_id,
 ///      verification_method, created_at, domain?, audience?}`, and verifies the detached JWS over
 ///      it with `public_key`.
@@ -657,7 +657,7 @@ pub fn verify_proof_value_for_signer_result_with_digest_suite(
         .map_err(|error| format!("invalid Event binding actor DID: {error}"))?;
     let canonical_bytes = crate::canonical::canonical_json_bytes(envelope_without_proof)
         .map_err(|error| format!("canonicalize Event proof envelope: {error}"))?;
-    arkret_sdk::signatures::verify_eddsa_detached_jws_proof_with_digest_suite(
+    arkret_sdk::signatures::verify_ed25519_detached_jws_proof_with_digest_suite(
         &proof,
         &canonical_bytes,
         &did,
@@ -719,9 +719,6 @@ pub fn verify_signal_envelope_proof_at(
     let Ok(binding_bytes) = envelope.proof_binding_bytes() else {
         return false;
     };
-    if envelope.proof.alg != "EdDSA" {
-        return false;
-    }
     arkret_sdk::signatures::proof::Ed25519DetachedJwsVerifier::new()
         .verify_detached_jws(&envelope.proof.jws, &binding_bytes, public_key)
         .is_ok()
@@ -1160,30 +1157,30 @@ mod tests {
             trust_domain: TypedTrustDomainId::new(TIER2_TRUST_DOMAIN).unwrap(),
             principal_signing_key: PublishedKey {
                 kid: arkret_sdk::DidUrl::new(psk_kid.clone()).unwrap(),
-                alg: NonEmptyString::new("EdDSA").unwrap(),
+                algorithm: NonEmptyString::new("Ed25519").unwrap(),
                 public_key: NonEmptyString::new(psk_multibase.clone()).unwrap(),
                 key_format: KeyFormat::Multibase,
             },
             self_signing_key: SubordinateSignedKey {
                 kid: arkret_sdk::DidUrl::new(ssk_kid.clone()).unwrap(),
-                alg: NonEmptyString::new("EdDSA").unwrap(),
+                algorithm: NonEmptyString::new("Ed25519").unwrap(),
                 public_key: NonEmptyString::new(ssk_multibase.clone()).unwrap(),
                 key_format: KeyFormat::Multibase,
                 binding: SubordinateSignedKeyBinding {
                     verification_method: arkret_sdk::DidUrl::new(psk_kid.clone()).unwrap(),
-                    alg: NonEmptyString::new("EdDSA").unwrap(),
+                    signature_algorithm: NonEmptyString::new("Ed25519").unwrap(),
                     signature: NonEmptyString::new("pending").unwrap(),
                 },
             },
             user_signing_key: SubordinateSignedKey {
                 kid: arkret_sdk::DidUrl::new(usk_kid).unwrap(),
-                alg: NonEmptyString::new("EdDSA").unwrap(),
+                algorithm: NonEmptyString::new("Ed25519").unwrap(),
                 // Distinct from SSK (publish validation requires it).
                 public_key: NonEmptyString::new(format!("{ssk_multibase}USK")).unwrap(),
                 key_format: KeyFormat::Multibase,
                 binding: SubordinateSignedKeyBinding {
                     verification_method: arkret_sdk::DidUrl::new(psk_kid.clone()).unwrap(),
-                    alg: NonEmptyString::new("EdDSA").unwrap(),
+                    signature_algorithm: NonEmptyString::new("Ed25519").unwrap(),
                     signature: NonEmptyString::new("unused").unwrap(),
                 },
             },
@@ -1212,7 +1209,9 @@ mod tests {
         .unwrap();
         let binding = QueryDeviceCrossSigningBinding {
             verification_method: arkret_sdk::DidUrl::new(ssk_kid).unwrap(),
-            alg: Some(arkret_sdk::NonEmptyString::new("EdDSA").unwrap()),
+            signature_algorithm: Some(
+                arkret_sdk::NonEmptyString::new("Ed25519").unwrap(),
+            ),
             ssk_generation: binding_gen,
             signature: arkret_sdk::Base64UrlString::new(base64url_encode(
                 ssk.sign(&device_input).to_bytes(),

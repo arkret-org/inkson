@@ -1655,7 +1655,6 @@ pub fn build_signed_device_verification_proof(
         .map_err(|error| anyhow::anyhow!("hash device verification proof: {error}"))?;
     let signature = arkret_sdk::signatures::proof::build_proof_envelope(
         arkret_sdk::signatures::proof::detached_jws_kind(),
-        "EdDSA",
         verification_method,
         payload_digest,
         None,
@@ -1726,16 +1725,12 @@ pub fn ensure_device_verification_proof_is_signed(proof: &Value) -> anyhow::Resu
     let Some(signature) = proof.get("signature") else {
         anyhow::bail!("device verification proof must include a signed device envelope")
     };
-    let alg = signature
-        .get("alg")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
     let jws = signature
         .get("jws")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if alg != "EdDSA" || jws.split('.').count() != 3 {
-        anyhow::bail!("device verification proof must carry an EdDSA compact JWS")
+    if arkret_sdk::signatures::proof::validate_ed25519_detached_jws_shape(jws).is_err() {
+        anyhow::bail!("device verification proof must carry an Ed25519 compact JWS")
     }
     if proof.get("device_envelope").is_none() {
         anyhow::bail!("device verification proof missing device_envelope")

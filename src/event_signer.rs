@@ -201,19 +201,14 @@ impl PayloadSigner for InksonPayloadSignerAdapter<'_> {
             .inner
             .sign(canonical_bytes)
             .map_err(|error| WireError::Protocol(error.to_string()))?;
-        let header = serde_json::to_vec(&serde_json::json!({
-            "alg": self.owner.algorithm(),
-        }))?;
         Ok(PayloadSignature {
-            alg: self.owner.algorithm().to_owned(),
             verification_method: self.verification_method.clone(),
             payload_digest: Hash::new(arkret_sdk::canonical::sha256_digest(canonical_bytes))?,
             created_at: crate::clock::now_utc(),
-            jws: format!(
-                "{}..{}",
-                URL_SAFE_NO_PAD.encode(header),
-                URL_SAFE_NO_PAD.encode(signature)
-            ),
+            jws: arkret_sdk::signatures::proof::ed25519_detached_jws_from_signature(
+                &signature, None,
+            )
+            .map_err(|error| WireError::Protocol(error.to_string()))?,
             // `seal.schema.json#/$defs/signature` is `additionalProperties:
             // true`; inkson emits no extension members.
             extra: Default::default(),
@@ -297,7 +292,7 @@ impl InksonEventSigner {
             .map(|key| URL_SAFE_NO_PAD.encode(key.verifying_key().as_bytes()))
     }
 
-    /// JWS algorithm name (e.g. `"EdDSA"`).
+    /// JWS algorithm name (e.g. `"Ed25519"`).
     pub fn algorithm(&self) -> &str {
         self.inner.algorithm()
     }
@@ -327,18 +322,11 @@ impl InksonEventSigner {
             .inner
             .sign(canonical_bytes)
             .map_err(|error| EventSignerError::Backend(error.to_string()))?;
-        let header = serde_json::to_vec(&serde_json::json!({
-            "alg": self.algorithm(),
-        }))
-        .map_err(|error| EventSignerError::Encoding(error.to_string()))?;
         if let Ok(mut guard) = self.last_signed_at.lock() {
             *guard = Some(crate::clock::now_utc());
         }
-        Ok(format!(
-            "{}..{}",
-            URL_SAFE_NO_PAD.encode(header),
-            URL_SAFE_NO_PAD.encode(signature)
-        ))
+        arkret_sdk::signatures::proof::ed25519_detached_jws_from_signature(&signature, None)
+            .map_err(|error| EventSignerError::Encoding(error.to_string()))
     }
 
     /// Adapt the session device key as an authenticated principal signer.
@@ -595,22 +583,15 @@ impl InksonEventSigner {
     /// envelope bytes excluding `proof`) — go through this helper instead
     /// of re-deriving the JWS reassembly.
     pub fn detached_jws_over(&self, bytes: &[u8]) -> Result<String, EventSignerError> {
-        use base64::Engine;
-        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-
         let signature = self
             .inner
             .sign(bytes)
             .map_err(|err| EventSignerError::Backend(err.to_string()))?;
-        let header = serde_json::json!({ "alg": self.algorithm() });
-        let header = serde_json::to_vec(&header)
-            .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
-        let header_b64 = URL_SAFE_NO_PAD.encode(&header);
-        let sig_b64 = URL_SAFE_NO_PAD.encode(&signature);
         if let Ok(mut guard) = self.last_signed_at.lock() {
             *guard = Some(crate::clock::now_utc());
         }
-        Ok(format!("{header_b64}..{sig_b64}"))
+        arkret_sdk::signatures::proof::ed25519_detached_jws_from_signature(&signature, None)
+            .map_err(|error| EventSignerError::Encoding(error.to_string()))
     }
 
     /// Produce a detached compact JWS (`<b64u header>..<b64u sig>`) with a
@@ -624,33 +605,24 @@ impl InksonEventSigner {
         kid: &str,
         payload: &[u8],
     ) -> Result<String, EventSignerError> {
-        use base64::Engine;
-        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-
         let kid = kid.trim();
         if kid.is_empty() {
             return Err(EventSignerError::Encoding(
                 "detached JWS kid must not be empty".to_owned(),
             ));
         }
-        let header = serde_json::json!({
-            "alg": self.algorithm(),
-            "kid": kid,
-        });
-        let header = serde_json::to_vec(&header)
-            .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
-        let header_b64 = URL_SAFE_NO_PAD.encode(&header);
-        let payload_b64 = URL_SAFE_NO_PAD.encode(payload);
-        let signing_input = format!("{header_b64}.{payload_b64}");
+        let signing_input =
+            arkret_sdk::signatures::proof::ed25519_detached_jws_signing_input(payload, Some(kid))
+                .map_err(|error| EventSignerError::Encoding(error.to_string()))?;
         let Some(signing_key) = &self.raw_signing_key else {
             return Err(EventSignerError::RawSigningUnavailable);
         };
         let signature = signing_key.sign(signing_input.as_bytes()).to_bytes();
-        let sig_b64 = URL_SAFE_NO_PAD.encode(signature);
         if let Ok(mut guard) = self.last_signed_at.lock() {
             *guard = Some(crate::clock::now_utc());
         }
-        Ok(format!("{header_b64}..{sig_b64}"))
+        arkret_sdk::signatures::proof::ed25519_detached_jws_from_signature(&signature, Some(kid))
+            .map_err(|error| EventSignerError::Encoding(error.to_string()))
     }
 
     pub(crate) fn verification_method_for_sdk_event(
@@ -680,7 +652,7 @@ impl InksonEventSigner {
     /// receivers / tests can wrap a verifier with the matching tag
     /// without re-deriving it.
     pub fn proof_type_tag() -> ProofType {
-        ProofType::production("detached_jws", "EdDSA")
+        ProofType::production("detached_jws", "Ed25519")
     }
 }
 
@@ -1153,7 +1125,7 @@ mod tests {
         let signer = build_ed25519_signer([7u8; 32], "did:web:alice.example");
         assert_eq!(signer.signer_did(), "did:web:alice.example");
         assert_eq!(signer.verification_method(), "did:web:alice.example#device");
-        assert_eq!(signer.algorithm(), "EdDSA");
+        assert_eq!(signer.algorithm(), "Ed25519");
         assert_eq!(signer.mode_tag(), "ed25519");
         assert!(signer.last_signed_at_snapshot().is_none());
     }
@@ -1171,7 +1143,7 @@ mod tests {
             signer.verification_method(),
             "did:web:alice.example#did-key-1"
         );
-        assert_eq!(signer.algorithm(), "EdDSA");
+        assert_eq!(signer.algorithm(), "Ed25519");
         assert_eq!(signer.mode_tag(), "ed25519");
     }
 
@@ -1237,7 +1209,7 @@ mod tests {
 
         let jws_signing_input = format!(
             "{}.{}",
-            URL_SAFE_NO_PAD.encode(br#"{"alg":"EdDSA"}"#),
+            URL_SAFE_NO_PAD.encode(br#"{"alg":"Ed25519"}"#),
             URL_SAFE_NO_PAD.encode(&bytes)
         );
         assert!(
@@ -1273,7 +1245,7 @@ mod tests {
         let header: serde_json::Value =
             serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[0]).expect("header b64"))
                 .expect("header json");
-        assert_eq!(header, json!({"alg": "EdDSA", "kid": kid}));
+        assert_eq!(header, json!({"alg": "Ed25519", "kid": kid}));
 
         let signing_input = format!("{}.{}", parts[0], URL_SAFE_NO_PAD.encode(&payload));
         let signature =
@@ -1312,7 +1284,6 @@ mod tests {
 
         let proof = event.proofs.first().expect("real proof attached");
         assert_eq!(proof.kind, "detached_jws");
-        assert_eq!(proof.alg, "EdDSA");
         assert_eq!(
             proof.verification_method,
             format!("did:web:bob.example#{TEST_DEVICE_ID}")
@@ -1327,7 +1298,7 @@ mod tests {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         let header = URL_SAFE_NO_PAD.decode(parts[0]).expect("header b64");
         let header: serde_json::Value = serde_json::from_slice(&header).expect("header json");
-        assert_eq!(header, json!({"alg": "EdDSA"}));
+        assert_eq!(header, json!({"alg": "Ed25519"}));
 
         assert!(signer.last_signed_at_snapshot().is_some());
     }
@@ -1751,7 +1722,7 @@ mod tests {
         let status = signer_status().expect("status");
         assert_eq!(status.signer_did, "did:web:frank.example");
         assert_eq!(status.verification_method, "did:web:frank.example#device");
-        assert_eq!(status.algorithm, "EdDSA");
+        assert_eq!(status.algorithm, "Ed25519");
         assert_eq!(status.mode_tag, "ed25519");
         assert!(status.last_signed_at.is_none());
     }

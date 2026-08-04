@@ -566,7 +566,6 @@ mod invite_addressing_tests {
                 "proof": {
                     "kind": "detached_jws",
                     "verification_method": "did:web:ps.bob.example#server-key-1",
-                    "alg": "EdDSA",
                     "payload_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
                     "created_at": "2026-06-07T00:00:00.000Z",
                     "jws": "header..sig"

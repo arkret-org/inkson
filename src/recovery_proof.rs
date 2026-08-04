@@ -82,7 +82,8 @@ pub fn build_principal_signing_proof(
             challenge: challenge.to_owned(),
             verification_method: arkret_sdk::DidUrl::new(verification_method.to_owned())
                 .map_err(anyhow::Error::msg)?,
-            alg: arkret_sdk::NonEmptyString::new("EdDSA").map_err(anyhow::Error::msg)?,
+            signature_algorithm: arkret_sdk::NonEmptyString::new("Ed25519")
+                .map_err(anyhow::Error::msg)?,
             signature: arkret_sdk::Base64UrlString::new(B64.encode(signature.to_bytes()))
                 .map_err(anyhow::Error::msg)?,
         },
@@ -109,7 +110,7 @@ pub fn build_principal_signing_proof_active(session: &Value) -> anyhow::Result<O
         "kind": "principal_signing",
         "challenge": challenge,
         "verification_method": signer.verification_method(),
-        "alg": signer.algorithm(),
+        "signature_algorithm": signer.algorithm(),
         "signature": B64.encode(signature),
     })))
 }
@@ -231,7 +232,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(proof["kind"], "principal_signing");
-        assert_eq!(proof["alg"], "EdDSA");
+        assert_eq!(proof["signature_algorithm"], "Ed25519");
         assert_eq!(proof["challenge"], session["challenge"]);
 
         // Re-derive the transcript bytes and verify the embedded signature —

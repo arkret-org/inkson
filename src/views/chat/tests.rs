@@ -311,7 +311,6 @@ fn sign_chat_fixture(value: &mut Value) {
             let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
             let mut proof = arkret_sdk::Proof {
                 kind: "detached_jws".to_owned(),
-                alg: signer.algorithm().to_owned(),
                 verification_method: arkret_sdk::DidUrl::new(
                     signer.verification_method().to_owned(),
                 )

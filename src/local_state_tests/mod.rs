@@ -104,7 +104,7 @@ pub(super) fn snapshot_manifest_for_items(
             checked_at: created_at,
             witness_attestations: Vec::new(),
         },
-        signature: arkret_sdk::DetachedJwsProof::eddsa(
+        signature: arkret_sdk::DetachedJwsProof::ed25519(
             arkret_sdk::DidUrl::new("did:web:server.example#snapshot").unwrap(),
             snapshot_hash(2),
             created_at,

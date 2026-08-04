@@ -235,7 +235,8 @@ fn mls_history_backup_body_decodes_to_snapshot_envelope() {
         )
         .unwrap();
 
-    let decoded = decode_mls_history_backup_envelope(&body, "device-secret").unwrap();
+    let typed = parse_mls_history_backup(&body).unwrap();
+    let decoded = decode_mls_history_backup_envelope(&typed, "device-secret").unwrap();
 
     assert_eq!(decoded.realm_id, envelope.realm_id);
     assert_eq!(decoded.group_id, envelope.group_id);
@@ -268,7 +269,8 @@ fn mls_history_backup_decode_rejects_metadata_mismatch() {
         .unwrap();
     body["contents"][0]["epoch"] = json!(7);
 
-    let error = decode_mls_history_backup_envelope(&body, "device-secret").unwrap_err();
+    let typed = parse_mls_history_backup(&body).unwrap();
+    let error = decode_mls_history_backup_envelope(&typed, "device-secret").unwrap_err();
 
     assert!(matches!(error, MlsRuntimeError::BackupDecode(_)));
     assert!(error.user_message().contains("epoch mismatch"));

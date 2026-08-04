@@ -157,7 +157,8 @@ fn account_secret_rotation_rewraps_backups_old_secret_cannot_decrypt() {
         None,
     )
     .unwrap();
-    let decoded = decode_mls_history_backup_envelope(&body, &rotation.new_secret).unwrap();
+    let typed = parse_mls_history_backup(&body).unwrap();
+    let decoded = decode_mls_history_backup_envelope(&typed, &rotation.new_secret).unwrap();
     assert!(
         crate::mls::persistence::decrypt_envelope(&decoded, old_secret).is_err(),
         "revoked device's old account secret must not decrypt the new backup"

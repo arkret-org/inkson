@@ -419,7 +419,7 @@ pub(crate) fn wrap_realm_key_share_payload_event(
 ///
 /// Returns a typed `sender_device_signature` object:
 /// ```json
-/// { "alg": "Ed25519", "signature": "<b64url>", "signer_public_key_multibase": "z.." }
+/// { "signature_algorithm": "Ed25519", "signature": "<b64url>", "signer_public_key_multibase": "z.." }
 /// ```
 /// or `None` when no raw-capable signer is installed.
 pub(crate) fn sign_realm_key_share_sender_signature(
@@ -431,7 +431,10 @@ pub(crate) fn sign_realm_key_share_sender_signature(
     let signing_input = payload.sender_signing_input().ok()?;
     let signature = signer.sign_raw(&signing_input).ok()?;
     let mut fields = BTreeMap::new();
-    fields.insert("alg".to_owned(), Value::String("Ed25519".to_owned()));
+    fields.insert(
+        "signature_algorithm".to_owned(),
+        Value::String("Ed25519".to_owned()),
+    );
     fields.insert(
         "signature".to_owned(),
         Value::String(URL_SAFE_NO_PAD.encode(signature)),
@@ -481,8 +484,8 @@ pub(crate) fn build_mls_welcome_payload(
         signature: arkret_sdk::KeyOperationSignature {
             kid: arkret_sdk::NonEmptyString::new("pending")
                 .map_err(|err| format!("MLS Welcome placeholder kid: {err}"))?,
-            alg: Some(
-                arkret_sdk::NonEmptyString::new("EdDSA")
+            signature_algorithm: Some(
+                arkret_sdk::NonEmptyString::new("Ed25519")
                     .map_err(|err| format!("MLS Welcome signature algorithm: {err}"))?,
             ),
             sig: arkret_sdk::Base64UrlString::new("cGVuZGluZw")
@@ -714,7 +717,9 @@ mod tests {
                     record.principal_id.as_str()
                 ))
                 .unwrap(),
-                alg: Some(arkret_sdk::NonEmptyString::new("EdDSA").unwrap()),
+                signature_algorithm: Some(
+                    arkret_sdk::NonEmptyString::new("Ed25519").unwrap(),
+                ),
                 sig: arkret_sdk::Base64UrlString::new("c2ln").unwrap(),
             },
             revocation_status: None,
@@ -759,7 +764,9 @@ mod tests {
             created_at: crate::clock::now_utc(),
             signature: arkret_sdk::KeyOperationSignature {
                 kid: arkret_sdk::NonEmptyString::new("placeholder-kid").unwrap(),
-                alg: Some(arkret_sdk::NonEmptyString::new("EdDSA").unwrap()),
+                signature_algorithm: Some(
+                    arkret_sdk::NonEmptyString::new("Ed25519").unwrap(),
+                ),
                 sig: arkret_sdk::Base64UrlString::new("c2ln").unwrap(),
             },
         };

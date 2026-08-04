@@ -12,13 +12,13 @@
 //!
 //! ## Algorithm choice
 //!
-//! Ed25519 (`alg=EdDSA`, `kty=OKP`, `crv=Ed25519`) over ES256. Three
+//! Ed25519 (`alg=Ed25519`, `kty=OKP`, `crv=Ed25519`) over ES256. Three
 //! reasons, in order of weight:
 //!
 //! * Every other signing surface in inkson — `event_signer`, `cross_signing`, `move_builder`,
 //!   `session_grant` proofs — is already ed25519. Adding a second curve doubles the WASM bundle
 //!   surface for no protocol benefit.
-//! * coauth's `DpopVerifier` (`coauth/crates/backend/src/services/dpop.rs`) accepts `EdDSA` as a
+//! * coauth's `DpopVerifier` (`coauth/crates/backend/src/services/dpop.rs`) accepts `Ed25519` as a
 //!   first-class algorithm; the JWA registry lists it as an approved JWS alg.
 //! * `ed25519-dalek` is pure-Rust and known to build cleanly under `wasm32-unknown-unknown`. ES256
 //!   via the browser's SubtleCrypto means crossing the JS boundary on every mint, which complicates
