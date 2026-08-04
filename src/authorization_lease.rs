@@ -477,7 +477,7 @@ fn is_managed_agent_pcr_control(event: &arkret_sdk::Event) -> bool {
         && event.authorization_ref.as_deref() == Some(managed_authorization_ref.as_str())
 }
 
-fn is_managed_agent_pcr_genesis(event: &arkret_sdk::Event) -> bool {
+pub(crate) fn is_managed_agent_pcr_genesis(event: &arkret_sdk::Event) -> bool {
     event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE
         && is_managed_agent_pcr_control(event)
 }
@@ -908,6 +908,47 @@ mod tests {
         )
         .unwrap();
         assert_eq!(authority, expected);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn managed_agent_pcr_genesis_submission_carries_controller_receipt() {
+        let _guard = test_guard();
+        let agent_id = "did:web:agent.example";
+        let controller_id = "did:web:alice.example";
+        let mut events = crate::event_builders::build_managed_agent_pcr_bootstrap_events(
+            "ak:realm:01964137-0000-7000-8000-000000000099",
+            agent_id,
+            controller_id,
+            "did:web:agent.example#managed-controller",
+            "ak:trust_domain:did.web.example",
+            arkret_sdk::EventId::new("ak:event:01964137-0000-7000-8000-000000000098").unwrap(),
+        )
+        .unwrap();
+        let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
+            [42_u8; 32],
+            controller_id,
+            "ak:device:01964137-0000-7000-8000-000000000097",
+        ));
+        let _signer = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
+        let previous_proof_mode = crate::operation::current_proof_mode();
+        crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
+        let signed = crate::event_signer::sign_sdk_event_with_active_context(
+            &mut events[0],
+            crate::event_signer::EventProofContext::new(),
+        );
+        crate::operation::set_proof_mode(previous_proof_mode);
+        signed.unwrap();
+        let http = arkret_sdk::http_client::Client::builder("http://127.0.0.1:9/".parse().unwrap())
+            .allow_insecure_localhost()
+            .build()
+            .unwrap();
+
+        let submission = standard_initial_submission(&http, &events[0])
+            .await
+            .unwrap();
+
+        assert!(submission.authorization_lease.is_none());
+        assert!(submission.control_proposal_receipt.is_some());
     }
 
     #[test]

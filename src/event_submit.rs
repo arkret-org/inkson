@@ -37,6 +37,15 @@ pub struct EventSubmitter {
     describe_cache: OnceCell<ServiceDescribe>,
 }
 
+/// Ordinary Realm and self-principal bootstrap units intentionally publish
+/// without per-Event proposal receipts. A managed Agent PCR create is also an
+/// anchor unit, but its delegated controller is the founding proposal
+/// authority, so it must pass through `standard_initial_submission` to attach
+/// that controller's receipt.
+fn uses_bare_online_anchor_submission(anchor_unit: bool, event: &arkret_sdk::Event) -> bool {
+    anchor_unit && !crate::authorization_lease::is_managed_agent_pcr_genesis(event)
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error("event {event_id} is durably queued for retry")]
 pub(crate) struct DurablyQueuedError {
@@ -2216,7 +2225,7 @@ impl EventSubmitter {
         let anchor_unit = first_event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE;
         let mut submissions = Vec::with_capacity(sdk_events.len());
         for event in sdk_events {
-            let submission = if anchor_unit {
+            let submission = if uses_bare_online_anchor_submission(anchor_unit, event) {
                 let submission = arkret_wire::EventInitialSubmission::online(event.clone());
                 submission
                     .validate_structural_in_context(arkret_wire::EventSubmitContext::AnchorUnit)
@@ -2778,6 +2787,33 @@ mod tests {
         assert!(account_authority_http_client("http://localhost:8787").is_ok());
         assert!(account_authority_http_client("http://127.0.0.1:8787").is_ok());
         assert!(account_authority_http_client("http://accounts.example").is_err());
+    }
+
+    #[test]
+    fn managed_agent_pcr_genesis_does_not_bypass_proposal_receipt_authoring() {
+        let mut managed = sdk_event_with_kind(
+            "ak:event:01904100-0000-7000-8000-000000000020",
+            "ak:realm:01904100-0000-7000-8000-000000000021",
+            "ak.realm.create",
+            "did:web:agent.example",
+        );
+        managed.executed_by = Some(arkret_sdk::Did::new("did:web:alice.example").unwrap());
+        managed.authorization_ref = Some(
+            arkret_sdk::AuthorizationRef::new("did:web:agent.example#managed-controller").unwrap(),
+        );
+
+        assert!(crate::authorization_lease::is_managed_agent_pcr_genesis(
+            &managed
+        ));
+        assert!(!uses_bare_online_anchor_submission(true, &managed));
+
+        let ordinary = sdk_event_with_kind(
+            "ak:event:01904100-0000-7000-8000-000000000022",
+            "ak:realm:01904100-0000-7000-8000-000000000023",
+            "ak.realm.create",
+            "did:web:alice.example",
+        );
+        assert!(uses_bare_online_anchor_submission(true, &ordinary));
     }
 
     #[test]
