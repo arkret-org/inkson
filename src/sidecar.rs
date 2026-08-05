@@ -1925,18 +1925,18 @@ mod tests {
             controller_id: "did:web:alice.example".to_owned(),
             addressed_agent_ids: vec!["did:web:agents.example:assistant".to_owned()],
             addressed_agent_label: "Assistant".to_owned(),
-            source_realm_id: "ak:realm:019f0000-0000-7000-8000-000000000002".to_owned(),
-            source_strand_id: "ak:strand:019f0000-0000-7000-8000-000000000003".to_owned(),
+            source_realm_id: "ak:realm:019f0000-0000-8000-8000-000000000002".to_owned(),
+            source_strand_id: "ak:strand:019f0000-0000-8000-8000-000000000003".to_owned(),
             sidecar_id: arkret_sdk::SidecarId::new(
                 "ak:sidecar:019f0000-0000-7000-8000-000000000004".to_owned(),
             )
             .unwrap(),
             backing_scope_circle_id: arkret_sdk::CircleId::new(
-                "ak:circle:019f0000-0000-7000-8000-000000000007".to_owned(),
+                "ak:circle:019f0000-0000-8000-8000-000000000007".to_owned(),
             )
             .unwrap(),
-            private_strand_id: "ak:strand:019f0000-0000-7000-8000-000000000005".to_owned(),
-            private_relation_id: "ak:relation:019f0000-0000-7000-8000-000000000006".to_owned(),
+            private_strand_id: "ak:strand:019f0000-0000-8000-8000-000000000005".to_owned(),
+            private_relation_id: "ak:relation:019f0000-0000-8000-8000-000000000006".to_owned(),
             access_readiness: if pending.is_empty() {
                 arkret_sdk::AgentSidecarAccessReadiness::Ready
             } else {
@@ -1948,7 +1948,7 @@ mod tests {
                     .unwrap(),
                 control_frontier: vec![
                     arkret_sdk::NonEmptyString::new(
-                        "ak:event:019f0000-0000-7000-8000-000000000005",
+                        "ak:event:019f0000-0000-8000-8000-000000000005",
                     )
                     .unwrap(),
                 ],
@@ -2063,12 +2063,12 @@ mod tests {
     #[test]
     fn fold_evidence_is_controller_and_realm_scoped_with_a_stable_digest() {
         let account = "did:web:alice.example";
-        let realm = "ak:realm:01964137-0000-7000-8000-0000000000f1";
-        let other_realm = "ak:realm:01964137-0000-7000-8000-0000000000f2";
+        let realm = "ak:realm:01964137-0000-8000-8000-0000000000f1";
+        let other_realm = "ak:realm:01964137-0000-8000-8000-0000000000f2";
         let projection = |realm_id: &str, exchange: &str| {
             let coordinator = arkret_sdk::Did::new("did:web:agents.example:assistant").unwrap();
             let request_event =
-                arkret_sdk::EventId::new("ak:event:019f0000-0000-7000-8000-000000000009").unwrap();
+                arkret_sdk::EventId::new("ak:event:019f0000-0000-8000-8000-000000000009").unwrap();
             arkret_sdk::AgentSidecarExchangeProjection {
                 schema: arkret_sdk::AgentSidecarExchangeProjectionSchema::V1,
                 controller_id: arkret_sdk::Did::new(account).unwrap(),
@@ -2077,7 +2077,7 @@ mod tests {
                 )
                 .unwrap(),
                 private_strand_id: arkret_sdk::StrandId::new(
-                    "ak:strand:019f0000-0000-7000-8000-000000000005",
+                    "ak:strand:019f0000-0000-8000-8000-000000000005",
                 )
                 .unwrap(),
                 exchange_id: arkret_sdk::AgentSidecarExchangeId::new(exchange).unwrap(),
@@ -2085,7 +2085,7 @@ mod tests {
                 source_track_ref: arkret_sdk::AgentSidecarSourceTrackRef {
                     realm_id: arkret_sdk::RealmId::new(realm_id).unwrap(),
                     strand_id: arkret_sdk::StrandId::new(
-                        "ak:strand:019f0000-0000-7000-8000-000000000003",
+                        "ak:strand:019f0000-0000-8000-8000-000000000003",
                     )
                     .unwrap(),
                     track_name: "discussion".to_owned(),
@@ -2167,8 +2167,8 @@ mod tests {
 
     const EXCHANGE_ACCOUNT: &str = "did:web:alice.example";
     const EXCHANGE_AGENT: &str = "did:web:agents.example:assistant";
-    const EXCHANGE_REQUEST_EVENT: &str = "ak:event:019f0000-0000-7000-8000-000000000009";
-    const EXCHANGE_RESPONSE_EVENT: &str = "ak:event:019f0000-0000-7000-8000-00000000000a";
+    const EXCHANGE_REQUEST_EVENT: &str = "ak:event:019f0000-0000-8000-8000-000000000009";
+    const EXCHANGE_RESPONSE_EVENT: &str = "ak:event:019f0000-0000-8000-8000-00000000000a";
 
     fn exchange_test_store(label: &str) -> crate::state::LocalStateStore {
         let path = std::env::temp_dir().join(format!(
@@ -2507,7 +2507,7 @@ mod tests {
         // Even a server-accepted submit marker remains client-local retry
         // metadata. It cannot close the exchange before the accepted control
         // Event itself arrives through private history.
-        let close_event_id = "ak:event:019f0000-0000-7000-8000-00000000000b";
+        let close_event_id = "ak:event:019f0000-0000-8000-8000-00000000000b";
         let mut accepted_intent =
             pending_sidecar_auto_close_intents(&store, EXCHANGE_ACCOUNT, &session.source_realm_id)
                 .pop()
@@ -2635,7 +2635,7 @@ mod tests {
         // … but scoped to an unrelated Circle the controller can also read.
         event.scope_ref = arkret_wire::ScopeRef::Circle {
             realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
-            circle_id: arkret_sdk::CircleId::new("ak:circle:019f0000-0000-7000-8000-0000000000ff")
+            circle_id: arkret_sdk::CircleId::new("ak:circle:019f0000-0000-8000-8000-0000000000ff")
                 .unwrap(),
         };
         event.refs = vec![arkret_sdk::EventRef::new(EXCHANGE_REQUEST_EVENT, "after")];
@@ -2809,7 +2809,7 @@ mod tests {
     /// releasing the guard frees the slot for a retry.
     #[test]
     fn sidecar_submission_guard_blocks_concurrent_same_intent() {
-        let strand = "ak:strand:019f0000-0000-7000-8000-0000000000e1";
+        let strand = "ak:strand:019f0000-0000-8000-8000-0000000000e1";
         let intent = "guard-test-intent-digest";
         let first = try_begin_sidecar_submission(EXCHANGE_ACCOUNT, strand, intent);
         assert!(first.is_some());
@@ -2883,7 +2883,7 @@ mod tests {
         let pending = exchange_pending_submission(&session);
         save_pending_sidecar_submission(&mut store, "explicit-publish", &pending).unwrap();
         let gate = SidecarPrivacyGate::from_store(&store, EXCHANGE_ACCOUNT);
-        let message_id = "ak:message:019f0000-0000-7000-8000-0000000000e7";
+        let message_id = "ak:message:019f0000-0000-8000-8000-0000000000e7";
 
         let unconfirmed = crate::views::chat::confirmed_sidecar_publish_message_operation(
             &gate,

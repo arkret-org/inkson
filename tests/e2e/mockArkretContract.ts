@@ -3,7 +3,7 @@
 // `cotest/tests/fixtures/inkson_mock_parity.json` and gets compared
 // against a real soland process. When adding a branch, also add the
 // matching fixture case — unmatched branches are silently dead code.
-const DEMO_REALM = "ak:realm:0196419b-0000-7000-8000-000000000000";
+const DEMO_REALM = "ak:realm:0196419b-0000-8000-8000-000000000000";
 
 export function mockArkretContract(req) {
   const method = (req.method ?? "GET").toUpperCase();
@@ -43,7 +43,7 @@ export function mockArkretContract(req) {
     const acceptedId =
       body.event_id ??
       firstEventId(body.events) ??
-      "ak:event:0196419b-0000-7000-8000-00000000e2e0";
+      "ak:event:0196419b-0000-8000-8000-00000000e2e0";
     // soland's EventsSubmitOutcome skips empty/null fields (duplicate, rejected,
     // actor_frontier, realm_frontier) via serde skip_serializing_if, so a clean
     // accept serializes to exactly {status, accepted, cursor}. Match that shape.
@@ -73,7 +73,7 @@ export function mockArkretContract(req) {
         binding_state: "verified",
       },
       profile: {
-        id: "ak:actor_profile:01964137-0000-7000-8000-0000000000a1",
+        id: "ak:actor_profile:01964137-0000-8000-8000-0000000000a1",
         schema: "ak.schema.actor_profile.v1",
         principal_id: principalId,
         actor_kind: "user",
@@ -146,7 +146,7 @@ export function mockArkretContract(req) {
     const deviceId = body.new_device_pubkey?.kid ?? "ak:device:01964137-0000-7000-8000-0000000000b2";
     return json({
       device_id: deviceId,
-      authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000d001",
+      authorized_event_ref: "ak:event:01964137-0000-8000-8000-00000000d001",
     });
   }
 
@@ -185,7 +185,7 @@ export function mockArkretContract(req) {
     return json({
       state: "authorized",
       device_id: "ak:device:01964137-0000-7000-8000-0000000000b2",
-      authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000d001",
+      authorized_event_ref: "ak:event:01964137-0000-8000-8000-00000000d001",
     });
   }
 
@@ -250,7 +250,7 @@ function realmPreview() {
     join_rule: "public",
     member_count_bucket: "1-10",
     as_of: "2026-06-13T00:00:00.000Z",
-    source_refs: ["ak:event:0196419b-0000-7000-8000-000000000001"],
+    source_refs: ["ak:event:0196419b-0000-8000-8000-000000000001"],
     policy_revision: "mock-policy-rev",
   };
 }

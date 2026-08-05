@@ -328,8 +328,8 @@ mod tests {
 
     use super::*;
 
-    const REALM_ID: &str = "ak:realm:01904100-0000-7000-8000-000000000001";
-    const STRAND_ID: &str = "ak:strand:01904100-0000-7000-8000-000000000002";
+    const REALM_ID: &str = "ak:realm:01904100-0000-8000-8000-000000000001";
+    const STRAND_ID: &str = "ak:strand:01904100-0000-8000-8000-000000000002";
     const ACTOR_ID: &str = "did:web:alice.example";
     const DEVICE_ID: &str = "ak:device:01904100-0000-7000-8000-000000000003";
 

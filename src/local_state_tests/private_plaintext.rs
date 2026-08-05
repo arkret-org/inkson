@@ -76,8 +76,8 @@ fn private_plaintext_sidecar_stays_memory_only_without_secure_store() {
     // Fail-closed fallback: without a hardened store, keep the current-process
     // cache but never serialize the plaintext sidecar into account-state JSON.
     let path = temp_state_path("private-plaintext-sidecar");
-    let realm = "ak:realm:0196419b-0000-7000-8000-000000000001";
-    let strand = "ak:strand:0196419b-0000-7000-8000-0000000000aa";
+    let realm = "ak:realm:0196419b-0000-8000-8000-000000000001";
+    let strand = "ak:strand:0196419b-0000-8000-8000-0000000000aa";
     {
         let mut store = LocalStateStore::with_path(path.clone());
         store.save_private_plaintext(realm, strand, "body", "\"author body\"");
@@ -152,8 +152,8 @@ fn e2ee_plaintext_cache_round_trips_through_account_scoped_secure_store() {
 
     let path = temp_state_path("e2ee-secure-cache-roundtrip");
     let actor = "did:web:alice.example";
-    let realm = "ak:realm:0196419b-0000-7000-8000-000000000010";
-    let strand = "ak:strand:0196419b-0000-7000-8000-000000000011";
+    let realm = "ak:realm:0196419b-0000-8000-8000-000000000010";
+    let strand = "ak:strand:0196419b-0000-8000-8000-000000000011";
     let digest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     let secure = MemorySecureKeyStore::new();
 
@@ -216,7 +216,7 @@ fn receive_snapshot_and_plaintext_share_one_secure_entry() {
     use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
 
     let actor = "did:web:alice.example";
-    let realm = "ak:realm:0196419b-0000-7000-8000-000000000015";
+    let realm = "ak:realm:0196419b-0000-8000-8000-000000000015";
     let digest = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
     let secure = MemorySecureKeyStore::new();
     let envelope = encrypt_state(realm, "abcd", 4, b"advanced", "profile", b"salt");
@@ -257,7 +257,7 @@ fn secure_snapshot_replaces_stale_same_epoch_account_snapshot() {
     use crate::secure_key_store::MemorySecureKeyStore;
 
     let actor = "did:web:alice.example";
-    let realm = "ak:realm:0196419b-0000-7000-8000-000000000016";
+    let realm = "ak:realm:0196419b-0000-8000-8000-000000000016";
     let secure = MemorySecureKeyStore::new();
     let stale = encrypt_state(realm, "abcd", 5, b"stale", "profile", b"salt");
     let current = encrypt_state(realm, "abcd", 5, b"current", "profile", b"salt");
@@ -289,7 +289,7 @@ fn missing_secure_checkpoint_rolls_back_to_pre_decrypt_snapshot() {
 
     let path = temp_state_path("e2ee-interrupted-checkpoint");
     let actor = "did:web:alice.example";
-    let realm = "ak:realm:0196419b-0000-7000-8000-000000000017";
+    let realm = "ak:realm:0196419b-0000-8000-8000-000000000017";
     let digest = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
     let base = encrypt_state(realm, "abcd", 6, b"base", "profile", b"salt");
     let advanced = encrypt_state(realm, "abcd", 6, b"advanced", "profile", b"salt");
@@ -343,7 +343,7 @@ fn dropping_mls_snapshot_also_drops_receive_recovery_checkpoint() {
 
     let path = temp_state_path("e2ee-drop-recovery-checkpoint");
     let actor = "did:web:alice.example";
-    let realm = "ak:realm:0196419b-0000-7000-8000-000000000018";
+    let realm = "ak:realm:0196419b-0000-8000-8000-000000000018";
     let digest = "sha256:abababababababababababababababababababababababababababababababab";
     let secure = MemorySecureKeyStore::new();
     {
@@ -381,8 +381,8 @@ fn secure_cache_hydration_fills_gaps_without_overwriting_live_values() {
     use crate::secure_key_store::MemorySecureKeyStore;
 
     let actor = "did:web:alice.example";
-    let realm = "ak:realm:0196419b-0000-7000-8000-000000000020";
-    let strand = "ak:strand:0196419b-0000-7000-8000-000000000021";
+    let realm = "ak:realm:0196419b-0000-8000-8000-000000000020";
+    let strand = "ak:strand:0196419b-0000-8000-8000-000000000021";
     let digest_conflict = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
     let digest_gap = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
     let secure = MemorySecureKeyStore::new();
@@ -447,8 +447,8 @@ fn secure_cache_bootstrap_persists_live_values_when_no_entry_exists_yet() {
     use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
 
     let actor = "did:web:alice.example";
-    let realm = "ak:realm:0196419b-0000-7000-8000-000000000030";
-    let strand = "ak:strand:0196419b-0000-7000-8000-000000000031";
+    let realm = "ak:realm:0196419b-0000-8000-8000-000000000030";
+    let strand = "ak:strand:0196419b-0000-8000-8000-000000000031";
     let secure = MemorySecureKeyStore::new();
     let mut live = LocalStateStore::with_path(temp_state_path("e2ee-secure-cache-first-frame"));
     live.switch_active_account(actor);
@@ -499,9 +499,9 @@ fn history_secret_is_never_written_to_plaintext_state() {
 fn e2ee_plaintext_cache_usage_is_grouped_by_realm() {
     use crate::mls::persistence::encrypt_state;
 
-    let realm_a = "ak:realm:0196419b-0000-7000-8000-000000000061";
-    let realm_b = "ak:realm:0196419b-0000-7000-8000-000000000062";
-    let strand = "ak:strand:0196419b-0000-7000-8000-0000000000aa";
+    let realm_a = "ak:realm:0196419b-0000-8000-8000-000000000061";
+    let realm_b = "ak:realm:0196419b-0000-8000-8000-000000000062";
+    let strand = "ak:strand:0196419b-0000-8000-8000-0000000000aa";
     let digest = "sha256:6161616161616161616161616161616161616161616161616161616161616161";
     let mut store = LocalStateStore::with_path(temp_state_path("e2ee-cache-usage"));
     store.save_private_plaintext(realm_a, strand, "body", "alpha");
@@ -531,9 +531,9 @@ async fn explicit_e2ee_plaintext_cleanup_persists_scope_and_keeps_mls_state() {
     use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
 
     let actor = "did:web:alice.example";
-    let realm_a = "ak:realm:0196419b-0000-7000-8000-000000000063";
-    let realm_b = "ak:realm:0196419b-0000-7000-8000-000000000064";
-    let strand = "ak:strand:0196419b-0000-7000-8000-0000000000aa";
+    let realm_a = "ak:realm:0196419b-0000-8000-8000-000000000063";
+    let realm_b = "ak:realm:0196419b-0000-8000-8000-000000000064";
+    let strand = "ak:strand:0196419b-0000-8000-8000-0000000000aa";
     let digest = "sha256:6363636363636363636363636363636363636363636363636363636363636363";
     let secure = MemorySecureKeyStore::new();
     let mut store = LocalStateStore::with_path(temp_state_path("e2ee-cache-clear"));
@@ -662,8 +662,8 @@ async fn failed_durable_plaintext_cleanup_rolls_back_and_reports_error() {
     }
 
     let actor = "did:web:alice.example";
-    let realm = "ak:realm:0196419b-0000-7000-8000-000000000065";
-    let strand = "ak:strand:0196419b-0000-7000-8000-0000000000aa";
+    let realm = "ak:realm:0196419b-0000-8000-8000-000000000065";
+    let strand = "ak:strand:0196419b-0000-8000-8000-0000000000aa";
     let secure = FailingStore::default();
     let mut store = LocalStateStore::with_path(temp_state_path("e2ee-cache-clear-failure"));
     store.switch_active_account(actor);
@@ -730,9 +730,9 @@ fn disappearing_message_plaintext_drop_clears_sidecar_and_decrypt_cache() {
     use crate::mls::persistence::encrypt_state;
 
     let path = temp_state_path("disappearing-shred");
-    let realm = "ak:realm:0196419b-0000-7000-8000-000000000001";
-    let strand = "ak:strand:0196419b-0000-7000-8000-0000000000aa";
-    let message = "ak:message:0196419b-0000-7000-8000-0000000000bb";
+    let realm = "ak:realm:0196419b-0000-8000-8000-000000000001";
+    let strand = "ak:strand:0196419b-0000-8000-8000-0000000000aa";
+    let message = "ak:message:0196419b-0000-8000-8000-0000000000bb";
     let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let mut store = LocalStateStore::with_path(path.clone());
     store.save_private_plaintext(realm, strand, &format!("message:{message}"), "secret body");

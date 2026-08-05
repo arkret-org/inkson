@@ -51,8 +51,7 @@ fn canonical_space_join_rule_keeps_v1_invite_value() {
 
 #[test]
 fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
-    let events = build_realm_bootstrap_events(
-        "ak:realm:0196419b-0000-7000-8000-000000000001",
+    let (_realm_id, events) = build_realm_bootstrap_events(
         "did:web:alice.example",
         "did:web:server.example",
         "Engineering",
@@ -264,7 +263,6 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
 #[test]
 fn plaintext_realm_create_does_not_claim_e2ee_floors() {
     let envelope = build_realm_create_event(
-        "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice.example",
         "did:web:server.example",
         "Public updates",
@@ -294,7 +292,6 @@ fn plaintext_realm_create_does_not_claim_e2ee_floors() {
 #[test]
 fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
     let err = build_realm_bootstrap_events(
-        "ak:realm:0196419b-0000-7000-8000-000000000011",
         "did:web:alice.example",
         "did:web:server.example",
         "Strict history",
@@ -322,8 +319,7 @@ fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
 
 #[test]
 fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
-    let events = build_realm_bootstrap_events(
-        "ak:realm:0196419b-0000-7000-8000-000000000012",
+    let (_realm_id, events) = build_realm_bootstrap_events(
         "did:web:alice.example",
         "did:web:server.example",
         "Strict history",
@@ -385,8 +381,7 @@ fn default_history_sharing_policy_matches_prejoin_visibility() {
 /// locally-signed one.
 #[test]
 fn bootstrap_envelopes_have_no_sdk_digest_drift() {
-    let events = build_realm_bootstrap_events(
-        "ak:realm:0196419b-0000-7000-8000-000000000001",
+    let (_realm_id, events) = build_realm_bootstrap_events(
         "did:web:alice.example",
         "did:web:server.example",
         "Engineering",
@@ -438,7 +433,6 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
 #[test]
 fn realm_bootstrap_rejects_handle_seed_without_directory_evidence() {
     let err = build_realm_bootstrap_events(
-        "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice.example",
         "did:web:server.example",
         "Engineering",
@@ -467,7 +461,7 @@ fn realm_bootstrap_rejects_handle_seed_without_directory_evidence() {
 #[test]
 fn member_state_ban_event_uses_realm_scoped_member_cell() {
     let event = build_member_state_transition_event(
-        "ak:realm:0196419b-0000-7000-8000-000000000010",
+        "ak:realm:0196419b-0000-8000-8000-000000000010",
         "did:web:alice.example",
         "did:web:bob.example",
         Some("join"),
@@ -479,7 +473,7 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
     assert_eq!(event.kind.as_str(), "ak.member.state");
     assert_eq!(
         event.payload["realm_id"],
-        "ak:realm:0196419b-0000-7000-8000-000000000010"
+        "ak:realm:0196419b-0000-8000-8000-000000000010"
     );
     assert_eq!(event.payload["actor_id"], "did:web:bob.example");
     assert_eq!(event.payload["membership"], "ban");
@@ -506,7 +500,7 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
 
 #[test]
 fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
-    let strand_id = "ak:strand:0196419b-0000-7000-8000-000000000002";
+    let strand_id = "ak:strand:0196419b-0000-8000-8000-000000000002";
     let mut patch = arkret_sdk::Patch::new();
     patch
         .insert_op(
@@ -519,7 +513,7 @@ fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
         .to_value()
         .unwrap();
     let event = OperationBuilder::new(
-        "ak:realm:0196419b-0000-7000-8000-000000000010",
+        "ak:realm:0196419b-0000-8000-8000-000000000010",
         "did:web:alice.example",
         arkret_sdk::EventKind::StrandUpdate,
     )
@@ -538,8 +532,8 @@ fn space_create_payload_matches_spec_schema() {
     // `^ak:realm:UUID7` pattern; the product Space id remains a
     // separate `ak:space:*` object id.
     let event = build_space_create_event(
-        "ak:space:0196419b-0000-7000-8000-000000000010",
-        "ak:realm:0196419b-0000-7000-8000-000000000001",
+        "ak:space:0196419b-0000-8000-8000-000000000010",
+        "ak:realm:0196419b-0000-8000-8000-000000000001",
         "did:web:alice.example",
         "Roadmap",
         Some("Q3 planning"),
@@ -579,8 +573,7 @@ fn realm_bootstrap_payloads_match_spec_schema() {
         crate::event_signer::ActiveSignerTestGuard::replace(Some(std::sync::Arc::new(
             crate::event_signer::build_ed25519_signer([42_u8; 32], "did:web:alice.example"),
         )));
-    let mut events = build_realm_bootstrap_events(
-        "ak:realm:0196419b-0000-7000-8000-000000000001",
+    let (_realm_id, mut events) = build_realm_bootstrap_events(
         "did:web:alice.example",
         "did:web:server.example",
         "Engineering",
@@ -629,7 +622,7 @@ fn realm_join_and_discovery_authoring_rejects_values_outside_spec_enums() {
         crate::event_signer::ActiveSignerTestGuard::replace(Some(std::sync::Arc::new(
             crate::event_signer::build_ed25519_signer([43_u8; 32], "did:web:alice.example"),
         )));
-    let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000001";
+    let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000001";
     let actor_id = "did:web:alice.example";
 
     assert!(

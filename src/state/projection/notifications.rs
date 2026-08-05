@@ -331,7 +331,7 @@ pub(crate) fn test_event_notification(
 ) -> StoredNotification {
     let source_event_id = source_event_id
         .map(ToOwned::to_owned)
-        .unwrap_or_else(|| format!("ak:event:0196419b-0000-7000-8000-{ordinal:012x}"));
+        .unwrap_or_else(|| format!("ak:event:0196419b-0000-8000-8000-{ordinal:012x}"));
     StoredNotification::Event {
         notification: Notification {
             id: arkret_sdk::NotificationId::new(format!(

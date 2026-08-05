@@ -39,7 +39,7 @@ pub(super) fn temp_state_path(name: &str) -> PathBuf {
 }
 
 pub(super) fn snapshot_event_id(suffix: &str) -> arkret_sdk::EventId {
-    arkret_sdk::EventId::new(format!("ak:event:01904100-0000-7000-8000-{suffix}")).unwrap()
+    arkret_sdk::EventId::new(format!("ak:event:01904100-0000-8000-8000-{suffix}")).unwrap()
 }
 
 pub(super) fn snapshot_hash(seed: u8) -> arkret_sdk::Hash {
@@ -55,7 +55,7 @@ pub(super) fn snapshot_manifest_for_items(
     let snapshot_id =
         arkret_sdk::SnapshotId::new("ak:snapshot:01904100-0000-7000-8000-0000000000aa").unwrap();
     let realm_id =
-        arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-0000000000aa").unwrap();
+        arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-0000000000aa").unwrap();
     let service_id = arkret_sdk::Did::new("did:web:server.example").unwrap();
     let state_digest = arkret_sdk::state_digest_from_items(&items).unwrap();
     let built = arkret_sdk::build_snapshot_chunks(

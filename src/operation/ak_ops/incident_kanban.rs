@@ -3,7 +3,7 @@
 use serde_json::json;
 
 use super::{
-    OperationBuilder, did_id, object_create_payload_value, realm_id_value, strand_id_value,
+    OperationBuilder, did_id, object_create_payload_value, realm_id_value,
     trim_realm_id,
 };
 
@@ -20,7 +20,6 @@ pub fn kanban_card_strand_create(
 ) -> anyhow::Result<OperationBuilder> {
     let realm_id = trim_realm_id(realm_id);
     let object = arkret_sdk::StrandCreateObject::new(
-        strand_id_value(strand_id)?,
         realm_id_value(&realm_id)?,
         did_id(actor)?,
     )

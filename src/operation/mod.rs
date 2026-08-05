@@ -342,13 +342,25 @@ impl OperationBuilder {
             .collect::<anyhow::Result<Vec<_>>>()?;
         let realm_id = arkret_sdk::RealmId::new(realm_id)
             .map_err(|err| anyhow::anyhow!("invalid realm_id: {err}"))?;
-        let scope_ref = match self.circle_id {
-            Some(circle_id) => ScopeRef::Circle {
-                realm_id,
-                circle_id: arkret_sdk::CircleId::new(circle_id)
-                    .map_err(|err| anyhow::anyhow!("invalid circle_id: {err}"))?,
-            },
-            None => ScopeRef::Realm { realm_id },
+        // Spec realm-and-space.md section 2.5.0: a Realm genesis carries the
+        // closed `realm_genesis` scope and no realm_id — the Realm's id is
+        // derived from the genesis Event itself.
+        let scope_ref = if self.op_type == EventKind::RealmCreate {
+            if self.circle_id.is_some() {
+                return Err(anyhow::anyhow!(
+                    "ak.realm.create cannot be narrowed to a Circle scope"
+                ));
+            }
+            ScopeRef::RealmGenesis
+        } else {
+            match self.circle_id {
+                Some(circle_id) => ScopeRef::Circle {
+                    realm_id,
+                    circle_id: arkret_sdk::CircleId::new(circle_id)
+                        .map_err(|err| anyhow::anyhow!("invalid circle_id: {err}"))?,
+                },
+                None => ScopeRef::Realm { realm_id },
+            }
         };
         let actor_id = arkret_sdk::Did::new(self.actor)
             .map_err(|err| anyhow::anyhow!("invalid actor_id DID: {err}"))?;
@@ -401,6 +413,16 @@ impl OperationBuilder {
             .transpose()
             .map_err(|err| anyhow::anyhow!("invalid authorization_ref: {err}"))?;
         event.unsigned = unsigned;
+        // A create whose object id is `event_derived` has exactly one legal
+        // local handle: the id the receiver will derive. Stamp it here so no
+        // caller has to invent one — inventing was the whole class of bug the
+        // content-bound id form removes (spec `zh/models/common-fields.md`
+        // section 6.0).
+        if let Some(object_id) = arkret_sdk::schema::derived_object_id(&event) {
+            event
+                .unsigned
+                .insert("local_target_ref".to_owned(), Value::String(object_id));
+        }
         // Authoring pre-check. All 163 active reducer-input kinds carry a
         // complete `cell_writes[]` contract, so the receiver can always derive
         // this Event's writes from `kind + payload`. A projection that does not

@@ -303,7 +303,6 @@ pub(super) fn object_lifecycle_payload_value(target_ref: &str) -> anyhow::Result
 pub(super) fn relation_create_payload_value(
     realm_id: &str,
     actor: &str,
-    relation_id: &str,
     kind: &str,
     from_ref: &str,
     to_ref: &str,
@@ -311,8 +310,9 @@ pub(super) fn relation_create_payload_value(
 ) -> anyhow::Result<Value> {
     let relation = arkret_sdk::Relation {
         schema: arkret_wire::SchemaId::RELATION_V1.to_owned(),
-        id: arkret_sdk::RelationId::new(relation_id.to_owned())
-            .map_err(|err| anyhow::anyhow!("invalid relation id {relation_id:?}: {err}"))?,
+        // R3.1: a create payload carries no object id — the Relation id is
+        // derived from this create Event.
+        id: None,
         realm_id: arkret_sdk::RealmId::new(trim_realm_id(realm_id))
             .map_err(|err| anyhow::anyhow!("invalid relation realm_id {realm_id:?}: {err}"))?,
         scope_circle_id: scope_circle_id
@@ -341,9 +341,7 @@ pub(super) fn relation_create_payload_value(
     };
     Ok(serde_json::json!({
         "relation": serde_json::to_value(&relation).map_err(|err| {
-            anyhow::anyhow!(
-                "invalid relation_create_payload ({relation_id} {kind} {from_ref}->{to_ref}): {err}"
-            )
+            anyhow::anyhow!("invalid relation_create_payload ({kind} {from_ref}->{to_ref}): {err}")
         })?
     }))
 }

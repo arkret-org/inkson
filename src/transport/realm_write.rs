@@ -78,12 +78,12 @@ pub async fn create_realm(
         return Err(anyhow::anyhow!("title is required for ak.realm.create"));
     }
 
-    let realm_id = arkret_sdk::RealmId::new_v7_at(crate::clock::now_unix_ms()).into_string();
     let join_rule = validate_join_rule_v1(join_rule)?;
     let notary_did = submitter.service_id().await?;
     let resolved_invitees = parse_realm_bootstrap_members(&invitees)?;
-    let events = build_realm_bootstrap_events(
-        &realm_id,
+    // The Realm id is not minted here: it is derived from the genesis Event
+    // the builder produces (spec realm-and-space.md section 2.5.0).
+    let (realm_id, events) = build_realm_bootstrap_events(
         actor_id,
         &notary_did,
         title,

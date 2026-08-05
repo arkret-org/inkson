@@ -60,8 +60,8 @@ fn sidecar_transition_suspends_only_track_edits_without_mixing_drafts() {
 
 #[test]
 fn sidecar_private_track_card_uses_only_private_strand_updates() {
-    let source_id = "ak:strand:0196419b-0000-7000-8000-000000000011";
-    let private_id = "ak:strand:0196419b-0000-7000-8000-000000000012";
+    let source_id = "ak:strand:0196419b-0000-8000-8000-000000000011";
+    let private_id = "ak:strand:0196419b-0000-8000-8000-000000000012";
     let mut source = test_card(source_id, "U");
     source.primary_strand_id = source_id.to_owned();
     source.body = "shared body".to_owned();
@@ -787,26 +787,26 @@ fn locate_strand_position_finds_present_strand_with_rank() {
         serde_json::from_value(serde_json::json!({
             "projection": "collection",
             "renderer": "board",
-            "view_id": "ak:view:01904100-0000-7000-8000-000000000001",
+            "view_id": "ak:view:01904100-0000-8000-8000-000000000001",
             "frontier": {
                 "state_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
             },
             "groups": [{
-                "key": "ak:space:01904100-0000-7000-8000-000000000021",
+                "key": "ak:space:01904100-0000-8000-8000-000000000021",
                 "title": "Review",
                 "rank": "U",
                 "items": [{
                     "object": {
-                        "id": "ak:strand:01904100-0000-7000-8000-000000000023",
+                        "id": "ak:strand:01904100-0000-8000-8000-000000000023",
                         "kind": "strand",
                         "title": "Find me"
                     },
                     "position": {
                     "model": "relation",
-                    "scope_container_id": "ak:space:01904100-0000-7000-8000-000000000020",
-                    "container_id": "ak:space:01904100-0000-7000-8000-000000000021",
+                    "scope_container_id": "ak:space:01904100-0000-8000-8000-000000000020",
+                    "container_id": "ak:space:01904100-0000-8000-8000-000000000021",
                     "relation_kind": "contains",
-                    "relation_id": "ak:relation:01904100-0000-7000-8000-000000000022",
+                    "relation_id": "ak:relation:01904100-0000-8000-8000-000000000022",
                     "rank": "h3"
                 }}],
                 "limited": false
@@ -815,12 +815,12 @@ fn locate_strand_position_finds_present_strand_with_rank() {
         .unwrap();
     let expected = locate_strand_position_in_projection(
         &projection,
-        "ak:strand:01904100-0000-7000-8000-000000000023",
+        "ak:strand:01904100-0000-8000-8000-000000000023",
     );
     assert_eq!(
         expected,
         StrandPositionExpectation::At {
-            list_space_id: "ak:space:01904100-0000-7000-8000-000000000021".to_owned(),
+            list_space_id: "ak:space:01904100-0000-8000-8000-000000000021".to_owned(),
             rank: "h3".to_owned(),
         }
     );
@@ -835,7 +835,7 @@ fn locate_strand_position_missing_strand_returns_initial() {
         serde_json::from_value(serde_json::json!({
             "projection": "collection",
             "renderer": "board",
-            "view_id": "ak:view:01904100-0000-7000-8000-000000000001",
+            "view_id": "ak:view:01904100-0000-8000-8000-000000000001",
             "frontier": {
                 "state_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
             },
@@ -877,7 +877,7 @@ fn seed_strand_ids_are_valid_object_patch_targets() {
         // SDK RealmId is strictly `ak:realm:<uuid7>` now; the realm arg can
         // no longer be the demo Space id.
         let event = crate::operation::ak_ops::strand_update_patch(
-            "ak:realm:0196419b-0000-7000-8000-00000000b0a0",
+            "ak:realm:0196419b-0000-8000-8000-00000000b0a0",
             "did:web:acme.example:users:alice",
             strand_id,
             json!({"synthesis": {"$op": "set", "value": "demo synthesis"}}),

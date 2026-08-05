@@ -71,7 +71,7 @@ mod tests {
         )
         .unwrap();
         arkret_sdk::MlsGovernanceBindingPayload::realm(
-            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001".to_owned())
+            arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001".to_owned())
                 .unwrap(),
             "mls-group-1",
             7,

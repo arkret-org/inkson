@@ -758,7 +758,7 @@ mod tests {
 
         let envelope = out
             .build_publish_envelope(
-                "ak:realm:01964137-0000-7000-8000-000000000aaa",
+                "ak:realm:01964137-0000-8000-8000-000000000aaa",
                 principal.as_str(),
             )
             .unwrap();

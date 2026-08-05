@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn aggregate_admin_grant_authorship_binds_the_registry_snapshot() {
         let event = capability_grant_actions(
-            "ak:realm:019f9000-0000-7000-8000-000000000001",
+            "ak:realm:019f9000-0000-8000-8000-000000000001",
             "did:web:issuer.example",
             "ak:grant:019f9000-0000-7000-8000-000000000002",
             "did:web:subject.example",
@@ -182,7 +182,7 @@ mod tests {
             event.payload["grant"]["issuer_authority_refs"],
             json!([{
                 "kind": "realm_root",
-                "realm_id": "ak:realm:019f9000-0000-7000-8000-000000000001",
+                "realm_id": "ak:realm:019f9000-0000-8000-8000-000000000001",
                 "cell_ref": "ak:cell:ak.component.realm.authority_root.v1:null",
                 "controller_epoch_at_issuance": 0,
                 "authority_generation": 0

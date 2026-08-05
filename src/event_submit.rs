@@ -2791,11 +2791,10 @@ mod tests {
 
     #[test]
     fn managed_agent_pcr_genesis_does_not_bypass_proposal_receipt_authoring() {
-        let mut managed = sdk_event_with_kind(
-            "ak:event:01904100-0000-7000-8000-000000000020",
-            "ak:realm:01904100-0000-7000-8000-000000000021",
-            "ak.realm.create",
+        let mut managed = realm_create_sdk_event(
+            "ak:event:01904100-0000-8000-8000-000000000020",
             "did:web:agent.example",
+            None,
         );
         managed.executed_by = Some(arkret_sdk::Did::new("did:web:alice.example").unwrap());
         managed.authorization_ref = Some(
@@ -2807,11 +2806,10 @@ mod tests {
         ));
         assert!(!uses_bare_online_anchor_submission(true, &managed));
 
-        let ordinary = sdk_event_with_kind(
-            "ak:event:01904100-0000-7000-8000-000000000022",
-            "ak:realm:01904100-0000-7000-8000-000000000023",
-            "ak.realm.create",
+        let ordinary = realm_create_sdk_event(
+            "ak:event:01904100-0000-8000-8000-000000000022",
             "did:web:alice.example",
+            None,
         );
         assert!(uses_bare_online_anchor_submission(true, &ordinary));
     }
@@ -2850,7 +2848,7 @@ mod tests {
         second.actor_seq = 42;
         second.hlc = None;
         second.prev_refs = vec![
-            arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000099".to_owned())
+            arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000099".to_owned())
                 .unwrap(),
         ];
         second.unsigned.insert(
@@ -2881,7 +2879,7 @@ mod tests {
     #[test]
     fn capability_payload_validation_does_not_mutate_queue_intent() {
         let mut event = crate::operation::ak_ops::capability_grant_actions(
-            "ak:realm:01904100-0000-7000-8000-000000000001",
+            "ak:realm:01904100-0000-8000-8000-000000000001",
             "did:web:alice.example",
             "ak:grant:01904100-0000-7000-8000-000000000002",
             "did:web:bob.example",
@@ -2964,20 +2962,20 @@ mod tests {
     #[test]
     fn pending_chat_projection_ignores_sent_items_and_other_conversations() {
         let realm =
-            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001".to_owned())
+            arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001".to_owned())
                 .unwrap();
         let actor = "did:web:alice.example";
         let mut queue = garth::SendQueue::new();
         let pending = sdk_event_with_kind(
-            "ak:event:01904100-0000-7000-8000-000000000001",
+            "ak:event:01904100-0000-8000-8000-000000000001",
             realm.as_str(),
             "ak.message.create",
             actor,
         );
         let mut pending = pending;
         pending.payload = serde_json::from_value(json!({
-            "message_id": "ak:message:01904100-0000-7000-8000-000000000001",
-            "strand_id": "ak:strand:01904100-0000-7000-8000-000000000010"
+            "message_id": "ak:message:01904100-0000-8000-8000-000000000001",
+            "strand_id": "ak:strand:01904100-0000-8000-8000-000000000010"
         }))
         .unwrap();
         queue
@@ -3004,14 +3002,14 @@ mod tests {
             .unwrap();
 
         let mut other_conversation = sdk_event_with_kind(
-            "ak:event:01904100-0000-7000-8000-000000000003",
+            "ak:event:01904100-0000-8000-8000-000000000003",
             realm.as_str(),
             "ak.message.create",
             actor,
         );
         other_conversation.payload = serde_json::from_value(json!({
-            "message_id": "ak:message:01904100-0000-7000-8000-000000000003",
-            "strand_id": "ak:strand:01904100-0000-7000-8000-000000000099"
+            "message_id": "ak:message:01904100-0000-8000-8000-000000000003",
+            "strand_id": "ak:strand:01904100-0000-8000-8000-000000000099"
         }))
         .unwrap();
         queue
@@ -3038,7 +3036,7 @@ mod tests {
             .unwrap();
 
         let sent = sdk_event_with_kind(
-            "ak:event:01904100-0000-7000-8000-000000000002",
+            "ak:event:01904100-0000-8000-8000-000000000002",
             realm.as_str(),
             "ak.message.create",
             actor,
@@ -3081,7 +3079,7 @@ mod tests {
             .mark_sent(
                 &sent_transaction,
                 arkret_sdk::EventId::new(
-                    "ak:event:01904100-0000-7000-8000-000000000099".to_owned(),
+                    "ak:event:01904100-0000-8000-8000-000000000099".to_owned(),
                 )
                 .unwrap(),
                 vec![crate::authorization_lease::test_support::receipt(
@@ -3095,20 +3093,20 @@ mod tests {
             pending_chat_message_ids_from_snapshot(
                 &queue.snapshot(),
                 realm.as_str(),
-                "ak:strand:01904100-0000-7000-8000-000000000010",
+                "ak:strand:01904100-0000-8000-8000-000000000010",
             ),
             std::collections::BTreeSet::from([
-                "ak:message:01904100-0000-7000-8000-000000000001".to_owned()
+                "ak:message:01904100-0000-8000-8000-000000000001".to_owned()
             ])
         );
     }
 
     fn sdk_event_without_proof(actor_id: &str) -> arkret_sdk::Event {
         serde_json::from_value(json!({
-            "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
+            "event_id": "ak:event:01904100-0000-8000-8000-000000000001",
             "kind": "ak.presence",
-            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
-            "scope_ref": {"kind": "realm", "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001"},
+            "realm_id": "ak:realm:01904100-0000-8000-8000-000000000001",
+            "scope_ref": {"kind": "realm", "realm_id": "ak:realm:01904100-0000-8000-8000-000000000001"},
             "actor_id": actor_id,
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00.000Z",
@@ -3145,21 +3143,28 @@ mod tests {
         .unwrap()
     }
 
+    /// A genesis `ak.realm.create` carries no `realm_id` and no
+    /// `payload.object.id`: both are derived from `event_id`, so the caller
+    /// picks the Event id and reads the Realm id back off the envelope.
     fn realm_create_sdk_event(
-        realm_id: &str,
+        event_id: &str,
         created_by: &str,
         registry_digest: Option<&str>,
     ) -> arkret_sdk::Event {
-        let mut event = sdk_event_with_kind(
-            "ak:event:01904100-0000-7000-8000-00000000000c",
-            realm_id,
-            "ak.realm.create",
-            created_by,
-        );
-        let mut object = json!({
-            "id": realm_id,
-            "created_by": created_by,
-        });
+        let mut event: arkret_sdk::Event = serde_json::from_value(json!({
+            "event_id": event_id,
+            "kind": "ak.realm.create",
+            "scope_ref": {"kind": "realm_genesis"},
+            "actor_id": created_by,
+            "actor_seq": 1,
+            "created_at": "2026-05-19T00:00:00.000Z",
+            "hlc": "01970e589d21-0001-a13f9c2e",
+            "prev_refs": [],
+            "payload": {},
+            "proofs": []
+        }))
+        .unwrap();
+        let mut object = json!({ "created_by": created_by });
         if let Some(digest) = registry_digest {
             object["capability_action_registry_digest"] = json!(digest);
         }
@@ -3167,7 +3172,10 @@ mod tests {
         event
     }
 
-    const AUTHORITY_REALM: &str = "ak:realm:01904100-0000-7000-8000-00000000000a";
+    const AUTHORITY_GENESIS_EVENT: &str = "ak:event:01904100-0000-8000-8000-00000000000c";
+    /// Any well-formed Realm id: used by the non-genesis events below, which
+    /// still carry `realm_id` on the wire.
+    const AUTHORITY_REALM: &str = "ak:realm:01904100-0000-8000-8000-00000000000a";
     const AUTHORITY_CONTROLLER: &str = "did:web:alice.example";
     const AUTHORITY_DIGEST: &str =
         "sha256:0000000000000000000000000000000000000000000000000000000000000000";
@@ -3175,12 +3183,13 @@ mod tests {
     #[test]
     fn realm_create_authority_resolves_the_root_controller() {
         let events = [realm_create_sdk_event(
-            AUTHORITY_REALM,
+            AUTHORITY_GENESIS_EVENT,
             AUTHORITY_CONTROLLER,
             Some(AUTHORITY_DIGEST),
         )];
+        let realm_id = events[0].realm_id.to_string();
         assert_eq!(
-            realm_create_authority_from_events(&events, AUTHORITY_REALM),
+            realm_create_authority_from_events(&events, &realm_id),
             Some(RealmCreateAuthority::Root {
                 controller_id: AUTHORITY_CONTROLLER.to_owned()
             })
@@ -3192,31 +3201,41 @@ mod tests {
         // Pre-authority-root creates never carried the create-locked digest;
         // such a Realm has no root cell and must not be claimed.
         let events = [realm_create_sdk_event(
-            AUTHORITY_REALM,
+            AUTHORITY_GENESIS_EVENT,
             AUTHORITY_CONTROLLER,
             None,
         )];
+        let realm_id = events[0].realm_id.to_string();
         assert_eq!(
-            realm_create_authority_from_events(&events, AUTHORITY_REALM),
+            realm_create_authority_from_events(&events, &realm_id),
             Some(RealmCreateAuthority::NoAuthorityRoot)
         );
     }
 
     #[test]
     fn realm_create_authority_ignores_other_realms_and_kinds() {
+        // A create for a *different* Realm: a different genesis Event id, so a
+        // different derived Realm id.
         let other_realm = realm_create_sdk_event(
-            "ak:realm:01904100-0000-7000-8000-00000000000b",
+            "ak:event:01904100-0000-8000-8000-00000000000b",
             "did:web:mallory.example",
             Some(AUTHORITY_DIGEST),
         );
+        let authority_realm = realm_create_sdk_event(
+            AUTHORITY_GENESIS_EVENT,
+            AUTHORITY_CONTROLLER,
+            Some(AUTHORITY_DIGEST),
+        )
+        .realm_id
+        .to_string();
         let other_kind = sdk_event_with_kind(
-            "ak:event:01904100-0000-7000-8000-00000000000d",
-            AUTHORITY_REALM,
+            "ak:event:01904100-0000-8000-8000-00000000000d",
+            &authority_realm,
             "ak.strand.create",
             AUTHORITY_CONTROLLER,
         );
         assert_eq!(
-            realm_create_authority_from_events(&[other_realm, other_kind], AUTHORITY_REALM),
+            realm_create_authority_from_events(&[other_realm, other_kind], &authority_realm),
             None
         );
     }
@@ -3240,7 +3259,7 @@ mod tests {
         };
         let event = |actor: &str| {
             sdk_event_with_kind(
-                "ak:event:01904100-0000-7000-8000-00000000000e",
+                "ak:event:01904100-0000-8000-8000-00000000000e",
                 AUTHORITY_REALM,
                 "ak.strand.create",
                 actor,
@@ -3276,7 +3295,7 @@ mod tests {
             controller_id: AUTHORITY_CONTROLLER.to_owned(),
         };
         let mut with_grant = sdk_event_with_kind(
-            "ak:event:01904100-0000-7000-8000-00000000000f",
+            "ak:event:01904100-0000-8000-8000-00000000000f",
             AUTHORITY_REALM,
             "ak.strand.create",
             AUTHORITY_CONTROLLER,
@@ -3288,7 +3307,7 @@ mod tests {
         assert_eq!(realm_authority_root_claim(&with_grant, Some(&root)), None);
 
         let mut executed_by_service = sdk_event_with_kind(
-            "ak:event:01904100-0000-7000-8000-000000000010",
+            "ak:event:01904100-0000-8000-8000-000000000010",
             AUTHORITY_REALM,
             "ak.strand.create",
             AUTHORITY_CONTROLLER,
@@ -3314,7 +3333,7 @@ mod tests {
     async fn stamp_realm_authority_root_claim_stamps_from_cached_create_facts() {
         // Unique Realm id: the create-facts cache is process-global and tests
         // run in parallel.
-        let realm = "ak:realm:01904100-0000-7000-8000-0000000000aa";
+        let realm = "ak:realm:01904100-0000-8000-8000-0000000000aa";
         realm_create_authority_cache()
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -3325,7 +3344,7 @@ mod tests {
                 },
             );
         let mut event = sdk_event_with_kind(
-            "ak:event:01904100-0000-7000-8000-000000000011",
+            "ak:event:01904100-0000-8000-8000-000000000011",
             realm,
             "ak.strand.create",
             AUTHORITY_CONTROLLER,
@@ -3349,7 +3368,7 @@ mod tests {
     /// resolvable.
     #[tokio::test]
     async fn frozen_intent_replay_must_not_upgrade_the_authorization_claim() {
-        let realm = "ak:realm:01904100-0000-7000-8000-0000000000ad";
+        let realm = "ak:realm:01904100-0000-8000-8000-0000000000ad";
         realm_create_authority_cache()
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -3362,7 +3381,7 @@ mod tests {
         // Outage-era intent: owner-authored kind, but no claim was resolvable
         // at enqueue time.
         let mut event = sdk_event_with_kind(
-            "ak:event:01904100-0000-7000-8000-000000000013",
+            "ak:event:01904100-0000-8000-8000-000000000013",
             realm,
             "ak.message.create",
             AUTHORITY_CONTROLLER,
@@ -3396,8 +3415,8 @@ mod tests {
         // fail the submit — a member's ordinary grant path stays usable when
         // the create lookup is unavailable.
         let mut event = sdk_event_with_kind(
-            "ak:event:01904100-0000-7000-8000-000000000012",
-            "ak:realm:01904100-0000-7000-8000-0000000000ab",
+            "ak:event:01904100-0000-8000-8000-000000000012",
+            "ak:realm:01904100-0000-8000-8000-0000000000ab",
             "ak.strand.create",
             AUTHORITY_CONTROLLER,
         );
@@ -3413,7 +3432,7 @@ mod tests {
         // freeze a stamped intent, author the envelope from it the way the
         // outbound drive does, and require `EventIntent` equality — the exact
         // check `decode_queued_sdk_event` enforces on the persisted attempt.
-        let realm = "ak:realm:01904100-0000-7000-8000-0000000000ac";
+        let realm = "ak:realm:01904100-0000-8000-8000-0000000000ac";
         realm_create_authority_cache()
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -3426,9 +3445,9 @@ mod tests {
         let event = crate::operation::ak_ops::kanban_card_strand_create(
             realm,
             AUTHORITY_CONTROLLER,
-            "ak:strand:01904100-0000-7000-8000-000000000031",
-            "ak:space:01904100-0000-7000-8000-000000000032",
-            "ak:space:01904100-0000-7000-8000-000000000033",
+            "ak:strand:01904100-0000-8000-8000-000000000031",
+            "ak:space:01904100-0000-8000-8000-000000000032",
+            "ak:space:01904100-0000-8000-8000-000000000033",
             "probe card",
             "a0",
         )
@@ -3470,7 +3489,7 @@ mod tests {
         );
         authored.actor_seq = 7;
         authored.prev_refs = vec![
-            arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000034".to_owned())
+            arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000034".to_owned())
                 .unwrap(),
         ];
         authored.hlc = Some(arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap());
@@ -3572,9 +3591,7 @@ mod tests {
                 .service_id()
                 .await
                 .map_err(|error| format!("service describe failed: {error:#}"))?;
-            let realm_id = format!("ak:realm:{}", uuid_v7());
-            let bootstrap = crate::event_builders::build_realm_bootstrap_events(
-                &realm_id,
+            let (realm_id, bootstrap) = crate::event_builders::build_realm_bootstrap_events(
                 &actor,
                 &notary_did,
                 "root-claim live probe",
@@ -3743,9 +3760,9 @@ mod tests {
         let hook = InksonPostAcceptHook {
             state_store: Some(handle),
         };
-        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
+        let realm_id = "ak:realm:01904100-0000-8000-8000-000000000001";
         let event = sdk_event_with_kind(
-            "ak:event:01904100-0000-7000-8000-000000000001",
+            "ak:event:01904100-0000-8000-8000-000000000001",
             realm_id,
             "ak.mls.commit",
             "did:web:alice.example",
@@ -3792,7 +3809,7 @@ mod tests {
             )
             .unwrap();
         let event_id =
-            arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000001").unwrap();
+            arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000001").unwrap();
 
         hook.post_accept(&item, &event_id, false).await.unwrap();
         hook.post_accept(&item, &event_id, true).await.unwrap();
@@ -3811,15 +3828,15 @@ mod tests {
 
     #[test]
     fn queued_mls_admission_round_trips_exact_welcome_material() {
-        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
+        let realm_id = "ak:realm:01904100-0000-8000-8000-000000000001";
         let commit = sdk_event_with_kind(
-            "ak:event:01904100-0000-7000-8000-000000000010",
+            "ak:event:01904100-0000-8000-8000-000000000010",
             realm_id,
             "ak.mls.commit",
             "did:web:alice.example",
         );
         let mut welcome = sdk_event_with_kind(
-            "ak:event:01904100-0000-7000-8000-000000000011",
+            "ak:event:01904100-0000-8000-8000-000000000011",
             realm_id,
             "ak.mls.welcome",
             "did:web:alice.example",
@@ -3895,9 +3912,9 @@ mod tests {
             move |read| read(&read_store.lock().unwrap()),
             move |write| write(&mut write_store.lock().unwrap()),
         );
-        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
+        let realm_id = "ak:realm:01904100-0000-8000-8000-000000000001";
         let welcome = sdk_event_with_kind(
-            "ak:event:01904100-0000-7000-8000-000000000011",
+            "ak:event:01904100-0000-8000-8000-000000000011",
             realm_id,
             "ak.mls.welcome",
             "did:web:alice.example",
@@ -3926,7 +3943,7 @@ mod tests {
         let error = persist_post_accept_action(
             Some(&handle),
             action,
-            arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000099").unwrap(),
+            arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000099").unwrap(),
         )
         .await
         .unwrap_err();
@@ -3940,7 +3957,7 @@ mod tests {
     fn apply_actor_frontier_stamps_next_sequence_and_predecessor() {
         let mut event = sdk_event_without_proof("did:web:alice.example");
         let frontier_event_id =
-            arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000002").unwrap();
+            arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000002").unwrap();
         let frontier = arkret_sdk::RealmActorFrontierView::new(
             event.realm_id.clone(),
             arkret_sdk::Did::new("did:web:alice.example").unwrap(),
@@ -3965,7 +3982,6 @@ mod tests {
     #[test]
     fn actor_frontier_stamp_does_not_move_cell_local_ordered_log_sequence() {
         let mut event = crate::event_builders::build_realm_create_event(
-            "ak:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "did:web:alice.example",
             "Frontier",
@@ -3997,7 +4013,7 @@ mod tests {
             event.actor_id.clone(),
             8,
             vec![
-                arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000002").unwrap(),
+                arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000002").unwrap(),
             ],
             arkret_sdk::canonical::DigestSuite::Sha256,
         )
@@ -4038,8 +4054,7 @@ mod tests {
                 "ak:device:01904100-0000-7000-8000-a11ce0000001",
             )),
         ));
-        let events = crate::event_builders::build_realm_bootstrap_events(
-            "ak:realm:0196419b-0000-7000-8000-000000000001",
+        let (_realm_id, events) = crate::event_builders::build_realm_bootstrap_events(
             "did:web:alice.example",
             "did:web:server.example",
             "Engineering",
@@ -4112,7 +4127,7 @@ mod tests {
             arkret_sdk::Did::new("did:web:bob.example").unwrap(),
             8,
             vec![
-                arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000002").unwrap(),
+                arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000002").unwrap(),
             ],
             arkret_sdk::canonical::DigestSuite::Sha256,
         )
@@ -4128,7 +4143,7 @@ mod tests {
     #[test]
     fn actor_seq_cas_conflict_classifier_is_narrow() {
         let current_frontier = arkret_sdk::RealmActorFrontierView::new(
-            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),
+            arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001").unwrap(),
             arkret_sdk::Did::new("did:web:alice.example").unwrap(),
             0,
             vec![],
@@ -4164,20 +4179,20 @@ mod tests {
 
     #[test]
     fn mls_genesis_event_lookup_filters_kind_and_realm() {
-        let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
-        let other_realm = "ak:realm:01904100-0000-7000-8000-000000000099";
+        let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
+        let other_realm = "ak:realm:01904100-0000-8000-8000-000000000099";
         let expected =
-            arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000003").unwrap();
+            arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000003").unwrap();
         let outcome = arkret_sdk::EventsQueryOutcome {
             events: vec![
                 sdk_event_with_kind(
-                    "ak:event:01904100-0000-7000-8000-000000000001",
+                    "ak:event:01904100-0000-8000-8000-000000000001",
                     realm,
                     "ak.message.create",
                     "did:web:alice.example",
                 ),
                 sdk_event_with_kind(
-                    "ak:event:01904100-0000-7000-8000-000000000002",
+                    "ak:event:01904100-0000-8000-8000-000000000002",
                     other_realm,
                     "ak.mls.genesis",
                     "did:web:alice.example",
@@ -4203,7 +4218,7 @@ mod tests {
         assert_eq!(
             mls_genesis_event_id_from_events(
                 &outcome,
-                "ak:realm:01904100-0000-7000-8000-000000000123"
+                "ak:realm:01904100-0000-8000-8000-000000000123"
             ),
             None
         );

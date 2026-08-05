@@ -14,8 +14,8 @@ fn direct_route_resolves_agent_peer_independently_of_reply_participation() {
                 "controller_id": "did:web:example.com:users:alice",
                 "agent_slug": "aa",
                 "direct_conversation": {
-                    "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000020",
-                    "main_strand_id": "ak:strand:0196419b-0000-7000-8000-000000000021",
+                    "realm_id": "ak:realm:0196419b-0000-8000-8000-000000000020",
+                    "main_strand_id": "ak:strand:0196419b-0000-8000-8000-000000000021",
                     "state": "found"
                 }
             }]
@@ -26,8 +26,8 @@ fn direct_route_resolves_agent_peer_independently_of_reply_participation() {
     assert_eq!(
         route_surface::direct_conversation_peer_id(
             &contacts,
-            "ak:realm:0196419b-0000-7000-8000-000000000020",
-            "ak:strand:0196419b-0000-7000-8000-000000000021",
+            "ak:realm:0196419b-0000-8000-8000-000000000020",
+            "ak:strand:0196419b-0000-8000-8000-000000000021",
         ),
         "did:web:example.com:agents:aa"
     );
@@ -132,7 +132,7 @@ fn ensure_default_push_token_provider_installs_a_provider_and_is_idempotent() {
 
 #[test]
 fn unread_notification_count_ignores_read_and_archived_items() {
-    let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000001";
+    let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000001";
     let mut projection = (1..=5)
         .map(|ordinal| {
             crate::state::projection::notifications::test_event_notification(
@@ -819,37 +819,37 @@ fn setup_section_route_labels_match_realm_and_space_forms() {
 #[test]
 fn kanban_board_route_uses_realm_context_for_mls_bootstrap() {
     let route = Route::KanbanBoard {
-        realm_id: "ak:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
-        board_id: "ak:space:019e67ae-e633-7ef4-8a64-1f736d75d8ad".to_owned(),
+        realm_id: "ak:realm:019e67a5-8edc-8347-9ca1-a0b880987bdc".to_owned(),
+        board_id: "ak:space:019e67ae-e633-8ef4-8a64-1f736d75d8ad".to_owned(),
     };
 
     assert!(route_uses_realm_context(&route));
     assert_eq!(
         route.realm_id(),
-        Some("ak:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc")
+        Some("ak:realm:019e67a5-8edc-8347-9ca1-a0b880987bdc")
     );
 }
 
 #[test]
 fn kanban_board_task_route_uses_realm_context_for_mls_bootstrap() {
     let route = Route::KanbanBoardTask {
-        realm_id: "ak:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
-        board_id: "ak:space:019e67ae-e633-7ef4-8a64-1f736d75d8ad".to_owned(),
-        task_id: "ak:strand:019e67b1-0000-7000-8000-000000000001".to_owned(),
+        realm_id: "ak:realm:019e67a5-8edc-8347-9ca1-a0b880987bdc".to_owned(),
+        board_id: "ak:space:019e67ae-e633-8ef4-8a64-1f736d75d8ad".to_owned(),
+        task_id: "ak:strand:019e67b1-0000-8000-8000-000000000001".to_owned(),
     };
 
     assert!(route_uses_realm_context(&route));
     assert_eq!(
         route.realm_id(),
-        Some("ak:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc")
+        Some("ak:realm:019e67a5-8edc-8347-9ca1-a0b880987bdc")
     );
 }
 
 #[test]
 fn board_first_mls_bootstrap_key_never_prompts_for_passphrase() {
     let route = Route::KanbanBoard {
-        realm_id: "ak:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
-        board_id: "ak:space:019e67ae-e633-7ef4-8a64-1f736d75d8ad".to_owned(),
+        realm_id: "ak:realm:019e67a5-8edc-8347-9ca1-a0b880987bdc".to_owned(),
+        board_id: "ak:space:019e67ae-e633-8ef4-8a64-1f736d75d8ad".to_owned(),
     };
     let realm_id = route.realm_id().expect("board route carries a realm id");
 
@@ -1006,7 +1006,7 @@ fn mls_welcome_bootstrap_key_waits_for_e2ee_profile_and_sync() {
     let session = "session-token";
     let actor = "did:web:inkson.example";
     let device = "ak:device:01964137-0000-7000-8000-000000000001";
-    let realm = "ak:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc";
+    let realm = "ak:realm:019e67a5-8edc-8347-9ca1-a0b880987bdc";
 
     assert_eq!(
         mls_welcome_bootstrap_key(base, session, actor, device, realm, false, true),

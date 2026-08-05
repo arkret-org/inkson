@@ -95,7 +95,7 @@ fn private_strand_display_text_blanks_undecryptable_envelope() {
     let store = temp_state_store("private-strand-blank");
     let ctx = MlsDecryptCtx {
         state_store: &store,
-        realm_id: "ak:realm:01904100-0000-7000-8000-000000000001",
+        realm_id: "ak:realm:01904100-0000-8000-8000-000000000001",
         actor_id: "did:web:alice.example",
         device_id: "ak:device:01904100-0000-7000-8000-000000000001",
         circle_id: None,
@@ -110,8 +110,8 @@ fn private_strand_field_text_prefers_local_sidecar_plaintext() {
     // (OpenMLS refuses the author's own ciphertext). The local sidecar
     // is the only source. With a sidecar hit and NO MLS group at all,
     // the builder must still render the plaintext.
-    let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
-    let strand = "ak:strand:01904100-0000-7000-8000-0000000000ab";
+    let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
+    let strand = "ak:strand:01904100-0000-8000-8000-0000000000ab";
     let mut store = temp_state_store("private-strand-sidecar");
     // The writer stores the JSON-serialized patch value (a bare string).
     store.save_private_plaintext(realm, strand, "body", "\"author body\"");
@@ -138,7 +138,7 @@ fn private_strand_field_text_prefers_local_sidecar_plaintext() {
     assert_eq!(
         private_strand_field_text(
             Some(&ctx),
-            "ak:strand:01904100-0000-7000-8000-0000000000cd",
+            "ak:strand:01904100-0000-8000-8000-0000000000cd",
             "body",
             Some(&envelope)
         ),
@@ -148,8 +148,8 @@ fn private_strand_field_text_prefers_local_sidecar_plaintext() {
 
 #[test]
 fn private_strand_empty_sidecar_does_not_mask_encrypted_locked_state() {
-    let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
-    let strand = "ak:strand:01904100-0000-7000-8000-0000000000ab";
+    let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
+    let strand = "ak:strand:01904100-0000-8000-8000-0000000000ab";
     let mut store = temp_state_store("private-strand-empty-sidecar");
     store.save_private_plaintext(realm, strand, "synthesis", "\"\"");
     let ctx = MlsDecryptCtx {
@@ -184,8 +184,8 @@ fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
     // un-decryptable MLS envelope, with NO MLS snapshot present. The
     // card must show the author's plaintext (proving the author sees
     // own content with zero decryption).
-    let realm = "ak:realm:01904100-0000-7000-8000-000000000000";
-    let strand = "ak:strand:01904100-0000-7000-8000-0000000000ab";
+    let realm = "ak:realm:01904100-0000-8000-8000-000000000000";
+    let strand = "ak:strand:01904100-0000-8000-8000-0000000000ab";
     let mut store = temp_state_store("card-builder-sidecar");
     store.save_private_plaintext(realm, strand, "body", "\"recovered body\"");
     let ctx = MlsDecryptCtx {

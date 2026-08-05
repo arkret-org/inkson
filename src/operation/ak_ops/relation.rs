@@ -12,18 +12,12 @@ pub fn relation_create(
     from_ref: &str,
     to_ref: &str,
 ) -> anyhow::Result<OperationBuilder> {
-    let relation_id = format!("ak:relation:{}", crate::operation::uuid_v7());
+    // No relation id is minted here: `OperationBuilder` stamps the derived one
+    // as `unsigned.local_target_ref` once the envelope exists.
     Ok(
         OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::RelationCreate)
-            .target_ref(&relation_id)
             .body(relation_create_payload_value(
-                realm_id,
-                actor,
-                &relation_id,
-                kind,
-                from_ref,
-                to_ref,
-                None,
+                realm_id, actor, kind, from_ref, to_ref, None,
             )?),
     )
 }

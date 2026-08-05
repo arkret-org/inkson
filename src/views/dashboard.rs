@@ -831,11 +831,11 @@ mod tests {
                 peer_service_id: None,
                 direct_conversation: direct_ready.then(|| arkret_sdk::DirectConversationSummary {
                     realm_id: arkret_sdk::RealmId::new(
-                        "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+                        "ak:realm:01904100-0000-8000-8000-000000000001".to_owned(),
                     )
                     .unwrap(),
                     main_strand_id: arkret_sdk::StrandId::new(
-                        "ak:strand:01904100-0000-7000-8000-000000000002".to_owned(),
+                        "ak:strand:01904100-0000-8000-8000-000000000002".to_owned(),
                     )
                     .unwrap(),
                     binding_event_ref: None,
@@ -900,11 +900,11 @@ mod tests {
                 }
             }),
         };
-        let realm_a = "ak:realm:01904100-0000-7000-8000-000000000001";
-        let realm_b = "ak:realm:01904100-0000-7000-8000-000000000002";
+        let realm_a = "ak:realm:01904100-0000-8000-8000-000000000001";
+        let realm_b = "ak:realm:01904100-0000-8000-8000-000000000002";
         let operations = vec![
-            operation("ak:strand:01904100-0000-7000-8000-000000000011", realm_a),
-            operation("ak:strand:01904100-0000-7000-8000-000000000012", realm_b),
+            operation("ak:strand:01904100-0000-8000-8000-000000000011", realm_a),
+            operation("ak:strand:01904100-0000-8000-8000-000000000012", realm_b),
         ];
 
         let strands = dashboard_recent_strands(&operations, realm_a);

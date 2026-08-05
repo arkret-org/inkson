@@ -502,7 +502,7 @@ mod tests {
         let mut state = crate::state::ClientLocalState::default();
         state.raw_operations.push(crate::state::RawOperationRecord {
             operation_id: "op-1".to_owned(),
-            realm_id: Some("ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
+            realm_id: Some("ak:realm:01904100-0000-8000-8000-9b64700c6ee8".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
                 "kind": "ak.realm.media_service",
@@ -516,7 +516,7 @@ mod tests {
             }),
         });
         let (dids, focus_id) =
-            media_service_selection(&state, "ak:realm:01904100-0000-7000-8000-9b64700c6ee8");
+            media_service_selection(&state, "ak:realm:01904100-0000-8000-8000-9b64700c6ee8");
         assert_eq!(dids, vec!["did:web:media.example"]);
         assert_eq!(focus_id, "fra-1");
     }
@@ -526,11 +526,11 @@ mod tests {
         let mut state = crate::state::ClientLocalState::default();
         state.raw_operations.push(crate::state::RawOperationRecord {
             operation_id: "op-1".to_owned(),
-            realm_id: Some("ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
+            realm_id: Some("ak:realm:01904100-0000-8000-8000-9b64700c6ee8".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
                 "kind": "ak.call.state",
-                "event_id": "ak:event:0196441c-0000-7000-8000-000000000001",
+                "event_id": "ak:event:0196441c-0000-8000-8000-000000000001",
                 "body": {
                     "call_id": "ak:call:0196441c-0000-7000-8000-000000000000",
                     "roster_delta": {
@@ -545,7 +545,7 @@ mod tests {
         });
         let identities = call_state_participant_identities(
             &state,
-            "ak:realm:01904100-0000-7000-8000-9b64700c6ee8",
+            "ak:realm:01904100-0000-8000-8000-9b64700c6ee8",
             "ak:call:0196441c-0000-7000-8000-000000000000",
         );
         assert!(identities.contains("ak:rtc_participant:alice"));
@@ -557,11 +557,11 @@ mod tests {
         let mut state = crate::state::ClientLocalState::default();
         state.raw_operations.push(crate::state::RawOperationRecord {
             operation_id: "op-1".to_owned(),
-            realm_id: Some("ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
+            realm_id: Some("ak:realm:01904100-0000-8000-8000-9b64700c6ee8".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
                 "kind": "ak.call.state",
-                "event_id": "ak:event:0196441c-0000-7000-8000-000000000002",
+                "event_id": "ak:event:0196441c-0000-8000-8000-000000000002",
                 "body": {
                     "call_id": "ak:call:0196441c-0000-7000-8000-000000000000",
                     "roster_delta": {
@@ -577,7 +577,7 @@ mod tests {
         });
         let map = call_state_participant_device_map(
             &state,
-            "ak:realm:01904100-0000-7000-8000-9b64700c6ee8",
+            "ak:realm:01904100-0000-8000-8000-9b64700c6ee8",
             "ak:call:0196441c-0000-7000-8000-000000000000",
         );
         assert_eq!(
@@ -591,11 +591,11 @@ mod tests {
         let mut state = crate::state::ClientLocalState::default();
         state.raw_operations.push(crate::state::RawOperationRecord {
             operation_id: "op-1".to_owned(),
-            realm_id: Some("ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
+            realm_id: Some("ak:realm:01904100-0000-8000-8000-9b64700c6ee8".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
                 "kind": "ak.call.state",
-                "event_id": "ak:event:0196441c-0000-7000-8000-000000000003",
+                "event_id": "ak:event:0196441c-0000-8000-8000-000000000003",
                 "body": {
                     "call_id": "ak:call:0196441c-0000-7000-8000-000000000000",
                     "roster_delta": {
@@ -611,7 +611,7 @@ mod tests {
         });
         let map = call_state_participant_actor_device_map(
             &state,
-            "ak:realm:01904100-0000-7000-8000-9b64700c6ee8",
+            "ak:realm:01904100-0000-8000-8000-9b64700c6ee8",
             "ak:call:0196441c-0000-7000-8000-000000000000",
         );
         assert_eq!(
@@ -629,7 +629,7 @@ mod tests {
                 "from": "stopped",
                 "to": "ready",
                 "result": {
-                    "recording_start_event_id": "ak:event:019a7360-0000-7000-8000-000000000003",
+                    "recording_start_event_id": "ak:event:019a7360-0000-8000-8000-000000000003",
                     "recording_url": "https://s3.amazonaws.com/bucket/recording.mp4"
                 }
             }
@@ -654,7 +654,7 @@ mod tests {
                 "from": "stopped",
                 "to": "ready",
                 "result": {
-                    "transcript_start_event_id": "ak:event:019a7360-0000-7000-8000-000000000003",
+                    "transcript_start_event_id": "ak:event:019a7360-0000-8000-8000-000000000003",
                     "transcript_artifact_url": "https://backend.example/transcript.vtt"
                 }
             }
@@ -670,11 +670,11 @@ mod tests {
         let mut state = crate::state::ClientLocalState::default();
         state.raw_operations.push(crate::state::RawOperationRecord {
             operation_id: "op-1".to_owned(),
-            realm_id: Some("ak:realm:019a7360-0000-7000-8000-000000000000".to_owned()),
+            realm_id: Some("ak:realm:019a7360-0000-8000-8000-000000000000".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
                 "kind": "ak.call.state",
-                "event_id": "ak:event:019a7360-0000-7000-8000-000000000009",
+                "event_id": "ak:event:019a7360-0000-8000-8000-000000000009",
                 "body": {
                     "call_id": "ak:call:019a7360-0000-7000-8000-000000000001",
                     "recording_transition": {
@@ -682,7 +682,7 @@ mod tests {
                         "from": "stopped",
                         "to": "ready",
                         "result": {
-                            "recording_start_event_id": "ak:event:019a7360-0000-7000-8000-000000000003",
+                            "recording_start_event_id": "ak:event:019a7360-0000-8000-8000-000000000003",
                             "recording_url": "https://backend.example/egress/out.mp4"
                         }
                     },
@@ -699,7 +699,7 @@ mod tests {
         });
         let identities = call_state_participant_identities(
             &state,
-            "ak:realm:019a7360-0000-7000-8000-000000000000",
+            "ak:realm:019a7360-0000-8000-8000-000000000000",
             "ak:call:019a7360-0000-7000-8000-000000000001",
         );
         assert!(identities.is_empty());
@@ -710,11 +710,11 @@ mod tests {
         let mut state = crate::state::ClientLocalState::default();
         state.raw_operations.push(crate::state::RawOperationRecord {
             operation_id: "op-1".to_owned(),
-            realm_id: Some("ak:realm:019a7360-0000-7000-8000-000000000000".to_owned()),
+            realm_id: Some("ak:realm:019a7360-0000-8000-8000-000000000000".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
                 "kind": "ak.call.state",
-                "event_id": "ak:event:019a7360-0000-7000-8000-00000000000a",
+                "event_id": "ak:event:019a7360-0000-8000-8000-00000000000a",
                 "body": {
                     "call_id": "ak:call:019a7360-0000-7000-8000-000000000001",
                     "transcript_transition": {
@@ -722,7 +722,7 @@ mod tests {
                         "from": "stopped",
                         "to": "ready",
                         "result": {
-                            "transcript_start_event_id": "ak:event:019a7360-0000-7000-8000-000000000003",
+                            "transcript_start_event_id": "ak:event:019a7360-0000-8000-8000-000000000003",
                             "transcript_artifact_url": "https://backend.example/transcript.vtt"
                         }
                     },
@@ -739,17 +739,17 @@ mod tests {
         });
         let identities = call_state_participant_identities(
             &state,
-            "ak:realm:019a7360-0000-7000-8000-000000000000",
+            "ak:realm:019a7360-0000-8000-8000-000000000000",
             "ak:call:019a7360-0000-7000-8000-000000000001",
         );
         assert!(identities.is_empty());
     }
 
     fn valid_recording_call_state() -> serde_json::Value {
-        let realm_id = "ak:realm:019a7360-0000-7000-8000-000000000000";
+        let realm_id = "ak:realm:019a7360-0000-8000-8000-000000000000";
         let call_id = "ak:call:019a7360-0000-7000-8000-000000000001";
         let recording_id = "rtc-recording-019a7360-0000-7000-8000-000000000002";
-        let start_event_id = "ak:event:019a7360-0000-7000-8000-000000000003";
+        let start_event_id = "ak:event:019a7360-0000-8000-8000-000000000003";
         let content_digest =
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let ciphertext_digest =

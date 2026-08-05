@@ -8,7 +8,7 @@ use crate::recovery_crypto::{VAULT_SALT_LEN, VaultKek, derive_vault_kek_with_sal
 const BACKUP_ID: &str = "ak:backup:01964137-0000-7000-8000-00000000beef";
 const ACTOR: &str = "did:web:alice.example";
 const DEVICE: &str = "ak:device:01964137-0000-7000-8000-000000000001";
-const DEVICE_AUTHORIZE_EVENT: &str = "ak:event:01964137-0000-7000-8000-000000000123";
+const DEVICE_AUTHORIZE_EVENT: &str = "ak:event:01964137-0000-8000-8000-000000000123";
 
 fn test_root() -> VaultKek {
     derive_vault_kek_with_salt(b"correct horse battery staple", &[7u8; VAULT_SALT_LEN]).unwrap()
@@ -50,7 +50,7 @@ fn managed_agent_pcr_binding_is_bound_into_hpke_aad() {
         managed_principal_id: arkret_sdk::Did::new("did:web:agent.example").unwrap(),
         controller_id: controller,
         principal_control_realm_id: arkret_sdk::RealmId::new(
-            "ak:realm:01964137-0000-7000-8000-000000000099",
+            "ak:realm:01964137-0000-8000-8000-000000000099",
         )
         .unwrap(),
         authorization_ref: "did:web:agent.example#managed-controller".to_owned(),

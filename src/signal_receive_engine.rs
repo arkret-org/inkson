@@ -617,7 +617,7 @@ mod tests {
             sent_at: at(0),
             expires_at: at(30),
             scope_ref: arkret_sdk::ScopeRef::Realm {
-                realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001")
+                realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001")
                     .unwrap(),
             },
             seal_ref: arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "a".repeat(64)))

@@ -274,7 +274,7 @@ test("settings MIMI facade discovers drafts and runs interop actions", async ({ 
 
   await page.getByTestId("mimi-group-info").click();
   await expect(page.getByTestId("mimi-action-receipt")).toContainText(
-    "group-info 01JSMIMI binding ak:event:01964137-0000-7000-8000-00000000d0ab proofs 0",
+    "group-info 01JSMIMI binding ak:event:01964137-0000-8000-8000-00000000d0ab proofs 0",
   );
 
   await page.getByTestId("mimi-identifier-query").click();
@@ -297,7 +297,7 @@ test("settings MIMI facade discovers drafts and runs interop actions", async ({ 
   expect(submitBody.ciphertext.ciphertext_digest).toMatch(/^sha256:[0-9a-f]{64}$/);
   expect(submitBody.ciphertext.payload).toMatch(/^[A-Za-z0-9_-]+$/);
   await expect(page.getByTestId("mimi-action-receipt")).toContainText(
-    "submit-message event ak:event:01964137-0000-7000-8000-00000000d0aa rejected 0",
+    "submit-message event ak:event:01964137-0000-8000-8000-00000000d0aa rejected 0",
   );
 });
 
@@ -650,7 +650,7 @@ test("agent deactivation submits controller-signed revocations before the termin
   expect(lifecycleSubmission.control_proposal_receipt).toBeDefined();
   expect(lifecycleEvent.kind).toBe("ak.self.agent.deactivate");
   expect(lifecycleEvent.realm_id).toBe(
-    "ak:realm:01964137-0000-7000-8000-000000000006",
+    "ak:realm:01964137-0000-8000-8000-000000000006",
   );
   expect(lifecycleEvent.actor_id).toBe(
     "did:web:agents.example:assistant",

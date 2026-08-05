@@ -103,8 +103,13 @@ pub(crate) fn parse_realm_bootstrap_members(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Build the ordered Realm genesis batch.
+///
+/// The Realm id is **not** an input: spec realm-and-space.md section 2.5.0
+/// derives it from the genesis Event, so this builds `ak.realm.create` first,
+/// reads the id off the built envelope, and only then builds the follow-ups
+/// that must name it. The derived id is returned alongside the batch.
 pub fn build_realm_bootstrap_events(
-    realm_id: &str,
     actor_id: &str,
     notary_did: &str,
     title: &str,
@@ -122,7 +127,7 @@ pub fn build_realm_bootstrap_events(
     plaintext_visible_services: &[String],
     alias: Option<&str>,
     content_scheme: Option<&str>,
-) -> anyhow::Result<Vec<arkret_sdk::Event>> {
+) -> anyhow::Result<(String, Vec<arkret_sdk::Event>)> {
     // Spec realm-and-space.md §2.6: creator membership is auto-derived
     // by the reducer from `ak.realm.create`'s `created_by == actor_id`
     // (renamed from `created_by_principal` at spec head 37ce729).
@@ -145,8 +150,7 @@ pub fn build_realm_bootstrap_events(
     // entered through an ordinary `ak.invite.create` Control Move after the
     // creator's bootstrap has been accepted.
     let _invitees = parse_realm_bootstrap_members(invitees)?;
-    events.push(build_realm_create_event(
-        realm_id,
+    let create_event = build_realm_create_event(
         actor_id,
         notary_did,
         title,
@@ -161,7 +165,12 @@ pub fn build_realm_bootstrap_events(
         digest_algorithm,
         trust_domain,
         content_scheme,
-    )?);
+    )?;
+    // The genesis envelope carries no realm_id; the SDK resolved it from the
+    // Event itself, and every follow-up in this batch must name that value.
+    let realm_id_owned = create_event.realm_id.to_string();
+    let realm_id = realm_id_owned.as_str();
+    events.push(create_event);
     // realm-and-space.md §2.5: an ordinary Realm is one genesis transaction of
     // `ak.realm.create` plus the closed follow-up facet whitelist. The creator's
     // root authority is the `ak.component.realm.authority_root.v1` cell the
@@ -291,7 +300,7 @@ pub fn build_realm_bootstrap_events(
     }
     arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(&events)
         .map_err(|error| anyhow::anyhow!("{}: {error}", error.reason_code()))?;
-    Ok(events)
+    Ok((realm_id_owned, events))
 }
 
 fn recommended_history_sharing_policy_for_profile(
@@ -354,7 +363,6 @@ fn parse_wire_enum<T: serde::de::DeserializeOwned>(field: &str, value: &str) -> 
 /// candidate gate.
 #[allow(clippy::too_many_arguments)]
 fn build_realm_genesis_object(
-    realm_id: &str,
     actor_id: &str,
     notary_did: &str,
     title: &str,
@@ -378,8 +386,6 @@ fn build_realm_genesis_object(
         } else {
             federation_policy
         };
-    let realm_object_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
-        .map_err(|err| anyhow::anyhow!("invalid realm_id for realm.create: {err:?}"))?;
     let created_by = arkret_sdk::Did::new(actor_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid created_by DID for realm.create: {err:?}"))?;
     let trust_domain_typed = arkret_sdk::TypedTrustDomainId::new(trust_domain.to_owned())
@@ -398,7 +404,9 @@ fn build_realm_genesis_object(
         })?;
 
     let mut object = arkret_sdk::Realm::new(
-        realm_object_id,
+        // Placeholder: cleared below, since a create payload carries no id.
+        arkret_sdk::RealmId::new("ak:realm:00000000-0000-8000-8000-000000000000")
+            .expect("placeholder realm id is canonical"),
         title,
         created_by,
         trust_domain_typed,
@@ -462,7 +470,6 @@ fn build_realm_genesis_object(
 /// `realm_create_payload` semantic validation requires
 /// `payload.object.created_at == Event.created_at`.
 fn build_realm_create_event_from_object(
-    realm_id: &str,
     actor_id: &str,
     object: arkret_sdk::Realm,
 ) -> anyhow::Result<arkret_sdk::Event> {
@@ -474,8 +481,15 @@ fn build_realm_create_event_from_object(
     let realm_body = arkret_sdk::RealmCreatePayload::new(object)
         .to_value()
         .map_err(|e| anyhow::anyhow!("ak.realm.create payload serialize: {e}"))?;
-    OperationBuilder::new(realm_id, actor_id, arkret_sdk::EventKind::RealmCreate)
-        .target_ref(realm_id)
+    // The builder emits the closed `realm_genesis` scope for this kind, so the
+    // realm id passed here is a placeholder the envelope never carries.
+    OperationBuilder::new(
+        arkret_sdk::RealmId::new("ak:realm:00000000-0000-8000-8000-000000000000")
+            .expect("placeholder realm id is canonical")
+            .into_string(),
+        actor_id,
+        arkret_sdk::EventKind::RealmCreate,
+    )
         .body(realm_body)
         .preconditions(preconditions)
         .requirements(event_requirements_with_schema("ak.schema.realm.v1"))
@@ -485,7 +499,6 @@ fn build_realm_create_event_from_object(
 
 #[allow(clippy::too_many_arguments)]
 pub fn build_realm_create_event(
-    realm_id: &str,
     actor_id: &str,
     notary_did: &str,
     title: &str,
@@ -502,7 +515,6 @@ pub fn build_realm_create_event(
     content_scheme: Option<&str>,
 ) -> anyhow::Result<arkret_sdk::Event> {
     let object = build_realm_genesis_object(
-        realm_id,
         actor_id,
         notary_did,
         title,
@@ -518,7 +530,7 @@ pub fn build_realm_create_event(
         trust_domain,
         content_scheme,
     )?;
-    build_realm_create_event_from_object(realm_id, actor_id, object)
+    build_realm_create_event_from_object(actor_id, object)
 }
 
 /// Build the create-locked Principal Control Realm genesis for a managed
@@ -526,14 +538,14 @@ pub fn build_realm_create_event(
 /// controller only executes the Event under the DID delegation returned by
 /// provisioning.
 pub fn build_managed_agent_pcr_create_event(
-    realm_id: &str,
+    // The PCR id is subject-derived from `agent_id`; the caller no longer
+    // supplies it (spec realm-and-space.md section 2.5.0).
     agent_id: &str,
     controller_id: &str,
     controller_authorization_ref: &str,
     trust_domain: &str,
 ) -> anyhow::Result<arkret_sdk::Event> {
     let mut object = build_realm_genesis_object(
-        realm_id,
         agent_id,
         agent_id,
         "Managed Agent Principal Control Realm",
@@ -594,7 +606,7 @@ pub fn build_managed_agent_pcr_create_event(
         .validate()
         .map_err(|error| anyhow::anyhow!("managed Agent PCR notary invalid: {error}"))?;
 
-    let mut event = build_realm_create_event_from_object(realm_id, agent_id, object)?;
+    let mut event = build_realm_create_event_from_object(agent_id, object)?;
     event.executed_by = Some(controller_did);
     event.authorization_ref = Some(
         arkret_sdk::AuthorizationRef::new(controller_authorization_ref.to_owned())
@@ -604,7 +616,7 @@ pub fn build_managed_agent_pcr_create_event(
 }
 
 pub fn build_managed_agent_pcr_bootstrap_events(
-    realm_id: &str,
+    // No realm_id input: the PCR id is subject-derived from `agent_id`.
     agent_id: &str,
     controller_id: &str,
     controller_authorization_ref: &str,
@@ -612,7 +624,6 @@ pub fn build_managed_agent_pcr_bootstrap_events(
     provision_event_id: arkret_sdk::EventId,
 ) -> anyhow::Result<Vec<arkret_sdk::Event>> {
     let mut create = build_managed_agent_pcr_create_event(
-        realm_id,
         agent_id,
         controller_id,
         controller_authorization_ref,
@@ -1745,7 +1756,6 @@ mod notary_derivation_tests {
     #[test]
     fn managed_agent_pcr_genesis_keeps_subject_and_executor_distinct() {
         let event = build_managed_agent_pcr_create_event(
-            "ak:realm:01964137-0000-7000-8000-000000000099",
             "did:web:agent.example",
             "did:web:alice.example",
             "did:web:agent.example#managed-controller",
@@ -1826,12 +1836,11 @@ mod notary_derivation_tests {
     #[test]
     fn managed_agent_pcr_bootstrap_is_delegated_create_only() {
         let events = build_managed_agent_pcr_bootstrap_events(
-            "ak:realm:01964137-0000-7000-8000-000000000099",
             "did:web:agent.example",
             "did:web:alice.example",
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
-            arkret_sdk::EventId::new("ak:event:01964137-0000-7000-8000-000000000098").unwrap(),
+            arkret_sdk::EventId::new("ak:event:01964137-0000-8000-8000-000000000098").unwrap(),
         )
         .unwrap();
 
@@ -1941,8 +1950,7 @@ mod notary_derivation_tests {
 
     #[test]
     fn ordinary_realm_create_candidate_matches_closed_schema() {
-        let events = build_realm_bootstrap_events(
-            "ak:realm:01964137-0000-7000-8000-000000000077",
+        let (_realm_id, events) = build_realm_bootstrap_events(
             "did:web:alice.example",
             "did:web:alice.example",
             "Ordinary Realm",
@@ -2011,7 +2019,6 @@ mod notary_derivation_tests {
     #[test]
     fn managed_agent_pcr_create_candidate_matches_closed_schema() {
         let event = build_managed_agent_pcr_create_event(
-            "ak:realm:01964137-0000-7000-8000-000000000099",
             "did:web:agent.example",
             "did:web:alice.example",
             "did:web:agent.example#managed-controller",
@@ -2023,7 +2030,7 @@ mod notary_derivation_tests {
 
     #[test]
     fn realm_authority_and_relinquish_builders_preserve_distinct_authorization_modes() {
-        let realm = "ak:realm:01964137-0000-7000-8000-000000000077";
+        let realm = "ak:realm:01964137-0000-8000-8000-000000000077";
         let transfer: arkret_sdk::RealmOwnerTransferPayload = serde_json::from_value(json!({
             "realm_id": realm,
             "expected_state_digest": format!("sha256:{}", "1".repeat(64)),

@@ -652,7 +652,7 @@ test.describe("feature coverage placeholders", () => {
     page,
   }) => {
     await page.goto(
-      "/realms/ak:realm:0196419b-0000-7000-8000-000000000000/settings/security",
+      "/realms/ak:realm:0196419b-0000-8000-8000-000000000000/settings/security",
       {
         waitUntil: "domcontentloaded",
         timeout: 120_000,

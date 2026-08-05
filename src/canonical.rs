@@ -149,10 +149,10 @@ mod tests {
     #[test]
     fn canonical_event_envelope_bytes_use_sdk_digest_payload() {
         let event: arkret_sdk::Event = serde_json::from_value(json!({
-            "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
+            "event_id": "ak:event:01904100-0000-8000-8000-000000000001",
             "kind": "ak.message.create",
-            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
-            "scope_ref": {"kind": "realm", "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001"},
+            "realm_id": "ak:realm:01904100-0000-8000-8000-000000000001",
+            "scope_ref": {"kind": "realm", "realm_id": "ak:realm:01904100-0000-8000-8000-000000000001"},
             "actor_id": "did:web:alice.example",
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00.000Z",

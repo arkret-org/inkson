@@ -236,8 +236,8 @@ fn test_signing_key() -> &'static SigningKey {
     })
 }
 
-const TEST_REALM_ID: &str = "ak:realm:0196419b-0000-7000-8000-000000000001";
-const TEST_SPACE_ID: &str = "ak:space:0196419b-0000-7000-8000-000000000002";
+const TEST_REALM_ID: &str = "ak:realm:0196419b-0000-8000-8000-000000000001";
+const TEST_SPACE_ID: &str = "ak:space:0196419b-0000-8000-8000-000000000002";
 const TEST_ACTOR_ID: &str = "did:web:alice.example";
 const TEST_SERVICE_ID: &str = "did:web:server.example";
 const TEST_INVITEE_DID: &str = "did:web:bob.example";
@@ -359,7 +359,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
     let bogus = serde_json::json!({
         "event_id": "ak:event:not-a-uuid",
         "kind": "ak.realm.create",
-        "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
+        "realm_id": "ak:realm:0196419b-0000-8000-8000-000000000001",
         "actor_id": "did:web:alice.example",
         "actor_seq": 1,
         "created_at": "2026-05-21T13:00:00.000Z",
@@ -378,9 +378,9 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
     // branch of the top-level `allOf`. If this slips through, the
     // schema validator is silently degraded to a syntax-only checker.
     let reducer_missing_required = serde_json::json!({
-        "event_id": "ak:event:0196419b-0000-7777-8000-000000000003",
+        "event_id": "ak:event:0196419b-0000-8777-8000-000000000003",
         "kind": "ak.realm.create",
-        "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
+        "realm_id": "ak:realm:0196419b-0000-8000-8000-000000000001",
         "actor_id": "did:web:alice.example",
         "actor_seq": 1,
         "created_at": "2026-05-21T13:00:00.000Z",
@@ -433,7 +433,6 @@ fn assert_envelope_matches_schema(label: &str, envelope: &Event) {
 #[test]
 fn build_realm_create_event_matches_event_schema() {
     let mut envelope = event_builders::build_realm_create_event(
-        TEST_REALM_ID,
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
         "Engineering",
@@ -591,8 +590,7 @@ fn build_member_state_event_matches_event_schema() {
     // reason="space_create" — same canonical shape. We exercise the
     // wrapper path indirectly via `build_realm_bootstrap_events` (which
     // calls it for each invitee) and pick out the member-state envelope.
-    let events = event_builders::build_realm_bootstrap_events(
-        TEST_REALM_ID,
+    let (_realm_id, events) = event_builders::build_realm_bootstrap_events(
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
         "Engineering",
@@ -662,8 +660,7 @@ fn build_plaintext_visible_services_event_matches_event_schema() {
 /// 2026-07-30-realm-policy-payload-shape-gaps.md` gap 2.
 #[test]
 fn realm_bootstrap_delivery_binding_policy_matches_payload_schema() {
-    let events = event_builders::build_realm_bootstrap_events(
-        TEST_REALM_ID,
+    let (_realm_id, events) = event_builders::build_realm_bootstrap_events(
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
         "Engineering",
@@ -711,8 +708,7 @@ fn realm_bootstrap_delivery_binding_policy_matches_payload_schema() {
 #[test]
 fn blank_alias_is_absence_and_emits_no_alias_event() {
     for blank in ["  ", "#", " # "] {
-        let events = event_builders::build_realm_bootstrap_events(
-            TEST_REALM_ID,
+        let (_realm_id, events) = event_builders::build_realm_bootstrap_events(
             TEST_ACTOR_ID,
             TEST_SERVICE_ID,
             "Engineering",
@@ -752,8 +748,7 @@ fn blank_alias_is_absence_and_emits_no_alias_event() {
 /// object schema-valid AND must materialize exactly one dedicated facet Event.
 #[test]
 fn realm_bootstrap_keeps_plaintext_services_off_the_closed_realm_object() {
-    let events = event_builders::build_realm_bootstrap_events(
-        TEST_REALM_ID,
+    let (_realm_id, events) = event_builders::build_realm_bootstrap_events(
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
         "Engineering",
@@ -813,8 +808,7 @@ fn realm_bootstrap_keeps_plaintext_services_off_the_closed_realm_object() {
 /// `alias: None`, so the field never reached a validated object.
 #[test]
 fn realm_bootstrap_carries_alias_as_a_facet_event_not_on_the_closed_realm_object() {
-    let events = event_builders::build_realm_bootstrap_events(
-        TEST_REALM_ID,
+    let (_realm_id, events) = event_builders::build_realm_bootstrap_events(
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
         "Engineering",
@@ -877,12 +871,11 @@ fn realm_bootstrap_carries_alias_as_a_facet_event_not_on_the_closed_realm_object
 #[test]
 fn managed_agent_pcr_genesis_leaves_history_sharing_policy_to_the_profile() {
     let events = event_builders::build_managed_agent_pcr_bootstrap_events(
-        TEST_REALM_ID,
         "did:web:agent.example",
         TEST_ACTOR_ID,
         "did:web:alice.example#delegation-0",
         "ak:trust_domain:server.example",
-        arkret_sdk::EventId::new("ak:event:01964137-0000-7000-8000-000000000098")
+        arkret_sdk::EventId::new("ak:event:01964137-0000-8000-8000-000000000098")
             .expect("fixture provision Event id"),
     )
     .expect("build_managed_agent_pcr_bootstrap_events succeeds");

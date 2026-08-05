@@ -90,16 +90,16 @@ fn card_detail_update_patch_uses_strand_update_patch_paths() {
 
 #[test]
 fn card_assignment_mutations_create_and_tombstone_relation_events() {
-    let mut current = test_card("ak:strand:0196419b-0000-7000-8000-000000000101", "U");
+    let mut current = test_card("ak:strand:0196419b-0000-8000-8000-000000000101", "U");
     current.assignee = "did:web:bob.example".to_owned();
     current.assigned_to_relations = vec![CardAssignedToRelation {
-        relation_id: "ak:relation:0196419b-0000-7000-8000-0000000000bb".to_owned(),
+        relation_id: "ak:relation:0196419b-0000-8000-8000-0000000000bb".to_owned(),
         actor_id: "did:web:bob.example".to_owned(),
     }];
     let selected = BTreeSet::from(["did:web:alice.example".to_owned()]);
 
     let mutations = card_assignment_mutations(
-        "ak:realm:0196419b-0000-7000-8000-000000000000",
+        "ak:realm:0196419b-0000-8000-8000-000000000000",
         "did:web:owner.example",
         &current,
         &selected,
@@ -138,12 +138,12 @@ fn card_assignment_mutations_create_and_tombstone_relation_events() {
         .expect("tombstone mutation");
     assert_eq!(
         tombstone.relation_id(),
-        "ak:relation:0196419b-0000-7000-8000-0000000000bb"
+        "ak:relation:0196419b-0000-8000-8000-0000000000bb"
     );
     assert_eq!(tombstone.operation().kind.as_str(), "ak.relation.tombstone");
     assert_eq!(
         tombstone.operation().payload["relation_id"],
-        json!("ak:relation:0196419b-0000-7000-8000-0000000000bb")
+        json!("ak:relation:0196419b-0000-8000-8000-0000000000bb")
     );
 
     let after = assignment_relations_after_mutations(&current, &selected, &mutations);
@@ -154,21 +154,21 @@ fn card_assignment_mutations_create_and_tombstone_relation_events() {
 
 #[test]
 fn card_assignment_mutations_clear_all_assignees() {
-    let mut current = test_card("ak:strand:0196419b-0000-7000-8000-000000000101", "U");
+    let mut current = test_card("ak:strand:0196419b-0000-8000-8000-000000000101", "U");
     current.assigned_to_relations = vec![
         CardAssignedToRelation {
-            relation_id: "ak:relation:0196419b-0000-7000-8000-0000000000aa".to_owned(),
+            relation_id: "ak:relation:0196419b-0000-8000-8000-0000000000aa".to_owned(),
             actor_id: "did:web:alice.example".to_owned(),
         },
         CardAssignedToRelation {
-            relation_id: "ak:relation:0196419b-0000-7000-8000-0000000000bb".to_owned(),
+            relation_id: "ak:relation:0196419b-0000-8000-8000-0000000000bb".to_owned(),
             actor_id: "did:web:bob.example".to_owned(),
         },
     ];
 
     let selected = BTreeSet::new();
     let mutations = card_assignment_mutations(
-        "ak:realm:0196419b-0000-7000-8000-000000000000",
+        "ak:realm:0196419b-0000-8000-8000-000000000000",
         "did:web:owner.example",
         &current,
         &selected,

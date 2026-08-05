@@ -5,33 +5,33 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mockArkretContract } from "./mockArkretContract";
 
-const DEMO_REALM = "ak:realm:0196419b-0000-7000-8000-000000000000";
+const DEMO_REALM = "ak:realm:0196419b-0000-8000-8000-000000000000";
 const STRAND_POSITION_CELL_FAMILY = "ak.component.strand.position.v1";
-const DEMO_FRONTIER_EVENT = "ak:event:0196419b-0000-7000-8000-00000000e2e0";
+const DEMO_FRONTIER_EVENT = "ak:event:0196419b-0000-8000-8000-00000000e2e0";
 const SETUP_REALM = "ak:realm:01js0setupflow000000000000";
 const LOW_FLOOR_REALM = "ak:realm:01lowfloor0000000000000000";
-const CHILD_REALM = "ak:realm:0196419b-0000-7000-8000-00000000c001";
-const GRANDCHILD_REALM = "ak:realm:0196419b-0000-7000-8000-00000000c002";
-const DIRECT_BOB_REALM = "ak:realm:01964137-0000-7000-8000-00000000d0b1";
-const DIRECT_BOB_STRAND = "ak:strand:01964137-0000-7000-8000-00000000d0b2";
-const DIRECT_OWN_AGENT_REALM = "ak:realm:01964137-0000-7000-8000-0000000000a1";
+const CHILD_REALM = "ak:realm:0196419b-0000-8000-8000-00000000c001";
+const GRANDCHILD_REALM = "ak:realm:0196419b-0000-8000-8000-00000000c002";
+const DIRECT_BOB_REALM = "ak:realm:01964137-0000-8000-8000-00000000d0b1";
+const DIRECT_BOB_STRAND = "ak:strand:01964137-0000-8000-8000-00000000d0b2";
+const DIRECT_OWN_AGENT_REALM = "ak:realm:01964137-0000-8000-8000-0000000000a1";
 const DIRECT_OWN_AGENT_STRAND =
-  "ak:strand:01964137-0000-7000-8000-0000000000a2";
-const DEMO_CIRCLE = "ak:circle:0196419b-0000-7000-8000-00000000c1c1";
-const DEMO_BOARD_SPACE = "ak:space:0196419b-0000-7000-8000-00000000b0a0";
-const DEMO_SECOND_BOARD_SPACE = "ak:space:0196419b-0000-7000-8000-00000000b0b0";
-const DEMO_TODO_LIST = "ak:space:0196419b-0000-7000-8000-00000000b0a1";
-const DEMO_PROGRESS_LIST = "ak:space:0196419b-0000-7000-8000-00000000b0a2";
-const DEMO_DONE_LIST = "ak:space:0196419b-0000-7000-8000-00000000b0a3";
-const DEMO_SECOND_LIST = "ak:space:0196419b-0000-7000-8000-00000000b0b1";
+  "ak:strand:01964137-0000-8000-8000-0000000000a2";
+const DEMO_CIRCLE = "ak:circle:0196419b-0000-8000-8000-00000000c1c1";
+const DEMO_BOARD_SPACE = "ak:space:0196419b-0000-8000-8000-00000000b0a0";
+const DEMO_SECOND_BOARD_SPACE = "ak:space:0196419b-0000-8000-8000-00000000b0b0";
+const DEMO_TODO_LIST = "ak:space:0196419b-0000-8000-8000-00000000b0a1";
+const DEMO_PROGRESS_LIST = "ak:space:0196419b-0000-8000-8000-00000000b0a2";
+const DEMO_DONE_LIST = "ak:space:0196419b-0000-8000-8000-00000000b0a3";
+const DEMO_SECOND_LIST = "ak:space:0196419b-0000-8000-8000-00000000b0b1";
 const DEMO_STRAND_LEGAL_REVIEW =
-  "ak:strand:0196419b-0000-7000-8000-000000000101";
+  "ak:strand:0196419b-0000-8000-8000-000000000101";
 const DEMO_STRAND_ONBOARDING_COPY =
-  "ak:strand:0196419b-0000-7000-8000-000000000102";
+  "ak:strand:0196419b-0000-8000-8000-000000000102";
 const DEMO_STRAND_SECURITY_SIGNOFF =
-  "ak:strand:0196419b-0000-7000-8000-000000000103";
+  "ak:strand:0196419b-0000-8000-8000-000000000103";
 const DEMO_STRAND_SECONDARY_CARD =
-  "ak:strand:0196419b-0000-7000-8000-000000000104";
+  "ak:strand:0196419b-0000-8000-8000-000000000104";
 const DEMO_BLOB_REF =
   "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460";
 const DEMO_AVATAR_PNG_BASE64 =
@@ -382,7 +382,7 @@ export async function mockArkretApi(
     updated_at: "2026-06-23T00:00:00.000Z",
   });
   const sidecarCircleView = () => ({
-    ...circleView("ak:circle:0196419b-0000-7000-8000-00000000c1c2"),
+    ...circleView("ak:circle:0196419b-0000-8000-8000-00000000c1c2"),
     profile_ref: "ak.profile.internal_scope.v1",
     title: "Internal scope",
     display: {
@@ -566,7 +566,7 @@ export async function mockArkretApi(
   const activeAssistantKeyState = {
     agent_id: activeAssistantId,
     controller_id: accountPrincipalId,
-    principal_control_realm_id: "ak:realm:01964137-0000-7000-8000-000000000006",
+    principal_control_realm_id: "ak:realm:01964137-0000-8000-8000-000000000006",
     controller_authorization_ref: `${activeAssistantId}#managed-controller`,
     pcr_recovery: {
       status: "ready",
@@ -588,12 +588,12 @@ export async function mockArkretApi(
       kind: "ak.agent.requested_scope_commitment.v1",
       requested_scope: activeAssistantScope,
     }),
-    authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000a600",
+    authorized_event_ref: "ak:event:01964137-0000-8000-8000-00000000a600",
     active_authorizations: [
       {
         key_id: "runtime-key-1",
         verification_method: `${activeAssistantId}#runtime-key-1`,
-        authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000a600",
+        authorized_event_ref: "ak:event:01964137-0000-8000-8000-00000000a600",
       },
     ],
   };
@@ -620,12 +620,12 @@ export async function mockArkretApi(
       ...activeAssistantKeyState,
       agent_id: agent.agent_id,
       controller_authorization_ref: `${agent.agent_id}#managed-controller`,
-      authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000a601",
+      authorized_event_ref: "ak:event:01964137-0000-8000-8000-00000000a601",
       active_authorizations: [
         {
           key_id: "runtime-key-2",
           verification_method: `${agent.agent_id}#runtime-key-2`,
-          authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000a601",
+          authorized_event_ref: "ak:event:01964137-0000-8000-8000-00000000a601",
         },
       ],
     });
@@ -640,7 +640,7 @@ export async function mockArkretApi(
   });
   if (personalAgentPairingExpiresAt.startsWith("2000-")) {
     const expiredAgentId = "did:web:agents.example:summary";
-    const expiredRealmId = "ak:realm:01964137-0000-7000-8000-000000000005";
+    const expiredRealmId = "ak:realm:01964137-0000-8000-8000-000000000005";
     const expiredScope = {
       actions: [
         "ak.event.read",
@@ -922,7 +922,7 @@ export async function mockArkretApi(
   projectionEvents.push(
     ...boardSpaceContainers.map((space, index) =>
       canonicalProjectionEvent(
-        `ak:event:0196419b-0000-7000-8000-00000000b0${String(index + 1).padStart(2, "0")}`,
+        `ak:event:0196419b-0000-8000-8000-00000000b0${String(index + 1).padStart(2, "0")}`,
         "ak.space.create",
         200 + index,
         {
@@ -942,7 +942,7 @@ export async function mockArkretApi(
     ),
     ...boardStrandProjections.map((strand, index) =>
       canonicalProjectionEvent(
-        `ak:event:0196419b-0000-7000-8000-00000000c0${String(index + 1).padStart(2, "0")}`,
+        `ak:event:0196419b-0000-8000-8000-00000000c0${String(index + 1).padStart(2, "0")}`,
         "ak.strand.create",
         210 + index,
         {
@@ -974,11 +974,11 @@ export async function mockArkretApi(
     const historyActor = "did:web:history.example";
     projectionEvents.push({
       ...canonicalProjectionEvent(
-        `ak:event:0196419b-0000-7000-8000-${suffix}`,
+        `ak:event:0196419b-0000-8000-8000-${suffix}`,
         "ak.message.create",
         230 + index,
         {
-          message_id: `ak:message:0196419b-0000-7000-8000-${suffix}`,
+          message_id: `ak:message:0196419b-0000-8000-8000-${suffix}`,
           strand_id: DEMO_STRAND_LEGAL_REVIEW,
           track_name: "discussion",
           content: {
@@ -1044,9 +1044,9 @@ export async function mockArkretApi(
       const deviceId =
         typeof body.device_id === "string" ? body.device_id : currentDeviceId;
       const authorizedEvent: Record<string, unknown> = {
-        event_id: "ak:event:01964137-0000-7000-8000-00000000d0e1",
+        event_id: "ak:event:01964137-0000-8000-8000-00000000d0e1",
         kind: "ak.device.authorize",
-        realm_id: "ak:realm:01964137-0000-7000-8000-00000000c0de",
+        realm_id: "ak:realm:01964137-0000-8000-8000-00000000c0de",
         actor_id: accountPrincipalId,
         executed_by: ENROLLMENT_AUTHORITY_DID,
         authorization_ref: `${accountPrincipalId}#enrollment-authority`,
@@ -1353,7 +1353,7 @@ export async function mockArkretApi(
         encryption_profile?: string;
         join_rule?: string;
       };
-      const circleId = `ak:circle:0196419b-0000-7000-8000-${String(circleCounter).padStart(12, "0")}`;
+      const circleId = `ak:circle:0196419b-0000-8000-8000-${String(circleCounter).padStart(12, "0")}`;
       circleCounter += 1;
       circleStates.set(circleId, "active");
       circleMetadata.set(circleId, {
@@ -2085,7 +2085,7 @@ export async function mockArkretApi(
       route.request().method() === "POST"
     ) {
       return json(route, {
-        event_ref: "ak:event:01964137-0000-7000-8000-00000000d0aa",
+        event_ref: "ak:event:01964137-0000-8000-8000-00000000d0aa",
         delivery: {
           status: "accepted",
           delivered_to: ["did:web:remote.example"],
@@ -2106,7 +2106,7 @@ export async function mockArkretApi(
           mls_group_id: "mls-group-01",
           group_info: "ZTItdGVzdC1ncm91cC1pbmZv",
         },
-        room_binding_ref: "ak:event:01964137-0000-7000-8000-00000000d0ab",
+        room_binding_ref: "ak:event:01964137-0000-8000-8000-00000000d0ab",
         proofs: [],
       });
     }
@@ -2198,7 +2198,7 @@ export async function mockArkretApi(
           state: "active",
           devices: accountDeviceSummaries(),
           profile: {
-            id: "ak:actor_profile:01964137-0000-7000-8000-0000000000a1",
+            id: "ak:actor_profile:01964137-0000-8000-8000-0000000000a1",
             schema: "ak.schema.actor_profile.v1",
             principal_id: body.principal_id,
             actor_kind: "user",
@@ -2230,7 +2230,7 @@ export async function mockArkretApi(
           : undefined;
       return json(route, {
         profile: {
-          id: "ak:actor_profile:01964137-0000-7000-8000-0000000000a1",
+          id: "ak:actor_profile:01964137-0000-8000-8000-0000000000a1",
           schema: "ak.schema.actor_profile.v1",
           principal_id: "did:web:alice.example",
           actor_kind: "user",
@@ -2270,7 +2270,7 @@ export async function mockArkretApi(
       const notificationEvents = includeDemoRealms
         ? [
             {
-              event_id: "ak:event:01964137-0000-7000-8000-00000000a101",
+              event_id: "ak:event:01964137-0000-8000-8000-00000000a101",
               kind: "ak.account_data.set",
               realm_id: DEMO_REALM,
               scope_ref: { kind: "realm", realm_id: DEMO_REALM },
@@ -2293,7 +2293,7 @@ export async function mockArkretApi(
               proofs: [],
             },
             {
-              event_id: "ak:event:01964137-0000-7000-8000-00000000a102",
+              event_id: "ak:event:01964137-0000-8000-8000-00000000a102",
               kind: "ak.account_data.set",
               realm_id: DEMO_REALM,
               scope_ref: { kind: "realm", realm_id: DEMO_REALM },
@@ -2380,7 +2380,7 @@ export async function mockArkretApi(
                     events: [
                       {
                         event_id:
-                          "ak:event:0196419b-0000-7000-8000-00000000e2ee",
+                          "ak:event:0196419b-0000-8000-8000-00000000e2ee",
                         kind: "ak.realm.create",
                         realm_id: DEMO_REALM,
                         scope_ref: { kind: "realm", realm_id: DEMO_REALM },
@@ -2498,7 +2498,7 @@ export async function mockArkretApi(
             handle: "arkret.example",
             display_name: "Arkret Labs",
             as_of: "2026-06-19T00:00:00.000Z",
-            source_refs: ["ak:event:0196419b-0000-7000-8000-0000000000d1"],
+            source_refs: ["ak:event:0196419b-0000-8000-8000-0000000000d1"],
             policy_revision: "local",
           },
         ],
@@ -2866,8 +2866,8 @@ export async function mockArkretApi(
           {
             peer: { kind: "human", principal_id: "did:web:bob.example" },
             state: "accepted",
-            request_event_ref: "ak:event:0196419b-0000-7000-8000-000000000101",
-            response_event_ref: "ak:event:0196419b-0000-7000-8000-000000000102",
+            request_event_ref: "ak:event:0196419b-0000-8000-8000-000000000101",
+            response_event_ref: "ak:event:0196419b-0000-8000-8000-000000000102",
             granted_to_peer_scopes: ["direct_message", "invite"],
             granted_by_peer_scopes: ["direct_message", "invite"],
             bidirectional_scopes: ["direct_message", "invite"],
@@ -2876,7 +2876,7 @@ export async function mockArkretApi(
               realm_id: DIRECT_BOB_REALM,
               main_strand_id: DIRECT_BOB_STRAND,
               binding_event_ref:
-                "ak:event:0196419b-0000-7000-8000-000000000103",
+                "ak:event:0196419b-0000-8000-8000-000000000103",
               state: "found",
             },
             agents: [
@@ -2887,11 +2887,11 @@ export async function mockArkretApi(
                 agent_slug: "helper",
                 avatar_blob_ref: DEMO_BLOB_REF,
                 direct_conversation: {
-                  realm_id: "ak:realm:01964137-0000-7000-8000-0000000000b1",
+                  realm_id: "ak:realm:01964137-0000-8000-8000-0000000000b1",
                   main_strand_id:
-                    "ak:strand:01964137-0000-7000-8000-0000000000b2",
+                    "ak:strand:01964137-0000-8000-8000-0000000000b2",
                   binding_event_ref:
-                    "ak:event:01964137-0000-7000-8000-0000000000b3",
+                    "ak:event:01964137-0000-8000-8000-0000000000b3",
                   state: "found",
                 },
               },
@@ -2900,7 +2900,7 @@ export async function mockArkretApi(
           {
             peer: { kind: "human", principal_id: "did:web:carol.example" },
             state: "pending_outgoing",
-            request_event_ref: "ak:event:0196419b-0000-7000-8000-000000000104",
+            request_event_ref: "ak:event:0196419b-0000-8000-8000-000000000104",
             granted_to_peer_scopes: ["invite"],
             granted_by_peer_scopes: [],
             bidirectional_scopes: [],
@@ -2909,7 +2909,7 @@ export async function mockArkretApi(
           {
             peer: { kind: "human", principal_id: "did:web:dave.example" },
             state: "pending_incoming",
-            request_event_ref: "ak:event:0196419b-0000-7000-8000-000000000105",
+            request_event_ref: "ak:event:0196419b-0000-8000-8000-000000000105",
             granted_to_peer_scopes: [],
             granted_by_peer_scopes: ["direct_message"],
             bidirectional_scopes: [],
@@ -2921,8 +2921,8 @@ export async function mockArkretApi(
             // Accepted contact with a bidirectional invite scope.
             peer: { kind: "human", principal_id: "did:web:erin.example" },
             state: "accepted",
-            request_event_ref: "ak:event:0196419b-0000-7000-8000-000000000106",
-            response_event_ref: "ak:event:0196419b-0000-7000-8000-000000000107",
+            request_event_ref: "ak:event:0196419b-0000-8000-8000-000000000106",
+            response_event_ref: "ak:event:0196419b-0000-8000-8000-000000000107",
             granted_to_peer_scopes: ["direct_message", "invite"],
             granted_by_peer_scopes: ["direct_message", "invite"],
             bidirectional_scopes: ["direct_message", "invite"],
@@ -2940,7 +2940,7 @@ export async function mockArkretApi(
       route.request().method() === "POST"
     ) {
       return json(route, {
-        request_event_ref: "ak:event:0196419b-0000-7000-8000-000000000108",
+        request_event_ref: "ak:event:0196419b-0000-8000-8000-000000000108",
         requester_consent_refs: [],
         state: "pending_outgoing",
       });
@@ -2953,10 +2953,10 @@ export async function mockArkretApi(
     ) {
       const body = await route.request().postDataJSON();
       return json(route, {
-        response_event_ref: "ak:event:0196419b-0000-7000-8000-000000000109",
+        response_event_ref: "ak:event:0196419b-0000-8000-8000-000000000109",
         consent_grant_refs:
           body.action === "accept"
-            ? ["ak:event:0196419b-0000-7000-8000-000000000110"]
+            ? ["ak:event:0196419b-0000-8000-8000-000000000110"]
             : [],
         state: body.action === "accept" ? "accepted" : "rejected",
       });
@@ -2968,7 +2968,7 @@ export async function mockArkretApi(
       route.request().method() === "POST"
     ) {
       return json(route, {
-        tombstone_event_ref: "ak:event:0196419b-0000-7000-8000-000000000111",
+        tombstone_event_ref: "ak:event:0196419b-0000-8000-8000-000000000111",
         consent_revoke_refs: [],
         state: "tombstoned",
         partial_revoke: false,
@@ -3033,8 +3033,8 @@ export async function mockArkretApi(
             ? DIRECT_OWN_AGENT_STRAND
             : DIRECT_BOB_STRAND,
           binding_event_ref: ownedAgent
-            ? "ak:event:0196419b-0000-7000-8000-0000000000a3"
-            : "ak:event:0196419b-0000-7000-8000-000000000103",
+            ? "ak:event:0196419b-0000-8000-8000-0000000000a3"
+            : "ak:event:0196419b-0000-8000-8000-000000000103",
         },
         send_blockers: [],
       });
@@ -3106,7 +3106,7 @@ export async function mockArkretApi(
                 authorization_ref: `${requestedPrincipalId}#enrollment-authority`,
               },
               device_authorize_event_id:
-                "ak:event:01964137-0000-7000-8000-00000000a601",
+                "ak:event:01964137-0000-8000-8000-00000000a601",
               authorized_generation_ref: generationRef,
             },
           },
@@ -3136,7 +3136,7 @@ export async function mockArkretApi(
         principal_id: accountPrincipalId,
         state: "active",
         profile: {
-          id: "ak:actor_profile:01964137-0000-7000-8000-0000000000a1",
+          id: "ak:actor_profile:01964137-0000-8000-8000-0000000000a1",
           schema: "ak.schema.actor_profile.v1",
           principal_id: accountPrincipalId,
           actor_kind: "user",
@@ -3219,8 +3219,8 @@ export async function mockArkretApi(
       return json(route, {
         ok: true,
         sidecar_id: "ak:sidecar:01964137-0000-7000-8000-0000000000a0",
-        private_strand_id: "ak:strand:01964137-0000-7000-8000-0000000000a2",
-        private_relation_id: "ak:relation:01964137-0000-7000-8000-0000000000a3",
+        private_strand_id: "ak:strand:01964137-0000-8000-8000-0000000000a2",
+        private_relation_id: "ak:relation:01964137-0000-8000-8000-0000000000a3",
         access_readiness:
           sidecarPendingMemberReconciliations.length === 0
             ? "ready"
@@ -3239,7 +3239,7 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       const sidecarId = "ak:sidecar:01964137-0000-7000-8000-0000000000a0";
-      const backingCircleId = "ak:circle:01964137-0000-7000-8000-0000000000a1";
+      const backingCircleId = "ak:circle:01964137-0000-8000-8000-0000000000a1";
       const desiredAgentIds = [...sidecarAgentIds].sort();
       const principalIds = [accountPrincipalId, ...desiredAgentIds].sort();
       const ready = sidecarPendingMemberReconciliations.length === 0;
@@ -3267,14 +3267,14 @@ export async function mockArkretApi(
                 principal_ids: principalIds,
               }),
               control_frontier: [
-                "ak:event:01964137-0000-7000-8000-0000000000af",
+                "ak:event:01964137-0000-8000-8000-0000000000af",
               ],
               ...(ready
                 ? {
                     mls_group_id: "e2e-sidecar-group",
                     epoch: 1,
                     genesis_event_ref:
-                      "ak:event:01964137-0000-7000-8000-0000000000af",
+                      "ak:event:01964137-0000-8000-8000-0000000000af",
                   }
                 : {}),
               current_controller_device_ready: ready,
@@ -3296,7 +3296,7 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       const sidecarId = "ak:sidecar:01964137-0000-7000-8000-0000000000a0";
-      const backingCircleId = "ak:circle:01964137-0000-7000-8000-0000000000a1";
+      const backingCircleId = "ak:circle:01964137-0000-8000-8000-0000000000a1";
       const desiredAgentIds = [...sidecarAgentIds].sort();
       const principalIds = [accountPrincipalId, ...desiredAgentIds].sort();
       const ready = sidecarPendingMemberReconciliations.length === 0;
@@ -3321,13 +3321,13 @@ export async function mockArkretApi(
             controller_id: accountPrincipalId,
             principal_ids: principalIds,
           }),
-          control_frontier: ["ak:event:01964137-0000-7000-8000-0000000000af"],
+          control_frontier: ["ak:event:01964137-0000-8000-8000-0000000000af"],
           ...(ready
             ? {
                 mls_group_id: "e2e-sidecar-group",
                 epoch: 1,
                 genesis_event_ref:
-                  "ak:event:01964137-0000-7000-8000-0000000000af",
+                  "ak:event:01964137-0000-8000-8000-0000000000af",
               }
             : {}),
           current_controller_device_ready: ready,
@@ -3370,7 +3370,7 @@ export async function mockArkretApi(
           ? body.agent_id
           : `did:web:agents.example:${slug}`;
       const principalControlRealmId =
-        "ak:realm:01964137-0000-7000-8000-000000000005";
+        "ak:realm:01964137-0000-8000-8000-000000000005";
       const controllerRealmId = DEMO_REALM;
       const controllerAuthorizationRef = `${agentId}#managed-controller`;
       const requestedScopeDigest = canonicalSha256({
@@ -3750,7 +3750,7 @@ export async function mockArkretApi(
         );
       }
       const authorizedEventRef =
-        "ak:event:01964137-0000-7000-8000-00000000a601";
+        "ak:event:01964137-0000-8000-8000-00000000a601";
       agent.lifecycle = "active";
       agent.updated_at = "2026-07-06T00:05:00.000Z";
       const previousKeyState = personalAgentKeyStates.get(agentId) ?? {};
@@ -3792,7 +3792,7 @@ export async function mockArkretApi(
         "ak:device:01964137-0000-7000-8000-0000000000b2";
       return json(route, {
         device_id: deviceId,
-        authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000d001",
+        authorized_event_ref: "ak:event:01964137-0000-8000-8000-00000000d001",
       });
     }
 
@@ -3842,7 +3842,7 @@ export async function mockArkretApi(
       return json(route, {
         state: "authorized",
         device_id: "ak:device:01964137-0000-7000-8000-0000000000b2",
-        authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000d001",
+        authorized_event_ref: "ak:event:01964137-0000-8000-8000-00000000d001",
       });
     }
 
@@ -4111,7 +4111,7 @@ function realmPreview() {
     join_rule: "public",
     member_count_bucket: "1-10",
     as_of: "2026-06-13T00:00:00.000Z",
-    source_refs: ["ak:event:0196419b-0000-7000-8000-000000000001"],
+    source_refs: ["ak:event:0196419b-0000-8000-8000-000000000001"],
     policy_revision: "mock-policy-rev",
   };
 }

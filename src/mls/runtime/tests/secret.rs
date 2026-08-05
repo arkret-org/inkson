@@ -125,7 +125,7 @@ fn account_secret_rotation_rewraps_backups_old_secret_cannot_decrypt() {
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ak:realm:01904100-0000-7000-8000-000000000009";
+    let realm = "ak:realm:01904100-0000-8000-8000-000000000009";
     let old_secret = "old-account-secret";
     let plaintext = b"opaque sdk state before revoke";
     let store = MemorySecureKeyStore::new();
@@ -194,8 +194,8 @@ fn account_secret_rotation_skips_undecryptable_realm_and_records_failure() {
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
-    let good_realm = "ak:realm:01904100-0000-7000-8000-00000000000a";
-    let bad_realm = "ak:realm:01904100-0000-7000-8000-00000000000b";
+    let good_realm = "ak:realm:01904100-0000-8000-8000-00000000000a";
+    let bad_realm = "ak:realm:01904100-0000-8000-8000-00000000000b";
     let old_secret = "old-account-secret";
     let store = MemorySecureKeyStore::new();
     store_account_mls_secret_version(&store, actor, 1, old_secret).unwrap();

@@ -241,7 +241,7 @@ fn local_state_store_persists_notifications_and_mute_preferences() {
     let notification = crate::state::projection::notifications::test_event_notification(
         1,
         arkret_sdk::NotificationKind::Message,
-        "ak:realm:0196419b-0000-7000-8000-000000000001",
+        "ak:realm:0196419b-0000-8000-8000-000000000001",
         None,
         serde_json::json!({"body": "Hello"}),
     );
@@ -249,14 +249,14 @@ fn local_state_store_persists_notifications_and_mute_preferences() {
     store.save_notification_projection(vec![notification]);
     store.set_notification_read(notification_id.clone(), true);
     store.set_notification_archived(notification_id.clone(), true);
-    store.set_realm_muted("ak:realm:0196419b-0000-7000-8000-000000000001", true);
+    store.set_realm_muted("ak:realm:0196419b-0000-8000-8000-000000000001", true);
     store.set_notification_kind_enabled("message", false);
 
     let reader = LocalStateStore::with_path(path);
     assert_eq!(reader.notification_projection().len(), 1);
     assert!(reader.notification_state_for(&notification_id).read);
     assert!(reader.notification_state_for(&notification_id).archived);
-    assert!(reader.is_realm_muted("ak:realm:0196419b-0000-7000-8000-000000000001"));
+    assert!(reader.is_realm_muted("ak:realm:0196419b-0000-8000-8000-000000000001"));
     assert!(!reader.notification_kind_enabled("message"));
 }
 
@@ -289,8 +289,8 @@ fn local_state_store_persists_private_read_cursors() {
     let path = temp_state_path("read-cursor");
     let mut store = LocalStateStore::with_path(path.clone());
     const DEVICE_ID: &str = "ak:device:01964137-0000-7000-8000-000000000001";
-    const REALM_ID: &str = "ak:realm:01964137-0000-7000-8000-000000000010";
-    const EVENT_ID: &str = "ak:event:01964137-0000-7000-8000-000000000020";
+    const REALM_ID: &str = "ak:realm:01964137-0000-8000-8000-000000000010";
+    const EVENT_ID: &str = "ak:event:01964137-0000-8000-8000-000000000020";
     let marker = store
         .build_read_cursor_candidate("did:web:alice.example", DEVICE_ID, REALM_ID, None, EVENT_ID)
         .unwrap();
@@ -316,14 +316,14 @@ fn local_state_store_persists_canonical_read_cursor_outcome() {
     let path = temp_state_path("read-cursor-outcome");
     let mut store = LocalStateStore::with_path(path.clone());
     let outcome = arkret_sdk::ReadMarkerOutcome {
-        realm_id: arkret_sdk::RealmId::new("ak:realm:01964137-0000-7000-8000-000000000010")
+        realm_id: arkret_sdk::RealmId::new("ak:realm:01964137-0000-8000-8000-000000000010")
             .unwrap(),
         actor_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
         device_id: arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001")
             .unwrap(),
-        read_scope: read_scope_for_cursor("ak:realm:01964137-0000-7000-8000-000000000010", None),
+        read_scope: read_scope_for_cursor("ak:realm:01964137-0000-8000-8000-000000000010", None),
         position: ReadCursorPosition {
-            event_id: arkret_sdk::EventId::new("ak:event:01964137-0000-7000-8000-000000000020")
+            event_id: arkret_sdk::EventId::new("ak:event:01964137-0000-8000-8000-000000000020")
                 .unwrap(),
             hlc: arkret_sdk::Hlc::new("019641370000-0001-deadbeef").unwrap(),
         },
@@ -335,11 +335,11 @@ fn local_state_store_persists_canonical_read_cursor_outcome() {
     store.apply_read_cursor_outcome(outcome).unwrap();
 
     let persisted = LocalStateStore::with_path(path)
-        .read_cursor_for("ak:realm:01964137-0000-7000-8000-000000000010", None)
+        .read_cursor_for("ak:realm:01964137-0000-8000-8000-000000000010", None)
         .expect("canonical read cursor outcome persisted");
     assert_eq!(
         persisted.body.position.event_id.as_str(),
-        "ak:event:01964137-0000-7000-8000-000000000020"
+        "ak:event:01964137-0000-8000-8000-000000000020"
     );
     assert_eq!(
         persisted.updated_at.to_rfc3339(),
@@ -364,14 +364,14 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
             "schema": "ak.schema.read_cursor.v1",
             "actor_id": "did:web:alice.example",
             "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
-            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002",
+            "realm_id": "ak:realm:01904100-0000-8000-8000-000000000002",
             "read_scope": {
                 "kind": "strand",
-                "container_ref": "ak:strand:01904100-0000-7000-8000-000000000003",
+                "container_ref": "ak:strand:01904100-0000-8000-8000-000000000003",
                 "track_name": "discussion"
             },
             "position": {
-                "event_id": "ak:event:01904100-0000-7000-8000-000000000004",
+                "event_id": "ak:event:01904100-0000-8000-8000-000000000004",
                 "hlc": "019041000000-0001-deadbeef"
             },
             "updated_at": "2026-06-24T00:00:00.000Z"
@@ -382,14 +382,14 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
     let reader = LocalStateStore::with_path(path);
     let marker = reader
         .read_cursor_for(
-            "ak:realm:01904100-0000-7000-8000-000000000002",
-            Some("ak:strand:01904100-0000-7000-8000-000000000003"),
+            "ak:realm:01904100-0000-8000-8000-000000000002",
+            Some("ak:strand:01904100-0000-8000-8000-000000000003"),
         )
         .expect("read cursor update persisted");
     assert_eq!(marker.actor, "did:web:alice.example");
     assert_eq!(
         marker.body.position.event_id.as_str(),
-        "ak:event:01904100-0000-7000-8000-000000000004"
+        "ak:event:01904100-0000-8000-8000-000000000004"
     );
 }
 
@@ -413,14 +413,14 @@ fn local_state_store_accepts_server_read_cursor_winner_with_lower_hlc() {
                 "schema": "ak.schema.read_cursor.v1",
                 "actor_id": "did:web:alice.example",
                 "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
-                "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002",
+                "realm_id": "ak:realm:01904100-0000-8000-8000-000000000002",
                 "read_scope": {
                     "kind": "strand",
-                    "container_ref": "ak:strand:01904100-0000-7000-8000-000000000003",
+                    "container_ref": "ak:strand:01904100-0000-8000-8000-000000000003",
                     "track_name": "discussion"
                 },
                 "position": {
-                    "event_id": format!("ak:event:01904100-0000-7000-8000-{event_suffix}"),
+                    "event_id": format!("ak:event:01904100-0000-8000-8000-{event_suffix}"),
                     "hlc": hlc
                 },
                 "updated_at": sent_at
@@ -450,13 +450,13 @@ fn local_state_store_accepts_server_read_cursor_winner_with_lower_hlc() {
     let reader = LocalStateStore::with_path(path);
     let marker = reader
         .read_cursor_for(
-            "ak:realm:01904100-0000-7000-8000-000000000002",
-            Some("ak:strand:01904100-0000-7000-8000-000000000003"),
+            "ak:realm:01904100-0000-8000-8000-000000000002",
+            Some("ak:strand:01904100-0000-8000-8000-000000000003"),
         )
         .expect("canonical server read cursor persisted");
     assert_eq!(
         marker.body.position.event_id.as_str(),
-        "ak:event:01904100-0000-7000-8000-000000000005"
+        "ak:event:01904100-0000-8000-8000-000000000005"
     );
     assert_eq!(
         marker.body.position.hlc.as_str(),
@@ -547,7 +547,7 @@ fn local_state_store_dismisses_answered_realm_key_request_by_message_id() {
             "key_scope": {
                 "effective_scope": {
                     "kind": "realm",
-                    "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000003"
+                    "realm_id": "ak:realm:0196419b-0000-8000-8000-000000000003"
                 },
                 "from_epoch": 0,
                 "to_epoch": 0
@@ -584,10 +584,10 @@ fn local_state_store_dismisses_answered_realm_key_request_by_message_id() {
 fn local_state_store_keeps_thread_read_cursors_separate() {
     let path = temp_state_path("thread-read-cursor");
     let mut store = LocalStateStore::with_path(path);
-    const REALM_ID: &str = "ak:realm:01964137-0000-7000-8000-000000000011";
-    const TOPIC_EVENT_ID: &str = "ak:event:01964137-0000-7000-8000-000000000021";
+    const REALM_ID: &str = "ak:realm:01964137-0000-8000-8000-000000000011";
+    const TOPIC_EVENT_ID: &str = "ak:event:01964137-0000-8000-8000-000000000021";
     const THREAD_ID: &str = "ak:thread:01964137-0000-7000-8000-000000000031";
-    const THREAD_EVENT_ID: &str = "ak:event:01964137-0000-7000-8000-000000000022";
+    const THREAD_EVENT_ID: &str = "ak:event:01964137-0000-8000-8000-000000000022";
     let topic_marker = store
         .build_read_cursor_candidate(
             "did:web:alice.example",

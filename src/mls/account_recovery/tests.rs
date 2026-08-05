@@ -31,9 +31,9 @@ const ACTOR: &str = "did:web:alice.example";
 const DEVICE: &str = "ak:device:01964137-0000-7000-8000-000000000001";
 const PASSPHRASE: &[u8] = b"correct horse battery staple";
 const ACCOUNT_SECRET: &str = "qr6h9rJ8nU0H2pP5w3sLx1A4bC7dE9fG2hI5jK8lM0N";
-const PROMPT_REALM_ID: &str = "ak:realm:01964137-2000-7000-8000-000000000001";
-const FIRST_REALM_ID: &str = "ak:realm:01964137-2000-7000-8000-000000000002";
-const OTHER_REALM_ID: &str = "ak:realm:01964137-2000-7000-8000-000000000003";
+const PROMPT_REALM_ID: &str = "ak:realm:01964137-2000-8000-8000-000000000001";
+const FIRST_REALM_ID: &str = "ak:realm:01964137-2000-8000-8000-000000000002";
+const OTHER_REALM_ID: &str = "ak:realm:01964137-2000-8000-8000-000000000003";
 const ACTIVE_SECRET_STORAGE_SERIES: &str = "ak:backup_series:01964137-1000-7000-8000-0000000000a1";
 const STALE_SECRET_STORAGE_SERIES: &str = "ak:backup_series:01964137-1000-7000-8000-0000000000a2";
 const ACTIVE_MLS_HISTORY_SERIES: &str = "ak:backup_series:01964137-1000-7000-8000-0000000000b1";
@@ -157,7 +157,7 @@ fn managed_agent_pcr_history_body(series_id: &str) -> Value {
             secret_id: Some("inkson_managed_agent_pcr_snapshot".to_owned()),
             realm_id: Some(
                 arkret_sdk::RealmId::new(
-                    "ak:realm:01964137-0000-7000-8000-00000000a6e1".to_owned(),
+                    "ak:realm:01964137-0000-8000-8000-00000000a6e1".to_owned(),
                 )
                 .unwrap(),
             ),
@@ -606,7 +606,7 @@ fn fresh_device_restores_via_recovery_key_no_passphrase() {
     use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
 
     let device_a = "ak:device:01964137-0000-7000-8000-00000000000a";
-    let realm = "ak:realm:01964137-0000-7000-8000-0000000000ab";
+    let realm = "ak:realm:01964137-0000-8000-8000-0000000000ab";
     let identity = ArkretMlsIdentity::new_basic(
         Did::new(ACTOR.to_owned()).unwrap(),
         DeviceId::new(device_a.to_owned()).unwrap(),
@@ -832,7 +832,7 @@ fn restore_replaces_stale_local_secret_before_history_replay() {
     use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
 
     let device_a = "ak:device:01964137-0000-7000-8000-00000000000a";
-    let realm = "ak:realm:01964137-0000-7000-8000-0000000000ab";
+    let realm = "ak:realm:01964137-0000-8000-8000-0000000000ab";
     let identity = ArkretMlsIdentity::new_basic(
         Did::new(ACTOR.to_owned()).unwrap(),
         DeviceId::new(device_a.to_owned()).unwrap(),
@@ -1261,7 +1261,7 @@ fn restore_brings_back_the_sidecar_into_the_store() {
     // Build a real, decryptable account-secret + history backup so Step 1/2
     // succeed and the account secret is local for the sidecar KEK source.
     let device_a = "ak:device:01964137-0000-7000-8000-00000000000a";
-    let realm = "ak:realm:01964137-0000-7000-8000-0000000000ab";
+    let realm = "ak:realm:01964137-0000-8000-8000-0000000000ab";
     let identity = ArkretMlsIdentity::new_basic(
         Did::new(ACTOR.to_owned()).unwrap(),
         DeviceId::new(device_a.to_owned()).unwrap(),

@@ -63,7 +63,7 @@ fn move_submission_state_maps_failure_reasons() {
 fn move_submission_record_round_trips_through_store() {
     let path = temp_state_path("move-submission");
     let mut store = LocalStateStore::with_path(path.clone());
-    let realm = "ak:realm:0196419b-0000-7000-8000-000000000001";
+    let realm = "ak:realm:0196419b-0000-8000-8000-000000000001";
     let mid = "sha256:111";
     store.record_move_submission(
         mid,
@@ -107,7 +107,7 @@ fn move_submission_record_round_trips_through_store() {
 fn move_submission_pending_mls_binding_drives_toast() {
     let path = temp_state_path("move-mls-binding");
     let mut store = LocalStateStore::with_path(path);
-    let realm = "ak:realm:0196419b-0000-7000-8000-000000000002";
+    let realm = "ak:realm:0196419b-0000-8000-8000-000000000002";
     store.record_move_submission(
         "sha256:222",
         realm,
@@ -120,7 +120,7 @@ fn move_submission_pending_mls_binding_drives_toast() {
     assert!(!store.realm_has_paused_notary(realm));
 
     assert_eq!(store.resolve_member_remove_mls_bindings(realm), 0);
-    let membership_event = "ak:event:0196419b-0000-7000-8000-000000000003";
+    let membership_event = "ak:event:0196419b-0000-8000-8000-000000000003";
     let binding_tracking_id = format!("mls-binding:{membership_event}");
     store.record_move_submission(
         binding_tracking_id.clone(),
@@ -162,9 +162,9 @@ fn move_submission_pending_mls_binding_drives_toast() {
 fn add_binding_requires_explicit_mls_reconciliation_resolution() {
     let path = temp_state_path("move-mls-add-binding");
     let mut store = LocalStateStore::with_path(path);
-    let realm = "ak:realm:0196419b-0000-7000-8000-000000000004";
+    let realm = "ak:realm:0196419b-0000-8000-8000-000000000004";
     store.record_move_submission(
-        "ak:event:0196419b-0000-7000-8000-000000000004",
+        "ak:event:0196419b-0000-8000-8000-000000000004",
         realm,
         "mls_member_add",
         MoveSubmissionState::PendingMlsBinding,
@@ -183,14 +183,14 @@ fn add_binding_requires_explicit_mls_reconciliation_resolution() {
 fn pending_mls_binding_reason_preserves_add_and_remove_semantics() {
     let path = temp_state_path("move-mls-binding-reason");
     let mut store = LocalStateStore::with_path(path);
-    let add_realm = "ak:realm:0196419b-0000-7000-8000-00000000000a";
-    let remove_realm = "ak:realm:0196419b-0000-7000-8000-00000000000b";
+    let add_realm = "ak:realm:0196419b-0000-8000-8000-00000000000a";
+    let remove_realm = "ak:realm:0196419b-0000-8000-8000-00000000000b";
     let add_reason = "epoch_update_required: membership frontier changed; MLS Add commit required";
     let remove_reason =
         "epoch_update_required: membership frontier changed; MLS Remove commit required";
 
     store.record_move_submission(
-        "ak:event:0196419b-0000-7000-8000-00000000000a",
+        "ak:event:0196419b-0000-8000-8000-00000000000a",
         add_realm,
         "mls_member_add",
         MoveSubmissionState::PendingMlsBinding,
@@ -198,7 +198,7 @@ fn pending_mls_binding_reason_preserves_add_and_remove_semantics() {
         None,
     );
     store.record_move_submission(
-        "ak:event:0196419b-0000-7000-8000-00000000000b",
+        "ak:event:0196419b-0000-8000-8000-00000000000b",
         remove_realm,
         "mls_member_remove",
         MoveSubmissionState::PendingMlsBinding,

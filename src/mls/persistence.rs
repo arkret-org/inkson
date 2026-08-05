@@ -760,7 +760,7 @@ mod tests {
         )
         .unwrap();
         let group = identity
-            .create_group(b"ak:realm:01904100-0000-7000-8000-000000000028")
+            .create_group(b"ak:realm:01904100-0000-8000-8000-000000000028")
             .unwrap();
         let record = group.export_state_record().unwrap();
         let original_group_id = record.group_id.clone();
@@ -768,7 +768,7 @@ mod tests {
 
         let bytes = serde_json::to_vec(&record).unwrap();
         let envelope = encrypt_state(
-            "ak:realm:01904100-0000-7000-8000-000000000028",
+            "ak:realm:01904100-0000-8000-8000-000000000028",
             &original_group_id,
             original_epoch,
             &bytes,

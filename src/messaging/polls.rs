@@ -486,9 +486,9 @@ mod tests {
         draft.set_option(0, "yes".into());
         draft.set_option(1, "no".into());
         let op = build_poll_create_op(
-            "ak:realm:01904100-0000-7000-8000-000000000010",
+            "ak:realm:01904100-0000-8000-8000-000000000010",
             "did:web:alice.example",
-            "ak:strand:01904100-0000-7000-8000-000000000011",
+            "ak:strand:01904100-0000-8000-8000-000000000011",
             &draft,
         )
         .expect("builds");
@@ -523,10 +523,10 @@ mod tests {
     #[test]
     fn build_poll_vote_op_emits_canonical_poll_response_block() {
         let op = build_poll_vote_op(
-            "ak:realm:01904100-0000-7000-8000-000000000010",
+            "ak:realm:01904100-0000-8000-8000-000000000010",
             "did:web:alice.example",
-            "ak:strand:01904100-0000-7000-8000-000000000011",
-            "ak:message:01904100-0000-7000-8000-000000000012",
+            "ak:strand:01904100-0000-8000-8000-000000000011",
+            "ak:message:01904100-0000-8000-8000-000000000012",
             &["opt-1".to_owned()],
         )
         .expect("builds");
@@ -536,7 +536,7 @@ mod tests {
         assert!(block.get("choice").is_none());
         assert_eq!(
             block["poll_response"]["poll_ref"],
-            "ak:message:01904100-0000-7000-8000-000000000012"
+            "ak:message:01904100-0000-8000-8000-000000000012"
         );
         assert_eq!(block["poll_response"]["selections"], json!(["opt-1"]));
         arkret_sdk::schema::event_payload_validator_catalog()
@@ -554,9 +554,9 @@ mod tests {
         // poll_ref (schema requires ak:message:<uuid7>).
         assert!(
             build_poll_vote_op(
-                "ak:realm:01904100-0000-7000-8000-000000000010",
+                "ak:realm:01904100-0000-8000-8000-000000000010",
                 "did:web:alice.example",
-                "ak:strand:01904100-0000-7000-8000-000000000011",
+                "ak:strand:01904100-0000-8000-8000-000000000011",
                 &new_poll_id(),
                 &["opt-0".to_owned()],
             )
@@ -580,13 +580,13 @@ mod tests {
         });
         let card = PollCard::from_content(
             "ak:event:1".to_owned(),
-            Some("ak:message:01904100-0000-7000-8000-000000000012"),
+            Some("ak:message:01904100-0000-8000-8000-000000000012"),
             &content,
         )
         .unwrap();
         assert_eq!(
             card.poll_id,
-            "ak:message:01904100-0000-7000-8000-000000000012"
+            "ak:message:01904100-0000-8000-8000-000000000012"
         );
         assert_eq!(card.message_id, "ak:event:1");
         assert_eq!(card.question, "ship?");
@@ -625,12 +625,12 @@ mod tests {
             "kind": "ak.content.poll.response",
             "body": "poll response",
             "poll_response": {
-                "poll_ref": "ak:message:01904100-0000-7000-8000-000000000012",
+                "poll_ref": "ak:message:01904100-0000-8000-8000-000000000012",
                 "selections": ["opt-0", "opt-2"]
             }
         });
         let (poll_ref, selections) = poll_response_from_content(&canonical).unwrap();
-        assert_eq!(poll_ref, "ak:message:01904100-0000-7000-8000-000000000012");
+        assert_eq!(poll_ref, "ak:message:01904100-0000-8000-8000-000000000012");
         assert_eq!(selections, vec!["opt-0".to_owned(), "opt-2".to_owned()]);
         // Legacy flat shape fails closed.
         let flat = json!({

@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn call_state_emits_canonical_kind() {
         let op = build_call_state(
-            "ak:realm:0196419b-0000-7000-8000-0000000000ac",
+            "ak:realm:0196419b-0000-8000-8000-0000000000ac",
             "did:web:alice",
             "ak:call:c1",
             Some(CallState::Connecting),
@@ -258,7 +258,7 @@ mod tests {
     #[test]
     fn call_recording_start_uses_current_schema() {
         let op = build_call_recording_start(
-            "ak:realm:0196419b-0000-7000-8000-0000000000ac",
+            "ak:realm:0196419b-0000-8000-8000-0000000000ac",
             "did:web:alice",
             "ak:call:c1",
             "rtc-recording-r1",
@@ -283,7 +283,7 @@ mod tests {
     #[test]
     fn call_recording_start_supports_transcript_capture_kind() {
         let op = build_call_recording_start(
-            "ak:realm:0196419b-0000-7000-8000-0000000000ac",
+            "ak:realm:0196419b-0000-8000-8000-0000000000ac",
             "did:web:alice",
             "ak:call:c1",
             "rtc-transcript-t1",
@@ -327,7 +327,7 @@ mod tests {
 
     fn seq_key() -> CallSignalSeqKey {
         CallSignalSeqKey {
-            realm_id: "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+            realm_id: "ak:realm:01904100-0000-8000-8000-000000000001".to_owned(),
             call_id: TEST_CALL.to_owned(),
             sender_actor_id: TEST_ACTOR.to_owned(),
             sender_device_id: TEST_DEVICE.to_owned(),

@@ -866,7 +866,7 @@ mod tests {
     #[test]
     fn empty_anchor_set_fails_closed() {
         let request = MediaJoinRequest {
-            realm_id: "ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned(),
+            realm_id: "ak:realm:01904100-0000-8000-8000-9b64700c6ee8".to_owned(),
             call_id: "ak:call:0196441c-0000-7000-8000-000000000000".to_owned(),
             actor_id: "did:web:alice.example".to_owned(),
             device_id: "ak:device:01904100-0000-7000-8000-000000000005".to_owned(),
@@ -932,7 +932,7 @@ mod tests {
         governance_evidence: Option<MediaGovernanceEvidence>,
     ) -> MediaJoinRequest {
         MediaJoinRequest {
-            realm_id: "ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned(),
+            realm_id: "ak:realm:01904100-0000-8000-8000-9b64700c6ee8".to_owned(),
             call_id: "ak:call:0196441c-0000-7000-8000-000000000000".to_owned(),
             actor_id: "did:web:alice.example".to_owned(),
             device_id: "ak:device:01904100-0000-7000-8000-000000000005".to_owned(),
@@ -975,7 +975,7 @@ mod tests {
             )])
         });
         let governance_binding = MlsGovernanceBindingPayload::realm(
-            RealmId::new("ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()).unwrap(),
+            RealmId::new("ak:realm:01904100-0000-8000-8000-9b64700c6ee8".to_owned()).unwrap(),
             "Z3JvdXA",
             6,
             7,
@@ -1029,7 +1029,7 @@ mod tests {
 
     const EXPORTER_ACTOR: &str = "did:web:alice.example";
     const EXPORTER_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000001";
-    const EXPORTER_REALM: &str = "ak:realm:01904100-0000-7000-8000-000000000003";
+    const EXPORTER_REALM: &str = "ak:realm:01904100-0000-8000-8000-000000000003";
 
     /// Build a real MLS group for `EXPORTER_REALM`, store its account snapshot
     /// secret in `store`, and return the encrypted snapshot envelope — the same
@@ -1156,7 +1156,7 @@ mod tests {
     const BOB_ACTOR: &str = "did:web:bob.example";
     const BOB_DEVICE: &str = "ak:device:01904100-0000-7000-8000-00000000000b";
     const BOB_IDENTITY: &str = "ak:rtc_participant:0198c2f4-0000-7000-8000-00000000000b";
-    const INTEROP_REALM: &str = "ak:realm:01904100-0000-7000-8000-1ad6479d4a41";
+    const INTEROP_REALM: &str = "ak:realm:01904100-0000-8000-8000-1ad6479d4a41";
     const INTEROP_CALL: &str = "ak:call:0196441c-0000-7000-8000-000000000000";
 
     /// Snapshot a live MLS `group` under `(actor, device)`'s account secret in

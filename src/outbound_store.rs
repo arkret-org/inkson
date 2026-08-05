@@ -198,10 +198,10 @@ mod tests {
         let store = InksonOutboundStore::open_at(&path).unwrap();
         let engine = OutboundEngine::new(store);
         let realm =
-            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap();
+            arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001").unwrap();
         engine
             .enqueue(
-                Some("ak:event:01904100-0000-7000-8000-000000000001".to_owned()),
+                Some("ak:event:01904100-0000-8000-8000-000000000001".to_owned()),
                 realm,
                 garth::SendQueueItemKind::Custom {
                     kind: "ak.test.event".to_owned(),
@@ -220,7 +220,7 @@ mod tests {
         assert_eq!(snapshot.items.len(), 1);
         assert_eq!(
             snapshot.items[0].transaction_id,
-            "ak:event:01904100-0000-7000-8000-000000000001"
+            "ak:event:01904100-0000-8000-8000-000000000001"
         );
         let _ = std::fs::remove_file(path);
     }
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn snapshot_compaction_removes_only_unreferenced_terminal_history() {
         let realm =
-            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap();
+            arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001").unwrap();
         let mut queue = garth::SendQueue::new();
         queue
             .enqueue(

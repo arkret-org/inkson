@@ -119,23 +119,23 @@ mod tests {
 
     #[test]
     fn extracts_only_moderation_lifecycle_events_in_projection_shape() {
-        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
+        let realm_id = "ak:realm:01904100-0000-8000-8000-000000000001";
         let records = moderation_operations_from_events(
             realm_id,
             &[
                 json!({
-                    "event_id": "ak:event:01904100-0000-7000-8000-000000000101",
+                    "event_id": "ak:event:01904100-0000-8000-8000-000000000101",
                     "kind": "ak.moderation.decision",
                     "realm_id": realm_id,
                     "actor_id": "did:web:moderator.example",
                     "created_at": "2026-07-19T00:00:00.000Z",
                     "payload": {
-                        "target_ref": "ak:message:01904100-0000-7000-8000-000000000201",
+                        "target_ref": "ak:message:01904100-0000-8000-8000-000000000201",
                         "decision": "quarantine"
                     }
                 }),
                 json!({
-                    "event_id": "ak:event:01904100-0000-7000-8000-000000000102",
+                    "event_id": "ak:event:01904100-0000-8000-8000-000000000102",
                     "kind": "ak.message.create",
                     "realm_id": realm_id,
                     "payload": {}
@@ -148,7 +148,7 @@ mod tests {
         assert_eq!(records[0].payload["kind"], "ak.moderation.decision");
         assert_eq!(
             records[0].payload["body"]["target_ref"],
-            "ak:message:01904100-0000-7000-8000-000000000201"
+            "ak:message:01904100-0000-8000-8000-000000000201"
         );
     }
 }

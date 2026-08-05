@@ -192,7 +192,7 @@ mod tests {
         let mut event = arkret_sdk::Event::new(
             kind,
             arkret_sdk::ScopeRef::Realm {
-                realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001")
+                realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001")
                     .unwrap(),
             },
             arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
@@ -202,7 +202,7 @@ mod tests {
         )
         .unwrap();
         event.event_id =
-            arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000101").unwrap();
+            arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000101").unwrap();
         event.created_at = "2026-07-08T00:00:00.000Z".parse().unwrap();
         event
     }
@@ -212,7 +212,7 @@ mod tests {
         let event = typed_event(
             arkret_sdk::EventKind::MESSAGE_CREATE,
             json!({
-                "strand_id": "ak:strand:01904100-0000-7000-8000-000000000201",
+                "strand_id": "ak:strand:01904100-0000-8000-8000-000000000201",
                 "track_name": "discussion",
                 "content": {"kind": "ak.content.text", "body": "hello"}
             }),
@@ -223,11 +223,11 @@ mod tests {
 
         assert_eq!(
             record.operation_id,
-            "ak:event:01904100-0000-7000-8000-000000000101"
+            "ak:event:01904100-0000-8000-8000-000000000101"
         );
         assert_eq!(
             record.realm_id.as_deref(),
-            Some("ak:realm:01904100-0000-7000-8000-000000000001")
+            Some("ak:realm:01904100-0000-8000-8000-000000000001")
         );
         assert_eq!(record.received_at, event.created_at);
         assert_eq!(record.payload, value);
@@ -238,7 +238,7 @@ mod tests {
         let sidecar_control = typed_event(
             arkret_sdk::EventKind::AGENT_SIDECAR_EXCHANGE_CONTROL,
             json!({
-                "strand_id": "ak:strand:01904100-0000-7000-8000-000000000201",
+                "strand_id": "ak:strand:01904100-0000-8000-8000-000000000201",
                 "encrypted_payload": {
                     "schema": "ak.schema.encrypted_envelope.v1",
                     "suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
@@ -246,7 +246,7 @@ mod tests {
                         "kind": "mls_group",
                         "group_id": "AQIDBA",
                         "epoch": 1,
-                        "group_state_ref": "ak:event:01904100-0000-7000-8000-000000000102"
+                        "group_state_ref": "ak:event:01904100-0000-8000-8000-000000000102"
                     },
                     "aad_visibility": "hidden",
                     "ciphertext": "AQIDBA"
@@ -277,7 +277,7 @@ mod tests {
         let event = typed_event(
             arkret_sdk::EventKind::MESSAGE_CREATE,
             json!({
-                "strand_id": "ak:strand:01904100-0000-7000-8000-000000000002",
+                "strand_id": "ak:strand:01904100-0000-8000-8000-000000000002",
                 "track_name": "discussion",
                 "content": {"kind": "ak.content.text", "body": "typed"}
             }),
@@ -291,14 +291,14 @@ mod tests {
         };
 
         let records = message_operations_from_client_events(
-            "ak:realm:01904100-0000-7000-8000-000000000001",
+            "ak:realm:01904100-0000-8000-8000-000000000001",
             &[client_event],
         );
 
         assert_eq!(records.len(), 1);
         assert_eq!(
             records[0].operation_id,
-            "ak:event:01904100-0000-7000-8000-000000000101"
+            "ak:event:01904100-0000-8000-8000-000000000101"
         );
     }
 }

@@ -997,7 +997,7 @@ mod tests {
                                 "authority_did": "did:web:auth.example",
                                 "authorization_ref": "did:web:managed-alice.example#device-enrollment"
                             },
-                            "device_authorize_event_id": "ak:event:01904100-0000-7000-8000-000000000011",
+                            "device_authorize_event_id": "ak:event:01904100-0000-8000-8000-000000000011",
                             "authorized_generation_ref": "1-QmCurrent"
                         }
                     }
@@ -1063,7 +1063,7 @@ mod tests {
                                 "authority_did": "did:web:auth.example",
                                 "authorization_ref": "did:web:managed-carol.example#device-enrollment"
                             },
-                            "device_authorize_event_id": "ak:event:01904100-0000-7000-8000-000000000012",
+                            "device_authorize_event_id": "ak:event:01904100-0000-8000-8000-000000000012",
                             "authorized_generation_ref": "1-QmOld"
                         }
                     }
@@ -1467,7 +1467,7 @@ mod tests {
             "ak.member.state",
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(
-                    "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+                    "ak:realm:01904100-0000-8000-8000-000000000001".to_owned(),
                 )
                 .unwrap(),
             },
@@ -1499,7 +1499,7 @@ mod tests {
         let mut with_deleted_field = projected.clone();
         with_deleted_field["effective_scope"] = serde_json::json!({
             "kind": "realm",
-            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001"
+            "realm_id": "ak:realm:01904100-0000-8000-8000-000000000001"
         });
         assert!(!verify_persistent_envelope_proofs(
             &with_deleted_field,

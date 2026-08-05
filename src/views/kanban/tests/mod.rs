@@ -11,7 +11,7 @@ pub(super) use crate::move_builder::StrandPositionExpectation;
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) use crate::state::RawOperationRecord;
 
-pub(super) const TEST_REALM_ID: &str = "ak:realm:0196419b-0000-7000-8000-000000000010";
+pub(super) const TEST_REALM_ID: &str = "ak:realm:0196419b-0000-8000-8000-000000000010";
 
 // YOU-05-010: shared hermetic state-store fixture from `local_state`.
 #[cfg(not(target_arch = "wasm32"))]

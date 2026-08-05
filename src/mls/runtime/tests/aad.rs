@@ -26,7 +26,7 @@ fn aad_visibility_inferred_from_canonical_aad_shape() {
     use arkret_sdk::EncryptedEnvelopeAadVisibility;
     // hidden() omits both event-id fields ⇒ Hidden.
     let hidden = arkret_sdk::EncryptedEnvelopeAad::hidden(
-        arkret_sdk::RealmId::new("ak:realm:0196419b-0000-7000-8000-000000000001".to_owned())
+        arkret_sdk::RealmId::new("ak:realm:0196419b-0000-8000-8000-000000000001".to_owned())
             .unwrap(),
         "ak.message.create",
     );
@@ -48,7 +48,7 @@ fn aad_visibility_inferred_from_canonical_aad_shape() {
     assert_eq!(
         aad_visibility_of(&arkret_sdk::EncryptedEnvelopeAad {
             event_id: Some(
-                arkret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-000000000001").unwrap()
+                arkret_sdk::EventId::new("ak:event:0196419b-0000-8000-8000-000000000001").unwrap()
             ),
             ..hidden.clone()
         }),

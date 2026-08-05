@@ -1301,7 +1301,7 @@ mod tests {
             "ak.member.state",
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(
-                    "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+                    "ak:realm:01904100-0000-8000-8000-000000000001".to_owned(),
                 )
                 .unwrap(),
             },
@@ -1427,7 +1427,7 @@ mod tests {
         let seal = arkret_sdk::Seal {
             id: arkret_sdk::SealId::new(format!("ak:seal:{root}")).unwrap(),
             realm_id: arkret_sdk::RealmId::new(
-                "ak:realm:01904100-0000-7000-8000-0000000000c1".to_owned(),
+                "ak:realm:01904100-0000-8000-8000-0000000000c1".to_owned(),
             )
             .unwrap(),
             predecessor_refs: Vec::new(),
@@ -1541,7 +1541,7 @@ mod tests {
     #[test]
     fn incomplete_chunk_acquisition_survives_state_store_restart() {
         let path = temp_state_path("mls-governance-acquisition");
-        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
+        let realm_id = "ak:realm:01904100-0000-8000-8000-000000000001";
         let request;
         let expected_chunk;
         {

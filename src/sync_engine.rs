@@ -3082,7 +3082,7 @@ mod tests {
 
     #[test]
     fn realm_mls_removal_basis_requires_complete_roster_and_accepted_frontier() {
-        let removal_event = "ak:event:0196419b-0000-7000-8000-0000000000bb";
+        let removal_event = "ak:event:0196419b-0000-8000-8000-0000000000bb";
         let projection = json!({
             "members_limited": false,
             "members": [{
@@ -3116,13 +3116,13 @@ mod tests {
 
     #[test]
     fn pending_mls_binding_retries_on_empty_account_poll_until_resolved() {
-        let realm_id = "ak:realm:0196419b-0000-7000-8000-0000000000cc";
+        let realm_id = "ak:realm:0196419b-0000-8000-8000-0000000000cc";
         let response = empty_response("ak:cursor:mls-retry");
         let mut store = temp_store("mls-remove-empty-poll-retry");
 
         assert!(scope_rotate_realm_ids(&response, &store).is_empty());
         store.record_move_submission(
-            "ak:event:0196419b-0000-7000-8000-0000000000cd",
+            "ak:event:0196419b-0000-8000-8000-0000000000cd",
             realm_id,
             "mls_member_remove",
             crate::state::MoveSubmissionState::PendingMlsBinding,
@@ -3205,7 +3205,7 @@ mod tests {
             entry: serde_json::from_value(json!({
                 "state": {"events": [serde_json::to_value(sdk_event(
                     "ak.circle.member.remove",
-                    json!({"circle_id": "ak:circle:0196419b-0000-7000-8000-000000000001"})
+                    json!({"circle_id": "ak:circle:0196419b-0000-8000-8000-000000000001"})
                 )).unwrap()]}
             }))
             .expect("durable Realm update"),
@@ -3388,7 +3388,7 @@ mod tests {
     }
 
     fn sdk_realm_id() -> arkret_sdk::RealmId {
-        arkret_sdk::RealmId::new("ak:realm:0196419b-0000-7000-8000-000000000000").unwrap()
+        arkret_sdk::RealmId::new("ak:realm:0196419b-0000-8000-8000-000000000000").unwrap()
     }
 
     fn sdk_actor_id() -> arkret_sdk::Did {
@@ -3430,8 +3430,8 @@ mod tests {
                 "verification_method": "did:webvh:z6mkfixture:bob.example#key-1"
             }],
         });
-        let minimal_realm = "ak:realm:0196419b-0000-7000-8000-00000000aaaa";
-        let ordinary_realm = "ak:realm:0196419b-0000-7000-8000-00000000bbbb";
+        let minimal_realm = "ak:realm:0196419b-0000-8000-8000-00000000aaaa";
+        let ordinary_realm = "ak:realm:0196419b-0000-8000-8000-00000000bbbb";
         let mut response = empty_response("ak:cursor:minimal-metadata");
         response.realm_projections.insert(
             minimal_realm.to_owned(),
@@ -3464,7 +3464,7 @@ mod tests {
         let message_event = sdk_event(
             arkret_sdk::EventKind::MESSAGE_CREATE,
             json!({
-                "strand_id": "ak:strand:0196419b-0000-7000-8000-000000000011",
+                "strand_id": "ak:strand:0196419b-0000-8000-8000-000000000011",
                 "track_name": "discussion",
                 "content": {"kind": "ak.content.text", "body": "hello"}
             }),
@@ -3473,7 +3473,7 @@ mod tests {
             "ak.space.create",
             json!({
                 "object": {
-                    "id": "ak:space:0196419b-0000-7000-8000-000000000001",
+                    "id": "ak:space:0196419b-0000-8000-8000-000000000001",
                     "schema": "ak.schema.space.v1",
                     "realm_id": sdk_realm_id().as_str(),
                     "kind": "board",
@@ -3535,8 +3535,8 @@ mod tests {
     fn realm_subscribe_frames_ingest_into_raw_operations_and_dedupe() {
         use arkret_sdk::EventsSubscribeFrameKind;
 
-        let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000000";
-        let board_id = "ak:space:0196419b-0000-7000-8000-000000000001";
+        let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000000";
+        let board_id = "ak:space:0196419b-0000-8000-8000-000000000001";
         // Mirrors the server's `events/subscribe` framing: one `event` frame
         // carrying the projection-event JSON, a `catchup_complete`, a heartbeat.
         let ndjson = format!(
@@ -3546,7 +3546,7 @@ mod tests {
                 "seq": 1,
                 "cursor": "ak:cursor:realmframe1",
                 "payload": {
-                    "event_id": "ak:event:0196419b-0000-7000-8000-000000000101",
+                    "event_id": "ak:event:0196419b-0000-8000-8000-000000000101",
                     "event_kind": "ak.space.create",
                     "realm_id": realm_id,
                     "actor_id": "did:web:bob.example",
@@ -3600,14 +3600,14 @@ mod tests {
 
     #[test]
     fn membership_events_ingest_into_raw_operations() {
-        let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000000";
+        let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000000";
         let mut store = temp_store("membership-events");
         let changed = ingest_membership_projection_events(
             &mut store,
             realm_id,
             &[
                 json!({
-                    "event_id": "ak:event:0196419b-0000-7000-8000-000000000201",
+                    "event_id": "ak:event:0196419b-0000-8000-8000-000000000201",
                     "event_kind": "ak.member.state",
                     "realm_id": realm_id,
                     "actor_id": "did:web:alice.example",
@@ -3618,7 +3618,7 @@ mod tests {
                     }
                 }),
                 json!({
-                    "event_id": "ak:event:0196419b-0000-7000-8000-000000000202",
+                    "event_id": "ak:event:0196419b-0000-8000-8000-000000000202",
                     "kind": "ak.invite.accept",
                     "realm_id": realm_id,
                     "actor_id": "did:web:carol.example",
@@ -3628,7 +3628,7 @@ mod tests {
                     }
                 }),
                 json!({
-                    "event_id": "ak:event:0196419b-0000-7000-8000-000000000203",
+                    "event_id": "ak:event:0196419b-0000-8000-8000-000000000203",
                     "kind": "ak.mls.commit",
                     "realm_id": realm_id,
                     "payload": {}
@@ -3722,14 +3722,14 @@ mod tests {
         let mut store = LocalStateStore::with_path(temp);
         let body = json!({
             "state": { "events": [{
-                    "event_id": "ak:event:01904100-0000-7000-8000-0000000000a1",
+                    "event_id": "ak:event:01904100-0000-8000-8000-0000000000a1",
                     "operation_id": "ak:operation:01904100-0000-7000-8000-0000000000a1",
                     "event_kind": "ak.strand.update",
                     "actor_id": "did:web:bob.example",
                     "created_at": "2026-06-24T10:00:00.000Z",
-                    "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
+                    "realm_id": "ak:realm:01904100-0000-8000-8000-000000000001",
                     "payload": {
-                        "strand_id": "ak:strand:01904100-0000-7000-8000-000000000002",
+                        "strand_id": "ak:strand:01904100-0000-8000-8000-000000000002",
                         "patch": {
                             "synthesis": {"$op": "set", "value": "bob synthesis"}
                         }
@@ -3739,7 +3739,7 @@ mod tests {
 
         let changed = ingest_kanban_state_events_from_projection(
             &mut store,
-            "ak:realm:01904100-0000-7000-8000-000000000001",
+            "ak:realm:01904100-0000-8000-8000-000000000001",
             &body,
         );
 
@@ -3759,19 +3759,19 @@ mod tests {
 
     #[test]
     fn sync_state_events_ingest_discussion_pin_controls_as_raw_operations() {
-        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
-        let strand_id = "ak:strand:01904100-0000-7000-8000-000000000002";
+        let realm_id = "ak:realm:01904100-0000-8000-8000-000000000001";
+        let strand_id = "ak:strand:01904100-0000-8000-8000-000000000002";
         let mut store = temp_store("discussion-pin-state-events");
         let body = json!({
             "state": { "events": [{
-                    "event_id": "ak:event:01904100-0000-7000-8000-0000000000b1",
+                    "event_id": "ak:event:01904100-0000-8000-8000-0000000000b1",
                     "event_kind": "ak.pin.add",
                     "actor_id": "did:web:mei.example",
                     "created_at": "2026-06-24T10:00:00.000Z",
                     "realm_id": realm_id,
                     "payload": {
                         "pin_scope": {"kind": "strand", "id": strand_id},
-                        "target_ref": "ak:message:01904100-0000-7000-8000-000000000101",
+                        "target_ref": "ak:message:01904100-0000-8000-8000-000000000101",
                         "rank": "r001"
                     }
                 }] }
@@ -3784,7 +3784,7 @@ mod tests {
         assert_eq!(state.raw_operations.len(), 1);
         assert_eq!(
             state.raw_operations[0].operation_id,
-            "ak:event:01904100-0000-7000-8000-0000000000b1"
+            "ak:event:01904100-0000-8000-8000-0000000000b1"
         );
         assert_eq!(state.raw_operations[0].payload["event_kind"], "ak.pin.add");
         assert_eq!(
@@ -3795,20 +3795,20 @@ mod tests {
 
     #[test]
     fn sync_state_events_ingest_message_lifecycle_rows_for_discussion_raw_operations() {
-        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
-        let strand_id = "ak:strand:01904100-0000-7000-8000-000000000002";
+        let realm_id = "ak:realm:01904100-0000-8000-8000-000000000001";
+        let strand_id = "ak:strand:01904100-0000-8000-8000-000000000002";
         let mut store = temp_store("discussion-message-state-events");
         let body = json!({
             "state": { "events": [
                     {
-                        "event_id": "ak:event:01904100-0000-7000-8000-0000000000c1",
+                        "event_id": "ak:event:01904100-0000-8000-8000-0000000000c1",
                         "event_kind": "ak.message.revise",
                         "actor_id": "did:web:bob.example",
                         "created_at": "2026-06-24T10:00:00.000Z",
                         "realm_id": realm_id,
                         "payload": {
-                            "event_id": "ak:event:01904100-0000-7000-8000-0000000000c1",
-                            "target_ref": "ak:message:01904100-0000-7000-8000-000000000101",
+                            "event_id": "ak:event:01904100-0000-8000-8000-0000000000c1",
+                            "target_ref": "ak:message:01904100-0000-8000-8000-000000000101",
                             "strand_id": strand_id,
                             "content": {
                                 "kind": "ak.content.text",
@@ -3817,25 +3817,25 @@ mod tests {
                         }
                     },
                     {
-                        "event_id": "ak:event:01904100-0000-7000-8000-0000000000c2",
+                        "event_id": "ak:event:01904100-0000-8000-8000-0000000000c2",
                         "event_kind": "ak.message.redact",
                         "actor_id": "did:web:bob.example",
                         "created_at": "2026-06-24T10:01:00.000Z",
                         "realm_id": realm_id,
                         "payload": {
-                            "event_id": "ak:event:01904100-0000-7000-8000-0000000000c2",
-                            "message_id": "ak:message:01904100-0000-7000-8000-000000000101",
+                            "event_id": "ak:event:01904100-0000-8000-8000-0000000000c2",
+                            "message_id": "ak:message:01904100-0000-8000-8000-000000000101",
                             "reason": "user requested tombstone"
                         }
                     },
                     {
-                        "event_id": "ak:event:01904100-0000-7000-8000-0000000000c3",
+                        "event_id": "ak:event:01904100-0000-8000-8000-0000000000c3",
                         "event_kind": "ak.reaction.add",
                         "actor_id": "did:web:carol.example",
                         "created_at": "2026-06-24T10:02:00.000Z",
                         "realm_id": realm_id,
                         "payload": {
-                            "target_ref": "ak:message:01904100-0000-7000-8000-000000000101",
+                            "target_ref": "ak:message:01904100-0000-8000-8000-000000000101",
                             "key": "👍"
                         }
                     }
@@ -3865,7 +3865,7 @@ mod tests {
     fn persistent_proof_sender_device_collection_dedupes_nested_events() {
         let mut response = empty_response("cursor-1");
         response.realm_projections.insert(
-            "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+            "ak:realm:01904100-0000-8000-8000-000000000001".to_owned(),
             json!({
                 "timeline": {
                     "events": [
@@ -3915,7 +3915,7 @@ mod tests {
         let device = "ak:device:01904100-0000-7000-8000-0000000000aa";
         let mut response = empty_response("cursor-agent");
         response.realm_projections.insert(
-            "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+            "ak:realm:01904100-0000-8000-8000-000000000001".to_owned(),
             json!({
                 "timeline": {
                     "events": [{
@@ -3942,7 +3942,7 @@ mod tests {
         let existing = crate::state::projection::notifications::test_event_notification(
             1,
             arkret_sdk::NotificationKind::Message,
-            "ak:realm:0196419b-0000-7000-8000-000000000012",
+            "ak:realm:0196419b-0000-8000-8000-000000000012",
             None,
             json!({}),
         );
@@ -3957,7 +3957,7 @@ mod tests {
             false,
             Some(vec![crate::state::projection::notifications::test_invite(
                 0x10,
-                "ak:realm:0196419b-0000-7000-8000-000000000011",
+                "ak:realm:0196419b-0000-8000-8000-000000000011",
                 None,
                 None,
             )]),
@@ -3981,7 +3981,7 @@ mod tests {
     fn notification_projection_filters_invites_by_typed_membership() {
         let mut store = temp_store("invite-membership-projection");
         let actor_id = "did:webvh:z6mkfixture:bob.example";
-        let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000011";
+        let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000011";
         let invite =
             || crate::state::projection::notifications::test_invite(0x10, realm_id, None, None);
         let response = |membership: &str| {
@@ -4168,10 +4168,10 @@ mod tests {
         let device = "ak:device:0196419b-0000-7000-8000-000000000001";
         let mut response = empty_response("ak:cursor:device-revoke");
         response.realm_projections.insert(
-            "ak:realm:0196419b-0000-7000-8000-000000000002".to_owned(),
+            "ak:realm:0196419b-0000-8000-8000-000000000002".to_owned(),
             json!({
                 "state": { "events": [{
-                    "event_id": "ak:event:0196419b-0000-7000-8000-000000000003",
+                    "event_id": "ak:event:0196419b-0000-8000-8000-000000000003",
                     "kind": "ak.device.revoke",
                     "payload": {
                         "principal_id": actor,
@@ -4203,7 +4203,7 @@ mod tests {
         let device = "ak:device:0196419b-0000-7000-8000-000000000001";
         let mut response = empty_response("ak:cursor:malformed-device-revoke");
         response.realm_projections.insert(
-            "ak:realm:0196419b-0000-7000-8000-000000000002".to_owned(),
+            "ak:realm:0196419b-0000-8000-8000-000000000002".to_owned(),
             json!({
                 "state": { "events": [{
                     "kind": "ak.device.revoke",

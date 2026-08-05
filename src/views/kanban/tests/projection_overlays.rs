@@ -11,19 +11,19 @@ fn collection_projection_maps_to_kanban_columns() {
         serde_json::from_value(serde_json::json!({
             "projection": "collection",
             "renderer": "board",
-            "view_id": "ak:view:01904100-0000-7000-8000-000000000001",
+            "view_id": "ak:view:01904100-0000-8000-8000-000000000001",
             "frontier": {
                 "state_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-                "event_ids": ["ak:event:01904100-0000-7000-8000-000000000042"]
+                "event_ids": ["ak:event:01904100-0000-8000-8000-000000000042"]
             },
             "groups": [
                 {
-                    "key": "ak:space:01904100-0000-7000-8000-000000000031",
+                    "key": "ak:space:01904100-0000-8000-8000-000000000031",
                     "title": "Review",
                     "rank": "mV",
                     "items": [{
                         "object": {
-                            "id": "ak:strand:01904100-0000-7000-8000-000000000033",
+                            "id": "ak:strand:01904100-0000-8000-8000-000000000033",
                             "kind": "strand",
                             "title": "Legal review",
                             "fields": {
@@ -44,7 +44,7 @@ fn collection_projection_maps_to_kanban_columns() {
                     "limited": false
                 },
                 {
-                    "key": "ak:space:01904100-0000-7000-8000-000000000032",
+                    "key": "ak:space:01904100-0000-8000-8000-000000000032",
                     "title": "To do",
                     "rank": "aA",
                     "items": [],
@@ -56,12 +56,12 @@ fn collection_projection_maps_to_kanban_columns() {
 
     let cols = collection_projection_to_columns(&projection, None);
     assert_eq!(cols.len(), 2, "two groups → two columns");
-    assert_eq!(cols[0].id, "ak:space:01904100-0000-7000-8000-000000000031");
+    assert_eq!(cols[0].id, "ak:space:01904100-0000-8000-8000-000000000031");
     assert_eq!(cols[0].title, "Review");
     assert_eq!(cols[0].rank, "mV");
     assert_eq!(cols[0].cards.len(), 1);
     let card = &cols[0].cards[0];
-    assert_eq!(card.id, "ak:strand:01904100-0000-7000-8000-000000000033");
+    assert_eq!(card.id, "ak:strand:01904100-0000-8000-8000-000000000033");
     assert_eq!(card.title, "Legal review");
     assert_eq!(card.description, "ensure GDPR sign-off");
     assert_eq!(card.body, "Review processor wording before beta.");
@@ -82,12 +82,12 @@ fn collection_projection_maps_to_kanban_columns() {
 
 #[test]
 fn collection_projection_overlay_applies_remote_encrypted_strand_updates() {
-    let board_id = "ak:space:0196419b-0000-7000-8000-000000000001";
-    let strand_id = "ak:strand:0196419b-0000-7000-8000-000000000003";
+    let board_id = "ak:space:0196419b-0000-8000-8000-000000000001";
+    let strand_id = "ak:strand:0196419b-0000-8000-8000-000000000003";
     let projection: arkret_sdk::CollectionProjectionView = serde_json::from_value(json!({
         "projection": "collection",
         "renderer": "board",
-        "view_id": "ak:view:01904100-0000-7000-8000-000000000001",
+        "view_id": "ak:view:01904100-0000-8000-8000-000000000001",
         "frontier": {
             "state_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
         },
@@ -114,7 +114,7 @@ fn collection_projection_overlay_applies_remote_encrypted_strand_updates() {
         "epoch": 0,
     });
     let events = vec![json!({
-        "event_id": "ak:event:0196419b-0000-7000-8000-00000000f003",
+        "event_id": "ak:event:0196419b-0000-8000-8000-00000000f003",
         "operation_id": "ak:operation:0196419b-0000-7000-8000-00000000f003",
         "event_kind": "ak.strand.update",
         "actor_id": "did:web:alice.example",
@@ -160,7 +160,7 @@ fn collection_projection_overlay_applies_remote_encrypted_strand_updates() {
 fn projection_item_without_discussion_renders_synthesis_only() {
     let item: arkret_sdk::ProjectionRow = serde_json::from_value(serde_json::json!({
         "object": {
-            "id": "ak:strand:01904100-0000-7000-8000-000000000034",
+            "id": "ak:strand:01904100-0000-8000-8000-000000000034",
             "kind": "strand",
             "title": "DID method allowlist"
         }
@@ -176,8 +176,8 @@ fn projection_item_without_discussion_renders_synthesis_only() {
 fn board_space_options_pick_board_spaces_from_projection() {
     let options = board_space_options_from_projection(&[
         crate::state::projection_views::SpaceContainerProjectionView {
-            space_id: "ak:space:0196419b-0000-7000-8000-000000000001".to_owned(),
-            realm_id: "ak:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
+            space_id: "ak:space:0196419b-0000-8000-8000-000000000001".to_owned(),
+            realm_id: "ak:realm:0196419b-0000-8000-8000-000000000000".to_owned(),
             kind: "board".to_owned(),
             title: "Release".to_owned(),
             state: "active".to_owned(),
@@ -185,30 +185,30 @@ fn board_space_options_pick_board_spaces_from_projection() {
             parent_space_id: None,
         },
         crate::state::projection_views::SpaceContainerProjectionView {
-            space_id: "ak:space:0196419b-0000-7000-8000-000000000002".to_owned(),
-            realm_id: "ak:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
+            space_id: "ak:space:0196419b-0000-8000-8000-000000000002".to_owned(),
+            realm_id: "ak:realm:0196419b-0000-8000-8000-000000000000".to_owned(),
             kind: "list".to_owned(),
             title: "Todo".to_owned(),
             state: "active".to_owned(),
             rank: Some("U".to_owned()),
-            parent_space_id: Some("ak:space:0196419b-0000-7000-8000-000000000001".to_owned()),
+            parent_space_id: Some("ak:space:0196419b-0000-8000-8000-000000000001".to_owned()),
         },
     ]);
 
     assert_eq!(options.len(), 1);
     assert_eq!(
         options[0].id,
-        "ak:space:0196419b-0000-7000-8000-000000000001"
+        "ak:space:0196419b-0000-8000-8000-000000000001"
     );
     assert_eq!(options[0].title, "Release");
 }
 
 #[test]
 fn local_space_create_state_becomes_synced_once_projection_contains_target() {
-    let board_id = "ak:space:0196419b-0000-7000-8000-000000000001";
+    let board_id = "ak:space:0196419b-0000-8000-8000-000000000001";
     let raw_operations = vec![RawOperationRecord {
         operation_id: "sha256:local-board-create".to_owned(),
-        realm_id: Some("ak:realm:0196419b-0000-7000-8000-000000000000".to_owned()),
+        realm_id: Some("ak:realm:0196419b-0000-8000-8000-000000000000".to_owned()),
         received_at: chrono::Utc::now(),
         payload: json!({
             "kind": "ak.space.create",
@@ -233,7 +233,7 @@ fn local_space_create_state_becomes_synced_once_projection_contains_target() {
 
 #[test]
 fn displayed_card_state_uses_server_strand_projection_over_local_queue() {
-    let strand_id = "ak:strand:0196419b-0000-7000-8000-000000000003";
+    let strand_id = "ak:strand:0196419b-0000-8000-8000-000000000003";
     let mut card = test_card(strand_id, "U");
     card.state = CardState::Queued;
     let projected_strand_ids = BTreeSet::from([strand_id.to_owned()]);
@@ -246,12 +246,12 @@ fn displayed_card_state_uses_server_strand_projection_over_local_queue() {
 
 #[test]
 fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
-    let board_id = "ak:space:0196419b-0000-7000-8000-000000000001";
-    let list_id = "ak:space:0196419b-0000-7000-8000-000000000002";
+    let board_id = "ak:space:0196419b-0000-8000-8000-000000000001";
+    let list_id = "ak:space:0196419b-0000-8000-8000-000000000002";
     let containers = vec![
         crate::state::projection_views::SpaceContainerProjectionView {
             space_id: board_id.to_owned(),
-            realm_id: "ak:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
+            realm_id: "ak:realm:0196419b-0000-8000-8000-000000000000".to_owned(),
             kind: "board".to_owned(),
             title: "Release".to_owned(),
             state: "active".to_owned(),
@@ -260,7 +260,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
         },
         crate::state::projection_views::SpaceContainerProjectionView {
             space_id: list_id.to_owned(),
-            realm_id: "ak:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
+            realm_id: "ak:realm:0196419b-0000-8000-8000-000000000000".to_owned(),
             kind: "list".to_owned(),
             title: "Todo".to_owned(),
             state: "active".to_owned(),
@@ -269,8 +269,8 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
         },
     ];
     let strands = vec![crate::state::projection_views::StrandProjectionView {
-        strand_id: "ak:strand:0196419b-0000-7000-8000-000000000003".to_owned(),
-        realm_id: "ak:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
+        strand_id: "ak:strand:0196419b-0000-8000-8000-000000000003".to_owned(),
+        realm_id: "ak:realm:0196419b-0000-8000-8000-000000000000".to_owned(),
         title: "Persisted card".to_owned(),
         summary: Some("Loaded from projection".to_owned()),
         body: Some(json!({
@@ -283,7 +283,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
         assigned_actor_ids: vec!["did:web:alice.example".to_owned()],
         assigned_to_relations: vec![
             crate::state::projection_views::AssignedToRelationProjectionView {
-                relation_id: "ak:relation:0196419b-0000-7000-8000-000000000004".to_owned(),
+                relation_id: "ak:relation:0196419b-0000-8000-8000-000000000004".to_owned(),
                 actor_id: "did:web:alice.example".to_owned(),
             },
         ],
@@ -318,7 +318,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
     assert_eq!(
         card.assigned_to_relations,
         vec![CardAssignedToRelation {
-            relation_id: "ak:relation:0196419b-0000-7000-8000-000000000004".to_owned(),
+            relation_id: "ak:relation:0196419b-0000-8000-8000-000000000004".to_owned(),
             actor_id: "did:web:alice.example".to_owned(),
         }]
     );
@@ -327,12 +327,12 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
 
 #[test]
 fn lifecycle_projection_infers_board_from_list_parent() {
-    let board_id = "ak:space:0196419b-0000-7000-8000-000000000001";
-    let list_id = "ak:space:0196419b-0000-7000-8000-000000000002";
+    let board_id = "ak:space:0196419b-0000-8000-8000-000000000001";
+    let list_id = "ak:space:0196419b-0000-8000-8000-000000000002";
     let containers = vec![
         crate::state::projection_views::SpaceContainerProjectionView {
             space_id: list_id.to_owned(),
-            realm_id: "ak:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
+            realm_id: "ak:realm:0196419b-0000-8000-8000-000000000000".to_owned(),
             kind: "list".to_owned(),
             title: "Todo".to_owned(),
             state: "active".to_owned(),
@@ -354,12 +354,12 @@ fn lifecycle_projection_infers_board_from_list_parent() {
 
 #[test]
 fn local_strand_create_overlay_restores_card_until_projection_catches_up() {
-    let board_id = "ak:space:0196419b-0000-7000-8000-000000000001";
-    let list_id = "ak:space:0196419b-0000-7000-8000-000000000002";
-    let strand_id = "ak:strand:0196419b-0000-7000-8000-000000000003";
+    let board_id = "ak:space:0196419b-0000-8000-8000-000000000001";
+    let list_id = "ak:space:0196419b-0000-8000-8000-000000000002";
+    let strand_id = "ak:strand:0196419b-0000-8000-8000-000000000003";
     let raw_operations = vec![RawOperationRecord {
         operation_id: "sha256:local-create".to_owned(),
-        realm_id: Some("ak:realm:0196419b-0000-7000-8000-000000000000".to_owned()),
+        realm_id: Some("ak:realm:0196419b-0000-8000-8000-000000000000".to_owned()),
         received_at: chrono::Utc::now(),
         payload: json!({
             "kind": "ak.strand.create",
@@ -415,26 +415,26 @@ fn local_strand_create_overlay_restores_card_until_projection_catches_up() {
 
 #[test]
 fn remote_strand_update_events_overlay_detail_fields_on_projection() {
-    let board_id = "ak:space:0196419b-0000-7000-8000-000000000001";
-    let strand_id = "ak:strand:0196419b-0000-7000-8000-000000000003";
+    let board_id = "ak:space:0196419b-0000-8000-8000-000000000001";
+    let strand_id = "ak:strand:0196419b-0000-8000-8000-000000000003";
     let mut card = test_card(strand_id, "U");
     card.description = "old summary".to_owned();
     card.body = String::new();
     card.synthesis = String::new();
     let columns = vec![KanbanColumn {
-        id: "ak:space:0196419b-0000-7000-8000-000000000002".to_owned(),
+        id: "ak:space:0196419b-0000-8000-8000-000000000002".to_owned(),
         title: "Todo".to_owned(),
         rank: "U".to_owned(),
         cards: vec![card],
         state: SpaceContainerLifecycleState::Active,
     }];
     let events = vec![json!({
-        "event_id": "ak:event:0196419b-0000-7000-8000-00000000f001",
+        "event_id": "ak:event:0196419b-0000-8000-8000-00000000f001",
         "operation_id": "ak:operation:0196419b-0000-7000-8000-00000000f001",
         "event_kind": "ak.strand.update",
         "actor_id": "did:web:alice.example",
         "created_at": "2026-05-22T10:00:00.000Z",
-        "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
+        "realm_id": "ak:realm:0196419b-0000-8000-8000-000000000000",
         "payload": {
             "strand_id": strand_id,
             "patch": {
@@ -471,13 +471,13 @@ fn remote_strand_update_events_overlay_detail_fields_on_projection() {
 
 #[test]
 fn remote_encrypted_strand_update_overlay_marks_private_fields_locked() {
-    let board_id = "ak:space:0196419b-0000-7000-8000-000000000001";
-    let strand_id = "ak:strand:0196419b-0000-7000-8000-000000000003";
+    let board_id = "ak:space:0196419b-0000-8000-8000-000000000001";
+    let strand_id = "ak:strand:0196419b-0000-8000-8000-000000000003";
     let mut card = test_card(strand_id, "U");
     card.body = String::new();
     card.synthesis = String::new();
     let columns = vec![KanbanColumn {
-        id: "ak:space:0196419b-0000-7000-8000-000000000002".to_owned(),
+        id: "ak:space:0196419b-0000-8000-8000-000000000002".to_owned(),
         title: "Todo".to_owned(),
         rank: "U".to_owned(),
         cards: vec![card],
@@ -491,12 +491,12 @@ fn remote_encrypted_strand_update_overlay_marks_private_fields_locked() {
         "epoch": 0,
     });
     let events = vec![json!({
-        "event_id": "ak:event:0196419b-0000-7000-8000-00000000f002",
+        "event_id": "ak:event:0196419b-0000-8000-8000-00000000f002",
         "operation_id": "ak:operation:0196419b-0000-7000-8000-00000000f002",
         "event_kind": "ak.strand.update",
         "actor_id": "did:web:alice.example",
         "created_at": "2026-05-22T10:00:00.000Z",
-        "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
+        "realm_id": "ak:realm:0196419b-0000-8000-8000-000000000000",
         "payload": {
             "strand_id": strand_id,
             "patch": {

@@ -748,7 +748,7 @@ mod tests {
             )
             .unwrap(),
             intended_realm_id: arkret_sdk::RealmId::new(
-                "ak:realm:01904100-0000-7000-8000-0000000000d1",
+                "ak:realm:01904100-0000-8000-8000-0000000000d1",
             )
             .unwrap(),
             claim_id: arkret_sdk::NonEmptyString::new("ak:mls:kp:test:nonce").unwrap(),
@@ -794,7 +794,7 @@ mod tests {
     fn realm_key_share_event_matches_registered_payload_schema() {
         let _signer_guard =
             ActiveSignerGuard::install([9u8; 32], "did:key:zRealmKeyShareSchemaTest");
-        let realm = "ak:realm:01904100-0000-7000-8000-0000000000d7";
+        let realm = "ak:realm:01904100-0000-8000-8000-0000000000d7";
         let policy_digest =
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned();
         let event = build_realm_key_share_event(
@@ -807,7 +807,7 @@ mod tests {
             2,
             policy_digest.clone(),
             "c2VhbGVk".to_owned(),
-            "ak:event:01904100-0000-7000-8000-0000000000e7",
+            "ak:event:01904100-0000-8000-8000-0000000000e7",
             "ak:grant:01904100-0000-7000-8000-0000000000e8",
         )
         .unwrap();
@@ -859,7 +859,7 @@ mod tests {
         let mut alice_state = isolated_store_for_tests("invite-admission-alice");
         let mut bob_state = isolated_store_for_tests("invite-admission-bob");
         let secure = MemorySecureKeyStore::new();
-        let realm = "ak:realm:01904100-0000-7000-8000-0000000000d1";
+        let realm = "ak:realm:01904100-0000-8000-8000-0000000000d1";
         let alice = "did:web:alice.example";
         let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
         let bob = "did:web:bob.example";

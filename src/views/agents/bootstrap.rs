@@ -1181,7 +1181,6 @@ pub(crate) async fn bootstrap_provisioned_agent(
             })?;
         let describe = submitter.events_describe().await?;
         let bootstrap = crate::event_builders::build_managed_agent_pcr_bootstrap_events(
-            realm_id,
             agent_id,
             &controller_id,
             controller_authorization_ref,
@@ -1840,7 +1839,7 @@ mod tests {
     #[test]
     fn managed_pcr_backup_round_trips_bound_plaintext_keybag() {
         let snapshot = crate::mls::persistence::encrypt_state(
-            "ak:realm:01964137-0000-7000-8000-000000000099",
+            "ak:realm:01964137-0000-8000-8000-000000000099",
             "YWdlbnQtcGNy",
             0,
             b"real MLS state record bytes",
@@ -1863,7 +1862,7 @@ mod tests {
             },
         };
         let second_snapshot = crate::mls::persistence::encrypt_state(
-            "ak:realm:01964137-0000-7000-8000-000000000088",
+            "ak:realm:01964137-0000-8000-8000-000000000088",
             "YWdlbnQtcGNyLTI",
             1,
             b"second real MLS state record",
@@ -1993,8 +1992,8 @@ mod tests {
         let controller_id = "did:web:alice.example";
         let agent_id = "did:web:agent.example";
         let device_id = "ak:device:01964137-0000-7000-8000-000000000001";
-        let controller_realm = "ak:realm:01964137-0000-7000-8000-000000000081";
-        let agent_realm = "ak:realm:01964137-0000-7000-8000-000000000091";
+        let controller_realm = "ak:realm:01964137-0000-8000-8000-000000000081";
+        let agent_realm = "ak:realm:01964137-0000-8000-8000-000000000091";
         let controller_identity = ArkretMlsIdentity::new_basic(
             arkret_sdk::Did::new(controller_id.to_owned()).unwrap(),
             DeviceId::new(device_id.to_owned()).unwrap(),

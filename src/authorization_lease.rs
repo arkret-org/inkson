@@ -749,7 +749,7 @@ mod tests {
 
     fn scope() -> arkret_sdk::ScopeRef {
         arkret_sdk::ScopeRef::Realm {
-            realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001")
+            realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001")
                 .unwrap(),
         }
     }
@@ -878,14 +878,17 @@ mod tests {
     fn managed_agent_pcr_authority_preserves_the_complete_notary_profile() {
         let agent_id = "did:web:agent.example";
         let controller_id = "did:web:alice.example";
-        let realm_id = "ak:realm:01964137-0000-7000-8000-000000000099";
+        // The PCR id is subject-derived from the Agent DID, not chosen.
+        let realm_id = arkret_sdk::principal_control_realm_id(
+            &arkret_sdk::Did::new(agent_id).unwrap(),
+        );
+        let realm_id = realm_id.as_str();
         let accepted = crate::event_builders::build_managed_agent_pcr_bootstrap_events(
-            realm_id,
             agent_id,
             controller_id,
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
-            arkret_sdk::EventId::new("ak:event:01964137-0000-7000-8000-000000000098").unwrap(),
+            arkret_sdk::EventId::new("ak:event:01964137-0000-8000-8000-000000000098").unwrap(),
         )
         .unwrap();
         let mut target = event();
@@ -915,12 +918,11 @@ mod tests {
         let agent_id = "did:web:agent.example";
         let controller_id = "did:web:alice.example";
         let mut events = crate::event_builders::build_managed_agent_pcr_bootstrap_events(
-            "ak:realm:01964137-0000-7000-8000-000000000099",
             agent_id,
             controller_id,
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
-            arkret_sdk::EventId::new("ak:event:01964137-0000-7000-8000-000000000098").unwrap(),
+            arkret_sdk::EventId::new("ak:event:01964137-0000-8000-8000-000000000098").unwrap(),
         )
         .unwrap();
         let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
@@ -954,17 +956,17 @@ mod tests {
     fn managed_agent_pcr_authority_ignores_later_prestate_dependent_writes() {
         let agent_id = arkret_sdk::Did::new("did:web:agent.example").unwrap();
         let controller_id = arkret_sdk::Did::new("did:web:alice.example").unwrap();
+        // The PCR id is subject-derived from the Agent DID, not chosen.
         let realm_id =
-            arkret_sdk::RealmId::new("ak:realm:01964137-0000-7000-8000-000000000099").unwrap();
+            arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&agent_id)).unwrap();
         let authorization_ref =
             arkret_sdk::DidUrl::new("did:web:agent.example#managed-controller").unwrap();
         let mut accepted = crate::event_builders::build_managed_agent_pcr_bootstrap_events(
-            realm_id.as_str(),
             agent_id.as_str(),
             controller_id.as_str(),
             authorization_ref.as_str(),
             "ak:trust_domain:did.web.example",
-            arkret_sdk::EventId::new("ak:event:01964137-0000-7000-8000-000000000098").unwrap(),
+            arkret_sdk::EventId::new("ak:event:01964137-0000-8000-8000-000000000098").unwrap(),
         )
         .unwrap();
         accepted.push(
@@ -976,7 +978,7 @@ mod tests {
                     revoked_at: Utc::now(),
                     reason: Some("replacement".to_owned()),
                 },
-                arkret_sdk::EventId::new("ak:event:01964137-0000-7000-8000-0000000000aa").unwrap(),
+                arkret_sdk::EventId::new("ak:event:01964137-0000-8000-8000-0000000000aa").unwrap(),
                 arkret_sdk::ScopeRef::Realm {
                     realm_id: realm_id.clone(),
                 },

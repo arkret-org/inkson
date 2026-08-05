@@ -9,7 +9,7 @@ fn local_projection_commands_wait_for_the_projector() {
     let path = temp_state_path("local-projection-command-queue");
     let mut store = LocalStateStore::with_path(path);
     let operation_id = "ak:op:0196419b-0000-7000-8000-000000000001";
-    let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000001";
+    let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000001";
 
     store.enqueue_local_projection_command(
         operation_id,
@@ -33,7 +33,7 @@ fn local_projection_commands_wait_for_the_projector() {
 fn mls_encrypted_projection_detects_epoch_pause_scope() {
     let path = temp_state_path("mls-encrypted-projection");
     let mut store = LocalStateStore::with_path(path);
-    let realm = "ak:realm:0196419b-0000-7000-8000-0000000000ee";
+    let realm = "ak:realm:0196419b-0000-8000-8000-0000000000ee";
     store.save_realm_tree_projection(
         realm.to_owned(),
         json!({
@@ -46,7 +46,7 @@ fn mls_encrypted_projection_detects_epoch_pause_scope() {
     );
     assert!(store.realm_projection_is_mls_encrypted(realm));
 
-    let plain = "ak:realm:0196419b-0000-7000-8000-0000000000ef";
+    let plain = "ak:realm:0196419b-0000-8000-8000-0000000000ef";
     store.save_realm_tree_projection(
         plain.to_owned(),
         json!({
@@ -64,7 +64,7 @@ fn mls_encrypted_projection_detects_epoch_pause_scope() {
 fn mls_encrypted_projection_reads_canonical_realm_create_state_event() {
     let path = temp_state_path("mls-encrypted-state-event-projection");
     let mut store = LocalStateStore::with_path(path);
-    let realm = "ak:realm:0196419b-0000-7000-8000-0000000000f0";
+    let realm = "ak:realm:0196419b-0000-8000-8000-0000000000f0";
     store.save_realm_tree_projection(
         realm,
         json!({
@@ -90,14 +90,14 @@ fn minimal_metadata_projection_detected_from_profiles_arrays() {
     let path = temp_state_path("minimal-metadata-projection");
     let mut store = LocalStateStore::with_path(path);
 
-    let top = "ak:realm:0196419b-0000-7000-8000-0000000000a1";
+    let top = "ak:realm:0196419b-0000-8000-8000-0000000000a1";
     store.save_realm_tree_projection(
         top.to_owned(),
         json!({ "profiles": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1] }),
     );
     assert!(store.realm_projection_is_minimal_metadata(top));
 
-    let nested = "ak:realm:0196419b-0000-7000-8000-0000000000a2";
+    let nested = "ak:realm:0196419b-0000-8000-8000-0000000000a2";
     store.save_realm_tree_projection(
         nested.to_owned(),
         json!({
@@ -111,7 +111,7 @@ fn minimal_metadata_projection_detected_from_profiles_arrays() {
     );
     assert!(store.realm_projection_is_minimal_metadata(nested));
 
-    let plain = "ak:realm:0196419b-0000-7000-8000-0000000000a3";
+    let plain = "ak:realm:0196419b-0000-8000-8000-0000000000a3";
     store.save_realm_tree_projection(
         plain.to_owned(),
         json!({ "profiles": ["ak.profile.core.v1"] }),
@@ -121,7 +121,7 @@ fn minimal_metadata_projection_detected_from_profiles_arrays() {
     // Unknown Realm (no projection) ⇒ treated as non-minimal.
     assert!(
         !store
-            .realm_projection_is_minimal_metadata("ak:realm:0196419b-0000-7000-8000-0000000000a9")
+            .realm_projection_is_minimal_metadata("ak:realm:0196419b-0000-8000-8000-0000000000a9")
     );
 }
 
@@ -130,7 +130,7 @@ fn member_handle_cache_is_realm_and_digest_scoped() {
     let path = temp_state_path("member-handle-cache");
     let mut store = LocalStateStore::with_path(path);
     let subject = "did:webvh:zQmMember";
-    let realm = "ak:realm:0196419b-0000-7000-8000-000000000001";
+    let realm = "ak:realm:0196419b-0000-8000-8000-000000000001";
     store.save_member_handle_lookup(
         subject,
         Some(realm.to_owned()),
@@ -162,7 +162,7 @@ fn member_handle_cache_is_realm_and_digest_scoped() {
         store
             .cached_member_handle_lookup(
                 subject,
-                Some("ak:realm:0196419b-0000-7000-8000-000000000002"),
+                Some("ak:realm:0196419b-0000-8000-8000-000000000002"),
                 Some("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             )
             .is_none()
@@ -176,7 +176,7 @@ fn member_handle_cache_records_fresh_negative_lookup() {
     let subject = "did:webvh:zQmNoVisibleHandle";
     store.save_member_handle_lookup(
         subject,
-        Some("ak:realm:0196419b-0000-7000-8000-000000000001".to_owned()),
+        Some("ak:realm:0196419b-0000-8000-8000-000000000001".to_owned()),
         None,
         None,
         0,
@@ -187,7 +187,7 @@ fn member_handle_cache_records_fresh_negative_lookup() {
     let entry = store
         .cached_member_handle_lookup(
             subject,
-            Some("ak:realm:0196419b-0000-7000-8000-000000000001"),
+            Some("ak:realm:0196419b-0000-8000-8000-000000000001"),
             None,
         )
         .expect("fresh negative entry");
@@ -198,8 +198,8 @@ fn member_handle_cache_records_fresh_negative_lookup() {
 fn apply_snapshot_chunks_imports_projection_status_and_encrypted_payload() {
     let path = temp_state_path("snapshot-apply");
     let mut store = LocalStateStore::with_path(path.clone());
-    let message_id = "ak:message:01904100-0000-7000-8000-0000000000a1";
-    let realm_id = "ak:realm:01904100-0000-7000-8000-0000000000aa";
+    let message_id = "ak:message:01904100-0000-8000-8000-0000000000a1";
+    let realm_id = "ak:realm:01904100-0000-8000-8000-0000000000aa";
     let encrypted_message = json!({
         "schema": "ak.schema.encrypted_envelope.v1",
         "scheme": "mls_rfc9420",
@@ -266,9 +266,9 @@ fn apply_snapshot_chunks_imports_projection_status_and_encrypted_payload() {
 fn retain_realm_tree_projections_prunes_per_realm_caches() {
     let path = temp_state_path("retain-prunes");
     let mut store = LocalStateStore::with_path(path);
-    const KEEP: &str = "ak:realm:01964137-0000-7000-8000-000000000010";
-    const DROP_A: &str = "ak:realm:01964137-0000-7000-8000-000000000011";
-    const DROP_B: &str = "ak:realm:01964137-0000-7000-8000-000000000012";
+    const KEEP: &str = "ak:realm:01964137-0000-8000-8000-000000000010";
+    const DROP_A: &str = "ak:realm:01964137-0000-8000-8000-000000000011";
+    const DROP_B: &str = "ak:realm:01964137-0000-8000-8000-000000000012";
     // Seed three realms with overlapping per-realm caches.
     for id in [KEEP, DROP_A, DROP_B] {
         store.save_realm_tree_projection(id, serde_json::json!({"name": id}));
@@ -282,7 +282,7 @@ fn retain_realm_tree_projections_prunes_per_realm_caches() {
             "ak:device:01964137-0000-7000-8000-000000000001",
             DROP_A,
             None,
-            "ak:event:01964137-0000-7000-8000-000000000021",
+            "ak:event:01964137-0000-8000-8000-000000000021",
         )
         .unwrap();
     store.seed_read_cursor_projection(drop_marker).unwrap();
@@ -292,7 +292,7 @@ fn retain_realm_tree_projections_prunes_per_realm_caches() {
             "ak:device:01964137-0000-7000-8000-000000000001",
             KEEP,
             None,
-            "ak:event:01964137-0000-7000-8000-000000000022",
+            "ak:event:01964137-0000-8000-8000-000000000022",
         )
         .unwrap();
     store.seed_read_cursor_projection(keep_marker).unwrap();

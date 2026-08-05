@@ -26,7 +26,7 @@ use inkson::operation::{Event, EventExt};
 use regex::Regex;
 use sha2::{Digest, Sha256};
 
-const TEST_REALM_ID: &str = "ak:realm:0196419b-0000-7000-8000-000000000001";
+const TEST_REALM_ID: &str = "ak:realm:0196419b-0000-8000-8000-000000000001";
 const TEST_ACTOR_ID: &str = "did:web:alice.example";
 const TEST_SERVICE_ID: &str = "did:web:server.example";
 
@@ -69,7 +69,6 @@ fn stamp_real_proof_and_anchor(envelope: &mut Event) {
 #[test]
 fn realm_create_envelope_carries_real_proof_and_real_anchor() {
     let mut envelope = event_builders::build_realm_create_event(
-        TEST_REALM_ID,
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
         "Engineering",
@@ -96,8 +95,7 @@ fn realm_create_envelope_carries_real_proof_and_real_anchor() {
 
 #[test]
 fn full_bootstrap_chain_carries_real_proofs_and_anchors() {
-    let events = event_builders::build_realm_bootstrap_events(
-        TEST_REALM_ID,
+    let (_realm_id, events) = event_builders::build_realm_bootstrap_events(
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
         "Engineering",

@@ -13,7 +13,7 @@ import {
 registerStrandsBeforeEach();
 
 test("ordinary Circle list fails closed when the response contains a Sidecar profile", async ({ page }) => {
-  await gotoAndDismissRecovery(page, "/realms/ak:realm:0196419b-0000-7000-8000-000000000000/circles");
+  await gotoAndDismissRecovery(page, "/realms/ak:realm:0196419b-0000-8000-8000-000000000000/circles");
   const panel = page.getByTestId("circles-panel");
   await expect(panel).toBeVisible();
   await expect(panel.getByTestId("circle-list-item")).toHaveCount(1);
@@ -22,7 +22,7 @@ test("ordinary Circle list fails closed when the response contains a Sidecar pro
 });
 
 test("Circle creation establishes initial membership and opens the detail view", async ({ page }) => {
-  await gotoAndDismissRecovery(page, "/realms/ak:realm:0196419b-0000-7000-8000-000000000000/circles");
+  await gotoAndDismissRecovery(page, "/realms/ak:realm:0196419b-0000-8000-8000-000000000000/circles");
   const panel = page.getByTestId("circles-panel");
   await panel.getByTestId("circle-create-open").click();
   await page.getByTestId("circle-create-title").fill("Incident Response");
@@ -93,7 +93,7 @@ test("workspace sidebar separates contact-based direct chats", async ({ page }) 
   );
   await bobContactRow.click();
   await expect(page).toHaveURL(
-    /\/direct\/ak:realm:01964137-0000-7000-8000-00000000d0b1\/ak:strand:01964137-0000-7000-8000-00000000d0b2$/,
+    /\/direct\/ak:realm:01964137-0000-8000-8000-00000000d0b1\/ak:strand:01964137-0000-8000-8000-00000000d0b2$/,
   );
   await shell.getByTestId("realm-sidebar-tab-direct").click();
   await shell.getByTestId("contact-sidebar-agent-row").filter({ hasText: "Bob Helper" }).click();

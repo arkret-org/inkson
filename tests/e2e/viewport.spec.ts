@@ -7,7 +7,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mockArkretApi } from "./mockArkretApi";
 
-const DEMO_REALM = "ak:realm:0196419b-0000-7000-8000-000000000000";
+const DEMO_REALM = "ak:realm:0196419b-0000-8000-8000-000000000000";
 const MOBILE_VIEWPORT = { width: 390, height: 844 }; // iPhone 13
 const TABLET_VIEWPORT = { width: 820, height: 1180 }; // iPad Air narrow layout
 

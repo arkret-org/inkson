@@ -12,7 +12,7 @@ fn realm_member_roster_reads_r32_wire_shape() {
                 "actor_id": "did:web:acme.example:users:alice",
                 "membership": "join",
                 "subject_id": "did:web:acme.example:principals:alice",
-                "identity_event_ids": ["ak:event:01904100-0000-7000-8000-00000000000a"],
+                "identity_event_ids": ["ak:event:01904100-0000-8000-8000-00000000000a"],
                 "member_display_state_digest": "sha256:abababababababababababababababababababababababababababababababab",
                 "handle_claims": [{
                     "subject": "did:web:acme.example:principals:alice",
@@ -36,7 +36,7 @@ fn realm_member_roster_reads_r32_wire_shape() {
     assert_eq!(alice.membership.as_deref(), Some("join"));
     assert_eq!(
         alice.identity_event_ids,
-        vec!["ak:event:01904100-0000-7000-8000-00000000000a".to_owned()]
+        vec!["ak:event:01904100-0000-8000-8000-00000000000a".to_owned()]
     );
     assert!(alice.member_display_state_digest.is_some());
     assert_eq!(
@@ -137,7 +137,7 @@ fn member_display_label_uses_identity_name_when_no_verified_handle_exists() {
     // only. A materialized DID path is not itself verified handle evidence.
     let identity = MemberIdentity {
         schema: arkret_sdk::SchemaId::MEMBER_IDENTITY_V1.to_owned(),
-        realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001")
+        realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001")
             .unwrap(),
         actor_id: arkret_sdk::Did::new("did:web:acme.example:users:alice".to_owned()).unwrap(),
         subject_id: arkret_sdk::Did::new("did:web:acme.example:users:alice".to_owned()).unwrap(),

@@ -63,7 +63,7 @@ fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ak:realm:01904100-0000-7000-8000-000000000002";
+    let realm = "ak:realm:01904100-0000-8000-8000-000000000002";
 
     // Declare the minimal-metadata profile on the cached projection.
     state.save_realm_tree_projection(
@@ -105,7 +105,7 @@ fn non_minimal_reaction_never_forces_commit_and_persists_in_place() {
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ak:realm:01904100-0000-7000-8000-000000000003";
+    let realm = "ak:realm:01904100-0000-8000-8000-000000000003";
 
     super::seed_genesis_governance_proof(&mut state, realm);
     ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device).unwrap();

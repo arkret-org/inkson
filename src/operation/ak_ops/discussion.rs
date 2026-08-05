@@ -22,9 +22,12 @@ pub fn discussion_strand_create(
         .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
     let did = arkret_sdk::Did::new(actor.to_owned())
         .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
-    let typed_strand_id = arkret_sdk::StrandId::new(strand_id.to_owned())
+    // `strand_id` is no longer the object id — that is derived from this
+    // create Event. It survives only as the client-local correlation handle in
+    // `unsigned.local_target_ref`, so validate its shape and drop the value.
+    arkret_sdk::StrandId::new(strand_id.to_owned())
         .map_err(|e| anyhow::anyhow!("invalid strand_id: {e:?}"))?;
-    let strand = arkret_sdk::StrandCreateObject::new(typed_strand_id, typed_realm_id, did)
+    let strand = arkret_sdk::StrandCreateObject::new(typed_realm_id, did)
         .with_metadata_title(title)
         .with_track(
             "discussion",
@@ -83,9 +86,12 @@ pub fn scoped_discussion_strand_create(
         .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
     let did = arkret_sdk::Did::new(actor.to_owned())
         .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
-    let typed_strand_id = arkret_sdk::StrandId::new(strand_id.to_owned())
+    // `strand_id` is no longer the object id — that is derived from this
+    // create Event. It survives only as the client-local correlation handle in
+    // `unsigned.local_target_ref`, so validate its shape and drop the value.
+    arkret_sdk::StrandId::new(strand_id.to_owned())
         .map_err(|e| anyhow::anyhow!("invalid strand_id: {e:?}"))?;
-    let mut strand = arkret_sdk::StrandCreateObject::new(typed_strand_id, typed_realm_id, did)
+    let mut strand = arkret_sdk::StrandCreateObject::new(typed_realm_id, did)
         .with_metadata_title(title)
         .with_track(
             "discussion",
@@ -111,14 +117,13 @@ pub fn confidential_discussion_relation_create(
     public_seal_ref: &str,
     circle_id: &str,
 ) -> anyhow::Result<OperationBuilder> {
-    let relation_id = format!("ak:relation:{}", crate::operation::uuid_v7());
+    // No relation id is minted here: `OperationBuilder` stamps the derived one
+    // as `unsigned.local_target_ref` once the envelope exists.
     Ok(
         OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::RelationCreate)
-            .target_ref(&relation_id)
             .body(relation_create_payload_value(
                 realm_id,
                 actor,
-                &relation_id,
                 "confidential_discussion_of",
                 private_strand_id,
                 public_seal_ref,

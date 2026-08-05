@@ -27,7 +27,7 @@ fn account_data_event(payload: serde_json::Value) -> arkret_sdk::Event {
     arkret_sdk::Event::new(
         "ak.account_data.set",
         arkret_sdk::ScopeRef::Realm {
-            realm_id: arkret_sdk::RealmId::new("ak:realm:0196419b-0000-7000-8000-000000000001")
+            realm_id: arkret_sdk::RealmId::new("ak:realm:0196419b-0000-8000-8000-000000000001")
                 .unwrap(),
         },
         arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
@@ -43,7 +43,7 @@ fn hydrate_notifications_applies_push_rules_and_dnd() {
     let raw = vec![event(
         1,
         arkret_sdk::NotificationKind::Message,
-        "ak:realm:0196419b-0000-7000-8000-000000000010",
+        "ak:realm:0196419b-0000-8000-8000-000000000010",
         None,
         json!({"body": "hello"}),
     )];
@@ -51,7 +51,7 @@ fn hydrate_notifications_applies_push_rules_and_dnd() {
         "rules": [{
             "rule_id": "override.quiet",
             "conditions": [
-                {"kind": "field_match", "field": "realm_id", "pattern": "ak:realm:0196419b-0000-7000-8000-000000000010"}
+                {"kind": "field_match", "field": "realm_id", "pattern": "ak:realm:0196419b-0000-8000-8000-000000000010"}
             ],
             "actions": ["dont_notify"]
         }]
@@ -67,13 +67,13 @@ fn hydrate_notifications_applies_push_rules_and_dnd() {
 fn pending_invites_are_hydrated_as_notifications() {
     let invite = test_invite(
         1,
-        "ak:realm:01904100-0000-7000-8000-000000000002",
+        "ak:realm:01904100-0000-8000-8000-000000000002",
         None,
         None,
     );
     let duplicate_invite = test_invite(
         99,
-        "ak:realm:01904100-0000-7000-8000-000000000002",
+        "ak:realm:01904100-0000-8000-8000-000000000002",
         None,
         None,
     );
@@ -91,7 +91,7 @@ fn pending_invites_are_hydrated_as_notifications() {
     assert_eq!(notifications[0].title, "notifications.default_title.invite");
     assert_eq!(
         notifications[0].realm_id,
-        "ak:realm:01904100-0000-7000-8000-000000000002"
+        "ak:realm:01904100-0000-8000-8000-000000000002"
     );
     assert_eq!(notifications[0].body, "You were invited to join a Realm.");
     assert_eq!(
@@ -104,7 +104,7 @@ fn pending_invites_are_hydrated_as_notifications() {
     ));
 
     let joined_realms = JoinedRealmIds::default()
-        .joined_now("ak:realm:01904100-0000-7000-8000-000000000002".to_owned());
+        .joined_now("ak:realm:01904100-0000-8000-8000-000000000002".to_owned());
     append_invite_notifications(&mut raw, vec![invite], &joined_realms);
     drop_joined_invite_notifications(&mut raw, &joined_realms);
     assert!(raw.is_empty(), "joined Realm invites should be hidden");
@@ -135,7 +135,7 @@ fn visible_realm_preview_does_not_masquerade_as_joined_membership() {
 #[test]
 fn hydrate_pending_invite_uses_typed_local_membership() {
     let actor_id = "did:webvh:z6mkfixture:bob.example";
-    let realm_id = "ak:realm:01904100-0000-7000-8000-000000000002";
+    let realm_id = "ak:realm:01904100-0000-8000-8000-000000000002";
     let projection = |membership: &str| {
         json!({
             "members": [{
@@ -184,7 +184,7 @@ fn hydrate_notifications_uses_local_read_overlay_over_projection() {
         vec![event(
             1,
             arkret_sdk::NotificationKind::Mention,
-            "ak:realm:0196419b-0000-7000-8000-000000000010",
+            "ak:realm:0196419b-0000-8000-8000-000000000010",
             None,
             json!({"body": "hello"}),
         )],
@@ -199,10 +199,10 @@ fn hydrate_notifications_uses_local_read_overlay_over_projection() {
 
 #[test]
 fn hydrate_notifications_applies_synced_read_cursor() {
-    let realm_id = "ak:realm:01904100-0000-7000-8000-000000000002";
-    let strand_id = "ak:strand:01904100-0000-7000-8000-000000000003";
-    let old_event = "ak:event:01904100-0000-7000-8000-000000000004";
-    let cursor_event = "ak:event:01904100-0000-7000-8000-000000000005";
+    let realm_id = "ak:realm:01904100-0000-8000-8000-000000000002";
+    let strand_id = "ak:strand:01904100-0000-8000-8000-000000000003";
+    let old_event = "ak:event:01904100-0000-8000-8000-000000000004";
+    let cursor_event = "ak:event:01904100-0000-8000-8000-000000000005";
     let read_scope = read_scope_for_cursor(realm_id, Some(strand_id));
     let mut local_state = ClientLocalState::default();
     local_state.read_cursors.insert(
@@ -252,8 +252,8 @@ fn hydrate_notifications_applies_synced_read_cursor() {
 
 #[test]
 fn hydrate_notifications_does_not_order_missing_cursor_target_by_event_id() {
-    let realm_id = "ak:realm:01904100-0000-7000-8000-000000000002";
-    let strand_id = "ak:strand:01904100-0000-7000-8000-000000000003";
+    let realm_id = "ak:realm:01904100-0000-8000-8000-000000000002";
+    let strand_id = "ak:strand:01904100-0000-8000-8000-000000000003";
     let mut local_state = ClientLocalState::default();
     local_state.read_cursors.insert(
         "cursor".to_owned(),
@@ -265,7 +265,7 @@ fn hydrate_notifications_does_not_order_missing_cursor_target_by_event_id() {
                 read_scope: read_scope_for_cursor(realm_id, Some(strand_id)),
                 position: ReadCursorPosition {
                     event_id: arkret_sdk::EventId::new(
-                        "ak:event:01904100-0000-7000-8000-000000000009",
+                        "ak:event:01904100-0000-8000-8000-000000000009",
                     )
                     .unwrap(),
                     hlc: arkret_sdk::Hlc::new("019041000000-0001-deadbeef").unwrap(),
@@ -282,7 +282,7 @@ fn hydrate_notifications_does_not_order_missing_cursor_target_by_event_id() {
             1,
             arkret_sdk::NotificationKind::Mention,
             realm_id,
-            Some("ak:event:01904100-0000-7000-8000-000000000004"),
+            Some("ak:event:01904100-0000-8000-8000-000000000004"),
             json!({"strand_id": strand_id, "body": "target is not in this page"}),
         )],
         &local_state,
@@ -296,7 +296,7 @@ fn hydrate_notifications_does_not_order_missing_cursor_target_by_event_id() {
 
 #[test]
 fn fresh_invite_to_same_realm_survives_stale_archive_and_realm_mute() {
-    let realm_id = "ak:realm:01904100-0000-7000-8000-000000000002";
+    let realm_id = "ak:realm:01904100-0000-8000-8000-000000000002";
     // Local state left over from an earlier invite to this realm: the
     // previous invite notification was archived, and the realm itself is
     // muted (e.g. a prior membership the receiver left). Both are keyed on
@@ -334,7 +334,7 @@ fn fresh_invite_to_same_realm_survives_stale_archive_and_realm_mute() {
 
 #[test]
 fn mention_notification_respects_realm_mute_hydration() {
-    let realm_id = "ak:realm:01904100-0000-7000-8000-0000000000aa";
+    let realm_id = "ak:realm:01904100-0000-8000-8000-0000000000aa";
     let mut local_state = ClientLocalState::default();
     local_state
         .realm_watch_levels
@@ -366,7 +366,7 @@ fn mention_notification_respects_realm_mute_hydration() {
 
 #[test]
 fn assignment_and_schedule_notifications_respect_realm_mute_hydration() {
-    let realm_id = "ak:realm:01904100-0000-7000-8000-0000000000ab";
+    let realm_id = "ak:realm:01904100-0000-8000-8000-0000000000ab";
     let mut local_state = ClientLocalState::default();
     local_state
         .realm_watch_levels
@@ -404,7 +404,7 @@ fn assignment_and_schedule_notifications_respect_realm_mute_hydration() {
 
 #[test]
 fn invite_title_is_preserved_for_accept_projection_hint() {
-    let realm_id = "ak:realm:01904100-0000-7000-8000-000000000010";
+    let realm_id = "ak:realm:01904100-0000-8000-8000-000000000010";
     let invite = test_invite(
         0x11,
         realm_id,
@@ -441,11 +441,11 @@ fn notification_eval_context_extracts_watch_and_e2ee_flags() {
     let notification = event(
         1,
         arkret_sdk::NotificationKind::Mention,
-        "ak:realm:0196419b-0000-7000-8000-000000000010",
+        "ak:realm:0196419b-0000-8000-8000-000000000010",
         None,
         json!({
             "event_kind": "ak.message.create",
-            "strand_id": "ak:strand:0196419b-0000-7000-8000-000000000011",
+            "strand_id": "ak:strand:0196419b-0000-8000-8000-000000000011",
             "track_name": "discussion",
             "watch_state": "participating",
             "encrypted": true,
@@ -470,7 +470,7 @@ fn notification_eval_context_extracts_schedule_target() {
     let notification = event(
         1,
         arkret_sdk::NotificationKind::Schedule,
-        "ak:realm:0196419b-0000-7000-8000-000000000010",
+        "ak:realm:0196419b-0000-8000-8000-000000000010",
         None,
         json!({
             "event_kind": "ak.strand.update",
@@ -488,7 +488,7 @@ fn notification_eval_context_uses_typed_actor_not_preview_aliases() {
     let notification = event(
         1,
         arkret_sdk::NotificationKind::Mention,
-        "ak:realm:0196419b-0000-7000-8000-000000000010",
+        "ak:realm:0196419b-0000-8000-8000-000000000010",
         None,
         json!({
             "event_kind": "ak.message.create",
@@ -504,37 +504,37 @@ fn notification_eval_context_uses_typed_actor_not_preview_aliases() {
 
 #[test]
 fn read_cursor_targets_pick_latest_event_per_read_scope() {
-    let realm_a = "ak:realm:01904100-0000-7000-8000-000000000002";
-    let strand_a = "ak:strand:01904100-0000-7000-8000-000000000003";
-    let strand_b = "ak:strand:01904100-0000-7000-8000-000000000008";
-    let realm_b = "ak:realm:01904100-0000-7000-8000-000000000004";
+    let realm_a = "ak:realm:01904100-0000-8000-8000-000000000002";
+    let strand_a = "ak:strand:01904100-0000-8000-8000-000000000003";
+    let strand_b = "ak:strand:01904100-0000-8000-8000-000000000008";
+    let realm_b = "ak:realm:01904100-0000-8000-8000-000000000004";
     let raw = vec![
         event(
             1,
             arkret_sdk::NotificationKind::Message,
             realm_a,
-            Some("ak:event:01904100-0000-7000-8000-000000000005"),
+            Some("ak:event:01904100-0000-8000-8000-000000000005"),
             json!({"strand_id": strand_a}),
         ),
         event(
             2,
             arkret_sdk::NotificationKind::Message,
             realm_a,
-            Some("ak:event:01904100-0000-7000-8000-000000000006"),
+            Some("ak:event:01904100-0000-8000-8000-000000000006"),
             json!({"strand_id": strand_a}),
         ),
         event(
             4,
             arkret_sdk::NotificationKind::Message,
             realm_a,
-            Some("ak:event:01904100-0000-7000-8000-000000000009"),
+            Some("ak:event:01904100-0000-8000-8000-000000000009"),
             json!({"strand_id": strand_b}),
         ),
         event(
             3,
             arkret_sdk::NotificationKind::Mention,
             realm_b,
-            Some("ak:event:01904100-0000-7000-8000-000000000007"),
+            Some("ak:event:01904100-0000-8000-8000-000000000007"),
             json!({}),
         ),
     ];
@@ -549,7 +549,7 @@ fn read_cursor_targets_pick_latest_event_per_read_scope() {
         .expect("realm A strand A target");
     assert_eq!(
         target_a.event_id,
-        "ak:event:01904100-0000-7000-8000-000000000006"
+        "ak:event:01904100-0000-8000-8000-000000000006"
     );
     assert_eq!(target_a.strand_id.as_deref(), Some(strand_a));
     let target_b = targets
@@ -558,7 +558,7 @@ fn read_cursor_targets_pick_latest_event_per_read_scope() {
         .expect("realm A strand B target");
     assert_eq!(
         target_b.event_id,
-        "ak:event:01904100-0000-7000-8000-000000000009"
+        "ak:event:01904100-0000-8000-8000-000000000009"
     );
     let realm_b_target = targets
         .iter()
@@ -566,7 +566,7 @@ fn read_cursor_targets_pick_latest_event_per_read_scope() {
         .expect("realm B target");
     assert_eq!(
         realm_b_target.event_id,
-        "ak:event:01904100-0000-7000-8000-000000000007"
+        "ak:event:01904100-0000-8000-8000-000000000007"
     );
     assert!(realm_b_target.strand_id.is_none());
 }
@@ -576,8 +576,8 @@ fn notification_sources_merge_account_data_with_typed_subscribe_deltas() {
     let stored = event(
         1,
         arkret_sdk::NotificationKind::Message,
-        "ak:realm:0196419b-0000-7000-8000-000000000001",
-        Some("ak:event:0196419b-0000-7000-8000-000000000002"),
+        "ak:realm:0196419b-0000-8000-8000-000000000001",
+        Some("ak:event:0196419b-0000-8000-8000-000000000002"),
         json!({"body": "hello"}),
     );
     let crate::state::StoredNotification::Event { notification } = stored else {

@@ -128,7 +128,7 @@ mod tests {
             "policy_kind": "principal_control",
             "scope_ref": {
                 "kind": "realm",
-                "realm_id": "ak:realm:01964137-0000-7000-8000-000000000088"
+                "realm_id": "ak:realm:01964137-0000-8000-8000-000000000088"
             },
             "source": {
                 "source_kind": "cross_signing_publish",
@@ -156,7 +156,7 @@ mod tests {
             "basis_ref": "ak:seal:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "scope_ref": {
                 "kind": "realm",
-                "realm_id": "ak:realm:01964137-0000-7000-8000-000000000088"
+                "realm_id": "ak:realm:01964137-0000-8000-8000-000000000088"
             },
             "authority_set_ref": {
                 "authority_set_id": "ak.authority_set.recovery_cross_signing.v1",

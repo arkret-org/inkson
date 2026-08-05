@@ -992,30 +992,30 @@ mod tests {
     #[test]
     fn effective_scope_trims_realm_prefix_consistently() {
         let scope =
-            applet_effective_scope("ak:realm:01904100-0000-7000-8000-000000000010", None).unwrap();
+            applet_effective_scope("ak:realm:01904100-0000-8000-8000-000000000010", None).unwrap();
         assert!(matches!(
             scope,
             arkret_wire::ScopeRef::Realm { ref realm_id }
-                if realm_id.as_str() == "ak:realm:01904100-0000-7000-8000-000000000010"
+                if realm_id.as_str() == "ak:realm:01904100-0000-8000-8000-000000000010"
         ));
     }
 
     #[test]
     fn effective_scope_circle_id_targets_circle() {
         let scope = applet_effective_scope(
-            "ak:realm:01904100-0000-7000-8000-000000000010",
-            Some("ak:circle:01904100-0000-7000-8000-0000000000c1"),
+            "ak:realm:01904100-0000-8000-8000-000000000010",
+            Some("ak:circle:01904100-0000-8000-8000-0000000000c1"),
         )
         .unwrap();
         assert!(matches!(
             scope,
             arkret_wire::ScopeRef::Circle { ref realm_id, ref circle_id }
-                if realm_id.as_str() == "ak:realm:01904100-0000-7000-8000-000000000010"
-                    && circle_id.as_str() == "ak:circle:01904100-0000-7000-8000-0000000000c1"
+                if realm_id.as_str() == "ak:realm:01904100-0000-8000-8000-000000000010"
+                    && circle_id.as_str() == "ak:circle:01904100-0000-8000-8000-0000000000c1"
         ));
         // Blank circle falls back to a Realm-wide install.
         assert!(matches!(
-            applet_effective_scope("ak:realm:01904100-0000-7000-8000-000000000010", Some("  "))
+            applet_effective_scope("ak:realm:01904100-0000-8000-8000-000000000010", Some("  "))
                 .unwrap(),
             arkret_wire::ScopeRef::Realm { .. }
         ));
@@ -1024,26 +1024,26 @@ mod tests {
     #[test]
     fn applet_grant_resource_is_the_exact_effective_scope() {
         let realm_scope =
-            applet_effective_scope("ak:realm:01904100-0000-7000-8000-000000000010", None).unwrap();
+            applet_effective_scope("ak:realm:01904100-0000-8000-8000-000000000010", None).unwrap();
         assert_eq!(
             serde_json::to_value(applet_install_resource(&realm_scope).unwrap()).unwrap(),
             serde_json::json!({
                 "kind": "realm",
-                "realm_id": "ak:realm:01904100-0000-7000-8000-000000000010"
+                "realm_id": "ak:realm:01904100-0000-8000-8000-000000000010"
             })
         );
 
         let circle_scope = applet_effective_scope(
-            "ak:realm:01904100-0000-7000-8000-000000000010",
-            Some("ak:circle:01904100-0000-7000-8000-0000000000c1"),
+            "ak:realm:01904100-0000-8000-8000-000000000010",
+            Some("ak:circle:01904100-0000-8000-8000-0000000000c1"),
         )
         .unwrap();
         assert_eq!(
             serde_json::to_value(applet_install_resource(&circle_scope).unwrap()).unwrap(),
             serde_json::json!({
                 "kind": "circle",
-                "realm_id": "ak:realm:01904100-0000-7000-8000-000000000010",
-                "circle_id": "ak:circle:01904100-0000-7000-8000-0000000000c1",
+                "realm_id": "ak:realm:01904100-0000-8000-8000-000000000010",
+                "circle_id": "ak:circle:01904100-0000-8000-8000-0000000000c1",
                 "match_scope": "exact"
             })
         );

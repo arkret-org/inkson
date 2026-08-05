@@ -1,6 +1,6 @@
 use super::sync::projection_events_from_sync_realms;
 
-const GOLDEN_REALM: &str = "ak:realm:019f1071-0000-7000-8000-000000000000";
+const GOLDEN_REALM: &str = "ak:realm:019f1071-0000-8000-8000-000000000000";
 
 #[test]
 fn projection_expiry_stub_does_not_restore_authors_plaintext_sidecar() {
@@ -9,9 +9,9 @@ fn projection_expiry_stub_does_not_restore_authors_plaintext_sidecar() {
         crate::operation::uuid_v7()
     ));
     let mut store = crate::state::LocalStateStore::with_path(path);
-    let realm = "ak:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22";
-    let strand = "ak:strand:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22";
-    let message = "ak:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a24";
+    let realm = "ak:realm:019e4fd4-4e26-8cc9-af7e-d7102d6f4a22";
+    let strand = "ak:strand:019e4fd4-4e26-8cc9-af7e-d7102d6f4a22";
+    let message = "ak:message:019e4fd4-4e26-8cc9-af7e-d7102d6f4a24";
     store.save_private_plaintext(realm, strand, &format!("message:{message}"), "secret body");
     let realms = std::collections::BTreeMap::from([(
         realm.to_owned(),
@@ -76,23 +76,23 @@ fn golden_event(
 #[test]
 fn client_core_message_decode_golden_matches_inkson_ingest() {
     let create = golden_event(
-        "ak:event:01904100-0000-7000-8000-000000000101",
+        "ak:event:01904100-0000-8000-8000-000000000101",
         arkret_sdk::EventKind::MESSAGE_CREATE,
         1,
         "2026-07-08T00:00:00.000Z",
         serde_json::json!({
-            "strand_id": "ak:strand:01904100-0000-7000-8000-000000000201",
+            "strand_id": "ak:strand:01904100-0000-8000-8000-000000000201",
             "track_name": "discussion",
             "content": {"kind": "ak.content.text", "body": "hello"}
         }),
     );
     let reaction = golden_event(
-        "ak:event:01904100-0000-7000-8000-000000000102",
+        "ak:event:01904100-0000-8000-8000-000000000102",
         arkret_sdk::EventKind::REACTION_ADD,
         2,
         "2026-07-08T00:00:01.000Z",
         serde_json::json!({
-            "target_ref": "ak:event:01904100-0000-7000-8000-000000000101",
+            "target_ref": "ak:event:01904100-0000-8000-8000-000000000101",
             "key": "+1"
         }),
     );
@@ -136,7 +136,7 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
     assert_eq!(records.len(), 2);
     assert_eq!(
         records[0].operation_id,
-        "ak:event:01904100-0000-7000-8000-000000000101"
+        "ak:event:01904100-0000-8000-8000-000000000101"
     );
     assert_eq!(
         records[0].payload["payload"]["content"]["body"],
@@ -144,7 +144,7 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
     );
     assert_eq!(
         records[1].operation_id,
-        "ak:event:01904100-0000-7000-8000-000000000102"
+        "ak:event:01904100-0000-8000-8000-000000000102"
     );
     assert_eq!(
         records[1].payload["payload"]["key"],
@@ -159,9 +159,9 @@ fn projection_late_recovery_rejection_blocks_sidecar_plaintext() {
         crate::operation::uuid_v7()
     ));
     let mut store = crate::state::LocalStateStore::with_path(path);
-    let realm = "ak:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22";
-    let strand = "ak:strand:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22";
-    let message = "ak:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a24";
+    let realm = "ak:realm:019e4fd4-4e26-8cc9-af7e-d7102d6f4a22";
+    let strand = "ak:strand:019e4fd4-4e26-8cc9-af7e-d7102d6f4a22";
+    let message = "ak:message:019e4fd4-4e26-8cc9-af7e-d7102d6f4a24";
     store.save_private_plaintext(realm, strand, &format!("message:{message}"), "secret body");
     let realms = std::collections::BTreeMap::from([(
         realm.to_owned(),
@@ -203,7 +203,7 @@ fn projection_late_recovery_rejection_blocks_sidecar_plaintext() {
 
 #[test]
 fn projection_audit_policy_access_late_recovery_marker_is_guarded() {
-    let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
     let realms = std::collections::BTreeMap::from([(
         realm.to_owned(),
         serde_json::json!({
@@ -211,7 +211,7 @@ fn projection_audit_policy_access_late_recovery_marker_is_guarded() {
             "timeline": {
                 "events": [{
                     "kind": "ak.audit.policy_access",
-                    "event_id": "ak:event:01904100-0000-7000-8000-000000000099",
+                    "event_id": "ak:event:01904100-0000-8000-8000-000000000099",
                     "original_received_at": "2026-05-20T00:00:00.000Z",
                     "late_recovery": {
                         "receiver_visible_at_t0": true,
@@ -222,7 +222,7 @@ fn projection_audit_policy_access_late_recovery_marker_is_guarded() {
                         "realm_id": realm,
                         "actor": "did:web:alice.example",
                         "access_kind": "e2ee_late_recovery",
-                        "late_recovery_original_event_id": "ak:event:01904100-0000-7000-8000-000000000007",
+                        "late_recovery_original_event_id": "ak:event:01904100-0000-8000-8000-000000000007",
                         "observed_at": "2026-05-20T00:30:00.000Z"
                     }
                 }]
@@ -240,6 +240,6 @@ fn projection_audit_policy_access_late_recovery_marker_is_guarded() {
     assert!(!marker.failed);
     assert_eq!(
         marker.event_id.as_deref(),
-        Some("ak:event:01904100-0000-7000-8000-000000000007")
+        Some("ak:event:01904100-0000-8000-8000-000000000007")
     );
 }
