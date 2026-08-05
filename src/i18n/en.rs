@@ -1625,6 +1625,14 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("contacts.action.blocking", "Blocking…");
     dict.set("contacts.dm.opening", "Opening direct chat…");
     dict.set(
+        "contacts.dm.awaiting_founder",
+        "Waiting for the other person to set up this chat. It will open automatically.",
+    );
+    dict.set(
+        "contacts.dm.creating",
+        "Setting up the encrypted chat…",
+    );
+    dict.set(
         "contacts.dm.not_ready",
         "Direct chat isn't ready yet, try again shortly.",
     );

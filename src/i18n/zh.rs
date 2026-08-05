@@ -1507,6 +1507,11 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("contacts.action.withdrawing", "正在撤回…");
     dict.set("contacts.action.blocking", "正在拉黑…");
     dict.set("contacts.dm.opening", "正在打开私聊…");
+    dict.set(
+        "contacts.dm.awaiting_founder",
+        "等待对方建立这个会话，建好后会自动打开。",
+    );
+    dict.set("contacts.dm.creating", "正在建立加密会话…");
     dict.set("contacts.dm.not_ready", "私聊尚未就绪,请稍后再试。");
     dict.set("contacts.dm.open_failed", "打开私聊失败:{error}");
     dict.set("contacts.block.confirm_title", "确定拉黑该联系人?");

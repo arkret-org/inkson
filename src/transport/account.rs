@@ -177,38 +177,29 @@ pub async fn set_invite_receive_policy(
         .map_err(anyhow::Error::from)
 }
 
+/// Resolve the pair's stable Direct Conversation coordinates.
+///
+/// This is query-only. Creation is founder-only: only the participant derived from the pair's root
+/// Contact basis may author the founding unit, which is what removes the cross-server creation race.
+/// The `create` flag therefore no longer triggers a ceremony here — it only says whether the caller
+/// is willing to act when it turns out to be the founder.
 pub async fn direct_conversation_resolve(
     api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     peer: &str,
     peer_controller: Option<&str>,
-    create: bool,
+    _create: bool,
     enable_owned_agent_reply: bool,
-) -> anyhow::Result<arkret_sdk::operation_control::DirectConversationResolveOutcome> {
+) -> anyhow::Result<arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome> {
     let http = api.http();
     let peer_descriptor = direct_conversation_peer_descriptor(peer, peer_controller)?;
-    let body = arkret_sdk::operation_control::DirectConversationResolveRequestBody::Lookup(
-        arkret_sdk::operation_control::DirectConversationLookupRequestBody {
-            peer: peer_descriptor,
-            create: arkret_sdk::operation_control::DirectConversationLookupMarker,
-        },
-    );
+    let body = arkret_sdk::direct_conversation_ops::DirectConversationResolveRequestBody {
+        peer: peer_descriptor,
+    };
     let outcome = http
         .direct_conversation_resolve(&body)
         .await
         .map_err(anyhow::Error::from)?;
-    if create
-        && matches!(
-            &outcome,
-            arkret_sdk::operation_control::DirectConversationResolveOutcome::State(
-                arkret_sdk::operation_control::DirectConversationResolveStateOutcome::CreationRequired
-            )
-        )
-    {
-        anyhow::bail!(
-            "Direct Conversation creation is unavailable until the full authorization/materialization ceremony is wired"
-        );
-    }
     if enable_owned_agent_reply && direct_conversation_coordinates(&outcome).is_some() {
         preserve_resolved_direct_conversation(
             peer,
@@ -242,23 +233,39 @@ fn direct_conversation_peer_cache_key(realm_id: &str, strand_id: &str) -> String
 }
 
 pub(crate) fn direct_conversation_coordinates(
-    outcome: &arkret_sdk::operation_control::DirectConversationResolveOutcome,
-) -> Option<&arkret_sdk::operation_control::DirectConversationCoordinates> {
+    outcome: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
+) -> Option<&arkret_sdk::direct_conversation_ops::DirectConversationCoordinates> {
+    outcome.coordinates()
+}
+
+/// Product-level status for the Direct Conversation entry point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DirectConversationEntry {
+    /// This user is the founder and may create the conversation now.
+    ReadyToCreate,
+    /// The other participant is the founder. Waiting never grants create authority here, so the UI
+    /// shows a waiting state rather than offering a create action.
+    AwaitingFounder,
+    /// Coordinates exist; the conversation can be opened.
+    Openable,
+    /// Coordinates exist but sending is currently blocked.
+    Suspended,
+    /// The resolver could not classify the pair yet.
+    Unavailable,
+}
+
+pub(crate) fn direct_conversation_entry(
+    outcome: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
+) -> DirectConversationEntry {
+    use arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome as Outcome;
     match outcome {
-        arkret_sdk::operation_control::DirectConversationResolveOutcome::State(
-            arkret_sdk::operation_control::DirectConversationResolveStateOutcome::Found {
-                coordinates,
-                ..
-            }
-            | arkret_sdk::operation_control::DirectConversationResolveStateOutcome::Suspended {
-                coordinates,
-                ..
-            },
-        ) => Some(coordinates),
-        arkret_sdk::operation_control::DirectConversationResolveOutcome::Tombstoned(outcome) => {
-            Some(&outcome.coordinates)
+        Outcome::CreationRequired => DirectConversationEntry::ReadyToCreate,
+        Outcome::AwaitingFounder { .. } => DirectConversationEntry::AwaitingFounder,
+        Outcome::Provisional { .. } | Outcome::Found { .. } => DirectConversationEntry::Openable,
+        Outcome::Suspended { .. } => DirectConversationEntry::Suspended,
+        Outcome::CreationBlocked { .. } | Outcome::TemporarilyUnavailable { .. } => {
+            DirectConversationEntry::Unavailable
         }
-        _ => None,
     }
 }
 
@@ -267,7 +274,7 @@ const DIRECT_CONVERSATION_PEER_CACHE_OBFUSCATION_KEY: &str = "ak.local.direct_co
 fn remember_direct_conversation_peer(
     state_store: &mut SyncSignal<crate::state::LocalStateStore>,
     peer: &str,
-    outcome: &arkret_sdk::operation_control::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
 ) {
     let Some(coordinates) = direct_conversation_coordinates(outcome) else {
         return;
@@ -300,7 +307,7 @@ pub(crate) fn cached_direct_conversation_peer(
 /// into an unavailable navigation target.
 fn preserve_resolved_direct_conversation(
     agent_id: &str,
-    outcome: &arkret_sdk::operation_control::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
     reply_enablement: anyhow::Result<()>,
 ) {
     if let Err(error) = reply_enablement {
@@ -318,7 +325,7 @@ async fn ensure_owned_agent_direct_reply(
     http: &arkret_sdk::http_client::Client,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     agent_id: &str,
-    outcome: &arkret_sdk::operation_control::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
 ) -> anyhow::Result<()> {
     let coordinates = direct_conversation_coordinates(outcome)
         .ok_or_else(|| anyhow::anyhow!("owned-Agent Direct Conversation omitted realm_id"))?;
@@ -928,7 +935,7 @@ mod tests {
 
     #[test]
     fn reply_enablement_failure_does_not_invalidate_resolved_direct_conversation() {
-        let outcome: arkret_sdk::operation_control::DirectConversationResolveOutcome =
+        let outcome: arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome =
             serde_json::from_value(json!({
                 "state": "found",
                 "coordinates": {
@@ -937,6 +944,7 @@ mod tests {
                     "main_strand_id": "ak:strand:01970000-0000-7000-8000-000000000002",
                     "binding_event_ref": "ak:event:01970000-0000-7000-8000-000000000003"
                 },
+                "active_mls_generation_ref": "ak:event:01970000-0000-7000-8000-000000000004",
                 "send_blockers": []
             }))
             .expect("found Direct Conversation outcome");

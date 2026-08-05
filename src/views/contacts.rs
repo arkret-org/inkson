@@ -379,8 +379,6 @@ fn ContactRow(
                     Button {
                         variant: ButtonVariant::Primary,
                         "data-testid": "contact-message-{peer}",
-                        disabled: true,
-                        title: "Unavailable until the Direct Conversation materialization ceremony is wired",
                         onclick: {
                             let base = base_url.clone();
                             let peer = peer.clone();
@@ -404,15 +402,36 @@ fn ContactRow(
                                     .await
                                     {
                                         Ok(outcome) => {
-                                            match crate::transport::account::direct_conversation_coordinates(&outcome) {
-                                                Some(coordinates) => {
-                                                    row_status.set(String::new());
-                                                    nav.push(Route::DirectConversation {
-                                                        realm_id: coordinates.realm_id.to_string(),
-                                                        strand_id: coordinates.main_strand_id.to_string(),
-                                                    });
+                                            use crate::transport::account::DirectConversationEntry;
+                                            match crate::transport::account::direct_conversation_entry(&outcome) {
+                                                // Coordinates exist: open the conversation.
+                                                DirectConversationEntry::Openable
+                                                | DirectConversationEntry::Suspended => {
+                                                    match crate::transport::account::direct_conversation_coordinates(&outcome) {
+                                                        Some(coordinates) => {
+                                                            row_status.set(String::new());
+                                                            nav.push(Route::DirectConversation {
+                                                                realm_id: coordinates.realm_id.to_string(),
+                                                                strand_id: coordinates.main_strand_id.to_string(),
+                                                            });
+                                                        }
+                                                        None => row_status.set(tr("contacts.dm.not_ready")),
+                                                    }
                                                 }
-                                                _ => row_status.set(tr("contacts.dm.not_ready")),
+                                                // This user is the founder: the conversation is
+                                                // theirs to create.
+                                                DirectConversationEntry::ReadyToCreate => {
+                                                    row_status.set(tr("contacts.dm.creating"));
+                                                }
+                                                // The other participant is the founder. Waiting never
+                                                // grants create authority, so we show a waiting state
+                                                // instead of offering a create action.
+                                                DirectConversationEntry::AwaitingFounder => {
+                                                    row_status.set(tr("contacts.dm.awaiting_founder"));
+                                                }
+                                                DirectConversationEntry::Unavailable => {
+                                                    row_status.set(tr("contacts.dm.not_ready"));
+                                                }
                                             }
                                         }
                                         Err(err) => {
