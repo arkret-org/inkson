@@ -1078,11 +1078,21 @@ fn AppBootstrap() -> Element {
                                     callback_bootstrap_pending.set(true);
                                     callback_session_boot_state.set(SessionBootState::Checking);
                                     if callback_redirect_to_dashboard {
+                                        // Only this account's own unfinished
+                                        // setup routes to onboarding. A draft
+                                        // left behind by another identity is
+                                        // not this user's work, and sending
+                                        // them to onboarding for it strands a
+                                        // perfectly good session on a surface
+                                        // they cannot complete.
+                                        let signed_in_did = account_did.peek().trim().to_owned();
                                         let destination = if state_store
                                             .read()
                                             .pending_principal_registration()
-                                            .is_some()
-                                        {
+                                            .is_some_and(|checkpoint| {
+                                                signed_in_did.is_empty()
+                                                    || checkpoint.did == signed_in_did
+                                            }) {
                                             Route::Onboarding
                                         } else {
                                             Route::Dashboard

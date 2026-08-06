@@ -22,6 +22,71 @@ enum IdentityChoice {
     Create,
 }
 
+/// Which onboarding surface the durable stages select.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OnboardingSurface {
+    /// Choose an identity, then generate, save and confirm a new Recovery Key.
+    IdentityCreation,
+    /// Finish a durable identity draft that is still completable from here.
+    ResumeBootstrap,
+    /// A durable identity draft that nothing on this device can finish. It is
+    /// shown as a dead end with an explicit way out, never as a Recovery Key
+    /// prompt: asking for 24 words that cannot be used is indistinguishable
+    /// from a bug, and it locks a *new* account out of its own setup.
+    StaleCheckpoint,
+    /// No onboarding work is pending on this device.
+    AccountSummary,
+}
+
+/// Select the onboarding surface from the durable stages.
+///
+/// The account handoff is the freshest statement of intent on this device: it
+/// is written by the Account Authority callback that just authenticated
+/// someone. A persisted identity draft that does not belong to that handoff is
+/// therefore *not* the current user's unfinished work, and must never take the
+/// surface away from them — that is how a newly registered account was shown
+/// "Enter your Recovery Key" for a stranger's draft DID it could not have saved
+/// words for.
+///
+/// Without a handoff, a draft is only completable when its account binding has
+/// already been registered AND this device still holds that DID's session
+/// grant, which is what the remaining bootstrap calls authenticate with. A
+/// `CustodyConfirmed` draft always needs the handoff (its lease and handoff
+/// credential are what bind the account), so it can never be resumed alone.
+fn onboarding_surface(
+    handoff: Option<&crate::state::PendingAccountHandoff>,
+    checkpoint: Option<&crate::state::PendingPrincipalRegistration>,
+    session_principal_id: Option<&str>,
+) -> OnboardingSurface {
+    let Some(checkpoint) = checkpoint else {
+        return if handoff.is_some() {
+            OnboardingSurface::IdentityCreation
+        } else {
+            OnboardingSurface::AccountSummary
+        };
+    };
+
+    if let Some(handoff) = handoff {
+        return if crate::identity::principal_registration::checkpoint_belongs_to_handoff(
+            checkpoint, handoff,
+        ) {
+            OnboardingSurface::ResumeBootstrap
+        } else {
+            OnboardingSurface::IdentityCreation
+        };
+    }
+
+    let binding_registered =
+        checkpoint.stage != crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed;
+    let holds_this_identity_session =
+        session_principal_id.is_some_and(|principal_id| principal_id == checkpoint.did);
+    if binding_registered && holds_this_identity_session {
+        OnboardingSurface::ResumeBootstrap
+    } else {
+        OnboardingSurface::StaleCheckpoint
+    }
+}
+
 #[component]
 pub fn OnboardingPanel(
     secure_store_ready: bool,
@@ -44,36 +109,54 @@ pub fn OnboardingPanel(
             }
         };
     }
-    // Checkpoints are routing inputs only when this surface mounts. Do not
-    // subscribe the parent to every durable stage write: an uninterrupted
-    // child flow keeps the Recovery Key in memory and must remain mounted while
-    // its background bootstrap advances. A real remount (reload/restart) reads
-    // the latest checkpoint and intentionally enters the resume surface.
-    let (pending_handoff, mut pending_registration) = {
-        let store = state_store.peek();
-        (
-            store.pending_account_handoff(),
-            store.pending_principal_registration(),
-        )
+    // The durable stages are routing inputs ONLY at mount, and the decision is
+    // latched for the lifetime of this mount.
+    //
+    // Two independent regressions live here. Subscribing the parent to the
+    // state store made every durable stage write re-route the surface; latching
+    // additionally survives a parent re-render (changed props re-run this body
+    // with the store already advanced). Both used to swap the in-flight
+    // creation panel for the generic resume panel the moment
+    // `create_bind_and_bootstrap_identity` persisted its first checkpoint —
+    // unmounting the only holder of the in-memory Recovery Key, cancelling its
+    // scoped task, and asking an uninterrupted setup for the same 24 words
+    // twice. A real remount (reload/restart) re-reads the stages and
+    // intentionally enters the resume surface.
+    //
+    // `routed` is only ever `peek`ed, so latching it during render notifies no
+    // subscriber and cannot loop. An explicit discard bumps `reroute` (which IS
+    // subscribed) to force exactly one re-decision.
+    let mut routed = use_signal(|| None::<OnboardingSurface>);
+    let mut reroute = use_signal(|| 0_u32);
+    let _routing_generation = reroute();
+
+    let latched = *routed.peek();
+    let surface = match latched {
+        Some(surface) => surface,
+        None => {
+            let surface = {
+                let store = state_store.peek();
+                onboarding_surface(
+                    store.pending_account_handoff().as_ref(),
+                    store.pending_principal_registration().as_ref(),
+                    store
+                        .session_grant()
+                        .as_ref()
+                        .map(|grant| grant.principal_id.as_str()),
+                )
+            };
+            routed.set(Some(surface));
+            surface
+        }
     };
 
-    // Upgrade/self-heal path: older builds could combine a fresh account
-    // handoff with the previous account's identity draft in the anonymous
-    // namespace. Never route from that foreign draft; the active handoff owns
-    // this onboarding surface and will replace it when the user confirms a new
-    // Recovery Key.
-    if pending_registration.as_ref().is_some_and(|checkpoint| {
-        pending_handoff.as_ref().is_some_and(|handoff| {
-            !crate::identity::principal_registration::checkpoint_belongs_to_handoff(
-                checkpoint, handoff,
-            )
-        })
-    }) {
-        pending_registration = None;
-    }
+    let on_discard = move |()| {
+        routed.set(None);
+        reroute += 1;
+    };
 
-    if pending_registration.is_some() {
-        return rsx! {
+    match surface {
+        OnboardingSurface::ResumeBootstrap => rsx! {
             div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
                 PendingPrincipalBootstrap {
                     token,
@@ -82,13 +165,11 @@ pub fn OnboardingPanel(
                     config_store,
                     needs_device_authorization,
                     device_authorization_check_complete,
+                    on_discard,
                 }
             }
-        };
-    }
-
-    if pending_handoff.is_some() {
-        return rsx! {
+        },
+        OnboardingSurface::IdentityCreation => rsx! {
             div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
                 PendingAccountIdentityCreation {
                     token,
@@ -100,23 +181,29 @@ pub fn OnboardingPanel(
                     device_authorization_check_complete,
                 }
             }
-        };
-    }
-
-    let did = account_did();
-    rsx! {
-        div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
-            div { class: "event onboarding-card onboarding-finished", "data-testid": "account-strand",
-                if did.trim().is_empty() {
-                    div { class: "onboarding-finish-mark", "aria-hidden": "true", "1" }
-                    h2 { "Set up your identity" }
-                    p { class: "muted", "Sign in first, then choose whether to create or link an identity." }
-                    Link { class: "primary", to: Route::Login, "Sign in" }
-                } else {
-                    div { class: "onboarding-finish-mark", "aria-hidden": "true", "✓" }
-                    h2 { "You're all set" }
-                    p { class: "muted", "Your account is linked to {short_protocol_id(&did)}." }
-                    Link { class: "primary", to: Route::Dashboard, "Continue" }
+        },
+        OnboardingSurface::StaleCheckpoint => rsx! {
+            div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
+                StalePrincipalSetup { on_discard }
+            }
+        },
+        OnboardingSurface::AccountSummary => {
+            let did = account_did();
+            rsx! {
+                div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
+                    div { class: "event onboarding-card onboarding-finished", "data-testid": "account-strand",
+                        if did.trim().is_empty() {
+                            div { class: "onboarding-finish-mark", "aria-hidden": "true", "1" }
+                            h2 { "Set up your identity" }
+                            p { class: "muted", "Sign in first, then choose whether to create or link an identity." }
+                            Link { class: "primary", to: Route::Login, "Sign in" }
+                        } else {
+                            div { class: "onboarding-finish-mark", "aria-hidden": "true", "✓" }
+                            h2 { "You're all set" }
+                            p { class: "muted", "Your account is linked to {short_protocol_id(&did)}." }
+                            Link { class: "primary", to: Route::Dashboard, "Continue" }
+                        }
+                    }
                 }
             }
         }
@@ -409,7 +496,7 @@ fn PendingAccountIdentityCreation(
                                         confirmation.set(String::new());
                                         status.set(String::new());
                                         complete.set(true);
-                                        if let Err(error) = clear_completed_principal_setup(state_store).await {
+                                        if let Err(error) = clear_pending_principal_setup(state_store).await {
                                             status.set(format!(
                                                 "Setup finished, but local cleanup failed: {error}"
                                             ));
@@ -425,6 +512,111 @@ fn PendingAccountIdentityCreation(
                         if busy() { "Finishing…" } else { "Save and continue" }
                     }
                 }
+            }
+        }
+    }
+}
+
+/// What discarding a draft costs, which depends entirely on whether its account
+/// binding was already registered. Before the binding, the draft is local and
+/// worthless; after it, this device holds the only copy of the material that
+/// finishes an identity the account is already committed to.
+fn discard_consequence(binding_registered: bool) -> &'static str {
+    if binding_registered {
+        "This identity is already registered to your account, and this device holds the only copy of its unfinished setup. Discarding it cannot be undone."
+    } else {
+        "Nothing has been registered yet. Discarding starts over: sign in again, and this device creates a new identity with a new Recovery Key."
+    }
+}
+
+/// The way out of a saved setup this device cannot finish.
+///
+/// Onboarding is otherwise a one-way surface: without this, a draft that the
+/// server no longer honours (or whose 24 words are gone) leaves clearing the
+/// browser's site data as the only escape.
+#[component]
+fn DiscardSavedSetup(disabled: bool, on_discard: EventHandler<()>) -> Element {
+    let state_store = crate::app::SessionContext::get().state_store;
+    let mut busy = use_signal(|| false);
+    let mut status = use_signal(String::new);
+
+    rsx! {
+        div { class: "onboarding-discard",
+            Button {
+                variant: ButtonVariant::Secondary,
+                "data-testid": "onboarding-discard-saved-setup",
+                disabled: disabled || busy(),
+                onclick: move |_| {
+                    busy.set(true);
+                    status.set(String::new());
+                    spawn(async move {
+                        match clear_pending_principal_setup(state_store).await {
+                            // Deliberately stays busy on success: the parent
+                            // re-routes and this control is unmounted.
+                            Ok(()) => on_discard.call(()),
+                            Err(error) => {
+                                status.set(format!("Could not discard the saved setup: {error}"));
+                                busy.set(false);
+                            }
+                        }
+                    });
+                },
+                if busy() { "Discarding…" } else { "Discard saved setup" }
+            }
+            if !status().is_empty() {
+                div {
+                    class: "form-hint-warn",
+                    role: "alert",
+                    "data-testid": "onboarding-discard-status",
+                    "{status}"
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn StalePrincipalSetup(on_discard: EventHandler<()>) -> Element {
+    let state_store = crate::app::SessionContext::get().state_store;
+    // Read the draft once, without subscribing: the discard this surface offers
+    // clears the very checkpoint being described, and a subscribed read would
+    // repaint it as an empty node before the parent re-routes.
+    let (did_label, binding_registered) = use_hook(move || {
+        state_store
+            .peek()
+            .pending_principal_registration()
+            .map(|checkpoint| {
+                (
+                    short_protocol_id(&checkpoint.did),
+                    checkpoint.stage
+                        != crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed,
+                )
+            })
+            .unwrap_or_else(|| ("an earlier identity".to_owned(), false))
+    });
+
+    rsx! {
+        div { class: "event onboarding-card", "data-testid": "stale-principal-setup",
+            SetupProgress { current: 2 }
+            div { class: "onboarding-heading",
+                span { class: "eyebrow", "Continue setup" }
+                h2 { "This saved setup can't be finished here" }
+                p { class: "muted",
+                    "An unfinished identity setup for {did_label} is stored on this device, but this browser no longer holds the account session it needs to continue."
+                }
+            }
+
+            div { class: "callout warn",
+                div { class: "body",
+                    strong { "Sign in to continue it." }
+                    " Signing in to the same account restores what this setup needs. "
+                    "{discard_consequence(binding_registered)}"
+                }
+            }
+
+            div { class: "onboarding-footer-actions",
+                DiscardSavedSetup { disabled: false, on_discard }
+                Link { class: "primary", to: Route::Login, "Sign in" }
             }
         }
     }
@@ -582,7 +774,14 @@ async fn create_bind_and_bootstrap_identity(
     Ok((actor, device.to_owned(), grant_jwt))
 }
 
-async fn clear_completed_principal_setup(
+/// Drop the durable identity draft together with the handoff it is fenced to,
+/// and the short-lived account handoff credential.
+///
+/// Shared by completion and by an explicit user discard. Both must clear the
+/// handoff too: a draft is bound to one identity-creation lease, so a next
+/// attempt has to re-authenticate for a fresh lease rather than reuse the one
+/// this draft consumed.
+async fn clear_pending_principal_setup(
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
 ) -> anyhow::Result<()> {
     let barrier = {
@@ -765,6 +964,7 @@ fn PendingPrincipalBootstrap(
     config_store: Signal<crate::config::LocalConfigStore>,
     mut needs_device_authorization: Signal<bool>,
     mut device_authorization_check_complete: Signal<bool>,
+    on_discard: EventHandler<()>,
 ) -> Element {
     let base_url = crate::app::SessionContext::base_url_string();
     let state_store = crate::app::SessionContext::get().state_store;
@@ -796,6 +996,8 @@ fn PendingPrincipalBootstrap(
         return rsx! {};
     };
     let did_label = short_protocol_id(&registration.did);
+    let binding_registered =
+        registration.stage != crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed;
 
     rsx! {
         div { class: "event onboarding-card", "data-testid": "pending-principal-bootstrap",
@@ -804,6 +1006,10 @@ fn PendingPrincipalBootstrap(
                 span { class: "eyebrow", "Continue setup" }
                 h2 { "Enter your Recovery Key" }
                 p { class: "muted", "Use the same 24 words you saved for {did_label}." }
+                p { class: "muted",
+                    "Setting up a different account, or no longer have these words? Discard this setup and start again. "
+                    "{discard_consequence(binding_registered)}"
+                }
             }
             div { class: "workflow-form onboarding-confirmation",
                 Label { html_for: "bootstrap-recovery-key", "Recovery Key" }
@@ -827,7 +1033,8 @@ fn PendingPrincipalBootstrap(
                     "{status}"
                 }
             }
-            div { class: "onboarding-footer-actions is-end",
+            div { class: "onboarding-footer-actions",
+                DiscardSavedSetup { disabled: busy(), on_discard }
                 Button {
                         variant: ButtonVariant::Primary,
                         "data-testid": "bootstrap-submit",
@@ -894,7 +1101,7 @@ fn PendingPrincipalBootstrap(
                                         recovery_key.set(String::new());
                                         status.set(String::new());
                                         complete.set(true);
-                                        if let Err(error) = clear_completed_principal_setup(state_store).await {
+                                        if let Err(error) = clear_pending_principal_setup(state_store).await {
                                             status.set(format!(
                                                 "Setup finished, but local cleanup failed: {error}"
                                             ));
@@ -952,6 +1159,161 @@ mod tests {
                 std::slice::from_ref(&handle),
             ),
             "arkret-recovery-key-alice.txt"
+        );
+    }
+
+    fn test_checkpoint(
+        handoff: &crate::state::PendingAccountHandoff,
+        recovery_key: &str,
+        stage: crate::state::PendingPrincipalRegistrationStage,
+    ) -> crate::state::PendingPrincipalRegistration {
+        let mut checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
+            handoff,
+            &handoff.device_id,
+            recovery_key,
+        )
+        .unwrap();
+        checkpoint.stage = stage;
+        checkpoint
+    }
+
+    #[test]
+    fn a_fresh_handoff_never_yields_the_surface_to_a_foreign_draft() {
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let previous_handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000010",
+            Some("lease-1"),
+            Some(1),
+        );
+        let stale = test_checkpoint(
+            &previous_handoff,
+            &recovery_key,
+            crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed,
+        );
+        let mut new_account_handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000011",
+            Some("lease-2"),
+            Some(2),
+        );
+        new_account_handoff.account_handle = "bob:auth.example".to_owned();
+
+        // The newly authenticated account must reach its own Recovery Key
+        // generation, not be asked for 24 words it never saw.
+        assert_eq!(
+            onboarding_surface(Some(&new_account_handoff), Some(&stale), None),
+            OnboardingSurface::IdentityCreation
+        );
+        // Even a session grant for the stale draft's DID cannot outrank the
+        // handoff that just authenticated someone else on this device.
+        assert_eq!(
+            onboarding_surface(Some(&new_account_handoff), Some(&stale), Some(&stale.did)),
+            OnboardingSurface::IdentityCreation
+        );
+    }
+
+    #[test]
+    fn an_interrupted_creation_resumes_on_its_own_handoff() {
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000010",
+            Some("lease-1"),
+            Some(1),
+        );
+        let checkpoint = test_checkpoint(
+            &handoff,
+            &recovery_key,
+            crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed,
+        );
+
+        assert_eq!(
+            onboarding_surface(Some(&handoff), Some(&checkpoint), None),
+            OnboardingSurface::ResumeBootstrap
+        );
+    }
+
+    #[test]
+    fn a_draft_that_never_bound_its_account_cannot_resume_without_its_handoff() {
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000010",
+            Some("lease-1"),
+            Some(1),
+        );
+        let checkpoint = test_checkpoint(
+            &handoff,
+            &recovery_key,
+            crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed,
+        );
+
+        // The lease and the handoff credential are what bind the account, so a
+        // session grant for this DID cannot stand in for the missing handoff.
+        assert_eq!(
+            onboarding_surface(None, Some(&checkpoint), Some(&checkpoint.did)),
+            OnboardingSurface::StaleCheckpoint
+        );
+    }
+
+    #[test]
+    fn a_registered_binding_resumes_from_its_own_session_after_the_handoff_is_cleared() {
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000010",
+            Some("lease-1"),
+            Some(1),
+        );
+        for stage in [
+            crate::state::PendingPrincipalRegistrationStage::BindingRegistered,
+            crate::state::PendingPrincipalRegistrationStage::BootstrapAccepted,
+        ] {
+            let checkpoint = test_checkpoint(&handoff, &recovery_key, stage);
+
+            // Signing back in to an already-bound account clears the handoff
+            // (`OidcCallbackOutcome::Login`) but leaves the bootstrap unfinished.
+            assert_eq!(
+                onboarding_surface(None, Some(&checkpoint), Some(&checkpoint.did)),
+                OnboardingSurface::ResumeBootstrap
+            );
+            // No session, or another account's session: nothing here can
+            // authenticate the remaining bootstrap calls.
+            assert_eq!(
+                onboarding_surface(None, Some(&checkpoint), None),
+                OnboardingSurface::StaleCheckpoint
+            );
+            assert_eq!(
+                onboarding_surface(
+                    None,
+                    Some(&checkpoint),
+                    Some("did:webvh:z6mkother:principal.example")
+                ),
+                OnboardingSurface::StaleCheckpoint
+            );
+        }
+    }
+
+    #[test]
+    fn discarding_a_registered_binding_is_flagged_as_irreversible() {
+        // The two warnings are trivially easy to swap, and swapping them tells
+        // a user that throwing away the only copy of a registered identity's
+        // setup costs nothing.
+        assert!(discard_consequence(true).contains("cannot be undone"));
+        assert!(discard_consequence(false).contains("Nothing has been registered"));
+    }
+
+    #[test]
+    fn onboarding_without_a_draft_follows_the_handoff() {
+        let handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000010",
+            Some("lease-1"),
+            Some(1),
+        );
+
+        assert_eq!(
+            onboarding_surface(Some(&handoff), None, None),
+            OnboardingSurface::IdentityCreation
+        );
+        assert_eq!(
+            onboarding_surface(None, None, Some("did:webvh:z6mkfixture:principal.example")),
+            OnboardingSurface::AccountSummary
         );
     }
 
@@ -1107,7 +1469,10 @@ mod tests {
             device_id: "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
             enrollment_authority_did: "did:key:z6MkrJVnaZkeFzdQyKjzgRHjhBfE6ZscXDFHq8T7TYNy9v1t"
                 .to_owned(),
-            trust_domain: "ak:trust-domain:test".to_owned(),
+            // `ak:trust_domain:<scope>` — the hyphenated spelling stopped
+            // parsing as an Arkret identifier and failed every test built on
+            // this fixture inside `prepare_registration_checkpoint`.
+            trust_domain: "ak:trust_domain:auth.example".to_owned(),
         }
     }
 }
