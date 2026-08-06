@@ -523,9 +523,32 @@ pub async fn tombstone_contact_and_revoke_all(
     )
 }
 
+/// Read one holder-private consent cell. Spec OpenAPI
+/// `ak.self.consent.resource.get`.
+pub async fn consent_cell(
+    http: &arkret_sdk::http_client::Client,
+    holder: &str,
+    peer: &str,
+    scope: &str,
+) -> anyhow::Result<arkret_sdk::ConsentCellView> {
+    let path = format!(
+        "{}/{}?peer={}&consent_scope={}",
+        arkret_wire::PATH_SELF_CONSENT_CELLS,
+        crate::wire_helpers::path_component(holder.trim()),
+        crate::wire_helpers::path_component(peer.trim()),
+        crate::wire_helpers::path_component(scope.trim()),
+    );
+    http.get(&path).await.map_err(anyhow::Error::from)
+}
+
 /// Grant scoped consent to `peer` from the holder cell. `expires_at` is an
 /// optional RFC 3339 time window upper bound. Spec OpenAPI
 /// `ak.self.consent.command.grant`.
+///
+/// The Control Move is authored and signed here: its `consent_id` is the cell
+/// subject and its `event_id` becomes the or_set add dot, so neither is the
+/// server's to choose. A cell that already exists keeps its `consent_id`; a new
+/// one gets a freshly minted producer-allocated id.
 pub async fn grant_consent(
     http: &arkret_sdk::http_client::Client,
     holder: &str,
@@ -533,10 +556,23 @@ pub async fn grant_consent(
     scope: &str,
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> anyhow::Result<arkret_sdk::ConsentCellView> {
-    let body = arkret_sdk::ConsentUpdateRequestBody {
-        peer_did: did_for_request_field("peer", peer)?,
-        consent_scope: Some(scope.trim().to_owned()),
+    // Reuse the existing subject when there is one, so a re-grant lands in the
+    // same cell instead of opening a second one for the same (peer, scope).
+    let consent_id = match consent_cell(http, holder, peer, scope).await {
+        Ok(cell) => crate::operation::ak_ops::consent_id_from_cell_id(&cell.cell_id)?,
+        Err(_) => arkret_sdk::ConsentId::new_v7_at(crate::clock::now_unix_ms()),
+    };
+    let event = crate::operation::ak_ops::consent_grant(
+        &arkret_sdk::principal_control_realm_id(&did_for_request_field("holder", holder)?),
+        holder.trim(),
+        &consent_id,
+        peer,
+        scope,
         expires_at,
+    )?
+    .build_sdk_event("inkson")?;
+    let body = arkret_sdk::ConsentGrantRequestBody {
+        grant_event: arkret_wire::EventInitialSubmission::online(event),
     };
     let path = format!(
         "{}/{}/grant",
@@ -548,16 +584,29 @@ pub async fn grant_consent(
 
 /// Revoke scoped consent from `peer`. Spec OpenAPI
 /// `ak.self.consent.command.revoke`.
+///
+/// The current cell is read first because the Control Move MUST name the exact
+/// dots being removed; there is nothing the server could substitute for that
+/// without reintroducing the concurrent-revoke race the dot model exists to close.
 pub async fn revoke_consent(
     http: &arkret_sdk::http_client::Client,
     holder: &str,
     peer: &str,
     scope: &str,
 ) -> anyhow::Result<arkret_sdk::ConsentCellView> {
-    let body = arkret_sdk::ConsentUpdateRequestBody {
-        peer_did: did_for_request_field("peer", peer)?,
-        consent_scope: Some(scope.trim().to_owned()),
-        expires_at: None,
+    let cell = consent_cell(http, holder, peer, scope).await?;
+    let consent_id = crate::operation::ak_ops::consent_id_from_cell_id(&cell.cell_id)?;
+    let event = crate::operation::ak_ops::consent_revoke(
+        &arkret_sdk::principal_control_realm_id(&did_for_request_field("holder", holder)?),
+        holder.trim(),
+        &consent_id,
+        peer,
+        scope,
+        &cell.active_grant_dots,
+    )?
+    .build_sdk_event("inkson")?;
+    let body = arkret_sdk::ConsentRevokeRequestBody {
+        revoke_event: arkret_wire::EventInitialSubmission::online(event),
     };
     let path = format!(
         "{}/{}/revoke",
