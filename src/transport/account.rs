@@ -721,6 +721,55 @@ pub(crate) async fn account_data_snapshot(
     }
 }
 
+/// The holder whose account data this client writes.
+///
+/// `ak.account_data.set`'s actor-private cell subject is
+/// `composite[envelope.actor_id, payload.key]`, so the Event's actor is not a
+/// formality: it is half the cell address. The holder must sign, which is why this
+/// is resolved here rather than left to the server — soland used to author these
+/// Events under its own DID, which put every holder's value for one key into a
+/// single cell keyed by the service.
+fn account_data_holder() -> anyhow::Result<arkret_sdk::Did> {
+    let actor = crate::secure_key_store::active_device_seed_scope()
+        .filter(|actor| !actor.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("no active account; cannot author an account_data Event"))?;
+    arkret_sdk::Did::new(actor).map_err(anyhow::Error::from)
+}
+
+/// Build and sign the `ak.account_data.set` the endpoint now requires.
+async fn account_data_set_submission(
+    submitter: &EventSubmitter,
+    type_key: &str,
+    value: Option<Value>,
+    expected_revision: u64,
+) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
+    let holder = account_data_holder()?;
+    let realm_id = arkret_sdk::principal_control_realm_id(&holder);
+    let key = crate::account_data::AccountDataKey::from_wire(type_key);
+    let builder = match value {
+        Some(value) => crate::account_data::build_account_data_set(
+            &realm_id,
+            holder.as_str(),
+            &key,
+            value,
+            expected_revision,
+        ),
+        None => crate::account_data::build_account_data_tombstone(
+            &realm_id,
+            holder.as_str(),
+            &key,
+            expected_revision,
+        ),
+    };
+    let event = builder.build_sdk_event("inkson")?;
+    submitter
+        .prepare_initial_submissions(vec![event])
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("account_data submission was not prepared"))
+}
+
 /// Apply a domain merge against the latest Account Data value and retry
 /// compare-and-set conflicts with the authoritative conflict snapshot.
 pub(crate) async fn update_account_data_with_merge<F>(
@@ -738,8 +787,13 @@ where
     let mut snapshot = account_data_snapshot(submitter.http(), type_key).await?;
     for attempt in 1..=MAX_ACCOUNT_DATA_CAS_ATTEMPTS {
         let body = arkret_sdk::AccountDataReplaceRequestBody {
-            expected_revision: snapshot.revision,
-            content: merge(&snapshot)?,
+            set_event: account_data_set_submission(
+                submitter,
+                type_key,
+                Some(merge(&snapshot)?),
+                snapshot.revision,
+            )
+            .await?,
         };
         match submitter
             .http()
@@ -781,13 +835,16 @@ pub async fn delete_account_data(submitter: &EventSubmitter, type_key: &str) -> 
     let mut snapshot = account_data_snapshot(submitter.http(), type_key).await?;
     for attempt in 1..=MAX_ACCOUNT_DATA_CAS_ATTEMPTS {
         let path = format!(
-            "{ACCOUNT_DATA_RESOURCE_PATH}/{}?expected_revision={}",
+            "{ACCOUNT_DATA_RESOURCE_PATH}/{}",
             crate::wire_helpers::path_component(type_key),
-            snapshot.revision,
         );
+        let body = arkret_sdk::AccountDataDeleteRequestBody {
+            set_event: account_data_set_submission(submitter, type_key, None, snapshot.revision)
+                .await?,
+        };
         match submitter
             .http()
-            .delete::<arkret_sdk::AccountDataDeleteOutcome>(&path)
+            .delete_with_body::<_, arkret_sdk::AccountDataDeleteOutcome>(&path, &body)
             .await
         {
             Ok(_) => return Ok(()),
