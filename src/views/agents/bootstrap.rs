@@ -954,6 +954,9 @@ async fn submit_managed_agent_pcr_seal(
     let seal = signer
         .sign_managed_agent_pcr_event_seal(controller_id, events, predecessor, hlc)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    // `accepted_event_digests` is a set in `Seal.delta`'s normalization
+    // (byte-wise ascending, unique), which is what makes this comparison
+    // well-defined; reducer apply order is a different sequence.
     let expected_digests = seal.delta.clone();
     let outcome = http.events_submit_seal(&seal).await?;
     if outcome.seal_id != seal.id

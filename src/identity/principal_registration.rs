@@ -396,6 +396,12 @@ pub async fn bootstrap_principal(
     let seal = device_signer
         .sign_self_principal_bootstrap_seal(&create, &authorize, seal_hlc)
         .map_err(|error| anyhow!(error.to_string()))?;
+    // `EventSealSubmitOutcome.accepted_event_digests` is a set in `Seal.delta`'s
+    // normalization (byte-wise ascending, unique), so `seal.delta` is directly
+    // comparable. It is *not* reducer apply order, which is causal then
+    // digest-descending: comparing against that sequence made this check pass or
+    // fail on whether the causal order of the bootstrap pair happened to match
+    // ascending digest order.
     let expected_digests = seal.delta.clone();
     // A self-principal genesis has no accepted notary yet. The Principal
     // Server therefore pre-admits the complete ordered pair, issues one
