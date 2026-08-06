@@ -14,8 +14,8 @@ use arkret_wire::{
     AuthoritySetAuthorizationRule, AuthoritySetIssuer, AuthoritySetIssuerRole, AuthoritySetPolicy,
     AuthoritySetPolicyKind, AuthoritySetPolicySource, AuthoritySetRef, AuthoritySetSourceKind,
     AuthorizeEventPublicationIntent, Base64UrlString, CanonicalPublicMaterial, DidUrl,
-    EnrollmentAuthorityIdentityModel, EnrollmentAuthorityRecoveryPlan, Event, EventId, EventRef,
-    Hash, Hlc, IssueAuthorityTicketStep, LeaseBasisRef, NonEmptyString, PreparedDidPublication,
+    EnrollmentAuthorityIdentityModel, EnrollmentAuthorityRecoveryPlan, Event, EventRef, Hash, Hlc,
+    IssueAuthorityTicketStep, LeaseBasisRef, NonEmptyString, PreparedDidPublication,
     RECOVERY_ACCOUNT_AUTHORITY_SET_ID, ReceiptId, RecoveryAuthorityHolderProof,
     RecoveryAuthorityTicket, RecoveryAuthorityTicketId, RecoveryAuthorityTicketIssueRequest,
     RecoveryAuthorizationPreimage, RecoveryBinding, RecoveryPreparedPlan,
@@ -515,33 +515,76 @@ pub(crate) async fn prepare_enrollment_authority_recovery(
         verified_session.principal_id.as_str(),
         scope_ref.realm_id().as_str(),
     )?;
-    let mut authorize_event = Event::new_with_id_at(
-        EventId::new(crate::operation::PLACEHOLDER_EVENT_ID)?,
+
+    let accepted_basis = verified_session
+        .accepted_seal_frontier
+        .as_ref()
+        .ok_or_else(|| {
+            anyhow::anyhow!("verified recovery session has no accepted Seal frontier")
+        })?;
+    let trusted_leaf = accepted_basis.leaves.first().ok_or_else(|| {
+        anyhow::anyhow!("verified recovery session has an empty accepted Seal frontier")
+    })?;
+    let digest_suite = crate::event_signer::digest_suite_from_trusted_seal_id(trusted_leaf)?;
+
+    // key-management.md §5.0.7 fixes the dependency chain: authorize payload
+    // digest -> re-anchor -> authorize envelope. Every event_id derives from
+    // its own signed content, and the authorize envelope names the re-anchor in
+    // prev_refs, so the re-anchor can only commit to the authorize *payload*.
+    let authorize_payload_wire = serde_json::to_value(authorize_payload)?;
+    let replacement_authorize_payload_digest =
+        arkret_models_collaboration::events_payloads::device_identity::device_authorize_replacement_payload_digest(
+            &authorize_payload_wire,
+            digest_suite,
+        )?;
+    let reanchor_payload =
+        arkret_models_collaboration::events_payloads::device_identity::DeviceReanchorPayload {
+            principal_id: verified_session.principal_id.clone(),
+            did_version_id: NonEmptyString::new(rotation.version_id.clone())
+                .map_err(anyhow::Error::msg)?,
+            previous_device_generation: NonEmptyString::new(previous_generation.clone())
+                .map_err(anyhow::Error::msg)?,
+            new_device_generation: NonEmptyString::new(rotation.version_id.clone())
+                .map_err(anyhow::Error::msg)?,
+            pre_fence_basis: verified_session.accepted_seal_frontier.clone(),
+            replacement_authorize_payload_digest,
+        };
+    let mut reanchor_event = Event::new_with_derived_id_at(
+        arkret_wire::EventKind::DEVICE_REANCHOR,
+        scope_ref.clone(),
+        verified_session.principal_id.clone(),
+        actor_frontier.next_actor_seq,
+        reanchor_hlc,
+        serde_json::to_value(reanchor_payload)?,
+        not_before,
+    )?;
+    reanchor_event.prev_refs = actor_frontier.frontier_event_ids.clone();
+    reanchor_event.refs.push(EventRef::new(
+        rotation.version_id.clone(),
+        "did_recovery_anchor",
+    ));
+    // The envelope changed after construction, so the derived id must follow it.
+    reanchor_event.event_id = reanchor_event.derive_event_id_with_digest_suite(digest_suite)?;
+    let reanchor_event_id = reanchor_event.event_id.clone();
+
+    let mut authorize_event = Event::new_with_derived_id_at(
         arkret_wire::EventKind::DEVICE_AUTHORIZE,
         scope_ref.clone(),
         verified_session.principal_id.clone(),
         authorize_actor_seq,
         authorize_hlc,
-        serde_json::to_value(authorize_payload)?,
+        authorize_payload_wire,
         not_before,
     )?;
-    // No `prev_refs` back-link to the reanchor. Under content-bound ids that
-    // link would close a cycle with no fixed point: the reanchor's payload
-    // pre-declares this Event's id *and* digest, so if this Event's digest in
-    // turn covered the reanchor's id, each would be an input to the other.
-    //
-    // Nothing is lost. The ordering is already stated twice over — by
-    // `actor_seq` (the reanchor is N, this is N+1) and by the reanchor naming
-    // this Event explicitly — and the reanchor fixes its own frontier in
-    // `payload.pre_fence_basis` rather than in `prev_refs`, which is why
-    // `ak.device.reanchor` is one of the two closed exceptions that carry no
-    // CBA basis field at all.
+    // key-management.md 5.0.7 item 2: this Event's prev_refs is exactly the
+    // re-anchor id. The dependency stays one-way because the re-anchor only
+    // committed to this Event's *payload* digest, which was fixed before either
+    // envelope existed.
+    authorize_event.prev_refs = vec![reanchor_event_id.clone()];
     authorize_event.executed_by = Some(enrollment_authority_did.clone());
     authorize_event.authorization_ref =
         Some(arkret_sdk::AuthorizationRef::new(authorization_ref).map_err(anyhow::Error::msg)?);
-    // Stamped before anything reads the id: the reanchor payload below binds
-    // both this id and this digest.
-    authorize_event.event_id = authorize_event.derive_event_id()?;
+    authorize_event.event_id = authorize_event.derive_event_id_with_digest_suite(digest_suite)?;
     let authorize_event_id = authorize_event.event_id.clone();
     let authorize_event_preimage =
         CanonicalPublicMaterial::canonical_json(serde_json::to_value(&authorize_event)?)?;
@@ -590,49 +633,6 @@ pub(crate) async fn prepare_enrollment_authority_recovery(
         cba_proof_bundles: Vec::new(),
     };
 
-    let accepted_basis = verified_session
-        .accepted_seal_frontier
-        .as_ref()
-        .ok_or_else(|| {
-            anyhow::anyhow!("verified recovery session has no accepted Seal frontier")
-        })?;
-    let trusted_leaf = accepted_basis.leaves.first().ok_or_else(|| {
-        anyhow::anyhow!("verified recovery session has an empty accepted Seal frontier")
-    })?;
-    let digest_suite = crate::event_signer::digest_suite_from_trusted_seal_id(trusted_leaf)?;
-    let reanchor_payload =
-        arkret_models_collaboration::events_payloads::device_identity::DeviceReanchorPayload {
-            principal_id: verified_session.principal_id.clone(),
-            did_version_id: NonEmptyString::new(rotation.version_id.clone())
-                .map_err(anyhow::Error::msg)?,
-            previous_device_generation: NonEmptyString::new(previous_generation.clone())
-                .map_err(anyhow::Error::msg)?,
-            new_device_generation: NonEmptyString::new(rotation.version_id.clone())
-                .map_err(anyhow::Error::msg)?,
-            pre_fence_basis: verified_session.accepted_seal_frontier.clone(),
-            replacement_authorize_event_id: authorize_event_id.clone(),
-            replacement_authorize_digest: Hash::new(
-                authorize_event.event_digest_with_digest_suite(digest_suite)?,
-            )?,
-        };
-    let mut reanchor_event = Event::new_with_id_at(
-        EventId::new(crate::operation::PLACEHOLDER_EVENT_ID)?,
-        arkret_wire::EventKind::DEVICE_REANCHOR,
-        scope_ref,
-        verified_session.principal_id.clone(),
-        actor_frontier.next_actor_seq,
-        reanchor_hlc,
-        serde_json::to_value(reanchor_payload)?,
-        not_before,
-    )?;
-    reanchor_event.prev_refs = actor_frontier.frontier_event_ids.clone();
-    reanchor_event.refs.push(EventRef::new(
-        rotation.version_id.clone(),
-        "did_recovery_anchor",
-    ));
-    // Stamped last: every member of this Event's content is now final.
-    reanchor_event.event_id = reanchor_event.derive_event_id()?;
-    let reanchor_event_id = reanchor_event.event_id.clone();
     let root_did = arkret_sdk::Did::new(
         rotation
             .current_root_verification_method
