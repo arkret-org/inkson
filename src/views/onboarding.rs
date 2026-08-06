@@ -808,16 +808,33 @@ fn checkpoint_for_handoff(
     handoff: &crate::state::PendingAccountHandoff,
     recovery_key: &str,
 ) -> anyhow::Result<crate::state::PendingPrincipalRegistration> {
-    if !crate::identity::principal_registration::checkpoint_belongs_to_handoff(checkpoint, handoff)
-    {
-        anyhow::bail!("the saved identity setup belongs to a different service account");
-    }
     if checkpoint.handoff_request_id == handoff.request_id {
+        // Exact continuity: same handoff request, nothing to prove.
         crate::identity::principal_registration::validate_checkpoint_recovery_key(
             checkpoint,
             recovery_key,
         )?;
         return Ok(checkpoint.clone());
+    }
+    // Everything below is a *renewal*: a different request id reaching a draft
+    // this device already holds. Each way that can fail gets its own message,
+    // because the surface shows these to the person trying to finish setup and
+    // "wrong account" and "wrong identity" call for different actions.
+    if !checkpoint.account_handle.trim().is_empty()
+        && checkpoint.account_handle != handoff.account_handle
+    {
+        anyhow::bail!("the saved identity setup belongs to a different service account");
+    }
+    if handoff.reserved_identity.is_none() {
+        anyhow::bail!(
+            "this account has no identity reserved here, so the setup saved on this device belongs to an earlier registration"
+        );
+    }
+    if !crate::identity::principal_registration::checkpoint_belongs_to_handoff(checkpoint, handoff)
+    {
+        anyhow::bail!(
+            "the server's reserved identity does not match the saved setup; the original local checkpoint is required"
+        );
     }
     if checkpoint.stage != crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed {
         anyhow::bail!("a different identity setup is already pending");
@@ -1440,7 +1457,11 @@ mod tests {
 
         let error =
             checkpoint_for_handoff(&checkpoint, &re_registration, &recovery_key).unwrap_err();
-        assert!(error.to_string().contains("different service account"));
+        assert!(
+            error.to_string().contains("an earlier registration"),
+            "a re-registration must be told the draft is stale, not that it is someone \
+             else's account: {error}"
+        );
     }
 
     #[test]
