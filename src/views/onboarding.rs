@@ -49,14 +49,22 @@ enum OnboardingSurface {
 /// words for.
 ///
 /// Without a handoff, a draft is only completable when its account binding has
-/// already been registered AND this device still holds that DID's session
-/// grant, which is what the remaining bootstrap calls authenticate with. A
+/// already been registered AND this device holds a live session for that exact
+/// DID, which is what the remaining bootstrap calls authenticate with. A
 /// `CustodyConfirmed` draft always needs the handoff (its lease and handoff
 /// credential are what bind the account), so it can never be resumed alone.
+///
+/// The session is read from the same two signals the resume panel's submit
+/// authenticates with, NOT from the persisted session grant. Routing on a
+/// different input than submitting is what put a live, resumable setup on the
+/// dead-end surface: the durable grant snapshot races its own hydration (the
+/// test-fixture injection documents that race), while `token` / `account_did`
+/// are always settled before `secure_store_ready` unlatches this decision.
 fn onboarding_surface(
     handoff: Option<&crate::state::PendingAccountHandoff>,
     checkpoint: Option<&crate::state::PendingPrincipalRegistration>,
-    session_principal_id: Option<&str>,
+    session_token_present: bool,
+    active_account_did: &str,
 ) -> OnboardingSurface {
     let Some(checkpoint) = checkpoint else {
         return if handoff.is_some() {
@@ -79,7 +87,7 @@ fn onboarding_surface(
     let binding_registered =
         checkpoint.stage != crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed;
     let holds_this_identity_session =
-        session_principal_id.is_some_and(|principal_id| principal_id == checkpoint.did);
+        session_token_present && active_account_did == checkpoint.did;
     if binding_registered && holds_this_identity_session {
         OnboardingSurface::ResumeBootstrap
     } else {
@@ -134,15 +142,15 @@ pub fn OnboardingPanel(
     let surface = match latched {
         Some(surface) => surface,
         None => {
+            let session_token_present = !token.peek().trim().is_empty();
+            let active_account_did = account_did.peek().trim().to_owned();
             let surface = {
                 let store = state_store.peek();
                 onboarding_surface(
                     store.pending_account_handoff().as_ref(),
                     store.pending_principal_registration().as_ref(),
-                    store
-                        .session_grant()
-                        .as_ref()
-                        .map(|grant| grant.principal_id.as_str()),
+                    session_token_present,
+                    &active_account_did,
                 )
             };
             routed.set(Some(surface));
@@ -1200,13 +1208,13 @@ mod tests {
         // The newly authenticated account must reach its own Recovery Key
         // generation, not be asked for 24 words it never saw.
         assert_eq!(
-            onboarding_surface(Some(&new_account_handoff), Some(&stale), None),
+            onboarding_surface(Some(&new_account_handoff), Some(&stale), false, ""),
             OnboardingSurface::IdentityCreation
         );
-        // Even a session grant for the stale draft's DID cannot outrank the
+        // Even a live session for the stale draft's DID cannot outrank the
         // handoff that just authenticated someone else on this device.
         assert_eq!(
-            onboarding_surface(Some(&new_account_handoff), Some(&stale), Some(&stale.did)),
+            onboarding_surface(Some(&new_account_handoff), Some(&stale), true, &stale.did),
             OnboardingSurface::IdentityCreation
         );
     }
@@ -1226,7 +1234,7 @@ mod tests {
         );
 
         assert_eq!(
-            onboarding_surface(Some(&handoff), Some(&checkpoint), None),
+            onboarding_surface(Some(&handoff), Some(&checkpoint), false, ""),
             OnboardingSurface::ResumeBootstrap
         );
     }
@@ -1246,9 +1254,9 @@ mod tests {
         );
 
         // The lease and the handoff credential are what bind the account, so a
-        // session grant for this DID cannot stand in for the missing handoff.
+        // live session for this DID cannot stand in for the missing handoff.
         assert_eq!(
-            onboarding_surface(None, Some(&checkpoint), Some(&checkpoint.did)),
+            onboarding_surface(None, Some(&checkpoint), true, &checkpoint.did),
             OnboardingSurface::StaleCheckpoint
         );
     }
@@ -1268,22 +1276,32 @@ mod tests {
             let checkpoint = test_checkpoint(&handoff, &recovery_key, stage);
 
             // Signing back in to an already-bound account clears the handoff
-            // (`OidcCallbackOutcome::Login`) but leaves the bootstrap unfinished.
+            // (`OidcCallbackOutcome::Login`) but leaves the bootstrap
+            // unfinished. This is also the shape of the joint-e2e flow that
+            // injects only a checkpoint and then performs a real OIDC login:
+            // routing it to the dead end stranded a live, resumable setup.
             assert_eq!(
-                onboarding_surface(None, Some(&checkpoint), Some(&checkpoint.did)),
+                onboarding_surface(None, Some(&checkpoint), true, &checkpoint.did),
                 OnboardingSurface::ResumeBootstrap
             );
             // No session, or another account's session: nothing here can
             // authenticate the remaining bootstrap calls.
             assert_eq!(
-                onboarding_surface(None, Some(&checkpoint), None),
+                onboarding_surface(None, Some(&checkpoint), false, ""),
+                OnboardingSurface::StaleCheckpoint
+            );
+            // A signed-out device that still remembers which account it was:
+            // the DID matches, but there is no session to bootstrap with.
+            assert_eq!(
+                onboarding_surface(None, Some(&checkpoint), false, &checkpoint.did),
                 OnboardingSurface::StaleCheckpoint
             );
             assert_eq!(
                 onboarding_surface(
                     None,
                     Some(&checkpoint),
-                    Some("did:webvh:z6mkother:principal.example")
+                    true,
+                    "did:webvh:z6mkother:principal.example"
                 ),
                 OnboardingSurface::StaleCheckpoint
             );
@@ -1308,11 +1326,11 @@ mod tests {
         );
 
         assert_eq!(
-            onboarding_surface(Some(&handoff), None, None),
+            onboarding_surface(Some(&handoff), None, false, ""),
             OnboardingSurface::IdentityCreation
         );
         assert_eq!(
-            onboarding_surface(None, None, Some("did:webvh:z6mkfixture:principal.example")),
+            onboarding_surface(None, None, true, "did:webvh:z6mkfixture:principal.example"),
             OnboardingSurface::AccountSummary
         );
     }
