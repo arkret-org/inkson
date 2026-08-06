@@ -1411,8 +1411,13 @@ mod tests {
         assert!(error.to_string().contains("does not match the saved setup"));
     }
 
+    /// A handle can be registered again — delete the account, or reset the
+    /// Account Authority's store, and the same handle returns as a different
+    /// identity. This used to reuse the abandoned draft, which is exactly how a
+    /// fresh registration ended up being asked for 24 words belonging to a DID
+    /// the server no longer had.
     #[test]
-    fn renewed_handoff_reuses_checkpoint_for_the_same_account_handle() {
+    fn a_re_registered_handle_does_not_inherit_the_abandoned_draft() {
         let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
         let old_handoff = test_handoff(
             "ak:request:019f0000-0000-7000-8000-000000000010",
@@ -1425,18 +1430,17 @@ mod tests {
             &recovery_key,
         )
         .unwrap();
-        let new_handoff = test_handoff(
+        // Same handle, new registration, and the server reserved nothing.
+        let re_registration = test_handoff(
             "ak:request:019f0000-0000-7000-8000-000000000011",
             Some("lease-2"),
             Some(2),
         );
+        assert!(re_registration.reserved_identity.is_none());
 
-        let legacy_resumed =
-            checkpoint_for_handoff(&checkpoint, &new_handoff, &recovery_key).unwrap();
-        assert_eq!(legacy_resumed.did_operation, checkpoint.did_operation);
-        assert_eq!(legacy_resumed.handoff_request_id, new_handoff.request_id);
-        assert_eq!(legacy_resumed.lease_id, "lease-2");
-        assert_eq!(legacy_resumed.lease_fence, 2);
+        let error =
+            checkpoint_for_handoff(&checkpoint, &re_registration, &recovery_key).unwrap_err();
+        assert!(error.to_string().contains("different service account"));
     }
 
     #[test]

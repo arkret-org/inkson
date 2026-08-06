@@ -115,8 +115,16 @@ pub fn validate_checkpoint_recovery_key(
 
 /// Whether a persisted identity draft can safely follow this Account
 /// Authority handoff. A request-id match is exact continuity. A renewed
-/// request must additionally prove the same authenticated account handle or
-/// carry the exact server-side identity reservation.
+/// request must carry the exact server-side identity reservation.
+///
+/// An account handle is deliberately NOT accepted as continuity on its own.
+/// A handle is re-registrable: delete the account, or reset the Account
+/// Authority's store, and the same handle comes back as a different identity.
+/// Treating it as proof handed the *next* registration of a familiar handle the
+/// previous one's abandoned draft — the user was asked for 24 words belonging to
+/// a DID the server no longer has, with no way forward. The server's own
+/// reservation is the only thing that can say "this draft is still the identity
+/// I am holding for you".
 pub fn checkpoint_belongs_to_handoff(
     checkpoint: &PendingPrincipalRegistration,
     handoff: &PendingAccountHandoff,
@@ -132,14 +140,20 @@ pub fn checkpoint_belongs_to_handoff(
     if checkpoint.handoff_request_id == handoff.request_id {
         return true;
     }
-    if !checkpoint.account_handle.trim().is_empty()
-        && checkpoint.account_handle == handoff.account_handle
-    {
-        return true;
-    }
+    // A renewed lease carries forward whatever identity the server reserved. No
+    // reservation means the server is holding nothing for this account, so any
+    // local draft under a different request id is an orphan from an earlier
+    // attempt, whatever handle it was created under.
     let Some(reserved_identity) = handoff.reserved_identity.as_ref() else {
         return false;
     };
+    // The handle still has to agree when it is known: the reservation proves
+    // *which identity*, the handle proves *whose account* it was reserved for.
+    if !checkpoint.account_handle.trim().is_empty()
+        && checkpoint.account_handle != handoff.account_handle
+    {
+        return false;
+    }
     let Ok(reserved_identity) =
         serde_json::from_value::<arkret_sdk::ReservedIdentityCreation>(reserved_identity.clone())
     else {
@@ -441,6 +455,73 @@ pub async fn bootstrap_principal(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn continuity_handoff(request_id: &str, handle: &str) -> PendingAccountHandoff {
+        PendingAccountHandoff {
+            principal_server_url: "https://principal.example".to_owned(),
+            gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
+            request_id: request_id.to_owned(),
+            account_handle: handle.to_owned(),
+            holder_jkt: "holder-jkt".to_owned(),
+            audience: "did:webvh:z6mkfixture:principal.example".to_owned(),
+            expires_at: Utc::now() + chrono::Duration::minutes(10),
+            lease_id: Some("lease-1".to_owned()),
+            lease_fence: Some(1),
+            lease_expires_at: Some(Utc::now() + chrono::Duration::minutes(15)),
+            reserved_identity: None,
+            retry_after_ms: None,
+            device_id: "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
+            enrollment_authority_did: "did:key:z6MkrJVnaZkeFzdQyKjzgRHjhBfE6ZscXDFHq8T7TYNy9v1t"
+                .to_owned(),
+            trust_domain: "ak:trust_domain:test".to_owned(),
+        }
+    }
+
+    /// A handle is re-registrable. Delete the account or reset the Account
+    /// Authority's store and the same handle comes back as a different
+    /// identity, so it cannot stand in for the server's reservation.
+    #[test]
+    fn a_reused_account_handle_is_not_continuity() {
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let first = continuity_handoff("ak:request:019f0000-0000-7000-8000-000000000010", "alice");
+        let abandoned_draft =
+            prepare_registration_checkpoint(&first, &first.device_id, &recovery_key).unwrap();
+
+        // Same handle, same device, same deployment — but a brand-new
+        // registration: the server reserved nothing, so it is not holding the
+        // abandoned draft's identity for anyone.
+        let re_registration =
+            continuity_handoff("ak:request:019f0000-0000-7000-8000-000000000011", "alice");
+        assert!(!re_registration.reserved_identity.is_some());
+
+        assert!(
+            !checkpoint_belongs_to_handoff(&abandoned_draft, &re_registration),
+            "a re-registered handle must not inherit the previous registration's draft"
+        );
+    }
+
+    #[test]
+    fn a_renewed_lease_keeps_its_own_reserved_draft() {
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let first = continuity_handoff("ak:request:019f0000-0000-7000-8000-000000000010", "alice");
+        let draft =
+            prepare_registration_checkpoint(&first, &first.device_id, &recovery_key).unwrap();
+        let did_operation: arkret_sdk::DidOperationSubmitRequestBody =
+            serde_json::from_value(draft.did_operation.clone()).unwrap();
+        let reserved = arkret_sdk::ReservedIdentityCreation::from_operation(did_operation).unwrap();
+
+        let mut renewed =
+            continuity_handoff("ak:request:019f0000-0000-7000-8000-000000000011", "alice");
+        renewed.reserved_identity = Some(serde_json::to_value(&reserved).unwrap());
+        assert!(checkpoint_belongs_to_handoff(&draft, &renewed));
+
+        // The reservation says which identity; the handle says whose account it
+        // was reserved for. A different account cannot claim it.
+        let mut other_account =
+            continuity_handoff("ak:request:019f0000-0000-7000-8000-000000000012", "bob");
+        other_account.reserved_identity = Some(serde_json::to_value(&reserved).unwrap());
+        assert!(!checkpoint_belongs_to_handoff(&draft, &other_account));
+    }
 
     #[test]
     fn fresh_recovery_custody_produces_a_distinct_principal_did() {
