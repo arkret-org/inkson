@@ -43,9 +43,9 @@ type ControlProposalAckKey = (String, String, String);
 
 fn local_control_proposal_acks()
 -> &'static Mutex<BTreeMap<ControlProposalAckKey, ControlProposalAuthorityAck>> {
-    static RECEIPTS: OnceLock<Mutex<BTreeMap<ControlProposalAckKey, ControlProposalAuthorityAck>>> =
+    static ACKS: OnceLock<Mutex<BTreeMap<ControlProposalAckKey, ControlProposalAuthorityAck>>> =
         OnceLock::new();
-    RECEIPTS.get_or_init(|| Mutex::new(BTreeMap::new()))
+    ACKS.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
 fn lease_key(lease: &AuthorizationLease) -> anyhow::Result<LeaseKey> {
@@ -295,7 +295,7 @@ pub fn initial_submission(
         // a shortfall; a bounded superset is always acceptable, so nothing is
         // guessed here.
         cba_proof_bundles: Vec::new(),
-        // Control Moves acquire their authority receipt separately, including
+        // Control Moves acquire their authority Ack separately, including
         // caller-proven closed anchors. DataEvents keep it absent.
         control_proposal_ack: None,
         membership_compensation_evidence: None,
@@ -307,8 +307,8 @@ pub fn initial_submission(
 /// A non-genesis Control Move resolves its [`ProposalAuthorityRoute`] first,
 /// then either signs the authority Ack locally or asks the authenticated
 /// Principal Server for its independently signed one, and finally assembles the
-/// canonical receipt set. DataEvents do not enter the proposal protocol and
-/// therefore keep the receipt field absent.
+/// canonical Ack set. DataEvents do not enter the proposal protocol and
+/// therefore keep the Ack field absent.
 pub async fn standard_initial_submission(
     http: &arkret_sdk::http_client::Client,
     event: &arkret_sdk::Event,
@@ -442,13 +442,13 @@ impl LocalPrincipalAuthority {
             self.authority_set_ref.to_string(),
             verification_method.as_str().to_owned(),
         );
-        if let Some(receipt) = local_control_proposal_acks()
+        if let Some(ack) = local_control_proposal_acks()
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get(&cache_key)
             .cloned()
         {
-            return Ok(receipt);
+            return Ok(ack);
         }
 
         let adapter = signer.payload_signer_adapter_for_principal(&self.signer_principal)?;
@@ -597,7 +597,7 @@ fn managed_agent_pcr_authority_set_ref_from_events(
     .map_err(|error| anyhow::anyhow!("managed Agent PCR genesis authority is unavailable: {error}"))
 }
 
-/// Lease / receipt fixtures for tests in other modules.
+/// Lease / ingress receipt fixtures for tests in other modules.
 ///
 /// A client cannot mint either object for real (see the module header), so
 /// tests that need the publication evidence build a structurally valid pair

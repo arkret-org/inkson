@@ -7,8 +7,8 @@
 //! the single implementation of that rule. Three sites here used to apply it by
 //! hand, and each drifted at a different point:
 //!
-//! * `src/identity/agent_signer_evidence.rs` omitted `event_id`, so every
-//!   well-formed Agent evidence Event was rejected as `SigningKeyMismatch`;
+//! * `src/identity/agent_signer_evidence.rs` omitted `event_id`, so every well-formed Agent
+//!   evidence Event was rejected as `SigningKeyMismatch`;
 //! * `src/identity/device_directory.rs` carried its own full copy;
 //! * `src/views/chat/tests.rs` had a fixture signer with a fourth copy.
 //!
