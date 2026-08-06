@@ -748,6 +748,9 @@ pub fn verify_persistent_envelope_proofs(
     if let Some(object) = without_proofs.as_object_mut() {
         object.remove("proofs");
         object.remove("unsigned");
+        // `encoding.md` section 6: the preimage also drops `event_id`, because
+        // section 4.0 derives it *from* this digest.
+        object.remove("event_id");
         for field in arkret_sdk::Event::REDUCER_STAMPED_TOP_LEVEL_FIELDS {
             object.remove(field);
         }

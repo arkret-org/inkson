@@ -11,7 +11,7 @@
 
 use serde_json::Value;
 
-use crate::operation::{trim_realm_id, uuid_v7};
+use crate::operation::{trim_realm_id};
 use crate::state::LocalStateStore;
 
 /// Restrict a state/seal ref to the canonical `sha256:` digest grammar used
@@ -303,9 +303,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
     if summary.realm_id != realm_id {
         return Ok(None);
     }
-    let event_id = format!("ak:event:{}", uuid_v7());
-    let event_id_typed = arkret_sdk::EventId::new(event_id.clone())
-        .map_err(|err| format!("invalid MLS genesis event id: {err:?}"))?;
+
     let request = crate::mls::governance_proof::proof_request(
         state_store,
         realm_id,
@@ -340,10 +338,14 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
     .map(Some)
     .map_err(|err| format!("MLS genesis SDK Event conversion failed: {err}"))?;
     if let Some(event) = event.as_mut() {
-        event.event_id = event_id_typed;
         if let Some(circle_id) = circle {
             event.scope_ref = circle_effective_scope(realm_id, circle_id)?;
         }
+        // The id is a function of the finished content, so it is stamped last —
+        // after the scope narrowing above, which is part of that content.
+        event.event_id = event
+            .derive_event_id()
+            .map_err(|err| format!("MLS genesis event id derivation failed: {err}"))?;
     }
     Ok(event)
 }
@@ -474,9 +476,7 @@ fn mls_commit_event_from_store_for_effective_scope_with_options(
     // snapshot has advanced past the last server-confirmed epoch, which is what
     // tripped `mls_commit_payload.next_epoch must equal base_epoch + 1`.
     let prev_epoch = commit_envelope.epoch.saturating_sub(1);
-    let event_id = format!("ak:event:{}", uuid_v7());
-    let event_id_typed = arkret_sdk::EventId::new(event_id.clone())
-        .map_err(|err| format!("invalid MLS commit event id: {err:?}"))?;
+
     let base_group_state_ref = mls_base_epoch_ref_for_scope(
         state_store,
         realm_id,
@@ -519,10 +519,13 @@ fn mls_commit_event_from_store_for_effective_scope_with_options(
         previous_governance_binding,
     )
     .map_err(|err| format!("MLS commit preconditions failed: {err}"))?;
-    event.event_id = event_id_typed;
     if let Some(circle_id) = circle {
         event.scope_ref = circle_effective_scope(realm_id, circle_id)?;
     }
+    // Stamped last: the id is a function of the finished content.
+    event.event_id = event
+        .derive_event_id()
+        .map_err(|err| format!("MLS commit event id derivation failed: {err}"))?;
     Ok(event)
 }
 

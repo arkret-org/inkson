@@ -1945,7 +1945,11 @@ impl EventSubmitter {
     ) -> anyhow::Result<QueuedSdkEvent> {
         let mut replacement = previous.intent.to_unauthored_event();
         let previous_event_id = replacement.event_id.clone();
-        replacement.event_id = arkret_sdk::EventId::new(format!("ak:event:{}", uuid_v7()))?;
+        // A re-author changes the envelope (actor_seq, prev_refs, hlc), so the
+        // derived id changes with it. Choosing a fresh random id is no longer
+        // possible — and no longer needed: identical content keeps its
+        // identity, which is exactly the idempotent-resubmit semantics.
+        replacement.event_id = replacement.derive_event_id()?;
         let replacement_transport_key = replacement.event_id.to_string();
         replacement.unsigned.insert(
             "local_operation_idempotency_alias".to_owned(),

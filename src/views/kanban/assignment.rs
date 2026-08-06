@@ -110,15 +110,11 @@ pub(super) fn card_assignment_mutations(
         .map_err(|err| format!("cannot build assigned_to relation: {err:#}"))?
         .build_sdk_event("inkson")
         .map_err(|err| format!("cannot build assigned_to relation event: {err}"))?;
-        // Object branch: the id lives on the Relation snapshot the registry
-        // projection sets into the cell, not on a flat `relation_id` member.
-        let relation_id = operation
-            .payload
-            .get("relation")
-            .and_then(|relation| relation.get("id"))
-            .and_then(|value| value.as_str())
+        // The Relation id is derived from this create Event, not carried in the
+        // payload (spec `zh/models/common-fields.md` section 6.0).
+        let relation_id = arkret_sdk::schema::derived_object_id(&operation)
             .ok_or_else(|| {
-                "internal: assigned_to relation create is missing relation.id".to_owned()
+                "internal: assigned_to relation create derives no object id".to_owned()
             })?
             .to_owned();
         mutations.push(CardAssignmentMutation::Create {

@@ -47,8 +47,6 @@ pub fn prepare_registration_checkpoint(
             },
         },
     )?;
-    let bootstrap_create_event_id =
-        arkret_sdk::EventId::new_v7_at(crate::clock::now_unix_ms()).into_string();
     let draft_actor = arkret_sdk::Did::new(draft.did.clone())?;
     let draft_realm = arkret_sdk::principal_control_realm_id(&draft_actor);
     let bootstrap_hlc = crate::signing_stamp::issue_protocol_hlc_with_secret(
@@ -80,7 +78,6 @@ pub fn prepare_registration_checkpoint(
         backup_hpke_public_key_multibase: key_material.backup_hpke_public_key_multikey.clone(),
         recovery_key_fingerprint: crate::recovery_crypto::fingerprint_recovery_key(recovery_key),
         did_operation: serde_json::to_value(draft.submit_body)?,
-        bootstrap_create_event_id,
         bootstrap_create_event: None,
         bootstrap_created_at: arkret_sdk::canonical::format_timestamp_canonical(created_at),
         bootstrap_hlc,
@@ -282,7 +279,9 @@ fn build_bootstrap_create_event_with_registry(
                 arkret_bootstrap::DID_INCEPTION_REF_ROLE,
             ),
             capability_action_registry_digest,
-            event_id: arkret_sdk::EventId::new(checkpoint.bootstrap_create_event_id.clone())?,
+            // Placeholder: the builder needs an id up front, but the real one
+            // is a function of the finished envelope and is stamped below.
+            event_id: arkret_sdk::EventId::new(crate::operation::PLACEHOLDER_EVENT_ID)?,
             created_at,
             hlc: arkret_sdk::Hlc::new(checkpoint.bootstrap_hlc.clone())?,
         },
@@ -346,55 +345,18 @@ fn validate_persisted_bootstrap_create_event(
     Ok(())
 }
 
-async fn load_bootstrap_create_event(
+fn load_bootstrap_create_event(
     checkpoint: &PendingPrincipalRegistration,
     key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
-    principal_client: &arkret_sdk::http_client::Client,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    if let Some(value) = checkpoint.bootstrap_create_event.as_ref() {
-        let create: arkret_sdk::Event = serde_json::from_value(value.clone())
-            .context("persisted bootstrap create Event is invalid")?;
-        validate_persisted_bootstrap_create_event(checkpoint, key_material, &create)?;
-        return Ok(create);
-    }
-
-    // Legacy checkpoints stored only the create inputs. Those inputs are not
-    // sufficient for an exact retry after the embedded registry advances, so
-    // recover the already accepted canonical Event by its transaction-bound
-    // ID. The founding credential explicitly permits this closed resolve.
-    let event_id = arkret_sdk::EventId::new(checkpoint.bootstrap_create_event_id.clone())?;
-    let outcome = principal_client
-        .events_resolve(&arkret_sdk::EventsResolveRequestBody {
-            event_ids: vec![event_id.clone()],
-            event_digests: Vec::new(),
-            seal_refs: Vec::new(),
-            include_payload: Some(true),
-        })
-        .await
-        .context("resolve persisted bootstrap create Event")?;
-    if outcome.events.len() == 1 {
-        let create = outcome
-            .events
-            .into_iter()
-            .next()
-            .expect("length checked above");
-        validate_persisted_bootstrap_create_event(checkpoint, key_material, &create)?;
-        return Ok(create);
-    }
-    if !outcome.events.is_empty() {
-        anyhow::bail!("bootstrap create resolve returned more than one Event");
-    }
-    if !outcome.unauthorized.is_empty() {
-        anyhow::bail!("bootstrap credential cannot resolve its reserved create Event");
-    }
-    if outcome
-        .missing
-        .iter()
-        .any(|missing| missing == event_id.as_str())
-    {
-        return build_bootstrap_create_event(checkpoint, key_material);
-    }
-    anyhow::bail!("bootstrap create resolve omitted the requested Event outcome")
+    let value = checkpoint
+        .bootstrap_create_event
+        .as_ref()
+        .context("checkpoint is missing its bootstrap create Event")?;
+    let create: arkret_sdk::Event = serde_json::from_value(value.clone())
+        .context("persisted bootstrap create Event is invalid")?;
+    validate_persisted_bootstrap_create_event(checkpoint, key_material, &create)?;
+    Ok(create)
 }
 
 pub async fn bootstrap_principal(
@@ -409,7 +371,7 @@ pub async fn bootstrap_principal(
     let key_material = validate_checkpoint_recovery_key(checkpoint, recovery_key)?;
     let principal_id = arkret_sdk::Did::new(checkpoint.did.clone())?;
     let realm_id = arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&principal_id))?;
-    let create = load_bootstrap_create_event(checkpoint, &key_material, principal_client).await?;
+    let create = load_bootstrap_create_event(checkpoint, &key_material)?;
 
     let request = crate::identity::device_enrollment::DeviceEnrollmentRequest {
         device_id: checkpoint.device_id.clone(),

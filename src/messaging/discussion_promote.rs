@@ -12,7 +12,7 @@
 //! the wire builders covered by unit tests while the soland reducer is
 //! completed.
 
-use crate::operation::{ak_ops, uuid_v7};
+use crate::operation::ak_ops;
 
 /// Whether the local UI should expose the discussion promote modal.
 pub fn discussion_promote_enabled() -> bool {
@@ -57,41 +57,27 @@ pub struct PromoteIds {
     pub discussion_strand_id: String,
 }
 
-impl PromoteIds {
-    pub fn fresh() -> Self {
-        Self {
-            circle_id: format!("ak:circle:{}", uuid_v7()),
-            discussion_strand_id: format!("ak:strand:{}", uuid_v7()),
-        }
-    }
-}
+// `PromoteIds` is an *output* now, not an input: both ids are derived from the
+// create Events that make them, so there is nothing to mint up front.
 
 /// Build the `ak.circle.create` event for the private discussion scope.
 pub fn build_discussion_circle_create_op(
     realm_id: &str,
     actor: &str,
-    ids: &PromoteIds,
     title: &str,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    ak_ops::discussion_circle_create(realm_id, actor, &ids.circle_id, title)?
-        .build_sdk_event("inkson")
+    ak_ops::discussion_circle_create(realm_id, actor, title)?.build_sdk_event("inkson")
 }
 
 /// Build the `ak.strand.create` event for the new private discussion Strand.
 pub fn build_discussion_strand_create_op(
     realm_id: &str,
     actor: &str,
-    ids: &PromoteIds,
+    circle_id: &str,
     title: &str,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    ak_ops::scoped_discussion_strand_create(
-        realm_id,
-        actor,
-        &ids.discussion_strand_id,
-        &ids.circle_id,
-        title,
-    )?
-    .build_sdk_event("inkson")
+    ak_ops::scoped_discussion_strand_create(realm_id, actor, circle_id, title)?
+        .build_sdk_event("inkson")
 }
 
 /// Build the `ak.relation.create` event that links the private Strand back
@@ -112,19 +98,35 @@ pub fn build_confidential_discussion_relation_op(
     .build_sdk_event("inkson")
 }
 
-/// Convenience helper that bundles the promote envelopes in submit order.
+/// The object id a create Event derives, or an error naming the kind that
+/// failed to derive one.
+fn derived_id(event: &arkret_sdk::Event) -> anyhow::Result<String> {
+    arkret_sdk::schema::derived_object_id(event).ok_or_else(|| {
+        anyhow::anyhow!("{} derives no object id", event.kind.as_str())
+    })
+}
+
+/// Bundle the promote envelopes in submit order, together with the ids they
+/// derive.
+///
+/// The order is forced by the identities: the Circle id falls out of the Circle
+/// create, the Strand is scoped to that Circle and its id falls out of its own
+/// create, and only then can the Relation name both. Nothing here is chosen.
 pub fn build_promote_ops(
     realm_id: &str,
     actor: &str,
     source_id: &str,
-    ids: &PromoteIds,
     title: &str,
-) -> anyhow::Result<Vec<arkret_sdk::Event>> {
-    Ok(vec![
-        build_discussion_circle_create_op(realm_id, actor, ids, title)?,
-        build_discussion_strand_create_op(realm_id, actor, ids, title)?,
-        build_confidential_discussion_relation_op(realm_id, actor, source_id, ids)?,
-    ])
+) -> anyhow::Result<(PromoteIds, Vec<arkret_sdk::Event>)> {
+    let circle = build_discussion_circle_create_op(realm_id, actor, title)?;
+    let circle_id = derived_id(&circle)?;
+    let strand = build_discussion_strand_create_op(realm_id, actor, &circle_id, title)?;
+    let ids = PromoteIds {
+        discussion_strand_id: derived_id(&strand)?,
+        circle_id,
+    };
+    let relation = build_confidential_discussion_relation_op(realm_id, actor, source_id, &ids)?;
+    Ok((ids, vec![circle, strand, relation]))
 }
 
 #[cfg(test)]
@@ -154,15 +156,23 @@ mod tests {
 
     #[test]
     fn promote_ops_emit_circle_strand_and_private_relation() {
-        let ids = PromoteIds::fresh();
-        let ops = build_promote_ops(
+        let (ids, ops) = build_promote_ops(
             "ak:realm:0196419b-0000-8000-8000-000000000001",
             "did:web:alice.example",
             "ak:strand:0196419b-0000-8000-8000-000000000003",
-            &ids,
             "Private discussion",
         )
         .expect("promote ops build");
+        // Both ids are derived from the creates that make them, so the bundle
+        // and the ids it reports can never disagree.
+        assert_eq!(
+            ids.circle_id,
+            arkret_sdk::CircleId::from_event_id(&ops[0].event_id).as_str()
+        );
+        assert_eq!(
+            ids.discussion_strand_id,
+            arkret_sdk::StrandId::from_event_id(&ops[1].event_id).as_str()
+        );
         assert_eq!(ops.len(), 3);
         assert_eq!(ops[0].kind.as_str(), "ak.circle.create");
         assert_eq!(ops[1].kind.as_str(), "ak.strand.create");

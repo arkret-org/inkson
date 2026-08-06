@@ -546,6 +546,12 @@ impl EventExt for Event {
 /// example `RealmId::new_v7_at`) instead of adding a wire prefix to this value.
 /// The SDK still owns UUID layout and monotonicity; Inkson supplies only its
 /// platform-safe clock reading.
+/// A canonical-shaped `event_id` that stands in while an envelope is being
+/// assembled. Every builder that needs an id before the content is final uses
+/// this one and re-derives before submit — the real id is a function of the
+/// finished Event (spec `zh/conformance/encoding.md` section 4.0).
+pub const PLACEHOLDER_EVENT_ID: &str = "ak:event:00000000-0000-8000-8000-000000000000";
+
 pub fn uuid_v7() -> String {
     arkret_sdk::identifiers::uuid_v7_at(crate::clock::now_unix_ms()).to_string()
 }

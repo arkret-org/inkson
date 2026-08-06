@@ -415,6 +415,9 @@ fn build_realm_genesis_object(
         notary,
         capability_action_registry_digest,
     );
+    // A create payload carries no object id: the Realm id is derived from this
+    // genesis Event (spec `zh/models/common-fields.md` section 6.0).
+    object.id = None;
     // `Realm::new` seeds `schema_refs` with the core profile; an ordinary Realm
     // declares only the Realm schema itself.
     object.schema_refs = vec![arkret_wire::SchemaId::REALM_V1.to_owned()];
@@ -879,6 +882,10 @@ pub fn build_space_create_event(
         title,
         space_created_by,
     );
+    // A create payload carries no object id: the Space id is derived from this
+    // create Event (spec `zh/models/common-fields.md` section 6.0). The
+    // `space_id` argument survives only as a caller-local correlation handle.
+    space_object.id = None;
     space_object.state = Some(arkret_sdk::SpaceState::Active);
     if let Some(summary) = summary
         && !summary.trim().is_empty()

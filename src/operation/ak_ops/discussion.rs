@@ -48,7 +48,6 @@ pub fn discussion_strand_create(
 pub fn discussion_circle_create(
     realm_id: &str,
     actor: &str,
-    circle_id: &str,
     title: &str,
 ) -> anyhow::Result<OperationBuilder> {
     let display = arkret_sdk::CircleDisplay {
@@ -58,19 +57,22 @@ pub fn discussion_circle_create(
             glyph: arkret_sdk::CircleGlyph::Lock,
         },
     };
-    let circle = arkret_sdk::Circle::new(
-        circle_id_value(circle_id)?,
+    let mut circle = arkret_sdk::Circle::new(
+        // Placeholder: cleared below, since a create payload carries no id.
+        circle_id_value("ak:circle:00000000-0000-8000-8000-000000000000")?,
         realm_id_value(&trim_realm_id(realm_id))?,
         title.trim(),
         display,
         did_id(actor)?,
     );
+    circle.id = None;
     let body = object_create_payload_value(circle, "ak.circle.create payload serialize")?;
-    Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::CircleCreate)
-            .target_ref(circle_id)
-            .body(body),
+    Ok(OperationBuilder::new(
+        realm_id,
+        actor,
+        arkret_sdk::EventKind::CircleCreate,
     )
+    .body(body))
 }
 
 /// Build a `ak.strand.create` operation whose full Strand scope is a
@@ -78,7 +80,6 @@ pub fn discussion_circle_create(
 pub fn scoped_discussion_strand_create(
     realm_id: &str,
     actor: &str,
-    strand_id: &str,
     circle_id: &str,
     title: &str,
 ) -> anyhow::Result<OperationBuilder> {
@@ -86,11 +87,6 @@ pub fn scoped_discussion_strand_create(
         .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
     let did = arkret_sdk::Did::new(actor.to_owned())
         .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
-    // `strand_id` is no longer the object id — that is derived from this
-    // create Event. It survives only as the client-local correlation handle in
-    // `unsigned.local_target_ref`, so validate its shape and drop the value.
-    arkret_sdk::StrandId::new(strand_id.to_owned())
-        .map_err(|e| anyhow::anyhow!("invalid strand_id: {e:?}"))?;
     let mut strand = arkret_sdk::StrandCreateObject::new(typed_realm_id, did)
         .with_metadata_title(title)
         .with_track(
@@ -103,7 +99,6 @@ pub fn scoped_discussion_strand_create(
         .map_err(|e| anyhow::anyhow!("ak.strand.create payload serialize: {e}"))?;
     Ok(
         OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::StrandCreate)
-            .target_ref(strand_id)
             .body(payload),
     )
 }

@@ -989,10 +989,6 @@ mod tests {
         assert_eq!(resumed.lease_fence, 2);
         assert_eq!(resumed.did, checkpoint.did);
         assert_eq!(resumed.did_operation, checkpoint.did_operation);
-        assert_eq!(
-            resumed.bootstrap_create_event_id,
-            checkpoint.bootstrap_create_event_id
-        );
     }
 
     #[test]

@@ -571,8 +571,7 @@ pub(crate) async fn submit_chat_operation_with_plaintext_retry(
                 )
                 .await;
             let mut retry_operation = operation.clone();
-            retry_operation.event_id =
-                arkret_sdk::EventId::new(format!("ak:event:{}", crate::operation::uuid_v7()))?;
+            retry_operation.event_id = retry_operation.derive_event_id()?;
             retry_operation.unsigned.insert(
                 "local_operation_idempotency_alias".to_owned(),
                 serde_json::Value::String(format!("ak:operation:{}", crate::operation::uuid_v7())),

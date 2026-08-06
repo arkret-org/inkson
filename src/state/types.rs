@@ -669,7 +669,6 @@ pub struct PendingPrincipalRegistration {
     pub recovery_key_fingerprint: String,
     /// Typed `DidOperationSubmitRequestBody` serialized as public wire JSON.
     pub did_operation: Value,
-    pub bootstrap_create_event_id: String,
     /// The first signed `ak.realm.create` wire Event. Its registry basis is
     /// immutable even when a later client embeds a newer registry snapshot.
     #[serde(default, skip_serializing_if = "Option::is_none")]

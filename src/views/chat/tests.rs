@@ -307,7 +307,16 @@ fn sign_chat_fixture(value: &mut Value) {
                 &actor_id,
                 format!("{actor_id}#{CHAT_FIXTURE_DEVICE}"),
             );
-            let canonical_bytes = crate::canonical::canonical_json_bytes(value).unwrap();
+            // `encoding.md` section 6 preimage: the envelope minus proofs,
+            // unsigned, actor_kind and event_id. `event_id` is excluded because
+            // section 4.0 derives it *from* this digest, so a signer that left
+            // it in would produce bytes no verifier can reproduce.
+            let mut preimage = value.clone();
+            if let Some(object) = preimage.as_object_mut() {
+                object.remove("actor_kind");
+                object.remove("event_id");
+            }
+            let canonical_bytes = crate::canonical::canonical_json_bytes(&preimage).unwrap();
             let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
             let mut proof = arkret_sdk::Proof {
                 kind: "detached_jws".to_owned(),

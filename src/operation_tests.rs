@@ -372,9 +372,12 @@ fn discussion_strand_create_emits_discussion_track() {
     .unwrap()
     .build("node");
     assert_eq!(op.kind.as_str(), "ak.strand.create");
+    // The create payload carries no object id; the derived one is stamped as
+    // the client-local handle instead.
+    assert!(op.payload["object"].get("id").is_none());
     assert_eq!(
-        op.payload["object"]["id"],
-        "ak:strand:0196419b-0000-8000-8000-000000000001"
+        op.local_target_ref(),
+        Some(arkret_sdk::StrandId::from_event_id(&op.event_id).as_str())
     );
     assert!(!op.payload.contains_key("strand_id"));
     assert_eq!(
@@ -653,9 +656,10 @@ fn space_create_emits_canonical_space_object() {
     .expect("builds")
     .build("node");
     assert_eq!(op.kind.as_str(), "ak.space.create");
+    // The Space id is derived from this create Event, not chosen by the caller.
     assert_eq!(
         op.local_target_ref(),
-        Some("ak:space:0196419b-0000-8000-8000-000000000002")
+        Some(arkret_sdk::SpaceId::from_event_id(&op.event_id).as_str())
     );
     assert_eq!(op.payload["object"]["schema"], "ak.schema.space.v1");
     assert_eq!(

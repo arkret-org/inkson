@@ -42,11 +42,14 @@ pub fn build_calendar_rsvp_event(
     };
     let mut authoring = crate::operation::ak_ops::rsvp_authoring(strand_id, status, occurrence)?;
     authoring.schedule_basis_refs = schedule_basis_refs.clone();
-    Ok(arkret_sdk::calendar::build_rsvp_set_event(
+    let mut event = arkret_sdk::calendar::build_rsvp_set_event(
         authoring,
         calendar_fields,
         &schedule,
-        arkret_sdk::EventId::new(format!("ak:event:{}", crate::operation::uuid_v7()))?,
+        // Placeholder: `build_rsvp_set_event` needs an id up front, but the
+        // real one is a function of the finished envelope, so it is stamped
+        // below (spec `zh/conformance/encoding.md` section 4.0).
+        arkret_sdk::EventId::new(crate::operation::PLACEHOLDER_EVENT_ID)?,
         arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
         },
@@ -54,5 +57,8 @@ pub fn build_calendar_rsvp_event(
         actor_seq,
         hlc,
         schedule_basis_refs,
-    )?)
+    )?;
+    // Stamped last: the id is a function of the finished content.
+    event.event_id = event.derive_event_id()?;
+    Ok(event)
 }

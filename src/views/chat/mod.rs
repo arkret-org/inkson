@@ -4335,7 +4335,26 @@ pub fn ChatPanel(
                                             return;
                                         };
                                         let title = draft_snapshot.title.trim().to_owned();
-                                        let ids = crate::messaging::discussion_promote::PromoteIds::fresh();
+                                        // The ids fall out of the create
+                                        // Events, so the envelopes are built
+                                        // first — synchronously, before the
+                                        // optimistic indicator that names the
+                                        // Strand they derive.
+                                        let built = crate::messaging::discussion_promote::build_promote_ops(
+                                            &realm,
+                                            &actor,
+                                            &source_id,
+                                            &title,
+                                        );
+                                        let (ids, ops) = match built {
+                                            Ok(built) => built,
+                                            Err(err) => {
+                                                status_msg.set(format!(
+                                                    "Private discussion creation failed: {err}"
+                                                ));
+                                                return;
+                                            }
+                                        };
                                         // Optimistic UI: seal the
                                         // promoted indicator before the
                                         // server round-trip completes.
@@ -4345,10 +4364,7 @@ pub fn ChatPanel(
                                         promote_discussion_draft.write().close();
 
                                         let base = base.clone();
-                                        let realm = realm.clone();
-                                        let actor = actor.clone();
                                         let api_token = token();
-                                        let ids_clone = ids.clone();
                                         let source_id_for_rollback = source_id.clone();
                                         spawn(async move {
                                             // Experimental discussion promote is
@@ -4363,13 +4379,6 @@ pub fn ChatPanel(
                                                 &base,
                                                 api_token,
                                                 |api| async move {
-                                                    let ops = crate::messaging::discussion_promote::build_promote_ops(
-                                                        &realm,
-                                                        &actor,
-                                                        &source_id,
-                                                        &ids_clone,
-                                                        &title,
-                                                    )?;
                                                     for op in ops {
                                                         api.event_submitter()?.submit_sdk_event(&op).await?;
                                                     }

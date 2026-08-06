@@ -120,7 +120,9 @@ fn card_assignment_mutations_create_and_tombstone_relation_events() {
     assert_eq!(relation["relation_kind"], json!("assigned_to"));
     assert_eq!(relation["from_ref"], json!(current.id));
     assert_eq!(relation["to_ref"], json!("did:web:alice.example"));
-    assert_eq!(relation["id"], json!(create.relation_id()));
+    // No `relation.id` on a create payload: the id is derived from this Event
+    // and reappears as the cell subject and the local target ref below.
+    assert!(relation.get("id").is_none());
     let writes = crate::operation::direct_registered_cell_writes(create.operation()).unwrap();
     assert_eq!(
         writes[0].cell.as_str(),
