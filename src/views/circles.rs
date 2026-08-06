@@ -263,6 +263,8 @@ pub fn CirclesPanel(
                                     onclick: {
                                         let base = base_url.clone();
                                         let circle_id = circle.circle_id.to_string();
+                                        let member_realm_id = circle.realm_id.to_string();
+                                        let account_did = account_did.clone();
                                         move |_| {
                                             let Ok(actor_id) = arkret_sdk::Did::new(member_actor().trim().to_owned()) else {
                                                 status.set("Enter a valid member DID".to_owned());
@@ -279,10 +281,13 @@ pub fn CirclesPanel(
                                             let base = base.clone();
                                             let credential = token();
                                             let circle_id = circle_id.clone();
+                                            let member_realm_id = member_realm_id.clone();
+                                            let account_did = account_did.clone();
                                             spawn(async move {
-                                                let body = arkret_sdk::CircleMemberRequestBody { actor_id, membership: Some(membership) };
                                                 let outcome = with_authed_api(&base, credential, |api| async move {
-                                                    api.http().circle_member_add(&circle_id, &body).await.map_err(anyhow::Error::from)
+                                                    crate::transport::circle::add_circle_member(
+                                                        api.http(), &member_realm_id, &account_did, &circle_id, actor_id.as_str(), membership,
+                                                    ).await
                                                 }).await;
                                                 match outcome {
                                                     Ok(_) => { status.set("Membership updated".to_owned()); member_actor.set(String::new()); refresh += 1; }
@@ -306,15 +311,18 @@ pub fn CirclesPanel(
                                     onclick: {
                                         let base = base_url.clone();
                                         let circle_id = circle.circle_id.to_string();
+                                        let realm_id = circle.realm_id.to_string();
+                                        let account_did = account_did.clone();
                                         move |_| {
                                             busy.set(true);
                                             let base = base.clone();
                                             let credential = token();
                                             let circle_id = circle_id.clone();
+                                            let realm_id = realm_id.clone();
+                                            let account_did = account_did.clone();
                                             spawn(async move {
-                                                let body = arkret_sdk::CircleLifecycleRequestBody { reason_code: None };
                                                 let outcome = with_authed_api(&base, credential, |api| async move {
-                                                    api.http().circle_archive(&circle_id, &body).await.map_err(anyhow::Error::from)
+                                                    crate::transport::circle::archive_circle(api.http(), &realm_id, &account_did, &circle_id, None).await
                                                 }).await;
                                                 match outcome {
                                                     Ok(_) => { status.set("Circle archived".to_owned()); refresh += 1; }
@@ -334,15 +342,18 @@ pub fn CirclesPanel(
                                     onclick: {
                                         let base = base_url.clone();
                                         let circle_id = circle.circle_id.to_string();
+                                        let realm_id = circle.realm_id.to_string();
+                                        let account_did = account_did.clone();
                                         move |_| {
                                             busy.set(true);
                                             let base = base.clone();
                                             let credential = token();
                                             let circle_id = circle_id.clone();
+                                            let realm_id = realm_id.clone();
+                                            let account_did = account_did.clone();
                                             spawn(async move {
-                                                let body = arkret_sdk::CircleLifecycleRequestBody { reason_code: None };
                                                 let outcome = with_authed_api(&base, credential, |api| async move {
-                                                    api.http().circle_restore(&circle_id, &body).await.map_err(anyhow::Error::from)
+                                                    crate::transport::circle::restore_circle(api.http(), &realm_id, &account_did, &circle_id, None).await
                                                 }).await;
                                                 match outcome {
                                                     Ok(_) => { status.set("Circle restored".to_owned()); refresh += 1; }
@@ -459,11 +470,16 @@ pub fn CirclesPanel(
                                         spawn(async move {
                                             let outcome = with_authed_api(&base, credential, |api| async move {
                                                 let created = api.http().circle_create(&request).await?;
-                                                let member = arkret_sdk::CircleMemberRequestBody {
-                                                    actor_id,
-                                                    membership: Some(arkret_sdk::CircleMembership::Join),
-                                                };
-                                                api.http().circle_member_add(created.circle_id.as_str(), &member).await?;
+                                                // The Circle id only exists once the create Event is
+                                                // accepted, so the join Event is authored after it.
+                                                crate::transport::circle::add_circle_member(
+                                                    api.http(),
+                                                    created.realm_id.as_str(),
+                                                    actor_id.as_str(),
+                                                    created.circle_id.as_str(),
+                                                    actor_id.as_str(),
+                                                    arkret_sdk::CircleMembership::Join,
+                                                ).await?;
                                                 Ok::<_, anyhow::Error>(created.circle_id.to_string())
                                             }).await;
                                             match outcome {

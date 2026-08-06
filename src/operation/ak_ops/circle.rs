@@ -5,7 +5,10 @@
 //! resulting Circle id falls out of that Event. The server neither names the
 //! Circle nor signs for the user.
 
-use super::{OperationBuilder, did_id, object_create_payload_value, realm_id_value, trim_realm_id};
+use super::{
+    OperationBuilder, circle_id_value, did_id, object_create_payload_value, realm_id_value,
+    trim_realm_id,
+};
 
 /// Everything the create surface lets a user choose about a new Circle.
 ///
@@ -20,6 +23,50 @@ pub struct CircleCreateOptions<'a> {
     pub join_rule: arkret_sdk::CircleJoinRule,
     pub history_visibility: arkret_sdk::HistoryVisibility,
     pub encryption_profile: arkret_sdk::EncryptionProfile,
+}
+
+/// Build a canonical `ak.circle.member.state` Control Move.
+///
+/// Everything the operation acts on is in the payload: the Circle, the target
+/// actor and the membership value. Nothing asserts the caller's capability —
+/// `circle_member_state_payload` is closed, and the `ak.circle.member.manage`
+/// decision is made by admission against projected grants.
+pub fn circle_member_state(
+    realm_id: &str,
+    actor: &str,
+    circle_id: &str,
+    target_actor: &str,
+    membership: arkret_sdk::CircleMembership,
+) -> anyhow::Result<OperationBuilder> {
+    let payload = serde_json::json!({
+        "circle_id": circle_id_value(circle_id)?,
+        "actor_id": did_id(target_actor)?,
+        "membership": membership.as_str(),
+    });
+    Ok(
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::CircleMemberState)
+            .body(payload),
+    )
+}
+
+/// Build one of the three canonical Circle lifecycle Control Moves.
+///
+/// `object_lifecycle_payload` single-sources the target by `target_ref`, so the
+/// Circle is named once and the service checks it against the request path.
+pub fn circle_lifecycle(
+    realm_id: &str,
+    actor: &str,
+    circle_id: &str,
+    kind: arkret_sdk::EventKind,
+    reason: Option<&str>,
+) -> anyhow::Result<OperationBuilder> {
+    let mut payload = serde_json::json!({
+        "target_ref": circle_id_value(circle_id)?,
+    });
+    if let Some(reason) = reason.map(str::trim).filter(|reason| !reason.is_empty()) {
+        payload["reason"] = serde_json::Value::String(reason.to_owned());
+    }
+    Ok(OperationBuilder::new(realm_id, actor, kind).body(payload))
 }
 
 /// Derive a Circle's `display` from its title.

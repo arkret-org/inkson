@@ -19,6 +19,114 @@ pub async fn list_circles(
         .map_err(anyhow::Error::from)
 }
 
+/// Add or move a Circle member by submitting the caller-signed
+/// `ak.circle.member.state`. Spec OpenAPI `ak.self.circle.member.command.add`.
+pub async fn add_circle_member(
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &str,
+    actor: &str,
+    circle_id: &str,
+    target_actor: &str,
+    membership: arkret_sdk::CircleMembership,
+) -> anyhow::Result<arkret_sdk::CircleMembershipOutcome> {
+    let event = crate::operation::ak_ops::circle_member_state(
+        realm_id,
+        actor,
+        circle_id,
+        target_actor,
+        membership,
+    )?
+    .build_sdk_event("inkson")?;
+    let body = arkret_sdk::CircleMemberRequestBody {
+        member_event: arkret_wire::EventInitialSubmission::online(event),
+    };
+    http.circle_member_add(circle_id, &body)
+        .await
+        .map_err(anyhow::Error::from)
+}
+
+/// Archive a Circle by submitting the caller-signed `ak.circle.archive`.
+pub async fn archive_circle(
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &str,
+    actor: &str,
+    circle_id: &str,
+    reason: Option<&str>,
+) -> anyhow::Result<arkret_sdk::CircleView> {
+    let body = arkret_sdk::CircleArchiveRequestBody {
+        lifecycle_event: circle_lifecycle_submission(
+            realm_id,
+            actor,
+            circle_id,
+            arkret_sdk::EventKind::CircleArchive,
+            reason,
+        )?,
+    };
+    http.circle_archive(circle_id, &body)
+        .await
+        .map_err(anyhow::Error::from)
+}
+
+/// Restore an archived Circle by submitting the caller-signed `ak.circle.restore`.
+pub async fn restore_circle(
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &str,
+    actor: &str,
+    circle_id: &str,
+    reason: Option<&str>,
+) -> anyhow::Result<arkret_sdk::CircleView> {
+    let body = arkret_sdk::CircleRestoreRequestBody {
+        lifecycle_event: circle_lifecycle_submission(
+            realm_id,
+            actor,
+            circle_id,
+            arkret_sdk::EventKind::CircleRestore,
+            reason,
+        )?,
+    };
+    http.circle_restore(circle_id, &body)
+        .await
+        .map_err(anyhow::Error::from)
+}
+
+/// Tombstone a Circle by submitting the caller-signed `ak.circle.tombstone`.
+///
+/// Terminal: the lifecycle matrix admits no transition out, so this Event is the
+/// whole record of who ended the Circle.
+pub async fn tombstone_circle(
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &str,
+    actor: &str,
+    circle_id: &str,
+    reason: Option<&str>,
+) -> anyhow::Result<arkret_sdk::CircleView> {
+    let body = arkret_sdk::CircleTombstoneRequestBody {
+        lifecycle_event: circle_lifecycle_submission(
+            realm_id,
+            actor,
+            circle_id,
+            arkret_sdk::EventKind::CircleTombstone,
+            reason,
+        )?,
+    };
+    http.circle_tombstone(circle_id, &body)
+        .await
+        .map_err(anyhow::Error::from)
+}
+
+fn circle_lifecycle_submission(
+    realm_id: &str,
+    actor: &str,
+    circle_id: &str,
+    kind: arkret_sdk::EventKind,
+    reason: Option<&str>,
+) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
+    let event =
+        crate::operation::ak_ops::circle_lifecycle(realm_id, actor, circle_id, kind, reason)?
+            .build_sdk_event("inkson")?;
+    Ok(arkret_wire::EventInitialSubmission::online(event))
+}
+
 pub async fn submit_circle_scope_rotate_events(
     submitter: &EventSubmitter,
     circle_id: &str,
