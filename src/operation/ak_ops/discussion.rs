@@ -57,15 +57,12 @@ pub fn discussion_circle_create(
             glyph: arkret_sdk::CircleGlyph::Lock,
         },
     };
-    let mut circle = arkret_sdk::Circle::new(
-        // Placeholder: cleared below, since a create payload carries no id.
-        circle_id_value("ak:circle:00000000-0000-8000-8000-000000000000")?,
+    let circle = arkret_sdk::Circle::create_object(
         realm_id_value(&trim_realm_id(realm_id))?,
         title.trim(),
         display,
         did_id(actor)?,
     );
-    circle.id = None;
     let body = object_create_payload_value(circle, "ak.circle.create payload serialize")?;
     Ok(OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::CircleCreate).body(body))
 }

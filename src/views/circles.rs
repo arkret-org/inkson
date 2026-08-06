@@ -422,17 +422,35 @@ pub fn CirclesPanel(
                                         } else {
                                             arkret_sdk::EncryptionProfile::MlsRfc9420
                                         };
+                                        // The Circle id is `retype(create.event_id)`, so the
+                                        // Event is authored and signed here and the server
+                                        // submits those exact bytes. It cannot name the
+                                        // Circle, and it must not sign for us.
+                                        let title = create_title().trim().to_owned();
+                                        let summary = create_summary().trim().to_owned();
+                                        let create_event = match crate::operation::ak_ops::circle_create(
+                                            realm_id.as_str(),
+                                            &account_did,
+                                            crate::operation::ak_ops::CircleCreateOptions {
+                                                title: &title,
+                                                summary: Some(&summary),
+                                                display: crate::operation::ak_ops::circle_display_from_title(&title),
+                                                directory_visibility: arkret_sdk::CircleDirectoryVisibility::Members,
+                                                join_rule: arkret_sdk::CircleJoinRule::Public,
+                                                history_visibility: arkret_sdk::HistoryVisibility::Joined,
+                                                encryption_profile,
+                                            },
+                                        )
+                                        .and_then(|builder| builder.build_sdk_event("inkson"))
+                                        {
+                                            Ok(event) => event,
+                                            Err(error) => {
+                                                status.set(format!("Circle creation failed: {error}"));
+                                                return;
+                                            }
+                                        };
                                         let request = arkret_sdk::CircleCreateRequestBody {
-                                            realm_id,
-                                            title: create_title().trim().to_owned(),
-                                            summary: (!create_summary().trim().is_empty()).then(|| create_summary().trim().to_owned()),
-                                            directory_visibility: Some(arkret_sdk::CircleDirectoryVisibility::Members),
-                                            join_rule: Some(arkret_sdk::CircleJoinRule::Public),
-                                            history_visibility: Some(arkret_sdk::HistoryVisibility::Joined),
-                                            content_encryption_floor: None,
-                                            metadata_encryption_floor: None,
-                                            agent_participation: None,
-                                            encryption_profile: Some(encryption_profile),
+                                            create_event: arkret_wire::EventInitialSubmission::online(create_event),
                                         };
                                         busy.set(true);
                                         status.set("Creating Circle and establishing initial membership…".to_owned());

@@ -24,6 +24,7 @@ pub(super) use crate::payload::{payload_value, sdk_payload_value, strand_id_valu
 mod applet;
 mod calendar;
 mod capability;
+mod circle;
 mod device_mls;
 mod discussion;
 mod incident_kanban;
@@ -38,6 +39,7 @@ mod strand;
 pub use applet::*;
 pub use calendar::*;
 pub use capability::*;
+pub use circle::*;
 pub use device_mls::*;
 pub use discussion::*;
 pub use incident_kanban::*;
