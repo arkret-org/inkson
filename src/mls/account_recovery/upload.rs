@@ -68,7 +68,7 @@ async fn ensure_initial_active_series(
         .submit_sdk_events_batch(control_realm.as_str(), vec![event], None)
         .await?;
     let mut accepted = http
-        .events_query_all_pages(control_realm.as_str())
+        .events_read_all_pages(control_realm.as_str())
         .await?
         .events
         .into_iter()

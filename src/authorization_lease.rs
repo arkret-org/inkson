@@ -547,7 +547,7 @@ async fn resolve_proposal_authority_route(
                 })?
             } else {
                 let accepted = http
-                    .events_query_all_pages(event.realm_id.as_str())
+                    .events_read_all_pages(event.realm_id.as_str())
                     .await
                     .map_err(anyhow::Error::from)?;
                 managed_agent_pcr_authority_set_ref_from_events(event, &accepted.events)?
@@ -879,9 +879,8 @@ mod tests {
         let agent_id = "did:web:agent.example";
         let controller_id = "did:web:alice.example";
         // The PCR id is subject-derived from the Agent DID, not chosen.
-        let realm_id = arkret_sdk::principal_control_realm_id(
-            &arkret_sdk::Did::new(agent_id).unwrap(),
-        );
+        let realm_id =
+            arkret_sdk::principal_control_realm_id(&arkret_sdk::Did::new(agent_id).unwrap());
         let realm_id = realm_id.as_str();
         let accepted = crate::event_builders::build_managed_agent_pcr_bootstrap_events(
             agent_id,

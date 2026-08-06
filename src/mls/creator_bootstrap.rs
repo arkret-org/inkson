@@ -103,7 +103,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     let submitter = api
         .event_submitter()
         .map_err(|error| format!("MLS governance proof frontier client: {error}"))?;
-    // The authoritative frontier source is `ak.self.events.query.frontier`
+    // The authoritative frontier source is `ak.self.events.read.frontier`
     // (`client-sync.md` publishes none on the Realm delta). A freshly accepted
     // Realm may not be sealed yet, so poll briefly.
     let seal_view = wait_for_realm_seal_view(&submitter, realm_id)
@@ -245,7 +245,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     Ok(CreatorMlsBootstrapOutcome { fresh_snapshot })
 }
 
-/// Poll `ak.self.events.query.frontier` until the Realm has an accepted Seal.
+/// Poll `ak.self.events.read.frontier` until the Realm has an accepted Seal.
 ///
 /// A Realm accepted moments ago may not be sealed yet. During that window the
 /// registered frontier surface can report either `not_found` before a Seal

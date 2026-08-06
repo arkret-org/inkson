@@ -111,7 +111,7 @@ fn inkson_accepts_server_contract_payloads() {
         ],
         "supported_operations": [
             "ak.self.account.stream.subscribe",
-            "ak.self.events.query.scan",
+            "ak.self.events.read.scan",
             "ak.self.events.stream.subscribe",
             "ak.self.snapshot.query.manifest_head",
             "ak.find.directory.query.describe",
@@ -505,7 +505,7 @@ fn server_description_gates_event_envelope_write_plane() {
             "ak.profile.principal_server_events_api.v1"
         ],
         "supported_operations": [
-            "ak.self.events.query.describe",
+            "ak.self.events.read.describe",
             "ak.self.events.command.submit",
             "ak.self.account.stream.subscribe"
         ],
@@ -546,7 +546,7 @@ fn server_description_gates_event_envelope_write_plane() {
             "ak.profile.principal_server_events_api.v1"
         ],
         "supported_operations": [
-            "ak.self.events.query.describe",
+            "ak.self.events.read.describe",
             "ak.self.events.command.submit"
         ],
         "supported_bindings": [{"kind": "http_json", "base_url": "https://local.host"}],
@@ -627,7 +627,7 @@ fn server_description_gates_event_envelope_write_plane() {
         missing_event_envelope_write_requirements(&events_missing),
         vec![
             "ak.profile.core_event_store.v1",
-            "ak.self.events.query.describe",
+            "ak.self.events.read.describe",
             "ak.self.events.command.submit"
         ]
     );
@@ -637,7 +637,7 @@ fn server_description_gates_event_envelope_write_plane() {
         missing_v1_principal_server_requirements(&events_missing),
         vec![
             "ak.profile.core_event_store.v1",
-            "ak.self.events.query.describe",
+            "ak.self.events.read.describe",
             "ak.self.events.command.submit",
         ]
     );

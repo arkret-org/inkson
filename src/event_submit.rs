@@ -1163,7 +1163,7 @@ impl EventSubmitter {
     pub async fn backfill(&self, realm_id: &str) -> anyhow::Result<BackfillView> {
         let outcome = self
             .http
-            .events_query_all_pages(realm_id)
+            .events_read_all_pages(realm_id)
             .await
             .map_err(anyhow::Error::from)?;
         Ok(outcome.into())
@@ -1177,7 +1177,7 @@ impl EventSubmitter {
         // it is never silently judged "absent" because of front-page noise.
         let outcome = self
             .http
-            .events_query_all_pages(realm_id)
+            .events_read_all_pages(realm_id)
             .await
             .map_err(anyhow::Error::from)?;
         Ok(mls_genesis_event_id_from_events(&outcome, realm_id))
@@ -1258,7 +1258,7 @@ impl EventSubmitter {
         self.submit_signal_envelope(&envelope).await
     }
 
-    /// `GET /_arkret/self/events/frontier?realm_id=` — Realm Seal view
+    /// `QUERY /_arkret/self/events/frontier` — Realm Seal view
     /// `{realm_id, seal_id, control_event_set_root, state_root, hlc?}`.
     ///
     /// This is the spec-registered account-client sourcing for minting a
@@ -1345,7 +1345,7 @@ impl EventSubmitter {
         Ok((view, seal))
     }
 
-    /// `GET /_arkret/self/events/frontier?actor_id=&realm_id=` — the
+    /// `QUERY /_arkret/self/events/frontier` — the
     /// `(realm_id, actor_id)` frontier used for Event authoring.
     pub async fn events_frontier_actor(
         &self,
@@ -1369,8 +1369,8 @@ impl EventSubmitter {
         Ok(view)
     }
 
-    /// `GET /_arkret/self/events/describe` — spec binds the response to the
-    /// canonical `ServiceDescribe` shape (OpenAPI `ak.self.events.query.describe`).
+    /// `QUERY /_arkret/self/events/describe` — spec binds the response to the
+    /// canonical `ServiceDescribe` shape (OpenAPI `ak.self.events.read.describe`).
     /// YOU-01-016: the former soland-private `SolandEventsDescribeResBody`
     /// mirror (with its non-spec `capabilities` blob) was removed.
     pub async fn events_describe(&self) -> anyhow::Result<arkret_sdk::ServiceDescribe> {
@@ -2152,12 +2152,13 @@ impl EventSubmitter {
         }
         let outcome = self
             .http
-            .events_query(
+            .events_read_outcome(
                 realm_id,
                 None,
                 None,
                 None,
                 Some(REALM_CREATE_AUTHORITY_QUERY_LIMIT),
+                None,
             )
             .await
             .map_err(anyhow::Error::from)?;

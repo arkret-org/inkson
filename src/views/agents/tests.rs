@@ -151,8 +151,8 @@ mod personal_agent_tests {
                 "ak.message.create",
                 "ak.reaction.add",
                 "ak.self.events.stream.subscribe",
-                "ak.self.events.query.scan",
-                "ak.self.events.query.frontier",
+                "ak.self.events.read.scan",
+                "ak.self.events.read.frontier",
                 "ak.self.authorization_leases.command.issue",
                 "ak.self.events.command.submit",
                 "ak.self.keys.keypackages.upload.create",
@@ -173,11 +173,11 @@ mod personal_agent_tests {
                 },
                 {
                     "kind": "operation",
-                    "operation": "ak.self.events.query.scan"
+                    "operation": "ak.self.events.read.scan"
                 },
                 {
                     "kind": "operation",
-                    "operation": "ak.self.events.query.frontier"
+                    "operation": "ak.self.events.read.frontier"
                 },
                 {
                     "kind": "operation",
@@ -248,7 +248,7 @@ mod personal_agent_tests {
 
         assert_eq!(
             scope.actions,
-            vec!["ak.self.events.query.scan", "ak.self.events.resource.get"]
+            vec!["ak.self.events.read.scan", "ak.self.events.resource.get"]
         );
     }
 

@@ -1162,7 +1162,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
         let controller_realm_id =
             arkret_models_identity::did_document::principal_control_realm_id(&controller_did);
         let provision_event_id = http
-            .events_query_all_pages(controller_realm_id.as_str())
+            .events_read_all_pages(controller_realm_id.as_str())
             .await?
             .events
             .into_iter()

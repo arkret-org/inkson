@@ -561,7 +561,7 @@ export async function mockArkretApi(
   const activeAssistantId = "did:web:agents.example:assistant";
   const activeAssistantScope = {
     actions: ["ak.event.read"],
-    resources: [{ kind: "operation", operation: "ak.self.events.query.scan" }],
+    resources: [{ kind: "operation", operation: "ak.self.events.read.scan" }],
   };
   const activeAssistantKeyState = {
     agent_id: activeAssistantId,
@@ -647,7 +647,7 @@ export async function mockArkretApi(
         "ak.message.create",
         "ak.reaction.add",
         "ak.self.events.stream.subscribe",
-        "ak.self.events.query.scan",
+        "ak.self.events.read.scan",
         "ak.self.events.command.submit",
       ],
       resources: [
@@ -1173,9 +1173,9 @@ export async function mockArkretApi(
           "ak.self.account.query.describe",
           "ak.self.account.query.viewer",
           "ak.self.account.command.update_profile",
-          "ak.self.events.query.scan",
+          "ak.self.events.read.scan",
           "ak.self.events.stream.subscribe",
-          "ak.self.events.query.describe",
+          "ak.self.events.read.describe",
           "ak.self.events.command.submit",
           "ak.self.space.query.list",
           "ak.self.strand.query.list",
@@ -1435,10 +1435,20 @@ export async function mockArkretApi(
 
     if (
       url.pathname === "/_arkret/self/events/frontier" &&
-      route.request().method() === "GET"
+      ["QUERY", "GET"].includes(route.request().method())
     ) {
-      const actorId = url.searchParams.get("actor_id");
-      const realmId = url.searchParams.get("realm_id");
+      const selector =
+        route.request().method() === "QUERY"
+          ? ((await route.request().postDataJSON()) as Record<string, unknown>)
+          : {};
+      const actorId =
+        typeof selector.actor_id === "string"
+          ? selector.actor_id
+          : url.searchParams.get("actor_id");
+      const realmId =
+        typeof selector.realm_id === "string"
+          ? selector.realm_id
+          : url.searchParams.get("realm_id");
       if (actorId && realmId) {
         const actorEvents = projectionEvents.filter(
           (event) =>
@@ -1591,7 +1601,7 @@ export async function mockArkretApi(
 
     if (
       url.pathname === "/_arkret/self/events/mls-governance-proof" &&
-      route.request().method() === "POST"
+      ["QUERY", "POST"].includes(route.request().method())
     ) {
       const request = (await route.request().postDataJSON()) as Record<
         string,
@@ -1741,9 +1751,9 @@ export async function mockArkretApi(
 
     if (
       url.pathname === "/_arkret/self/events/describe" &&
-      route.request().method() === "GET"
+      ["QUERY", "GET"].includes(route.request().method())
     ) {
-      // Spec ak.self.events.query.describe -> canonical ServiceDescribe shape
+      // Spec ak.self.events.read.describe -> canonical ServiceDescribe shape
       // (17 required fields; inkson decodes the SDK ServerDescription).
       return json(route, {
         service_id: "did:web:server.local",
@@ -1753,7 +1763,7 @@ export async function mockArkretApi(
         supported_profiles: ["ak.profile.core_event_store.v1"],
         supported_operations: [
           "ak.self.events.command.submit",
-          "ak.self.events.query.describe",
+          "ak.self.events.read.describe",
         ],
         supported_bindings: [{ kind: "http_json" }],
         supported_features: ["events_query_range_completeness"],
@@ -2721,12 +2731,20 @@ export async function mockArkretApi(
 
     if (
       url.pathname === "/_arkret/self/events" &&
-      route.request().method() === "GET"
+      ["QUERY", "GET"].includes(route.request().method())
     ) {
-      const requestedRealms = (url.searchParams.get("realms") ?? "")
-        .split(",")
-        .map((realm) => realm.trim())
-        .filter(Boolean);
+      const requestBody =
+        route.request().method() === "QUERY"
+          ? ((await route.request().postDataJSON()) as Record<string, unknown>)
+          : {};
+      const requestedRealms = Array.isArray(requestBody.realms)
+        ? requestBody.realms.filter(
+            (realm): realm is string => typeof realm === "string",
+          )
+        : (url.searchParams.get("realms") ?? "")
+            .split(",")
+            .map((realm) => realm.trim())
+            .filter(Boolean);
       const events = requestedRealms.length
         ? projectionEvents.filter((event) =>
             requestedRealms.includes(eventRealmId(event)),
@@ -2738,7 +2756,8 @@ export async function mockArkretApi(
         has_more: false,
       };
       if (
-        url.searchParams.get("include_completeness") === "true" &&
+        (requestBody.include_completeness === true ||
+          url.searchParams.get("include_completeness") === "true") &&
         events.length >= 2 &&
         events.some((event) => event.kind === "ak.key_backup.active_series")
       ) {

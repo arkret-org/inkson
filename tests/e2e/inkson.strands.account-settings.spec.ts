@@ -472,7 +472,7 @@ test("account settings split account/server info and surface personal agents", a
     "ak.message.create",
     "ak.reaction.add",
     "ak.self.events.stream.subscribe",
-    "ak.self.events.query.scan",
+    "ak.self.events.read.scan",
     "ak.self.events.command.submit",
     "ak.self.keys.keypackages.upload.create",
     "ak.self.keys.keypackages.command.consume",

@@ -630,7 +630,7 @@ async fn fetch_authoritative_active_series(
         .map_err(|error| anyhow!("invalid principal control Realm id: {error}"))?;
     let events = api
         .http()
-        .events_query_all_pages_with_completeness(realm_id.as_str())
+        .events_read_all_pages_with_completeness(realm_id.as_str())
         .await
         .map_err(|error| anyhow!("read key backup active-series control stream: {error}"))?;
     let mut active_events = events

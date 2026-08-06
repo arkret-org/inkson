@@ -313,7 +313,7 @@ impl LocalStateStore {
     /// defines no Seal view on the Realm delta, so a body without `seal_view`
     /// says nothing about the frontier; replacing the stored view with the
     /// resulting empty one would drop the authoritative frontier obtained from
-    /// `ak.self.events.query.frontier` and make [`Self::set_realm_seal_view`]
+    /// `ak.self.events.read.frontier` and make [`Self::set_realm_seal_view`]
     /// evict every verified MLS governance proof for the Realm. See
     /// [`LocalSealView::merged_from_sync_body`].
     pub fn merge_realm_seal_view_from_sync_body(&mut self, realm_id: &str, body: &Value) {

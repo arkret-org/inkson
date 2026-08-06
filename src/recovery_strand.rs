@@ -543,7 +543,7 @@ async fn submit_first_recovery_policy_seal(
 ) -> anyhow::Result<()> {
     let http = api.sdk_http_client()?;
     let events = http
-        .events_query_all_pages(policy_event.realm_id.as_str())
+        .events_read_all_pages(policy_event.realm_id.as_str())
         .await?;
     let create = events
         .events

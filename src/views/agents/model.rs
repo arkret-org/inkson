@@ -244,9 +244,9 @@ impl AgentServiceScopePreset {
     pub fn actions(self) -> &'static [&'static str] {
         match self {
             Self::SubscribeEvents => &["ak.self.events.stream.subscribe"],
-            Self::ScanCatchUp => &["ak.self.events.query.scan"],
+            Self::ScanCatchUp => &["ak.self.events.read.scan"],
             Self::SubmitEvents => &[
-                "ak.self.events.query.frontier",
+                "ak.self.events.read.frontier",
                 "ak.self.authorization_leases.command.issue",
                 "ak.self.events.command.submit",
             ],

@@ -474,7 +474,7 @@ pub(super) fn dispatch_calendar_rsvp(
         let built = with_authed_api(&build_base, api_token, |api| async move {
             let events = api
                 .http()
-                .events_query_all_pages(&build_realm_id)
+                .events_read_all_pages(&build_realm_id)
                 .await?
                 .events;
             let schedule_heads = calendar_schedule_revision_heads(&events, &strand_id)?;
