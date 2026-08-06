@@ -649,7 +649,6 @@ pub async fn submit_did_operation(
         .map_err(anyhow::Error::from)
 }
 
-const ACCOUNT_DATA_RESOURCE_PATH: &str = "/_arkret/self/account_data";
 const MAX_ACCOUNT_DATA_CAS_ATTEMPTS: usize = 4;
 
 #[derive(Clone, Debug)]
@@ -700,11 +699,7 @@ pub(crate) async fn account_data_snapshot(
     http: &arkret_sdk::http_client::Client,
     type_key: &str,
 ) -> anyhow::Result<AccountDataSnapshot> {
-    let path = format!(
-        "{ACCOUNT_DATA_RESOURCE_PATH}/{}",
-        crate::wire_helpers::path_component(type_key),
-    );
-    match http.get::<arkret_sdk::AccountDataRow>(&path).await {
+    match http.account_data_get(type_key).await {
         Ok(entry) => {
             if entry.account_data_key != type_key {
                 anyhow::bail!("account_data response key mismatch");
@@ -780,10 +775,6 @@ pub(crate) async fn update_account_data_with_merge<F>(
 where
     F: FnMut(&AccountDataSnapshot) -> anyhow::Result<Value>,
 {
-    let path = format!(
-        "{ACCOUNT_DATA_RESOURCE_PATH}/{}",
-        crate::wire_helpers::path_component(type_key),
-    );
     let mut snapshot = account_data_snapshot(submitter.http(), type_key).await?;
     for attempt in 1..=MAX_ACCOUNT_DATA_CAS_ATTEMPTS {
         let body = arkret_sdk::AccountDataReplaceRequestBody {
@@ -795,11 +786,7 @@ where
             )
             .await?,
         };
-        match submitter
-            .http()
-            .put::<_, arkret_sdk::AccountDataRow>(&path, &body)
-            .await
-        {
+        match submitter.http().account_data_replace(type_key, &body).await {
             Ok(entry) => return serde_json::to_value(entry).map_err(anyhow::Error::from),
             Err(error) => {
                 let Some(current) = account_data_conflict_snapshot(type_key, &error)? else {
@@ -834,19 +821,11 @@ pub async fn set_account_data(
 pub async fn delete_account_data(submitter: &EventSubmitter, type_key: &str) -> anyhow::Result<()> {
     let mut snapshot = account_data_snapshot(submitter.http(), type_key).await?;
     for attempt in 1..=MAX_ACCOUNT_DATA_CAS_ATTEMPTS {
-        let path = format!(
-            "{ACCOUNT_DATA_RESOURCE_PATH}/{}",
-            crate::wire_helpers::path_component(type_key),
-        );
         let body = arkret_sdk::AccountDataDeleteRequestBody {
             set_event: account_data_set_submission(submitter, type_key, None, snapshot.revision)
                 .await?,
         };
-        match submitter
-            .http()
-            .delete_with_body::<_, arkret_sdk::AccountDataDeleteOutcome>(&path, &body)
-            .await
-        {
+        match submitter.http().account_data_delete(type_key, &body).await {
             Ok(_) => return Ok(()),
             Err(error) => {
                 let Some(current) = account_data_conflict_snapshot(type_key, &error)? else {
