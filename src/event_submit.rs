@@ -41,7 +41,7 @@ pub struct EventSubmitter {
 /// without per-Event Control Proposal Acks. A managed Agent PCR create is also an
 /// anchor unit, but its delegated controller is the founding proposal
 /// authority, so it must pass through `standard_initial_submission` to attach
-/// that controller's receipt.
+/// that controller's Control Proposal Ack.
 fn uses_bare_online_anchor_submission(anchor_unit: bool, event: &arkret_sdk::Event) -> bool {
     anchor_unit && !crate::authorization_lease::is_managed_agent_pcr_genesis(event)
 }
