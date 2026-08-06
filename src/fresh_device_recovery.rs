@@ -23,8 +23,8 @@ use arkret_wire::security_transaction::PreparedEventSubmissionBatch;
 use arkret_wire::{
     Audience, AuthorizationLease, AuthorizationLeaseId, BackupObjectRef, BackupRotationBinding,
     BackupRotationKind, BackupRotationPlan, BackupSeriesId, CLIENT_STEP_ATTESTATION_SIGNED_FIELDS,
-    CanonicalPublicMaterial, ClientStepAttestationAuthData, ControlProposalDecisionPolicy,
-    ControlProposalAck, DeviceId, Did, EnrollmentAuthorityRecoveryPlan, Event, EventId,
+    CanonicalPublicMaterial, ClientStepAttestationAuthData, ControlProposalAck,
+    ControlProposalDecisionPolicy, DeviceId, Did, EnrollmentAuthorityRecoveryPlan, Event, EventId,
     EventInitialSubmission, EventsSubmitBatchRequestBody, GrantId, Hash, NonEmptyString,
     PayloadProof, PolicyId, PreparedEventUnit, PromoteRecoverySessionGrantOutcome,
     PromoteRecoverySessionGrantRequest, ReceiptId, RecoveryAuthorityHolderProof,
@@ -270,7 +270,15 @@ pub fn build_cross_signing_recovery_events(
         now,
     )?;
     authorize.prev_refs = frontier.frontier_event_ids.clone();
-    authorize.seal_basis = session.accepted_seal_frontier.clone();
+    // The re-anchor pre-fence basis carries the roots too; an ordinary Event's
+    // seal_basis is leaves-only (spec 4.9), so take just the leaves.
+    authorize.seal_basis =
+        session
+            .accepted_seal_frontier
+            .as_ref()
+            .map(|basis| arkret_sdk::SealBasis {
+                leaves: basis.leaves.clone(),
+            });
 
     let mut list_update = Event::new_at(
         "ak.device.list_update",
@@ -286,7 +294,13 @@ pub fn build_cross_signing_recovery_events(
         now,
     )?;
     list_update.prev_refs = vec![authorize.event_id.clone()];
-    list_update.seal_basis = session.accepted_seal_frontier.clone();
+    list_update.seal_basis =
+        session
+            .accepted_seal_frontier
+            .as_ref()
+            .map(|basis| arkret_sdk::SealBasis {
+                leaves: basis.leaves.clone(),
+            });
 
     let device_signer =
         replacement_device_signer.payload_signer_adapter_for_principal(&session.principal_id)?;

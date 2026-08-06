@@ -11,16 +11,13 @@
 //! Every later encrypted write then failed forever with
 //! `MLS governance proof requires a locally trusted Seal anchor`.
 //!
-//! Spec position: §2.5.1.1 states that a bootstrapping client may use a
-//! genesis/compaction Seal as its request anchor once trust is established by
-//! "Realm create/join, a verified snapshot/compaction, or an equivalent
-//! authenticated bootstrap package". Realm create is exactly the creator's
-//! trust source here; nothing in the spec requires that step to complete inside
-//! one attempt, and nothing forbids replaying it. This module therefore adds
-//! liveness only: it introduces no new trust source, and the anchor is still
-//! pinned exclusively by
-//! [`fetch_verify_and_cache_proof`](crate::mls::governance_proof::fetch_verify_and_cache_proof)
-//! after full verification.
+//! Spec position: `encryption-and-audit.md` §2.5.4 T1 defines when a Seal may
+//! become the local anchor — the candidate must be the genesis Seal of the
+//! `ak.realm.create` Event that `realm_id` retypes to, signed by the notary that
+//! create payload names. This module does not decide any of that; it calls
+//! [`ensure_governance_anchor`](crate::mls::governance_proof::ensure_governance_anchor),
+//! which runs the SDK admission test. Nothing here requires the sequence to
+//! complete in one attempt, and replaying it is safe.
 
 use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
 
@@ -103,9 +100,9 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     let submitter = api
         .event_submitter()
         .map_err(|error| format!("MLS governance proof frontier client: {error}"))?;
-    // The authoritative frontier source is `ak.self.events.read.frontier`
-    // (`client-sync.md` publishes none on the Realm delta). A freshly accepted
-    // Realm may not be sealed yet, so poll briefly.
+    // A freshly accepted Realm may not be sealed yet, so wait for the Seal view
+    // before asking for anything Seal-bound. The view is a liveness signal only
+    // — the anchor below is established by verification, not by this read.
     let seal_view = wait_for_realm_seal_view(&submitter, realm_id)
         .await
         .map_err(|error| {
@@ -118,6 +115,14 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         view.state_root = Some(seal_view.state_root.to_string());
         store.set_realm_seal_view(realm_id.to_owned(), view);
     }
+
+    // encryption-and-audit.md 2.5.4 T1. This is what makes the module comment
+    // above true: the creator's trust in the anchor comes from the create Event
+    // it authored itself, recognised through realm_id, not from whichever head
+    // the service happens to serve.
+    crate::mls::governance_proof::ensure_governance_anchor(api, state_store, realm_id)
+        .await
+        .map_err(|error| format!("establishing the MLS governance trust anchor failed: {error}"))?;
 
     let request = crate::mls::governance_proof::proof_request(
         &state_store.read(),

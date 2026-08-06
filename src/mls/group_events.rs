@@ -11,7 +11,7 @@
 
 use serde_json::Value;
 
-use crate::operation::{trim_realm_id};
+use crate::operation::trim_realm_id;
 use crate::state::LocalStateStore;
 
 /// Restrict a state/seal ref to the canonical `sha256:` digest grammar used

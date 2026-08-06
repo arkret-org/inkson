@@ -717,9 +717,7 @@ mod tests {
                     record.principal_id.as_str()
                 ))
                 .unwrap(),
-                signature_algorithm: Some(
-                    arkret_sdk::NonEmptyString::new("Ed25519").unwrap(),
-                ),
+                signature_algorithm: Some(arkret_sdk::NonEmptyString::new("Ed25519").unwrap()),
                 sig: arkret_sdk::Base64UrlString::new("c2ln").unwrap(),
             },
             revocation_status: None,
@@ -764,9 +762,7 @@ mod tests {
             created_at: crate::clock::now_utc(),
             signature: arkret_sdk::KeyOperationSignature {
                 kid: arkret_sdk::NonEmptyString::new("placeholder-kid").unwrap(),
-                signature_algorithm: Some(
-                    arkret_sdk::NonEmptyString::new("Ed25519").unwrap(),
-                ),
+                signature_algorithm: Some(arkret_sdk::NonEmptyString::new("Ed25519").unwrap()),
                 sig: arkret_sdk::Base64UrlString::new("c2ln").unwrap(),
             },
         };

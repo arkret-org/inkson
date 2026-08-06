@@ -92,15 +92,13 @@ pub(crate) fn proof_request(
         next_epoch,
         binding_profile: arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1.to_owned(),
         reducer_profile: arkret_sdk::CORE_REDUCER_PROFILE.to_owned(),
+        // encryption-and-audit.md 2.5.4: the anchor comes from the local trust
+        // store or nowhere. Falling back to the served Seal head would let the
+        // party being verified pick the root of its own verification.
+        // `ensure_governance_anchor` is what fills the store, and it verifies
+        // the candidate against realm_id before pinning.
         trusted_anchor_seal_id: state_store
             .trusted_mls_governance_anchor(realm_id.as_str())
-            .or_else(|| {
-                state_store
-                    .seal_view_for_realm(realm_id.as_str())
-                    .frontier
-                    .first()
-                    .and_then(|anchor| arkret_sdk::SealId::new(anchor.clone()).ok())
-            })
             .ok_or_else(|| {
                 format!(
                     "MLS governance proof requires a locally trusted Seal anchor for {realm_id}; operation remains decryption_pending (state_mismatch)"
@@ -267,34 +265,8 @@ async fn fetch_verify_and_cache_proof_internal<S: GovernanceProofStateStore>(
     String,
 > {
     let bundle = fetch_proof_bundle(api, state_store.clone(), request).await?;
-    let existing_pin = state_store
-        .with_read(|store| store.trusted_mls_governance_anchor(request.realm_id.as_str()));
-    if existing_pin.is_none()
-        && !state_store.with_read(|store| bundle_intersects_local_seal_view(store, &bundle))
-    {
-        let observed = api
-            .event_submitter()
-            .map_err(|error| format!("MLS governance proof frontier client: {error}"))?
-            .events_frontier_realm_seal_view(request.realm_id.as_str())
-            .await
-            .map_err(|error| {
-                format!("refresh accepted Seal view before governance trust bootstrap: {error}")
-            })?;
-        let observed_view = crate::state::LocalSealView {
-            frontier: vec![observed.seal_id.to_string()],
-            state_root: Some(observed.state_root.to_string()),
-            ..Default::default()
-        };
-        if !bundle_intersects_seal_view(&observed_view, &bundle) {
-            return Err(format!(
-                "MLS governance proof cannot bootstrap trust: its Seal path does not intersect the freshly observed Seal head {} or state_root {}",
-                observed.seal_id, observed.state_root
-            ));
-        }
-        state_store.with_write(|store| {
-            store.set_realm_seal_view(request.realm_id.as_str(), observed_view)
-        });
-    }
+    // The anchor is already pinned: `proof_request` cannot build a request
+    // without one, and 2.5.4 leaves no path that pins during verification.
     let trusted_anchor = request.trusted_anchor_seal_id.clone();
 
     // DID-P2-B: reuse the account-level accepted-binding set instead of a
@@ -379,12 +351,6 @@ async fn fetch_verify_and_cache_proof_internal<S: GovernanceProofStateStore>(
         state_store.with_write(|store| store.store_accepted_did_bindings(records));
     }
     state_store.with_write(|store| {
-        if existing_pin.is_none() {
-            store.pin_mls_governance_anchor(
-                request.realm_id.as_str(),
-                &bundle.trusted_anchor_seal_id,
-            )?;
-        }
         store.cache_verified_mls_governance_proof(request.clone(), binding.clone(), &bundle)
     })?;
     Ok((bundle, binding))
@@ -428,40 +394,130 @@ pub(crate) async fn resolve_proof_signer_document(
     Ok(document)
 }
 
-fn bundle_intersects_local_seal_view(
-    state_store: &crate::state::LocalStateStore,
-    bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
-) -> bool {
-    let view = state_store.seal_view_for_realm(bundle.realm_id.as_str());
-    bundle_intersects_seal_view(&view, bundle)
+/// Establish the local MLS governance trust anchor for `realm_id` if it is not
+/// pinned yet — `encryption-and-audit.md` 2.5.4 rule T1.
+///
+/// Nothing here trusts the service. `realm_id` retypes to the id of the
+/// `ak.realm.create` Event that named this Realm, so the client asks for that
+/// exact Event, re-derives its content-bound id, and only then looks at the
+/// Seals the service returned alongside it. The SDK decides admission; the
+/// notary signature is checked against the notary the creator wrote into its
+/// own create payload.
+///
+/// Every first-time path funnels through here: the creator right after
+/// bootstrap, an invitee after its Welcome, a newly enrolled device, and a
+/// device restoring from key backup. They differ only in when they first know
+/// `realm_id`.
+pub(crate) async fn ensure_governance_anchor<S: GovernanceProofStateStore>(
+    api: &crate::transport::TransportClient,
+    state_store: S,
+    realm_id: &str,
+) -> Result<arkret_sdk::SealId, String> {
+    if let Some(pinned) =
+        state_store.with_read(|store| store.trusted_mls_governance_anchor(realm_id))
+    {
+        return Ok(pinned);
+    }
+    let realm = arkret_sdk::RealmId::new(realm_id.to_owned())
+        .map_err(|error| format!("invalid Realm id for governance anchor bootstrap: {error}"))?;
+    let create_event_id = arkret_sdk::EventId::from_uuid(realm.uuid());
+    let http = api
+        .sdk_http_client()
+        .map_err(|error| format!("build governance anchor bootstrap client: {error}"))?;
+    let outcome = http
+        .events_resolve(&arkret_sdk::EventsResolveRequestBody {
+            event_ids: vec![create_event_id.clone()],
+            event_digests: Vec::new(),
+            seal_refs: Vec::new(),
+            include_payload: Some(true),
+        })
+        .await
+        .map_err(|error| format!("resolve the Realm create Event for {realm_id}: {error}"))?;
+    let create = outcome
+        .events
+        .iter()
+        .find(|event| event.event_id == create_event_id)
+        .ok_or_else(|| {
+            format!(
+                "governance anchor bootstrap for {realm_id} needs the Realm create Event; the service returned none (state_mismatch)"
+            )
+        })?;
+    let notary: arkret_sdk::NotaryValue = create
+        .payload
+        .get("object")
+        .and_then(|object| object.get("notary"))
+        .cloned()
+        .ok_or_else(|| "Realm create payload carries no notary designation".to_owned())
+        .and_then(|value| {
+            serde_json::from_value(value)
+                .map_err(|error| format!("decode Realm create notary designation: {error}"))
+        })?;
+    notary
+        .validate()
+        .map_err(|error| format!("Realm create notary designation is invalid: {error}"))?;
+
+    let mut resolver = StaticProofDidResolver::default();
+    for did in notary_signer_dids(&outcome.seals)? {
+        let document = resolve_proof_signer_document(api, &did).await?;
+        resolver.documents.insert(did.as_str().to_owned(), document);
+    }
+
+    let mut last_error = None;
+    for candidate in &outcome.seals {
+        match arkret_sdk::admit_event_derived_genesis_anchor::<arkret_sdk::Error, _>(
+            &realm,
+            create,
+            candidate,
+            |seal, notary_value| {
+                let notary: arkret_sdk::NotaryValue = serde_json::from_value(notary_value.clone())
+                    .map_err(|error| {
+                        arkret_sdk::Error::Protocol(format!("decode genesis notary: {error}"))
+                    })?;
+                verify_seal(seal, &notary, None, &resolver)
+            },
+        ) {
+            Ok(admitted) => {
+                state_store
+                    .with_write(|store| store.pin_mls_governance_anchor(realm_id, &admitted))?;
+                return Ok(admitted);
+            }
+            Err(error) => last_error = Some(error.to_string()),
+        }
+    }
+    Err(format!(
+        "no Seal returned for {realm_id} is an admissible governance anchor (state_mismatch): {}",
+        last_error
+            .unwrap_or_else(|| "the service returned no Seal covering the create Event".to_owned())
+    ))
 }
 
-fn bundle_intersects_seal_view(
-    view: &crate::state::LocalSealView,
-    bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
-) -> bool {
-    let local_heads = view
-        .frontier
-        .iter()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    if bundle
-        .seal_path
-        .iter()
-        .any(|seal| local_heads.contains(seal.id.as_str()))
-    {
-        return true;
+fn notary_signer_dids(seals: &[Seal]) -> Result<BTreeSet<arkret_sdk::Did>, String> {
+    let mut signers = BTreeSet::new();
+    for seal in seals {
+        match &seal.notary_signature {
+            NotarySig::Single(signature) => {
+                signers.insert(
+                    verification_method_did(&signature.verification_method)
+                        .map_err(|error| format!("invalid Seal verification method: {error}"))?,
+                );
+            }
+            NotarySig::Multi(multi) => {
+                for signature in &multi.signatures {
+                    signers.insert(
+                        verification_method_did(&signature.verification_method).map_err(
+                            |error| format!("invalid Seal verification method: {error}"),
+                        )?,
+                    );
+                }
+            }
+            // A threshold Seal names its signers as DIDs, not as verification
+            // methods; `verify_seal` resolves each one's document itself.
+            NotarySig::Threshold(threshold) => {
+                signers.extend(threshold.signers.iter().cloned());
+            }
+        }
     }
-    let local_state_root = view
-        .state_root
-        .as_deref()
-        .and_then(crate::mls::group_events::mls_sha256_hash_from_ref);
-    local_state_root.is_some_and(|root| {
-        bundle
-            .seal_path
-            .iter()
-            .any(|seal| seal.state_root.as_str() == root)
-    })
+    Ok(signers)
 }
 
 pub(crate) fn authority_proof_signer_dids(
@@ -937,6 +993,12 @@ pub(crate) fn security_frontier_without_principals(
     leaves
 }
 
+/// Test-only shortcut that pins an anchor directly.
+///
+/// It exists for tests whose subject is something *after* trust is
+/// established. It MUST NOT be used to stand in for the first-time path: what
+/// admits an anchor is `ensure_governance_anchor` running the 2.5.4 T1 test,
+/// and a test that seeds the pin has skipped exactly the step worth checking.
 #[cfg(test)]
 pub(crate) fn seed_test_governance_proof(
     state_store: &mut crate::state::LocalStateStore,

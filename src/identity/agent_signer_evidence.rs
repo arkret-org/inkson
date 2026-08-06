@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use arkret_sdk::ProtocolOperationId;
 use arkret_sdk::signatures::agent_evidence::{
     AgentEvidenceCommonContext, AgentEvidenceRejectedReason, AgentEvidenceStateVerificationContext,
     AgentSignerEvidenceVerdict, CurrentAgentSignerEvidenceValidationContext,
@@ -11,7 +10,7 @@ use arkret_sdk::signatures::agent_evidence::{
 use arkret_sdk::signatures::{Ed25519DetachedJwsVerifier, PublicKeyMaterial};
 use arkret_sdk::{
     AgentSignerEvidence, AgentSignerEvidenceQueryRequestBodyBody, AgentSignerEvidenceQuerySelector,
-    Did, DidUrl, Hash, NonEmptyString, NotarySig, RealmId,
+    Did, DidUrl, Hash, NonEmptyString, NotarySig, ProtocolOperationId, RealmId,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;

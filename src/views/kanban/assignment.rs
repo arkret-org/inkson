@@ -113,9 +113,7 @@ pub(super) fn card_assignment_mutations(
         // The Relation id is derived from this create Event, not carried in the
         // payload (spec `zh/models/common-fields.md` section 6.0).
         let relation_id = arkret_sdk::schema::derived_object_id(&operation)
-            .ok_or_else(|| {
-                "internal: assigned_to relation create derives no object id".to_owned()
-            })?
+            .ok_or_else(|| "internal: assigned_to relation create derives no object id".to_owned())?
             .to_owned();
         mutations.push(CardAssignmentMutation::Create {
             actor_id: assignee_id.clone(),

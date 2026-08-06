@@ -101,9 +101,8 @@ pub fn build_confidential_discussion_relation_op(
 /// The object id a create Event derives, or an error naming the kind that
 /// failed to derive one.
 fn derived_id(event: &arkret_sdk::Event) -> anyhow::Result<String> {
-    arkret_sdk::schema::derived_object_id(event).ok_or_else(|| {
-        anyhow::anyhow!("{} derives no object id", event.kind.as_str())
-    })
+    arkret_sdk::schema::derived_object_id(event)
+        .ok_or_else(|| anyhow::anyhow!("{} derives no object id", event.kind.as_str()))
 }
 
 /// Bundle the promote envelopes in submit order, together with the ids they

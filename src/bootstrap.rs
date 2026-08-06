@@ -756,6 +756,16 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         &messages_value,
     )?;
     for preview in previews {
+        // encryption-and-audit.md 2.5.4 T1 — the invitee's first-time path. The
+        // Welcome deliberately carries no anchor: a carried one would be a second,
+        // weaker trust source. Knowing realm_id is enough, and the Welcome gives
+        // that much.
+        crate::mls::governance_proof::ensure_governance_anchor(
+            &api,
+            state_store,
+            preview.binding.realm_id().as_str(),
+        )
+        .await?;
         let request = crate::mls::governance_proof::proof_request(
             &state_store.read(),
             preview.binding.realm_id().as_str(),

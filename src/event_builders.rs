@@ -493,11 +493,11 @@ fn build_realm_create_event_from_object(
         actor_id,
         arkret_sdk::EventKind::RealmCreate,
     )
-        .body(realm_body)
-        .preconditions(preconditions)
-        .requirements(event_requirements_with_schema("ak.schema.realm.v1"))
-        .created_at(created_at)
-        .build_sdk_event("inkson")
+    .body(realm_body)
+    .preconditions(preconditions)
+    .requirements(event_requirements_with_schema("ak.schema.realm.v1"))
+    .created_at(created_at)
+    .build_sdk_event("inkson")
 }
 
 #[allow(clippy::too_many_arguments)]

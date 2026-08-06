@@ -41,8 +41,8 @@ fn leases() -> &'static Mutex<BTreeMap<LeaseKey, AuthorizationLease>> {
 
 type ControlProposalAckKey = (String, String, String);
 
-fn local_control_proposal_acks() -> &'static Mutex<BTreeMap<ControlProposalAckKey, ControlProposalAuthorityAck>>
-{
+fn local_control_proposal_acks()
+-> &'static Mutex<BTreeMap<ControlProposalAckKey, ControlProposalAuthorityAck>> {
     static RECEIPTS: OnceLock<Mutex<BTreeMap<ControlProposalAckKey, ControlProposalAuthorityAck>>> =
         OnceLock::new();
     RECEIPTS.get_or_init(|| Mutex::new(BTreeMap::new()))

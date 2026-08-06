@@ -621,8 +621,10 @@ mod tests {
 
     #[test]
     fn key_backup_body_carries_content_metadata_and_blob() {
+        // The typed MLS-history backup parses `realm_id` through the SDK
+        // identifier, so this fixture needs a canonical id rather than a label.
         let envelope = encrypt_state(
-            "ak:realm:demo",
+            "ak:realm:0196419b-0000-8000-8000-0000000004d2",
             "aaaa",
             42,
             b"placeholder",
@@ -661,7 +663,10 @@ mod tests {
         );
         assert!(body["encryption"].get("kdf").is_none());
         assert_eq!(body["contents"][0]["item_kind"], "mls_group_state");
-        assert_eq!(body["contents"][0]["realm_id"], "ak:realm:demo");
+        assert_eq!(
+            body["contents"][0]["realm_id"],
+            "ak:realm:0196419b-0000-8000-8000-0000000004d2"
+        );
         assert_eq!(body["contents"][0]["mls_group_id"], "aaaa");
         assert_eq!(body["contents"][0]["epoch"], 42);
         assert_eq!(
@@ -680,7 +685,10 @@ mod tests {
             .expect("MLS history backup should parse to the SDK type");
         let parsed = crate::mls::runtime::decode_mls_history_backup_envelope(&typed, "passw")
             .expect("MLS history backup should decrypt");
-        assert_eq!(parsed.realm_id, "ak:realm:demo");
+        assert_eq!(
+            parsed.realm_id,
+            "ak:realm:0196419b-0000-8000-8000-0000000004d2"
+        );
         assert_eq!(parsed.epoch, 42);
     }
 

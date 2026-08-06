@@ -15,10 +15,9 @@ pub fn relation_create(
     // No relation id is minted here: `OperationBuilder` stamps the derived one
     // as `unsigned.local_target_ref` once the envelope exists.
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::RelationCreate)
-            .body(relation_create_payload_value(
-                realm_id, actor, kind, from_ref, to_ref, None,
-            )?),
+        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::RelationCreate).body(
+            relation_create_payload_value(realm_id, actor, kind, from_ref, to_ref, None)?,
+        ),
     )
 }
 

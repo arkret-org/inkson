@@ -1,8 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use arkret_models_collaboration::governance::agent_participation::AgentParticipationEntry;
 use arkret_models_collaboration::governance::agent_participation::{
-    ParticipationBits, ParticipationScope,
+    AgentParticipationEntry, ParticipationBits, ParticipationScope,
 };
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;

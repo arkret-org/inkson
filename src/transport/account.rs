@@ -180,9 +180,9 @@ pub async fn set_invite_receive_policy(
 /// Resolve the pair's stable Direct Conversation coordinates.
 ///
 /// This is query-only. Creation is founder-only: only the participant derived from the pair's root
-/// Contact basis may author the founding unit, which is what removes the cross-server creation race.
-/// The `create` flag therefore no longer triggers a ceremony here — it only says whether the caller
-/// is willing to act when it turns out to be the founder.
+/// Contact basis may author the founding unit, which is what removes the cross-server creation
+/// race. The `create` flag therefore no longer triggers a ceremony here — it only says whether the
+/// caller is willing to act when it turns out to be the founder.
 pub async fn direct_conversation_resolve(
     api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,

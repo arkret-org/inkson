@@ -1212,9 +1212,7 @@ mod tests {
         .unwrap();
         let binding = QueryDeviceCrossSigningBinding {
             verification_method: arkret_sdk::DidUrl::new(ssk_kid).unwrap(),
-            signature_algorithm: Some(
-                arkret_sdk::NonEmptyString::new("Ed25519").unwrap(),
-            ),
+            signature_algorithm: Some(arkret_sdk::NonEmptyString::new("Ed25519").unwrap()),
             ssk_generation: binding_gen,
             signature: arkret_sdk::Base64UrlString::new(base64url_encode(
                 ssk.sign(&device_input).to_bytes(),

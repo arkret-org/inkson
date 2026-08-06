@@ -3264,9 +3264,8 @@ fn composer_enter_behavior_matches_chat_conventions_and_protects_ime_input() {
 
 #[test]
 fn participation_visibility_uses_most_specific_effective_scope() {
-    use arkret_models_collaboration::governance::agent_participation::AgentParticipationEntry;
     use arkret_models_collaboration::governance::agent_participation::{
-        ParticipationBits, ParticipationScope,
+        AgentParticipationEntry, ParticipationBits, ParticipationScope,
     };
 
     let realm = "ak:realm:0196419b-0000-8000-8000-000000000000";
@@ -3303,9 +3302,8 @@ fn participation_visibility_uses_most_specific_effective_scope() {
 
 #[test]
 fn participation_visibility_can_target_the_synthesized_default_discussion_strand() {
-    use arkret_models_collaboration::governance::agent_participation::AgentParticipationEntry;
     use arkret_models_collaboration::governance::agent_participation::{
-        ParticipationBits, ParticipationScope,
+        AgentParticipationEntry, ParticipationBits, ParticipationScope,
     };
 
     let realm = "ak:realm:0196419b-0000-8000-8000-000000000010";
@@ -3329,9 +3327,8 @@ fn participation_visibility_can_target_the_synthesized_default_discussion_strand
 
 #[test]
 fn mention_only_participation_does_not_expose_agent_in_roster() {
-    use arkret_models_collaboration::governance::agent_participation::AgentParticipationEntry;
     use arkret_models_collaboration::governance::agent_participation::{
-        ParticipationBits, ParticipationScope,
+        AgentParticipationEntry, ParticipationBits, ParticipationScope,
     };
 
     let realm = "ak:realm:0196419b-0000-8000-8000-000000000020";
