@@ -510,11 +510,11 @@ pub(crate) fn calendar_schedule_revision_heads(
 fn calendar_event_revises_schedule(event: &arkret_sdk::Event, strand_id: &str) -> bool {
     match event.kind.as_str() {
         "ak.strand.create" => {
+            // The create payload carries no object id — a Strand id is
+            // `retype(event_id)` of this very Event — so the Strand a create
+            // names can only be recovered from the Event's own id.
             let object = event.payload.get("object");
-            object
-                .and_then(|object| object.get("id"))
-                .and_then(Value::as_str)
-                == Some(strand_id)
+            arkret_sdk::StrandId::from_event_id(&event.event_id).as_str() == strand_id
                 && object
                     .and_then(|object| object.get("metadata"))
                     .and_then(|metadata| metadata.get("fields"))
