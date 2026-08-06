@@ -63,7 +63,7 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
             algorithm: arkret_sdk::EventSetCommitmentAlgorithm::MerkleEventSetV1,
             root: snapshot_contract_hash(9),
             covered_event_count: 1,
-            covered_seals: vec![snapshot_contract_event_id("0000000000c1")],
+            covered_event_ids: vec![snapshot_contract_event_id("0000000000c1")],
             actor_seq_ranges: Vec::new(),
         },
         chunks: built.into_iter().map(|chunk| chunk.descriptor).collect(),

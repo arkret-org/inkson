@@ -88,7 +88,7 @@ pub(super) fn snapshot_manifest_for_items(
             algorithm: arkret_sdk::EventSetCommitmentAlgorithm::MerkleEventSetV1,
             root: snapshot_hash(9),
             covered_event_count: 2,
-            covered_seals: vec![snapshot_event_id("0000000000a2")],
+            covered_event_ids: vec![snapshot_event_id("0000000000a2")],
             actor_seq_ranges: Vec::new(),
         },
         chunks,
