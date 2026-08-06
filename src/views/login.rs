@@ -1225,7 +1225,7 @@ mod tests {
             device_id: "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
             enrollment_authority_did: "did:key:z6MkrJVnaZkeFzdQyKjzgRHjhBfE6ZscXDFHq8T7TYNy9v1t"
                 .to_owned(),
-            trust_domain: "ak:trust-domain:test".to_owned(),
+            trust_domain: "ak:trust_domain:auth.example".to_owned(),
         }
     }
 
