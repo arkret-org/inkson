@@ -561,7 +561,7 @@ export async function mockArkretApi(
   const activeAssistantId = "did:web:agents.example:assistant";
   const activeAssistantScope = {
     actions: ["ak.event.read"],
-    resources: [{ kind: "operation", operation: "ak.self.events.query.scan" }],
+    resources: [{ kind: "operation", operation: "ak.self.events.read.scan" }],
   };
   const activeAssistantKeyState = {
     agent_id: activeAssistantId,
@@ -647,7 +647,7 @@ export async function mockArkretApi(
         "ak.message.create",
         "ak.reaction.add",
         "ak.self.events.stream.subscribe",
-        "ak.self.events.query.scan",
+        "ak.self.events.read.scan",
         "ak.self.events.command.submit",
       ],
       resources: [
@@ -1173,9 +1173,9 @@ export async function mockArkretApi(
           "ak.self.account.query.describe",
           "ak.self.account.query.viewer",
           "ak.self.account.command.update_profile",
-          "ak.self.events.query.scan",
+          "ak.self.events.read.scan",
           "ak.self.events.stream.subscribe",
-          "ak.self.events.query.describe",
+          "ak.self.events.read.describe",
           "ak.self.events.command.submit",
           "ak.self.space.query.list",
           "ak.self.strand.query.list",
@@ -1743,7 +1743,7 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/events/describe" &&
       route.request().method() === "GET"
     ) {
-      // Spec ak.self.events.query.describe -> canonical ServiceDescribe shape
+      // Spec ak.self.events.read.describe -> canonical ServiceDescribe shape
       // (17 required fields; inkson decodes the SDK ServerDescription).
       return json(route, {
         service_id: "did:web:server.local",
@@ -1753,7 +1753,7 @@ export async function mockArkretApi(
         supported_profiles: ["ak.profile.core_event_store.v1"],
         supported_operations: [
           "ak.self.events.command.submit",
-          "ak.self.events.query.describe",
+          "ak.self.events.read.describe",
         ],
         supported_bindings: [{ kind: "http_json" }],
         supported_features: ["events_query_range_completeness"],

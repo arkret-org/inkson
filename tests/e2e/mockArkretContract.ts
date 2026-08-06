@@ -28,7 +28,7 @@ export function mockArkretContract(req) {
       supported_operations: [
         "ak.server.query.describe",
         "ak.self.events.command.submit",
-        "ak.self.events.query.scan",
+        "ak.self.events.read.scan",
         "ak.find.directory.query.search_realms",
         "ak.self.keys.backups.query.list",
         "ak.self.signal.command.send",

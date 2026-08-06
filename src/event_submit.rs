@@ -1370,7 +1370,7 @@ impl EventSubmitter {
     }
 
     /// `GET /_arkret/self/events/describe` — spec binds the response to the
-    /// canonical `ServiceDescribe` shape (OpenAPI `ak.self.events.query.describe`).
+    /// canonical `ServiceDescribe` shape (OpenAPI `ak.self.events.read.describe`).
     /// YOU-01-016: the former soland-private `SolandEventsDescribeResBody`
     /// mirror (with its non-spec `capabilities` blob) was removed.
     pub async fn events_describe(&self) -> anyhow::Result<arkret_sdk::ServiceDescribe> {

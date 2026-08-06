@@ -154,9 +154,9 @@ pub fn missing_event_envelope_write_requirements(
     }
     if !service_supports_operation(
         description,
-        arkret_sdk::ServiceOperationId::SELF_EVENTS_QUERY_DESCRIBE,
+        arkret_sdk::ServiceOperationId::SELF_EVENTS_READ_DESCRIBE,
     ) {
-        missing.push(arkret_sdk::ServiceOperationId::SELF_EVENTS_QUERY_DESCRIBE);
+        missing.push(arkret_sdk::ServiceOperationId::SELF_EVENTS_READ_DESCRIBE);
     }
     if !service_supports_operation(
         description,
