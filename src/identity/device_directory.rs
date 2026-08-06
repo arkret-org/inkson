@@ -725,13 +725,14 @@ pub fn verify_signal_envelope_proof_at(
 }
 
 /// Verify a persistent Event envelope's `proofs` (array). The envelope passes
-/// if at least one proof entry verifies under `public_key` after producer-owned
-/// fields are reduced to the SDK Event digest transcript. Besides `proofs` and
-/// `unsigned`, reducer-stamped projection context must be excluded because it
-/// is attached only after the producer signs.
+/// if at least one proof entry verifies under `public_key` over the SDK's Event
+/// digest preimage ([`arkret_sdk::event_digest_preimage`], `encoding.md` §6).
 ///
-/// Returns `false` (fail-closed) when the envelope carries no `actor_id` or an
-/// empty / absent `proofs` array.
+/// The exclusion rule is never restated here. This function used to keep its own
+/// copy and drifted from it twice.
+///
+/// Returns `false` (fail-closed) when the envelope carries no `actor_id`, an
+/// empty / absent `proofs` array, or is not a JSON object.
 pub fn verify_persistent_envelope_proofs(
     envelope: &serde_json::Value,
     public_key: &PublicKeyMaterial,
@@ -744,20 +745,12 @@ pub fn verify_persistent_envelope_proofs(
         Some(proofs) if !proofs.is_empty() => proofs.clone(),
         _ => return false,
     };
-    let mut without_proofs = envelope.clone();
-    if let Some(object) = without_proofs.as_object_mut() {
-        object.remove("proofs");
-        object.remove("unsigned");
-        // `encoding.md` section 6: the preimage also drops `event_id`, because
-        // section 4.0 derives it *from* this digest.
-        object.remove("event_id");
-        for field in arkret_sdk::Event::REDUCER_STAMPED_TOP_LEVEL_FIELDS {
-            object.remove(field);
-        }
-    }
+    let Ok(preimage) = arkret_sdk::event_digest_preimage(envelope) else {
+        return false;
+    };
     proofs
         .iter()
-        .any(|proof| verify_proof_value(&without_proofs, proof, &actor_id, public_key))
+        .any(|proof| verify_proof_value(&preimage, proof, &actor_id, public_key))
 }
 
 /// Event kinds whose acceptance moves an actor's device-list or generation

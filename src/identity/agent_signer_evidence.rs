@@ -744,21 +744,20 @@ fn verify_lifecycle_reducer(
     if !provenance_matches {
         return Err(AgentEvidenceRejectedReason::AuthorizationInactive);
     }
-    let mut envelope =
+    let envelope =
         serde_json::to_value(event).map_err(|_| AgentEvidenceRejectedReason::SigningKeyMismatch)?;
     let proofs = envelope
         .get("proofs")
         .and_then(Value::as_array)
         .cloned()
         .ok_or(AgentEvidenceRejectedReason::SigningKeyMismatch)?;
-    let object = envelope
-        .as_object_mut()
-        .ok_or(AgentEvidenceRejectedReason::SigningKeyMismatch)?;
-    object.remove("proofs");
-    object.remove("unsigned");
-    for field in arkret_sdk::Event::REDUCER_STAMPED_TOP_LEVEL_FIELDS {
-        object.remove(field);
-    }
+    // The SDK owns the `encoding.md` §6 exclusion rule. This site used to apply
+    // it by hand and dropped only `proofs`, `unsigned` and `actor_kind`: leaving
+    // `event_id` in produced bytes the producer never signed, so every
+    // well-formed evidence Event failed verification as
+    // `SigningKeyMismatch`.
+    let envelope = arkret_sdk::event_digest_preimage(&envelope)
+        .map_err(|_| AgentEvidenceRejectedReason::SigningKeyMismatch)?;
     let verified = proofs.iter().any(|proof| {
         let Some(method) = proof.get("verification_method").and_then(Value::as_str) else {
             return false;
