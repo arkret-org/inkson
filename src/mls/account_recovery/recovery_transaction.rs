@@ -449,8 +449,6 @@ pub(crate) async fn prepare_enrollment_authority_recovery(
         .next_actor_seq
         .checked_add(1)
         .ok_or_else(|| anyhow::anyhow!("recovery actor sequence exhausted"))?;
-    let reanchor_event_id = EventId::new(format!("ak:event:{}", crate::operation::uuid_v7()))?;
-    let authorize_event_id = EventId::new(format!("ak:event:{}", crate::operation::uuid_v7()))?;
     let not_before = crate::clock::now_utc_millis();
     let device_signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("replacement device signer is unavailable"))?;
@@ -518,7 +516,7 @@ pub(crate) async fn prepare_enrollment_authority_recovery(
         scope_ref.realm_id().as_str(),
     )?;
     let mut authorize_event = Event::new_with_id_at(
-        authorize_event_id.clone(),
+        EventId::new(crate::operation::PLACEHOLDER_EVENT_ID)?,
         arkret_wire::EventKind::DEVICE_AUTHORIZE,
         scope_ref.clone(),
         verified_session.principal_id.clone(),
@@ -527,10 +525,24 @@ pub(crate) async fn prepare_enrollment_authority_recovery(
         serde_json::to_value(authorize_payload)?,
         not_before,
     )?;
-    authorize_event.prev_refs = vec![reanchor_event_id.clone()];
+    // No `prev_refs` back-link to the reanchor. Under content-bound ids that
+    // link would close a cycle with no fixed point: the reanchor's payload
+    // pre-declares this Event's id *and* digest, so if this Event's digest in
+    // turn covered the reanchor's id, each would be an input to the other.
+    //
+    // Nothing is lost. The ordering is already stated twice over — by
+    // `actor_seq` (the reanchor is N, this is N+1) and by the reanchor naming
+    // this Event explicitly — and the reanchor fixes its own frontier in
+    // `payload.pre_fence_basis` rather than in `prev_refs`, which is why
+    // `ak.device.reanchor` is one of the two closed exceptions that carry no
+    // CBA basis field at all.
     authorize_event.executed_by = Some(enrollment_authority_did.clone());
     authorize_event.authorization_ref =
         Some(arkret_sdk::AuthorizationRef::new(authorization_ref).map_err(anyhow::Error::msg)?);
+    // Stamped before anything reads the id: the reanchor payload below binds
+    // both this id and this digest.
+    authorize_event.event_id = authorize_event.derive_event_id()?;
+    let authorize_event_id = authorize_event.event_id.clone();
     let authorize_event_preimage =
         CanonicalPublicMaterial::canonical_json(serde_json::to_value(&authorize_event)?)?;
 
@@ -604,7 +616,7 @@ pub(crate) async fn prepare_enrollment_authority_recovery(
             )?,
         };
     let mut reanchor_event = Event::new_with_id_at(
-        reanchor_event_id.clone(),
+        EventId::new(crate::operation::PLACEHOLDER_EVENT_ID)?,
         arkret_wire::EventKind::DEVICE_REANCHOR,
         scope_ref,
         verified_session.principal_id.clone(),
@@ -618,6 +630,9 @@ pub(crate) async fn prepare_enrollment_authority_recovery(
         rotation.version_id.clone(),
         "did_recovery_anchor",
     ));
+    // Stamped last: every member of this Event's content is now final.
+    reanchor_event.event_id = reanchor_event.derive_event_id()?;
+    let reanchor_event_id = reanchor_event.event_id.clone();
     let root_did = arkret_sdk::Did::new(
         rotation
             .current_root_verification_method
