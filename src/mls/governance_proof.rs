@@ -420,6 +420,16 @@ pub(crate) async fn ensure_governance_anchor<S: GovernanceProofStateStore>(
     }
     let realm = arkret_sdk::RealmId::new(realm_id.to_owned())
         .map_err(|error| format!("invalid Realm id for governance anchor bootstrap: {error}"))?;
+    // Retyping only holds between kinds fixed to the same id_form. A PCR id is a
+    // v7 derived from the principal DID, so `retype` would name a nonexistent
+    // Event; those Realms anchor on their did_inception root instead (2.5.4 T2),
+    // which this client does not implement yet — fail closed rather than send a
+    // request built on a fabricated id.
+    if realm.uuid().get_version_num() != 8 {
+        return Err(format!(
+            "governance anchor bootstrap for {realm_id} needs the 2.5.4 T2 identity-root path: a Principal Control Realm id derives from the principal DID, not from a create Event (state_mismatch)"
+        ));
+    }
     let create_event_id = arkret_sdk::EventId::from_uuid(realm.uuid());
     let http = api
         .sdk_http_client()
