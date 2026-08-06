@@ -2508,7 +2508,9 @@ export async function mockArkretApi(
             handle: "arkret.example",
             display_name: "Arkret Labs",
             as_of: "2026-06-19T00:00:00.000Z",
-            source_refs: ["ak:event:0196419b-0000-8000-8000-0000000000d1"],
+            // No `source_refs`: a mocked entry has no Event provenance, and
+            // directory-operations.schema.json forbids synthesizing an id for
+            // an Event the implementation never authored.
             policy_revision: "local",
           },
         ],
@@ -4130,7 +4132,7 @@ function realmPreview() {
     join_rule: "public",
     member_count_bucket: "1-10",
     as_of: "2026-06-13T00:00:00.000Z",
-    source_refs: ["ak:event:0196419b-0000-8000-8000-000000000001"],
+    // No `source_refs`: a mocked entry has no Event provenance.
     policy_revision: "mock-policy-rev",
   };
 }
