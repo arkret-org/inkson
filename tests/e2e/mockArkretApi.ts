@@ -102,7 +102,7 @@ type InksonWireCommand =
   | "canonical-json"
   | "sha256-canonical-json"
   | "mls-governance-proof"
-  | "proposal-receipt"
+  | "control-proposal-ack"
   | "ingress-receipts"
   | "range-completeness";
 type InksonWireCanonicalJson = { canonical: string };
@@ -1634,11 +1634,11 @@ export async function mockArkretApi(
     }
 
     if (
-      url.pathname === "/_arkret/self/control-proposal-receipts" &&
+      url.pathname === "/_arkret/self/control-proposal-acks" &&
       route.request().method() === "POST"
     ) {
       const request = await route.request().postDataJSON();
-      const outcome = inksonWire<Record<string, unknown>>("proposal-receipt", {
+      const outcome = inksonWire<Record<string, unknown>>("control-proposal-ack", {
         request,
         device_id: currentDeviceId,
       });
@@ -2025,7 +2025,7 @@ export async function mockArkretApi(
               typeof eventId === "string",
           ),
         ingress_receipts: ingressReceipts,
-        control_proposal_receipts: [],
+        control_proposal_acks: [],
         duplicate: [],
         rejected: [],
         quarantine: [],
@@ -3518,7 +3518,7 @@ export async function mockArkretApi(
         Array.isArray(event?.proofs) &&
         event.proofs.length > 0 &&
         lifecycleSubmission?.authorization_lease &&
-        lifecycleSubmission?.control_proposal_receipt &&
+        lifecycleSubmission?.control_proposal_ack &&
         payload?.agent_id === agentId &&
         payload?.controller_id === accountPrincipalId &&
         payload?.transition === action &&
@@ -3598,7 +3598,7 @@ export async function mockArkretApi(
         Array.isArray(event?.proofs) &&
         event.proofs.length > 0 &&
         lifecycleSubmission?.authorization_lease &&
-        lifecycleSubmission?.control_proposal_receipt &&
+        lifecycleSubmission?.control_proposal_ack &&
         event?.payload?.agent_id === agentId &&
         event?.payload?.controller_id === accountPrincipalId &&
         event?.payload?.transition === "deactivate" &&

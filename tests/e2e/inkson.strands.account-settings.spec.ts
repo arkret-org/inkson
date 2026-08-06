@@ -647,7 +647,7 @@ test("agent deactivation submits controller-signed revocations before the termin
   const lifecycleSubmission = requestBody.lifecycle_event;
   const lifecycleEvent = lifecycleSubmission.event;
   expect(lifecycleSubmission.authorization_lease).toBeDefined();
-  expect(lifecycleSubmission.control_proposal_receipt).toBeDefined();
+  expect(lifecycleSubmission.control_proposal_ack).toBeDefined();
   expect(lifecycleEvent.kind).toBe("ak.self.agent.deactivate");
   expect(lifecycleEvent.realm_id).toBe(
     "ak:realm:01964137-0000-8000-8000-000000000006",
@@ -670,7 +670,7 @@ test("agent deactivation submits controller-signed revocations before the termin
   expect(lifecycleEvent.proofs.length).toBeGreaterThan(0);
   expect(requestBody.key_revocation_events).toHaveLength(1);
   expect(requestBody.key_revocation_events[0].authorization_lease).toBeDefined();
-  expect(requestBody.key_revocation_events[0].control_proposal_receipt).toBeDefined();
+  expect(requestBody.key_revocation_events[0].control_proposal_ack).toBeDefined();
   expect(requestBody.key_revocation_events[0].event.kind).toBe("ak.agent.key.revoke");
   expect(requestBody.key_revocation_events[0].event.payload.key_id).toBe("runtime-key-1");
   expect(requestBody.key_revocation_events[0].event.proofs.length).toBeGreaterThan(0);

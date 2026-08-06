@@ -1026,7 +1026,7 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
             // Re-publish the exact genesis before the first Seal. New
             // servers return the stored duplicate receipt; servers
             // upgraded from the pre-receipt managed-PCR path use this
-            // idempotent retry to attach the first valid proposal receipt
+            // idempotent retry to attach the first valid Control Proposal Ack
             // and rebuild the durable pending index that the atomic Seal
             // commit consumes.
             let creates = accepted_events

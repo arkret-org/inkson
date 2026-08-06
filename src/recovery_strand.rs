@@ -507,7 +507,7 @@ async fn publish_recovery_policy(
             .authorization_lease
             .expect("recovery policy publication uses an explicit authorization lease"),
         cba_proof_bundles: submission.cba_proof_bundles,
-        control_proposal_receipt: submission.control_proposal_receipt,
+        control_proposal_ack: submission.control_proposal_ack,
     };
 
     // A self-PCR notary is the principal's current device, never the hosting

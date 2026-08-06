@@ -51,7 +51,7 @@ export function mockArkretContract(req) {
       status: "accepted",
       accepted: [acceptedId],
       ingress_receipts: [],
-      control_proposal_receipts: [],
+      control_proposal_acks: [],
       cursor: "sx:e2e:event",
     });
   }

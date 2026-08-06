@@ -38,7 +38,7 @@ pub struct EventSubmitter {
 }
 
 /// Ordinary Realm and self-principal bootstrap units intentionally publish
-/// without per-Event proposal receipts. A managed Agent PCR create is also an
+/// without per-Event Control Proposal Acks. A managed Agent PCR create is also an
 /// anchor unit, but its delegated controller is the founding proposal
 /// authority, so it must pass through `standard_initial_submission` to attach
 /// that controller's receipt.
@@ -2795,7 +2795,7 @@ mod tests {
     }
 
     #[test]
-    fn managed_agent_pcr_genesis_does_not_bypass_proposal_receipt_authoring() {
+    fn managed_agent_pcr_genesis_does_not_bypass_control_proposal_ack_authoring() {
         let mut managed = realm_create_sdk_event(
             "ak:event:01904100-0000-8000-8000-000000000020",
             "did:web:agent.example",

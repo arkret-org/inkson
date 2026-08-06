@@ -18,8 +18,8 @@ struct MlsGovernanceProofInput {
 }
 
 #[derive(Debug, Deserialize)]
-struct ProposalReceiptInput {
-    request: arkret_wire::ProposalReceiptIssueRequest,
+struct ControlProposalAckInput {
+    request: arkret_wire::ControlProposalAckIssueRequest,
     device_id: String,
 }
 
@@ -42,7 +42,7 @@ fn main() -> Result<()> {
         "canonical-json" => canonical_json(input)?,
         "sha256-canonical-json" => sha256_canonical_json(input)?,
         "mls-governance-proof" => mls_governance_proof(input)?,
-        "proposal-receipt" => proposal_receipt(input)?,
+        "control-proposal-ack" => control_proposal_ack(input)?,
         "ingress-receipts" => ingress_receipts(input)?,
         "range-completeness" => range_completeness(input)?,
         _ => bail!("unknown inkson-wire command {command:?}"),
@@ -315,13 +315,13 @@ fn mls_governance_proof(input: Value) -> Result<Value> {
     serde_json::to_value(chunk).context("serialize MLS governance proof chunk")
 }
 
-fn proposal_receipt(input: Value) -> Result<Value> {
-    let input: ProposalReceiptInput =
-        serde_json::from_value(input).context("parse proposal receipt input")?;
+fn control_proposal_ack(input: Value) -> Result<Value> {
+    let input: ControlProposalAckInput =
+        serde_json::from_value(input).context("parse Control Proposal Ack input")?;
     input
         .request
         .validate_structural()
-        .map_err(|error| anyhow::anyhow!("validate proposal receipt request: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("validate Control Proposal Ack request: {error}"))?;
     let event = &input.request.event;
     let controller = event.executed_by.as_ref().unwrap_or(&event.actor_id);
     let signer = inkson::event_signer::build_ed25519_device_signer(
@@ -340,7 +340,7 @@ fn proposal_receipt(input: Value) -> Result<Value> {
         .context("digest proposal authority set")?,
     )
     .context("construct proposal authority-set digest")?;
-    let mut member = arkret_wire::ProposalMemberReceipt {
+    let mut member = arkret_wire::ControlProposalAuthorityAck {
         realm_id: event.realm_id.clone(),
         proposal_digest,
         received_at,
@@ -361,26 +361,26 @@ fn proposal_receipt(input: Value) -> Result<Value> {
     };
     let signing_bytes = member
         .canonical_bytes_for_signature()
-        .context("materialize proposal member receipt transcript")?;
+        .context("materialize proposal authority Ack transcript")?;
     member.signature.payload_digest = member
-        .member_receipt_digest()
-        .context("digest proposal member receipt")?;
+        .authority_ack_digest()
+        .context("digest proposal authority Ack")?;
     member.signature.jws = format!(
         "{}..{}",
         arkret_sdk::base64url_encode(br#"{"alg":"Ed25519"}"#),
         arkret_sdk::base64url_encode(
             signer
                 .sign_raw(&signing_bytes)
-                .map_err(|error| anyhow::anyhow!("sign proposal member receipt: {error}"))?
+                .map_err(|error| anyhow::anyhow!("sign proposal authority Ack: {error}"))?
         )
     );
     member
         .validate_protocol_bounds()
-        .map_err(|error| anyhow::anyhow!("validate proposal member receipt: {error}"))?;
-    serde_json::to_value(arkret_wire::ProposalReceiptIssueOutcome {
-        member_receipt: member,
+        .map_err(|error| anyhow::anyhow!("validate proposal authority Ack: {error}"))?;
+    serde_json::to_value(arkret_wire::ControlProposalAckIssueOutcome {
+        authority_ack: member,
     })
-    .context("serialize proposal receipt outcome")
+    .context("serialize Control Proposal Ack outcome")
 }
 
 fn ingress_receipts(input: Value) -> Result<Value> {

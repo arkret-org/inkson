@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock, PoisonError};
 
-use arkret_wire::{AuthorizationLease, ProposalMemberReceipt};
+use arkret_wire::{AuthorizationLease, ControlProposalAuthorityAck};
 
 /// No usable lease covers this Event's actor and signed scope.
 #[derive(Clone, Debug, thiserror::Error)]
@@ -39,11 +39,11 @@ fn leases() -> &'static Mutex<BTreeMap<LeaseKey, AuthorizationLease>> {
     LEASES.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
-type ProposalReceiptKey = (String, String, String);
+type ControlProposalAckKey = (String, String, String);
 
-fn local_proposal_receipts() -> &'static Mutex<BTreeMap<ProposalReceiptKey, ProposalMemberReceipt>>
+fn local_control_proposal_acks() -> &'static Mutex<BTreeMap<ControlProposalAckKey, ControlProposalAuthorityAck>>
 {
-    static RECEIPTS: OnceLock<Mutex<BTreeMap<ProposalReceiptKey, ProposalMemberReceipt>>> =
+    static RECEIPTS: OnceLock<Mutex<BTreeMap<ControlProposalAckKey, ControlProposalAuthorityAck>>> =
         OnceLock::new();
     RECEIPTS.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
@@ -101,7 +101,7 @@ pub fn clear_leases() {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .clear();
-    local_proposal_receipts()
+    local_control_proposal_acks()
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .clear();
@@ -297,7 +297,7 @@ pub fn initial_submission(
         cba_proof_bundles: Vec::new(),
         // Control Moves acquire their authority receipt separately, including
         // caller-proven closed anchors. DataEvents keep it absent.
-        control_proposal_receipt: None,
+        control_proposal_ack: None,
         membership_compensation_evidence: None,
     })
 }
@@ -305,7 +305,7 @@ pub fn initial_submission(
 /// Build the publication wrapper required by a normal events.submit call.
 ///
 /// A non-genesis Control Move resolves its [`ProposalAuthorityRoute`] first,
-/// then either signs the member receipt locally or asks the authenticated
+/// then either signs the authority Ack locally or asks the authenticated
 /// Principal Server for its independently signed one, and finally assembles the
 /// canonical receipt set. DataEvents do not enter the proposal protocol and
 /// therefore keep the receipt field absent.
@@ -316,19 +316,19 @@ pub async fn standard_initial_submission(
     let mut submission = arkret_wire::EventInitialSubmission::online(event.clone());
     let managed_genesis = is_managed_agent_pcr_genesis(event);
     if event.seal_basis.is_some() || managed_genesis {
-        let member_receipt = match resolve_proposal_authority_route(http, event).await? {
+        let authority_ack = match resolve_proposal_authority_route(http, event).await? {
             ProposalAuthorityRoute::LocalPrincipal(local) => {
                 let signer = crate::event_signer::active_signer().ok_or_else(|| {
-                    anyhow::anyhow!("PCR proposal receipt requires an active device signer")
+                    anyhow::anyhow!("PCR Control Proposal Ack requires an active device signer")
                 })?;
-                Some(local.issue_member_receipt(event, &signer)?)
+                Some(local.issue_authority_ack(event, &signer)?)
             }
             ProposalAuthorityRoute::RemoteCurrentAuthority => None,
         };
-        if let Some(member_receipt) = member_receipt {
-            submission.control_proposal_receipt = Some(
-                arkret_wire::ControlProposalReceipt::from_member_receipts_protocol_bounds(vec![
-                    member_receipt,
+        if let Some(authority_ack) = authority_ack {
+            submission.control_proposal_ack = Some(
+                arkret_wire::ControlProposalAck::from_authority_acks_protocol_bounds(vec![
+                    authority_ack,
                 ])?,
             );
         }
@@ -346,7 +346,7 @@ pub async fn standard_initial_submission(
 /// Build an explicitly delayed/offline submission from a held lease.
 ///
 /// Unlike [`standard_initial_submission`], this preserves the fixed lease
-/// window and obtains any external Control Move proposal receipt before the
+/// window and obtains any external Control Move Control Proposal Ack before the
 /// Event can be queued for later delivery.
 pub async fn delayed_initial_submission(
     http: &arkret_sdk::http_client::Client,
@@ -355,15 +355,15 @@ pub async fn delayed_initial_submission(
     let mut submission = initial_submission(event)?;
     let managed_genesis = is_managed_agent_pcr_genesis(event);
     if event.seal_basis.is_some() || managed_genesis {
-        let member_receipt = match resolve_proposal_authority_route(http, event).await? {
+        let authority_ack = match resolve_proposal_authority_route(http, event).await? {
             ProposalAuthorityRoute::LocalPrincipal(local) => {
                 let signer = crate::event_signer::active_signer().ok_or_else(|| {
-                    anyhow::anyhow!("PCR proposal receipt requires an active device signer")
+                    anyhow::anyhow!("PCR Control Proposal Ack requires an active device signer")
                 })?;
-                local.issue_member_receipt(event, &signer)?
+                local.issue_authority_ack(event, &signer)?
             }
             ProposalAuthorityRoute::RemoteCurrentAuthority => {
-                http.issue_control_proposal_receipt(&arkret_wire::ProposalReceiptIssueRequest {
+                http.issue_control_proposal_ack(&arkret_wire::ControlProposalAckIssueRequest {
                     event: event.clone(),
                     authorization_lease: submission
                         .authorization_lease
@@ -373,12 +373,12 @@ pub async fn delayed_initial_submission(
                 })
                 .await
                 .map_err(anyhow::Error::from)?
-                .member_receipt
+                .authority_ack
             }
         };
-        submission.control_proposal_receipt = Some(
-            arkret_wire::ControlProposalReceipt::from_member_receipts_protocol_bounds(vec![
-                member_receipt,
+        submission.control_proposal_ack = Some(
+            arkret_wire::ControlProposalAck::from_authority_acks_protocol_bounds(vec![
+                authority_ack,
             ])?,
         );
     }
@@ -392,7 +392,7 @@ pub async fn delayed_initial_submission(
     Ok(submission)
 }
 
-/// Who signs a Control Move's proposal receipt.
+/// Who signs a Control Move's Control Proposal Ack.
 ///
 /// This is the single place in Inkson that answers the question. Every caller —
 /// standard publication, managed Agent PCR writes, and fresh-device recovery —
@@ -428,12 +428,12 @@ impl LocalPrincipalAuthority {
         })
     }
 
-    /// Sign, or reuse an already signed, member receipt for this proposal.
-    pub(crate) fn issue_member_receipt(
+    /// Sign, or reuse an already signed, authority Ack for this proposal.
+    pub(crate) fn issue_authority_ack(
         &self,
         event: &arkret_sdk::Event,
         signer: &crate::event_signer::InksonEventSigner,
-    ) -> anyhow::Result<ProposalMemberReceipt> {
+    ) -> anyhow::Result<ControlProposalAuthorityAck> {
         let verification_method =
             signer.verification_method_for_principal(&self.signer_principal)?;
         let proposal_digest = arkret_sdk::Hash::new(event.event_digest()?)?;
@@ -442,7 +442,7 @@ impl LocalPrincipalAuthority {
             self.authority_set_ref.to_string(),
             verification_method.as_str().to_owned(),
         );
-        if let Some(receipt) = local_proposal_receipts()
+        if let Some(receipt) = local_control_proposal_acks()
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get(&cache_key)
@@ -452,7 +452,7 @@ impl LocalPrincipalAuthority {
         }
 
         let adapter = signer.payload_signer_adapter_for_principal(&self.signer_principal)?;
-        let member = ProposalMemberReceipt::issue_with_signer(
+        let member = ControlProposalAuthorityAck::issue_with_signer(
             event.realm_id.clone(),
             proposal_digest,
             self.authority_set_ref.clone(),
@@ -460,7 +460,7 @@ impl LocalPrincipalAuthority {
             arkret_wire::ControlProposalDecisionPolicy::default(),
             &adapter,
         )?;
-        local_proposal_receipts()
+        local_control_proposal_acks()
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(cache_key, member.clone());
@@ -531,7 +531,7 @@ async fn resolve_proposal_authority_route(
             // The single-Event managed PCR genesis is a caller-proven closed
             // anchor unit. Its founding notary material is completely derived
             // from that signed create, so the delegated controller can issue
-            // the proposal receipt before the Event is durable. Successors
+            // the Control Proposal Ack before the Event is durable. Successors
             // continue to resolve the same immutable authority from accepted
             // genesis history.
             let authority_set_ref = if is_managed_agent_pcr_genesis(event) {
@@ -948,7 +948,7 @@ mod tests {
             .unwrap();
 
         assert!(submission.authorization_lease.is_none());
-        assert!(submission.control_proposal_receipt.is_some());
+        assert!(submission.control_proposal_ack.is_some());
     }
 
     #[test]

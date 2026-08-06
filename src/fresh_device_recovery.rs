@@ -24,7 +24,7 @@ use arkret_wire::{
     Audience, AuthorizationLease, AuthorizationLeaseId, BackupObjectRef, BackupRotationBinding,
     BackupRotationKind, BackupRotationPlan, BackupSeriesId, CLIENT_STEP_ATTESTATION_SIGNED_FIELDS,
     CanonicalPublicMaterial, ClientStepAttestationAuthData, ControlProposalDecisionPolicy,
-    ControlProposalReceipt, DeviceId, Did, EnrollmentAuthorityRecoveryPlan, Event, EventId,
+    ControlProposalAck, DeviceId, Did, EnrollmentAuthorityRecoveryPlan, Event, EventId,
     EventInitialSubmission, EventsSubmitBatchRequestBody, GrantId, Hash, NonEmptyString,
     PayloadProof, PolicyId, PreparedEventUnit, PromoteRecoverySessionGrantOutcome,
     PromoteRecoverySessionGrantRequest, ReceiptId, RecoveryAuthorityHolderProof,
@@ -663,16 +663,16 @@ pub fn author_recovery_publication_submission(
     );
     lease.proofs.push(proof);
     lease.validate_structural()?;
-    let control_proposal_receipt = event
+    let control_proposal_ack = event
         .seal_basis
         .as_ref()
-        .map(|_| author_recovery_control_proposal_receipt(session, &event, authority_signer))
+        .map(|_| author_recovery_control_proposal_ack(session, &event, authority_signer))
         .transpose()?;
     let submission = EventInitialSubmission {
         event,
         authorization_lease: Some(lease),
         cba_proof_bundles: Vec::new(),
-        control_proposal_receipt,
+        control_proposal_ack,
         membership_compensation_evidence: None,
     };
     submission.validate_structural()?;
@@ -682,17 +682,17 @@ pub fn author_recovery_publication_submission(
 /// Recovery publishes into the principal's own Control Realm, so it resolves
 /// the same local authority route as every other Control Move and only supplies
 /// the recovery-session signer.
-fn author_recovery_control_proposal_receipt(
+fn author_recovery_control_proposal_ack(
     session: &RecoverySessionState,
     event: &Event,
     authority_signer: &crate::event_signer::InksonEventSigner,
-) -> anyhow::Result<ControlProposalReceipt> {
+) -> anyhow::Result<ControlProposalAck> {
     let policy = ControlProposalDecisionPolicy::default();
     let member = crate::authorization_lease::LocalPrincipalAuthority::self_principal_control_realm(
         &session.principal_id,
     )?
-    .issue_member_receipt(event, authority_signer)?;
-    ControlProposalReceipt::from_member_receipts(vec![member], policy).map_err(Into::into)
+    .issue_authority_ack(event, authority_signer)?;
+    ControlProposalAck::from_authority_acks(vec![member], policy).map_err(Into::into)
 }
 
 #[allow(clippy::too_many_arguments)]
