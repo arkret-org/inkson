@@ -1204,7 +1204,7 @@ export async function mockArkretApi(
           "ak.self.contact.command.tombstone",
           "ak.self.invite_receive_policy.resource.get",
           "ak.self.invite_receive_policy.resource.replace",
-          "ak.self.direct_conversation.command.resolve",
+          "ak.self.direct_conversation.query.resolve",
           "ak.self.circle.command.create",
           "ak.self.circle.query.list",
           "ak.self.circle.resource.get",
