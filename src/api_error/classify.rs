@@ -229,17 +229,6 @@ pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
     })
 }
 
-/// `true` for `stale_frontier` — the cursor itself is still valid but the
-/// service frontier lags the requested causal frontier. Per
-/// client-sync.md §4 the client MUST NOT clear the cursor; it should
-/// fetch the current frontier via `account/describe` / `snapshot/head`
-/// (§12.3 step 2) and retry / backfill with the SAME cursor.
-pub fn is_stale_frontier_error(error: &anyhow::Error) -> bool {
-    api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
-        envelope.code() == arkret_sdk::error::ErrorCode::STALE_FRONTIER
-    })
-}
-
 /// `true` for a typed MLS Security Frontier refusal: the submitted binding does
 /// not match the frontier projected from accepted control state and active MLS
 /// leaves.

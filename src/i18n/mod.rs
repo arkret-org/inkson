@@ -203,10 +203,6 @@ impl TranslationCompleteness {
     pub fn is_complete(&self) -> bool {
         self.missing_keys.is_empty()
     }
-
-    pub fn missing_count(&self) -> usize {
-        self.missing_keys.len()
-    }
 }
 
 /// Compare a locale dictionary against a reference dictionary.

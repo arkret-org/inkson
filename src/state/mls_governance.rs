@@ -209,15 +209,4 @@ impl LocalStateStore {
         }
         Ok(Some(entry.clone()))
     }
-
-    pub fn invalidate_mls_governance_proofs_for_realm(&mut self, realm_id: &str) {
-        self.ensure_cached_loaded();
-        let before = self.cached.mls_governance_proofs.len();
-        self.cached
-            .mls_governance_proofs
-            .retain(|_, entry| entry.request.realm_id.as_str() != realm_id);
-        if self.cached.mls_governance_proofs.len() != before {
-            let _ = self.flush();
-        }
-    }
 }

@@ -571,18 +571,6 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    pub fn remove_saved_account_data_entry(&mut self, account_data_key: &str) {
-        self.ensure_cached_loaded();
-        if self
-            .cached
-            .saved_account_data
-            .remove(account_data_key)
-            .is_some()
-        {
-            let _ = self.flush();
-        }
-    }
-
     pub fn preserve_encrypted_message(
         &mut self,
         message_id: impl Into<String>,

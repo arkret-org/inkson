@@ -412,26 +412,6 @@ impl LocalStateStore {
             .ok()
     }
 
-    /// Drop a cached remote-member MLS plaintext by payload digest.
-    pub fn drop_mls_decrypted_plaintext(&mut self, realm_id: &str, payload_digest: &str) -> bool {
-        let realm_id = realm_id.trim();
-        let payload_digest = payload_digest.trim();
-        if realm_id.is_empty() || payload_digest.is_empty() {
-            return false;
-        }
-        self.absorb_mls_receive_overlay();
-        let changed = remove_decrypted_plaintext_entry(
-            &mut self.cached.mls_decrypted_plaintext,
-            realm_id,
-            payload_digest,
-        );
-        if changed {
-            let _ = self.flush();
-            self.persist_e2ee_plaintext_cache_if_ready();
-        }
-        changed
-    }
-
     /// Drop local plaintext retained for a disappearing message.
     ///
     /// This removes the author's sidecar (`message:<message_id>`) and, when the

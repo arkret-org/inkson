@@ -47,43 +47,6 @@ pub fn hex_decode(value: &str) -> Option<Vec<u8>> {
     hex::decode(value).ok()
 }
 
-/// Helper: digest of a canonical operation/event body for proof binding.
-///
-/// Equivalent to `canonical_sha256(body)`, but kept as a named entry point so
-/// call sites are self-documenting at the point of signing.
-pub fn canonical_event_digest<T: Serialize>(body: &T) -> anyhow::Result<String> {
-    canonical_sha256(body)
-}
-
-// F-CANONICAL-1 (2026-05-19): named entry points for the three
-// wire-shaped canonicalizations that inkson actually emits / verifies.
-// The SDK already enforces field ordering / integer-only numbers /
-// UTF-8 byte order through `sdk_canonical_json_bytes`; these wrappers
-// make the call-site intent explicit (so an audit reader sees
-// "signing the move canonical bytes" instead of an ambiguous
-// "canonical_json_bytes(&move)") and give us a single throat to choke
-// when the spec adds new canonicalization rules for a specific
-// envelope type.
-
-/// F-CANONICAL-1: canonical bytes for a SDK [`arkret_sdk::Event`] payload —
-/// the input the signer hashes when producing the detached JWS over
-/// an inbound event. Matches `conformance/encoding.md §2` (event
-/// envelope canonicalization rules: sorted keys, integer-only
-/// numbers, no whitespace) and excludes `proofs` / `unsigned` exactly
-/// as [`arkret_sdk::Event::event_digest`] does.
-pub fn canonical_event_envelope_bytes(envelope: &arkret_sdk::Event) -> anyhow::Result<Vec<u8>> {
-    canonical_json_bytes(&envelope.digest_payload()?)
-}
-
-/// F-CANONICAL-1: canonical bytes for a Move body. Used at the move
-/// signer / verifier seam. Generic so callers can pass either the
-/// SDK's typed `Move` (when available in scope) or a `serde_json::Value`
-/// representing one. The encoder is the same — inkson does not maintain
-/// a parallel Move serializer.
-pub fn canonical_move_bytes<T: Serialize>(move_payload: &T) -> anyhow::Result<Vec<u8>> {
-    canonical_json_bytes(move_payload)
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -110,14 +73,6 @@ mod tests {
     }
 
     #[test]
-    fn canonical_event_digest_round_trip() {
-        let body = json!({"strand_id": "ak:strand:abc", "title": "Ops"});
-        let d = canonical_event_digest(&body).unwrap();
-        assert!(d.starts_with("sha256:"));
-        assert_eq!(d, canonical_sha256(&body).unwrap());
-    }
-
-    #[test]
     fn timestamp_validation_pass_through() {
         assert!(validate_timestamp_canonical("2026-05-14T00:00:00.000Z").is_ok());
         assert!(validate_timestamp_canonical("2026-05-14T00:00:00+00:00").is_err());
@@ -129,49 +84,5 @@ mod tests {
         assert_eq!(hex_encode(&hex_decode("deadbeef").unwrap()), "deadbeef");
         assert!(hex_decode("abc").is_none());
         assert!(hex_decode("zz").is_none());
-    }
-
-    // ── F-CANONICAL-1 ────────────────────────────────────────────────
-
-    #[test]
-    fn canonical_move_bytes_normalizes_key_order() {
-        // Two semantically identical move payloads with different
-        // serialization orders MUST produce the same canonical bytes,
-        // otherwise downstream signatures diverge.
-        let a = json!({"strand_id": "ak:strand:1", "patch": {"title": "x"}});
-        let b = json!({"patch": {"title": "x"}, "strand_id": "ak:strand:1"});
-        assert_eq!(
-            canonical_move_bytes(&a).unwrap(),
-            canonical_move_bytes(&b).unwrap()
-        );
-    }
-
-    #[test]
-    fn canonical_event_envelope_bytes_use_sdk_digest_payload() {
-        let event: arkret_sdk::Event = serde_json::from_value(json!({
-            "event_id": "ak:event:01904100-0000-8000-8000-000000000001",
-            "kind": "ak.message.create",
-            "realm_id": "ak:realm:01904100-0000-8000-8000-000000000001",
-            "scope_ref": {"kind": "realm", "realm_id": "ak:realm:01904100-0000-8000-8000-000000000001"},
-            "actor_id": "did:web:alice.example",
-            "actor_seq": 1,
-            "created_at": "2026-05-19T00:00:00.000Z",
-            "hlc": "01970e589d21-0001-a13f9c2e",
-            "prev_refs": [],
-            "payload": {"kind": "ak.content.text", "body": "hi"},
-            "unsigned": {"local_only": true},
-            "proofs": []
-        }))
-        .unwrap();
-
-        let bytes = canonical_event_envelope_bytes(&event).unwrap();
-        let as_text = std::str::from_utf8(&bytes).unwrap();
-
-        assert_eq!(
-            bytes,
-            sdk_canonical_json_bytes(&event.digest_payload().unwrap()).unwrap()
-        );
-        assert!(!as_text.contains("proofs"));
-        assert!(!as_text.contains("unsigned"));
     }
 }

@@ -256,27 +256,6 @@ pub(crate) fn wasm_secure_store_ready() -> bool {
     WASM_INDEXEDDB_SECURE_KEY_STORE.get().is_some()
 }
 
-/// Whether the process default secure store can durably persist account-grade
-/// secrets (MLS account secret, history secrets, session credential).
-///
-/// On wasm this is the installed IndexedDB + SubtleCrypto tier; the
-/// LocalStorage first-paint fallback refuses these keys. On native every
-/// backend persists. Recovery/backup detection effects gate on this: without
-/// a persisting tier, every `restore_*`/`store_secret_*` attempt fails and its
-/// state write re-triggers the detection effect, storming the account-recovery
-/// endpoints (the "describe-storm"). Returning `false` lets those effects
-/// bail once instead of looping.
-pub fn secure_store_can_persist_account_secrets() -> bool {
-    #[cfg(target_arch = "wasm32")]
-    {
-        wasm_secure_store_ready()
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        true
-    }
-}
-
 /// E2EE-at-rest T1 — load a realm's aggregated `history_secret`s from the
 /// hardened SecureKeyStore. Returns `None` before IndexedDB initialization (fail
 /// closed) so callers fall back to any transitional inline copy; returns

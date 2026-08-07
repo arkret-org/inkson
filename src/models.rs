@@ -837,10 +837,6 @@ impl ResolveHandleView {
         })
     }
 
-    pub fn has_member_delivery_binding(&self) -> bool {
-        self.member_delivery_binding_ref().is_some()
-    }
-
     pub fn member_delivery_binding_ref(
         &self,
     ) -> Option<&arkret_models_identity::DeliveryBindingHint> {

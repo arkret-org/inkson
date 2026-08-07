@@ -221,11 +221,6 @@ impl MultiProfileConfig {
         self.profiles.iter().find(|p| p.profile_id == id)
     }
 
-    pub fn active_mut(&mut self) -> Option<&mut AccountProfile> {
-        let id = self.active_profile_id.clone()?;
-        self.profiles.iter_mut().find(|p| p.profile_id == id)
-    }
-
     /// Add or replace a profile (matched by `account_did + server_url`)
     /// and mark it active. Returns the active profile id.
     pub fn upsert_and_activate(&mut self, profile: AccountProfile) -> String {
@@ -319,15 +314,6 @@ pub struct ProfileSwitchEvent {
     /// `(server_url, account_did, device_id, session_credential)` tuple so
     /// reactors don't need a follow-up store read.
     pub next_profile: AccountProfile,
-}
-
-impl ProfileSwitchEvent {
-    /// `true` when the prior profile id matches the next profile id —
-    /// i.e. the switcher refreshed the active profile in place (token
-    /// rotation) without actually swapping accounts.
-    pub fn is_in_place_refresh(&self) -> bool {
-        self.prior_profile_id.as_deref() == Some(self.next_profile.profile_id.as_str())
-    }
 }
 
 /// SecureKeyStore key for the current session credential of `account_did`.

@@ -125,13 +125,6 @@ impl LocalStateStore {
         self.load().client_blocklist_revision
     }
 
-    /// True when `did` appears in the local blocklist. Used by the
-    /// message renderers to gate message bodies behind a
-    /// "Show anyway" affordance.
-    pub fn is_user_blocked(&self, did: &str) -> bool {
-        crate::account_data::is_blocked(&self.load().client_blocklist, did)
-    }
-
     /// Append `did` to the personal blocklist. Idempotent — duplicate
     /// DIDs are not inserted twice. `reason` is shown back to the user
     /// in Settings → Privacy; pass `None` to skip.

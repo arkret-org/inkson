@@ -122,24 +122,6 @@ impl LocalStateStore {
         Ok(())
     }
 
-    pub fn mark_snapshot_degraded(
-        &mut self,
-        realm_id: impl Into<String>,
-        reason: impl Into<String>,
-    ) {
-        self.ensure_cached_loaded();
-        let realm_id = realm_id.into();
-        let status = SnapshotSyncStatus {
-            manifest_id: String::new(),
-            trust_state: crate::snapshot::SnapshotTrustState::Degraded,
-            updated_at: Utc::now(),
-            source_event_ids: Vec::new(),
-            degraded_reason: Some(reason.into()),
-        };
-        self.cached.snapshot_sync.insert(realm_id, status);
-        let _ = self.flush();
-    }
-
     pub fn snapshot_sync_status(&self, realm_id: &str) -> Option<SnapshotSyncStatus> {
         self.load().snapshot_sync.get(realm_id).cloned()
     }

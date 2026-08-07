@@ -8,8 +8,8 @@
 //! are unchanged.
 
 use chime::{
-    ArkretPushClient, ChimePushRegisterDeviceRequest, IntegrationDescribeOutcome,
-    PushBridgeDescribeOutcome, PushRegistrationState,
+    ArkretPushClient, ChimePushRegisterDeviceRequest, PushBridgeDescribeOutcome,
+    PushRegistrationState,
 };
 use serde_json::Value;
 
@@ -182,14 +182,6 @@ pub async fn describe_push_gateway_bridge(
         .await?)
 }
 
-pub async fn describe_push_gateway_integration(
-    push_gateway_url: &str,
-) -> anyhow::Result<IntegrationDescribeOutcome> {
-    Ok(push_describe_client(push_gateway_url)
-        .floria_integration_describe()
-        .await?)
-}
-
 pub fn summarize_push_gateway_bridge(bridge: &PushBridgeDescribeOutcome) -> String {
     format!(
         "contract={} version={} notify_path={} providers={} auth_modes={} privacy_mode={} todos={}",
@@ -211,53 +203,6 @@ pub fn summarize_push_gateway_bridge(bridge: &PushBridgeDescribeOutcome) -> Stri
             "none".to_owned()
         } else {
             bridge.todos.join(" | ")
-        },
-    )
-}
-
-pub fn summarize_push_gateway_integration(manifest: &IntegrationDescribeOutcome) -> String {
-    let dependencies = if manifest.dependencies.is_empty() {
-        "none".to_owned()
-    } else {
-        manifest
-            .dependencies
-            .iter()
-            .map(|dependency| {
-                format!(
-                    "{}:{}@{}",
-                    dependency.service, dependency.purpose, dependency.discovery_path
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",")
-    };
-    let surfaces = if manifest.surfaces.is_empty() {
-        "none".to_owned()
-    } else {
-        manifest
-            .surfaces
-            .iter()
-            .map(|surface| {
-                format!(
-                    "{} {} {} [{}]",
-                    surface.method, surface.path, surface.contract, surface.stability
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(" | ")
-    };
-    format!(
-        "contract={} version={} service={} kind={} dependencies={} surfaces={} todos={}",
-        manifest.contract,
-        manifest.version,
-        manifest.service,
-        manifest.service_kind,
-        dependencies,
-        surfaces,
-        if manifest.todos.is_empty() {
-            "none".to_owned()
-        } else {
-            manifest.todos.join(" | ")
         },
     )
 }

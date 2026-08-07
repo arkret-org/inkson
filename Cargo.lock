@@ -326,7 +326,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
- "tokio-util",
  "url",
 ]
 
@@ -3223,7 +3222,6 @@ dependencies = [
  "arkret-models-crypto",
  "arkret-models-discovery",
  "arkret-models-identity",
- "arkret-models-integration",
  "arkret-schema",
  "arkret-signatures",
  "arkret-state",

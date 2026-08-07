@@ -19,22 +19,6 @@ impl LocalStateStore {
         self.load().local_identity
     }
 
-    /// Replace (or clear) the persisted device identity record without
-    /// going through `ensure_local_identity`, which would generate a fresh
-    /// seed if the record were missing.
-    pub fn set_local_identity_record(&mut self, record: Option<LocalIdentityRecord>) {
-        self.ensure_cached_loaded();
-        #[cfg(target_arch = "wasm32")]
-        if record.is_some() && !plaintext_identity_seed_fallback_allowed() {
-            tracing::warn!("refusing to persist wasm local identity seed in plaintext local state");
-            self.cached.local_identity = None;
-            let _ = self.flush();
-            return;
-        }
-        self.cached.local_identity = record;
-        let _ = self.flush();
-    }
-
     /// Read the in-memory device identity. Returns `None` when no record
     /// is persisted; callers that need a key should call
     /// [`Self::ensure_local_identity`] which generates + persists on first

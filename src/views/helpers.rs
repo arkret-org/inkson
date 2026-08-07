@@ -1,32 +1,15 @@
 pub use arkret_sdk::MentionNode;
 use dioxus::prelude::*;
+// Single source in yoface (YGN-ARCH-01 step 3: the projection layer needs
+// this label formatter without importing a views module). Re-exported so all
+// existing `views::helpers::short_protocol_id` call sites keep resolving.
+pub use yoface::utils::text::short_protocol_id;
 
 pub(crate) use super::member_display::actor_display_label;
 use crate::api_error::normalize_wait_for_sync_token;
 use crate::config::{ClientConfig, LocalConfigStore};
 use crate::transport::auth::with_endpoint_clients;
 use crate::ui::button::{Button, ButtonVariant};
-
-/// Derive a lowercase handle string from a DID, suitable for registration.
-pub fn handle_from_did(did: &str) -> String {
-    did.rsplit(':')
-        .next()
-        .unwrap_or("inkson")
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
-                ch.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect()
-}
-
-// Single source in yoface (YGN-ARCH-01 step 3: the projection layer needs
-// this label formatter without importing a views module). Re-exported so all
-// existing `views::helpers::short_protocol_id` call sites keep resolving.
-pub use yoface::utils::text::short_protocol_id;
 
 /// Persist the current client configuration (server URL, DID, device ID, token).
 pub fn persist_config(

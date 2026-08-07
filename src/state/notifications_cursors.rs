@@ -245,14 +245,6 @@ impl LocalStateStore {
         self.set_realm_watch_level(realm_id, level);
     }
 
-    pub fn clear_muted_realms(&mut self) {
-        self.ensure_cached_loaded();
-        self.cached
-            .realm_watch_levels
-            .retain(|_, level| *level != WatchLevel::Muted);
-        let _ = self.flush();
-    }
-
     pub fn is_realm_muted(&self, realm_id: &str) -> bool {
         self.realm_watch_level(realm_id) == WatchLevel::Muted
     }
@@ -342,13 +334,6 @@ impl LocalStateStore {
 
     pub fn read_receipt_realm_overrides(&self) -> BTreeMap<String, bool> {
         self.load().read_receipt_realm_overrides
-    }
-
-    pub fn read_receipt_realm_display_override(&self, realm_id: &str) -> Option<bool> {
-        self.load()
-            .read_receipt_realm_display_overrides
-            .get(realm_id)
-            .copied()
     }
 
     pub fn set_read_receipt_realm_display_override(
@@ -554,10 +539,6 @@ impl LocalStateStore {
             .get(kind)
             .copied()
             .unwrap_or(true)
-    }
-
-    pub fn notification_kind_preferences(&self) -> BTreeMap<String, bool> {
-        self.load().muted_notification_kinds
     }
 
     pub fn notification_dnd_settings(&self) -> Option<crate::notification_rules::DndSettings> {
