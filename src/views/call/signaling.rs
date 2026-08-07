@@ -432,6 +432,7 @@ pub(super) async fn emit_signal(
         call_id: arkret_sdk::CallId::new(call_id)
             .map_err(|error| format!("invalid call_id: {error}"))?,
         signal_kind: signal_kind.to_owned(),
+        seq,
         data: Some(data),
     };
     let (actor, device) = (actor.to_owned(), device.to_owned());
@@ -444,7 +445,6 @@ pub(super) async fn emit_signal(
             &device,
             &material,
             &payload,
-            crate::signal::SignalSequence(seq),
             &state_store,
         )
         .await

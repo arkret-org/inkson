@@ -320,11 +320,12 @@ mod tests {
         let bytes = crate::signal::SignalPayload::CallSignal {
             call_id: arkret_sdk::CallId::new(TEST_CALL).unwrap(),
             signal_kind: signal_kind.to_owned(),
+            seq,
             data: Some(serde_json::json!({})),
         }
         .to_plaintext(
             &arkret_sdk::Did::new(TEST_ACTOR).unwrap(),
-            crate::signal::SignalSequence(seq),
+            crate::signal::SignalSequence::new(seq),
         )
         .expect("call signal plaintext must encode");
         serde_json::from_slice(&bytes).unwrap()
@@ -360,11 +361,12 @@ mod tests {
         let sender_error = crate::signal::SignalPayload::CallSignal {
             call_id: arkret_sdk::CallId::new(TEST_CALL).unwrap(),
             signal_kind: "sdp_offer".to_owned(),
+            seq: 1,
             data: None,
         }
         .to_plaintext(
             &arkret_sdk::Did::new(TEST_ACTOR).unwrap(),
-            crate::signal::SignalSequence(1),
+            crate::signal::SignalSequence::new(1),
         )
         .expect_err("non-canonical signal_kind must be rejected");
         assert!(sender_error.to_string().contains("signal_kind"));

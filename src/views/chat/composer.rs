@@ -533,7 +533,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     let device = device.clone();
                                     let strand_id = strand_id.clone();
                                     let material = material.clone();
-                                    let sequence = crate::signal::next_signal_sequence();
                                     let api_token = token();
                                     spawn(async move {
                                         let _ = crate::transport::auth::with_event_submitter(
@@ -555,7 +554,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                         )?,
                                                         typing: is_typing,
                                                     },
-                                                    sequence,
                                                     &typing_store,
                                                 )
                                                 .await

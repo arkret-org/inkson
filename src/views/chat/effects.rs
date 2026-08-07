@@ -220,7 +220,6 @@ pub(super) fn ChatEffects(
             // MLS snapshot before submit, so the send path needs the store
             // itself, not just the material descriptor.
             let receipt_store = crate::app::runtime_adapter::state_store_handle(state_store);
-            let sequence = crate::signal::next_signal_sequence();
             spawn(async move {
                 let _ = crate::transport::auth::with_event_submitter(
                     &base,
@@ -238,7 +237,6 @@ pub(super) fn ChatEffects(
                                     strand_id: arkret_sdk::StrandId::new(strand_id.clone())?,
                                     event_id: arkret_sdk::EventId::new(top_event.clone())?,
                                 },
-                                sequence,
                                 &receipt_store,
                             )
                             .await
@@ -328,7 +326,6 @@ pub(super) fn ChatEffects(
             };
             let presence_store =
                 crate::app::runtime_adapter::state_store_handle(state_store_for_presence);
-            let sequence = crate::signal::next_signal_sequence();
             spawn(async move {
                 let _ = crate::transport::auth::with_event_submitter(
                     &base,
@@ -346,7 +343,6 @@ pub(super) fn ChatEffects(
                                 status_message: status_message.clone(),
                                 last_active_at: None,
                             },
-                            sequence,
                             &presence_store,
                         )
                         .await

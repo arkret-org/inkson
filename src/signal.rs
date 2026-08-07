@@ -12,7 +12,7 @@
 //! that body is now the AEAD plaintext instead of a wire object. This module
 //! keeps those bodies, the header assembly and the device proof.
 
-use serde::Serialize;
+pub use arkret_sdk::SignalSequence;
 use serde_json::Value;
 
 /// Sender-side sequence within one `(scope_ref, sender_device_id)` stream.
@@ -20,22 +20,222 @@ use serde_json::Value;
 /// The receiver dedupes on `(sender_device_id, scope_ref, payload_sequence)`
 /// (`signal.md` §2). The sequence is inside the ciphertext, so a service can
 /// only suppress replays by whole-envelope digest.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
-pub struct SignalSequence(pub u64);
+const SIGNAL_SEQUENCE_RESERVATION_BLOCK: u64 = 256;
 
-static SIGNAL_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[derive(Clone, Copy, Debug)]
+struct SignalSequenceReservation {
+    next: u64,
+    end_exclusive: u64,
+}
 
-/// Next per-process Signal sequence.
+fn signal_sequence_reservations()
+-> &'static std::sync::Mutex<std::collections::BTreeMap<String, SignalSequenceReservation>> {
+    static RESERVATIONS: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::BTreeMap<String, SignalSequenceReservation>>,
+    > = std::sync::OnceLock::new();
+    RESERVATIONS.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()))
+}
+
+fn signal_sequence_domain(
+    sender_device_id: &arkret_sdk::DeviceId,
+    scope_ref: &arkret_sdk::ScopeRef,
+) -> anyhow::Result<String> {
+    use sha2::Digest as _;
+
+    let mut transcript = Vec::new();
+    transcript.extend_from_slice(b"ak.signal-sequence-domain-v1\0");
+    transcript.extend_from_slice(sender_device_id.as_str().as_bytes());
+    transcript.push(0);
+    transcript.extend_from_slice(&arkret_sdk::canonical::canonical_json_bytes(scope_ref)?);
+    Ok(hex::encode(sha2::Sha256::digest(transcript)))
+}
+
+/// Consume a sequence from a durably reserved per-device/per-scope block.
 ///
-/// This covers the in-ciphertext `payload_sequence` a receiver dedupes on, and
-/// nothing else. The AEAD nonce counter has a stricter contract — `encoding.md`
-/// §10.1 requires it to be persisted per `(key_ref, epoch, device_id, purpose,
-/// aead_profile)` and, when the local counter for an epoch cannot be recovered,
-/// requires an MLS Commit to a fresh epoch before sending again — so the SDK
-/// owns it inside the persisted MLS group snapshot and it is never a value this
-/// layer supplies.
-pub fn next_signal_sequence() -> SignalSequence {
-    SignalSequence(SIGNAL_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+/// The durable high-water is committed before the first number in a new block
+/// is returned.  A crash may therefore burn the unused tail, which is valid;
+/// no restart, failed submit, process, or browser tab can reuse it.
+pub async fn next_signal_sequence(
+    _state_store: &crate::runtime::input::StateStoreHandle,
+    sender_device_id: &arkret_sdk::DeviceId,
+    scope_ref: &arkret_sdk::ScopeRef,
+) -> anyhow::Result<SignalSequence> {
+    let domain = signal_sequence_domain(sender_device_id, scope_ref)?;
+    let account_namespace = _state_store.read(|store| store.signal_sequence_store_namespace());
+    let cached_domain = format!("{account_namespace}\0{domain}");
+    {
+        let mut reservations = signal_sequence_reservations()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(reservation) = reservations.get_mut(&cached_domain)
+            && reservation.next < reservation.end_exclusive
+        {
+            let value = reservation.next;
+            reservation.next += 1;
+            return Ok(SignalSequence::new(value));
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let first = {
+        let path = _state_store.read(|store| store.signal_sequence_store_path());
+        reserve_signal_sequence_block_in_file(&path, &domain, SIGNAL_SEQUENCE_RESERVATION_BLOCK)?
+    };
+
+    #[cfg(target_arch = "wasm32")]
+    let first = reserve_signal_sequence_block_in_browser(
+        &format!("inkson.signal_sequence.v1.{account_namespace}.{domain}"),
+        SIGNAL_SEQUENCE_RESERVATION_BLOCK,
+    )
+    .await?;
+
+    let end_exclusive = first
+        .checked_add(SIGNAL_SEQUENCE_RESERVATION_BLOCK)
+        .ok_or_else(|| anyhow::anyhow!("Signal payload_sequence exhausted"))?;
+    let mut reservations = signal_sequence_reservations()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // Another task may have installed a block while this task was reserving.
+    // Consume that installed block in lock-acquisition order and burn this
+    // redundant block; returning `first` here could emit a lower block after a
+    // higher one and manufacture a receiver-visible rollback.
+    if let Some(reservation) = reservations.get_mut(&cached_domain)
+        && reservation.next < reservation.end_exclusive
+    {
+        let value = reservation.next;
+        reservation.next += 1;
+        return Ok(SignalSequence::new(value));
+    }
+    reservations.insert(
+        cached_domain,
+        SignalSequenceReservation {
+            next: first + 1,
+            end_exclusive,
+        },
+    );
+    Ok(SignalSequence::new(first))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SignalSequenceReservationRecord {
+    version: u8,
+    domain: String,
+    next_unreserved: u64,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn reserve_signal_sequence_block_in_file(
+    path: &std::path::Path,
+    domain: &str,
+    block_size: u64,
+) -> anyhow::Result<u64> {
+    use std::io::{Read as _, Write as _};
+
+    use fs2::FileExt as _;
+
+    if block_size == 0 {
+        anyhow::bail!("Signal sequence reservation block must be non-zero");
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .append(true)
+        .open(path)?;
+    file.lock_exclusive()?;
+    let result = (|| -> anyhow::Result<u64> {
+        let mut journal = Vec::new();
+        file.read_to_end(&mut journal)?;
+        if !journal.is_empty() && !journal.ends_with(b"\n") {
+            anyhow::bail!(
+                "Signal sequence reservation journal {} has an incomplete tail; refusing to risk sequence reuse",
+                path.display()
+            );
+        }
+        let mut high_waters = std::collections::BTreeMap::new();
+        for line in journal
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+        {
+            let record: SignalSequenceReservationRecord =
+                serde_json::from_slice(line).map_err(|error| {
+                    anyhow::anyhow!(
+                        "Signal sequence reservation journal {} is corrupt: {error}",
+                        path.display()
+                    )
+                })?;
+            if record.version != 1 {
+                anyhow::bail!(
+                    "Signal sequence reservation journal {} has unsupported version {}",
+                    path.display(),
+                    record.version
+                );
+            }
+            high_waters.insert(record.domain, record.next_unreserved);
+        }
+        let first = high_waters.get(domain).copied().unwrap_or(1);
+        let next_unreserved = first
+            .checked_add(block_size)
+            .ok_or_else(|| anyhow::anyhow!("Signal payload_sequence exhausted"))?;
+        let mut encoded = serde_json::to_vec(&SignalSequenceReservationRecord {
+            version: 1,
+            domain: domain.to_owned(),
+            next_unreserved,
+        })?;
+        encoded.push(b'\n');
+        file.write_all(&encoded)?;
+        file.sync_all()?;
+        Ok(first)
+    })();
+    let unlock = fs2::FileExt::unlock(&file);
+    result.and_then(|value| {
+        unlock?;
+        Ok(value)
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(inline_js = r#"
+export async function reserveSignalSequenceBlock(key, blockSize) {
+  if (!globalThis.navigator?.locks) {
+    throw new Error("Web Locks API is required for atomic Signal sequence reservation");
+  }
+  return await globalThis.navigator.locks.request(key, {mode: "exclusive"}, async () => {
+    const storage = globalThis.localStorage;
+    if (!storage) throw new Error("localStorage is unavailable");
+    const encoded = storage.getItem(key);
+    const first = encoded === null ? 1n : BigInt(encoded);
+    const next = first + BigInt(blockSize);
+    if (next > 18446744073709551615n) throw new Error("Signal payload_sequence exhausted");
+    storage.setItem(key, next.toString());
+    return first.toString();
+  });
+}
+"#)]
+extern "C" {
+    #[wasm_bindgen::prelude::wasm_bindgen(catch, js_name = reserveSignalSequenceBlock)]
+    async fn reserve_signal_sequence_block_js(
+        key: &str,
+        block_size: u64,
+    ) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue>;
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn reserve_signal_sequence_block_in_browser(
+    key: &str,
+    block_size: u64,
+) -> anyhow::Result<u64> {
+    let value = reserve_signal_sequence_block_js(key, block_size)
+        .await
+        .map_err(|error| anyhow::anyhow!("reserve Signal sequence block: {error:?}"))?;
+    value
+        .as_string()
+        .ok_or_else(|| anyhow::anyhow!("Signal sequence reservation returned a non-string"))?
+        .parse()
+        .map_err(|error| anyhow::anyhow!("invalid Signal sequence reservation: {error}"))
 }
 
 /// Product payload carried inside a Signal's ciphertext.
@@ -63,6 +263,9 @@ pub enum SignalPayload {
     CallSignal {
         call_id: arkret_sdk::CallId,
         signal_kind: String,
+        /// Per-call anti-rollback sequence, independent of the common Signal
+        /// rail `payload_sequence`.
+        seq: u64,
         data: Option<Value>,
     },
     MessageStream(arkret_sdk::MessageStreamFrame),
@@ -122,18 +325,24 @@ impl SignalPayload {
         };
         match self {
             Self::MessageStream(frame) => {
-                if frame.payload_sequence() != sequence.0 {
-                    anyhow::bail!(
-                        "message stream payload_sequence {} disagrees with Signal sequence {}",
-                        frame.payload_sequence(),
-                        sequence.0
-                    );
+                let mut frame = frame.clone();
+                match &mut frame {
+                    arkret_sdk::MessageStreamFrame::Keyframe(value) => {
+                        value.payload_sequence = sequence.get();
+                    }
+                    arkret_sdk::MessageStreamFrame::Delta(value) => {
+                        value.payload_sequence = sequence.get();
+                    }
+                    arkret_sdk::MessageStreamFrame::Abort(value) => {
+                        value.payload_sequence = sequence.get();
+                    }
                 }
-                plaintext(arkret_sdk::seal_signal_plaintext(frame), "message stream")
+                plaintext(arkret_sdk::seal_signal_plaintext(&frame), "message stream")
             }
             Self::CallSignal {
                 call_id,
                 signal_kind,
+                seq,
                 data,
             } => {
                 let signal_kind: arkret_sdk::CallSignalKind =
@@ -154,17 +363,17 @@ impl SignalPayload {
                 // `payload_sequence` and the per-call `seq` are independent axes;
                 // this profile carries both and may omit neither.
                 let payload = arkret_sdk::CallSignalPlaintext::new(
-                    sequence.0,
+                    sequence.get(),
                     call_id.clone(),
                     signal_kind,
-                    sequence.0,
+                    *seq,
                     data,
                 );
                 plaintext(arkret_sdk::seal_signal_plaintext(&payload), "call signal")
             }
             Self::Typing { strand_id, typing } => {
                 let payload =
-                    arkret_sdk::TypingPlaintext::new(sequence.0, strand_id.clone(), *typing)
+                    arkret_sdk::TypingPlaintext::new(sequence.get(), strand_id.clone(), *typing)
                         .map_err(|error| anyhow::anyhow!("typing plaintext rejected: {error}"))?
                         .with_ttl_ms(self.ttl_ms()?)
                         .map_err(|error| anyhow::anyhow!("typing ttl_ms rejected: {error}"))?;
@@ -182,7 +391,7 @@ impl SignalPayload {
                         )
                     })?;
                 let mut payload = arkret_sdk::PresencePlaintext::new(
-                    sequence.0,
+                    sequence.get(),
                     actor_id.clone(),
                     state,
                     self.ttl_ms()?,
@@ -215,7 +424,7 @@ impl SignalPayload {
                 // envelope `expires_at` is already the TTL, and the closed
                 // schema rejects the field outright.
                 let receipt = arkret_sdk::ReadReceipt::new(
-                    sequence.0,
+                    sequence.get(),
                     actor_id.clone(),
                     event_id.clone(),
                     arkret_sdk::ReadReceiptScope::strand(
@@ -669,7 +878,9 @@ mod tests {
             .unwrap(),
             typing: true,
         };
-        let plaintext = payload.to_plaintext(&actor(), SignalSequence(7)).unwrap();
+        let plaintext = payload
+            .to_plaintext(&actor(), SignalSequence::new(7))
+            .unwrap();
         let body: Value = serde_json::from_slice(&plaintext).unwrap();
 
         assert_eq!(body["kind"], "ak.typing");
@@ -692,7 +903,7 @@ mod tests {
     fn message_stream_uses_its_closed_profile_plaintext() {
         let frame = arkret_sdk::MessageStreamFrame::Keyframe(
             arkret_sdk::MessageStreamKeyframe::new(
-                8,
+                999,
                 arkret_sdk::StrandId::new("ak:strand:Aa6k_ga4nHTT-mJwrlDP8oeaq3P1Wg9B6K8RtTXZyUY0")
                     .unwrap(),
                 arkret_sdk::MessageId::new(
@@ -713,7 +924,7 @@ mod tests {
         );
         let body: Value = serde_json::from_slice(
             &SignalPayload::MessageStream(frame)
-                .to_plaintext(&actor(), SignalSequence(8))
+                .to_plaintext(&actor(), SignalSequence::new(8))
                 .unwrap(),
         )
         .unwrap();
@@ -731,7 +942,7 @@ mod tests {
             status_message: None,
             last_active_at: None,
         };
-        assert!(bad.to_plaintext(&actor(), SignalSequence(0)).is_err());
+        assert!(bad.to_plaintext(&actor(), SignalSequence::new(0)).is_err());
 
         let payload = SignalPayload::Presence {
             state: "online".to_owned(),
@@ -742,9 +953,12 @@ mod tests {
                     .with_timezone(&chrono::Utc),
             ),
         };
-        let body: Value =
-            serde_json::from_slice(&payload.to_plaintext(&actor(), SignalSequence(1)).unwrap())
-                .unwrap();
+        let body: Value = serde_json::from_slice(
+            &payload
+                .to_plaintext(&actor(), SignalSequence::new(1))
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(body["state"], "online");
         assert_eq!(body["status_message"], "hi");
         // `<start>/<end>`, both RFC 3339 instants: the schema does not accept
@@ -767,9 +981,12 @@ mod tests {
             )
             .unwrap(),
         };
-        let body: Value =
-            serde_json::from_slice(&payload.to_plaintext(&actor(), SignalSequence(2)).unwrap())
-                .unwrap();
+        let body: Value = serde_json::from_slice(
+            &payload
+                .to_plaintext(&actor(), SignalSequence::new(2))
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(body["kind"], "ak.receipt.read");
         assert_eq!(body["payload_sequence"], 2);
         // The durable-object leftovers are gone: the receipt is a Signal
@@ -797,13 +1014,19 @@ mod tests {
         let rejected = SignalPayload::CallSignal {
             call_id: call_id.clone(),
             signal_kind: "not_a_kind".to_owned(),
+            seq: 3,
             data: None,
         };
-        assert!(rejected.to_plaintext(&actor(), SignalSequence(3)).is_err());
+        assert!(
+            rejected
+                .to_plaintext(&actor(), SignalSequence::new(3))
+                .is_err()
+        );
 
         let invite = SignalPayload::CallSignal {
             call_id: call_id.clone(),
             signal_kind: "invite".to_owned(),
+            seq: 4,
             data: None,
         };
         assert_eq!(invite.signal_class(), arkret_wire::SignalClass::Setup);
@@ -812,6 +1035,7 @@ mod tests {
         let moderation = SignalPayload::CallSignal {
             call_id: call_id.clone(),
             signal_kind: "moderation".to_owned(),
+            seq: 5,
             data: None,
         };
         assert_eq!(
@@ -823,9 +1047,18 @@ mod tests {
         let candidate = SignalPayload::CallSignal {
             call_id,
             signal_kind: "candidate".to_owned(),
+            seq: 6,
             data: Some(json!({"sdp_mid": "0"})),
         };
         assert_eq!(candidate.signal_class(), arkret_wire::SignalClass::Session);
+        let body: Value = serde_json::from_slice(
+            &candidate
+                .to_plaintext(&actor(), SignalSequence::new(1024))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body["payload_sequence"], 1024);
+        assert_eq!(body["seq"], 6, "per-call seq is an independent axis");
     }
 
     /// Restates the deleted `presence_proof_round_trips_through_ephemeral_sdk_verifier`
@@ -926,7 +1159,11 @@ mod tests {
             status_message: Some("字".repeat(257)),
             last_active_at: None,
         };
-        assert!(payload.to_plaintext(&actor(), SignalSequence(0)).is_err());
+        assert!(
+            payload
+                .to_plaintext(&actor(), SignalSequence::new(0))
+                .is_err()
+        );
     }
 
     #[test]
@@ -952,5 +1189,84 @@ mod tests {
                 "{class:?} TTL"
             );
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn durable_sequence_reservations_survive_restart_and_allow_crash_gaps() {
+        let dir = std::env::temp_dir().join(format!(
+            "inkson-signal-sequence-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("high-water.json");
+
+        // Simulate a process that reserves a block and crashes without using
+        // its tail. The reopened allocator must skip that tail permanently.
+        assert_eq!(
+            reserve_signal_sequence_block_in_file(&path, "device-a/scope-a", 256).unwrap(),
+            1
+        );
+        assert_eq!(
+            reserve_signal_sequence_block_in_file(&path, "device-a/scope-a", 256).unwrap(),
+            257
+        );
+        // A different scope owns an independent high-water domain.
+        assert_eq!(
+            reserve_signal_sequence_block_in_file(&path, "device-a/scope-b", 256).unwrap(),
+            1
+        );
+
+        // An interrupted append cannot erase earlier committed records. Its
+        // incomplete tail makes the allocator fail closed instead of guessing
+        // a lower high-water and reusing a sequence.
+        use std::io::Write as _;
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(br#"{"version":1"#)
+            .unwrap();
+        let error =
+            reserve_signal_sequence_block_in_file(&path, "device-a/scope-a", 256).unwrap_err();
+        assert!(error.to_string().contains("incomplete tail"));
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn concurrent_process_style_reservations_never_overlap() {
+        let dir = std::env::temp_dir().join(format!(
+            "inkson-signal-sequence-concurrent-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("high-water.json");
+        let mut threads = Vec::new();
+        for _ in 0..8 {
+            let path = path.clone();
+            threads.push(std::thread::spawn(move || {
+                reserve_signal_sequence_block_in_file(&path, "shared-domain", 32).unwrap()
+            }));
+        }
+        let mut starts: Vec<u64> = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect();
+        starts.sort_unstable();
+        assert_eq!(starts, vec![1, 33, 65, 97, 129, 161, 193, 225]);
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
     }
 }

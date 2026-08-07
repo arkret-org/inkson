@@ -1331,7 +1331,6 @@ impl EventSubmitter {
         device_id: &str,
         material: &crate::signal::SignalKeyMaterial,
         payload: &crate::signal::SignalPayload,
-        sequence: crate::signal::SignalSequence,
         state_store: &crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
         let seal_ref = self.current_seal_for(scope_ref.realm_id().as_str()).await?;
@@ -1346,7 +1345,7 @@ impl EventSubmitter {
             payload.signal_class(),
             crate::clock::now_utc(),
         );
-        self.send_signal(header, material, payload, sequence, state_store)
+        self.send_signal(header, material, payload, state_store)
             .await
     }
 
@@ -1362,12 +1361,17 @@ impl EventSubmitter {
         header: crate::signal::SignalHeader,
         material: &crate::signal::SignalKeyMaterial,
         payload: &crate::signal::SignalPayload,
-        sequence: crate::signal::SignalSequence,
         state_store: &crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
         // Realm id and send time are no longer arguments: `signal.md` §1.1
         // forbids a plaintext restating what the signed envelope already
         // carries, so the closed profiles do not have fields for them.
+        let sequence = crate::signal::next_signal_sequence(
+            state_store,
+            &header.sender_device_id,
+            &header.scope_ref,
+        )
+        .await?;
         let plaintext = payload.to_plaintext(&header.sender_actor_id, sequence)?;
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let encrypted_payload = state_store.write(|store| {

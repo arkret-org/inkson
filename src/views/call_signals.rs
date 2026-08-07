@@ -638,12 +638,13 @@ mod tests {
             &crate::signal::SignalPayload::CallSignal {
                 call_id: arkret_sdk::CallId::new(TEST_CALL).unwrap(),
                 signal_kind: signal_kind.to_owned(),
+                seq,
                 data: Some(data),
             },
             &arkret_sdk::RealmId::new(TEST_REALM).unwrap(),
             &arkret_sdk::Did::new(actor).unwrap(),
             &arkret_sdk::DeviceId::new(device).unwrap(),
-            crate::signal::SignalSequence(seq),
+            crate::signal::SignalSequence::new(seq),
         )
         .expect("fixture signal must seal")
     }

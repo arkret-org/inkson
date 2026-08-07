@@ -610,6 +610,33 @@ impl LocalStateStore {
         }
     }
 
+    /// Dedicated atomic store for durable Signal sequence block reservations.
+    /// It is intentionally separate from the large account-state snapshot: a
+    /// second process can lock and advance this high-water without rewriting
+    /// or racing unrelated projections.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn signal_sequence_store_path(&self) -> PathBuf {
+        let account = self.account_state_path(&self.effective_account_key());
+        let file_name = format!(
+            "{}.signal-sequences.jsonl",
+            account
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("account")
+        );
+        account
+            .parent()
+            .map(|parent| parent.join(&file_name))
+            .unwrap_or_else(|| PathBuf::from(file_name))
+    }
+
+    /// Stable namespace for the active account's Signal sequence allocator.
+    /// Process-local block caches and browser storage include it so an account
+    /// switch cannot consume a block persisted for a different account.
+    pub(crate) fn signal_sequence_store_namespace(&self) -> String {
+        self.effective_account_key()
+    }
+
     /// The single source of truth for the root index: ALWAYS read through from
     /// the backing store (it is small — a sync localStorage read on wasm, a tiny
     /// file on native — so this is cheap). There is no per-clone cache to go
