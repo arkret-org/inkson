@@ -268,7 +268,6 @@ fn kanban_card_strand_create_carries_position_in_metadata_fields() {
     let op = ak_ops::kanban_card_strand_create(
         "ak:realm:0196419b-0000-8000-8000-000000000001",
         "did:web:alice.example",
-        "ak:strand:0196419b-0000-8000-8000-000000000004",
         "ak:space:0196419b-0000-8000-8000-000000000002",
         "ak:space:0196419b-0000-8000-8000-000000000003",
         "Move-backed card",
@@ -366,7 +365,6 @@ fn discussion_strand_create_emits_discussion_track() {
     let op = ak_ops::discussion_strand_create(
         "ak:realm:0196419b-0000-8000-8000-000000000000",
         "did:web:alice.example",
-        "ak:strand:0196419b-0000-8000-8000-000000000001",
         "Ops",
     )
     .unwrap()
@@ -647,7 +645,6 @@ fn space_create_emits_canonical_space_object() {
     let op = ak_ops::space_create(
         "ak:realm:0196419b-0000-8000-8000-000000000001",
         "did:web:alice",
-        "ak:space:0196419b-0000-8000-8000-000000000002",
         "list",
         "To Do",
         Some("ak:space:0196419b-0000-8000-8000-000000000003"),
@@ -662,10 +659,8 @@ fn space_create_emits_canonical_space_object() {
         Some(arkret_sdk::SpaceId::from_event_id(&op.event_id).as_str())
     );
     assert_eq!(op.payload["object"]["schema"], "ak.schema.space.v1");
-    assert_eq!(
-        op.payload["object"]["id"],
-        "ak:space:0196419b-0000-8000-8000-000000000002"
-    );
+    // The create payload carries no object id (spec `common-fields.md` §6.0).
+    assert!(op.payload["object"].get("id").is_none());
     assert_eq!(
         op.payload["object"]["realm_id"],
         "ak:realm:0196419b-0000-8000-8000-000000000001"

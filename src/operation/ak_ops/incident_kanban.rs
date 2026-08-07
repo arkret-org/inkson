@@ -6,10 +6,13 @@ use super::{OperationBuilder, did_id, object_create_payload_value, realm_id_valu
 
 /// Build a `ak.strand.create` for a Kanban card Strand and include the
 /// initial Board/List position component used by board projections.
+///
+/// No Strand id is taken: `ak.strand.create` is `id_source: event_derived`, so
+/// the card is named `retype(create.event_id)` and [`OperationBuilder`] stamps
+/// that id as `unsigned.local_target_ref` once the envelope exists.
 pub fn kanban_card_strand_create(
     realm_id: &str,
     actor: &str,
-    strand_id: &str,
     board_space_id: &str,
     list_space_id: &str,
     title: &str,
@@ -30,11 +33,11 @@ pub fn kanban_card_strand_create(
         )
         .with_track("discussion", arkret_sdk::StrandTrackConfig::discussion());
     Ok(
-        OperationBuilder::new(&realm_id, actor, arkret_sdk::EventKind::StrandCreate)
-            .target_ref(strand_id)
-            .body(object_create_payload_value(
+        OperationBuilder::new(&realm_id, actor, arkret_sdk::EventKind::StrandCreate).body(
+            object_create_payload_value(
                 object,
                 "ak.strand.create kanban card payload serialize",
-            )?),
+            )?,
+        ),
     )
 }

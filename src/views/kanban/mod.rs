@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 use crate::components::{
     ActorIdentityLabel, EmptyState, EmptyStateKind, SecurityStateBadge, UiIcon, WriteStateIcon,
 };
-use crate::operation::uuid_v7;
+use crate::operation::EventExt;
 use crate::rank::rank_for_drop;
 use crate::routes::Route;
 use crate::state::LocalStateStore;
@@ -1237,11 +1237,9 @@ pub fn KanbanPanel(
                                             }
                                             let col_count = columns().len();
                                             let rank = format!("r{:03}", col_count + 1);
-                                            let list_space_id = format!("ak:space:{}", uuid_v7());
                                             let op = match crate::operation::ak_ops::space_create(
                                                 &realm,
                                                 &actor,
-                                                &list_space_id,
                                                 "list",
                                                 &title,
                                                 Some(&board_space_id),
@@ -1344,11 +1342,9 @@ pub fn KanbanPanel(
                                                     board_status.set("sign in before creating a Board".to_owned());
                                                     return;
                                                 }
-                                                let board_space_id = format!("ak:space:{}", uuid_v7());
                                                 let op = match crate::operation::ak_ops::space_create(
                                                     &realm,
                                                     &actor,
-                                                    &board_space_id,
                                                     "board",
                                                     &title,
                                                     None,
@@ -1375,6 +1371,18 @@ pub fn KanbanPanel(
                                                     board_status.set(reason);
                                                     return;
                                                 }
+                                                // The Board Space is named by its create Event, not by
+                                                // this handler: the builder stamped `retype(event_id)`
+                                                // as the local handle. Anything else would be an id the
+                                                // receiver never derives.
+                                                let Some(board_space_id) =
+                                                    op.local_target_ref().map(ToOwned::to_owned)
+                                                else {
+                                                    board_status.set(
+                                                        "cannot create board: ak.space.create carries no derived Space id".to_owned(),
+                                                    );
+                                                    return;
+                                                };
                                                 // Select the new board now;`ak.space.creatempty) columns
                                                 // derive from the appended `ak.space.create` op via the
                                                 // options-sync effect and the `columns` memo.
@@ -2170,7 +2178,6 @@ pub fn KanbanPanel(
                                                     board_status.set("select or create a Board Space before adding cards".to_owned());
                                                     return;
                                                 }
-                                                let strand_id = format!("ak:strand:{}", uuid_v7());
                                                 // Insert the new card at the end of the column.
                                                 // Look up the column's current tail rank and ask
                                                 // `rank_between` for a strictly-greater rank. If
@@ -2189,8 +2196,10 @@ pub fn KanbanPanel(
                                                 // The new card`ak.strand.createely: `submit_kanban_move`
                                                 // appends the `ak.strand.create` op (write_state queued),
                                                 // which the `columns` memo folds via `strand_views_from_ops`.
+                                                // No `strand_id` here: the card Strand is named by
+                                                // its own create Event, so `submit_kanban_move`
+                                                // fills the subject in once the envelope exists.
                                                 let value = json!({
-                                                    "strand_id": strand_id,
                                                     "board_space_id": board_space_id,
                                                     "list_space_id": col_id,
                                                     "title": title,
@@ -2202,7 +2211,7 @@ pub fn KanbanPanel(
                                                     token,
                                                     realm.clone(),
                                                     actor.clone(),
-                                                    strand_id.clone(),
+                                                    None,
                                                     "ak.strand.create",
                                                     value,
                                                     selected_scope_security_encrypted,

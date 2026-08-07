@@ -15,18 +15,15 @@ use super::{
 pub fn discussion_strand_create(
     realm_id: &str,
     actor: &str,
-    strand_id: &str,
     title: &str,
 ) -> anyhow::Result<OperationBuilder> {
     let typed_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
     let did = arkret_sdk::Did::new(actor.to_owned())
         .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
-    // `strand_id` is no longer the object id — that is derived from this
-    // create Event. It survives only as the client-local correlation handle in
-    // `unsigned.local_target_ref`, so validate its shape and drop the value.
-    arkret_sdk::StrandId::new(strand_id.to_owned())
-        .map_err(|e| anyhow::anyhow!("invalid strand_id: {e:?}"))?;
+    // No caller-supplied Strand id: the object is derived from this create
+    // Event, and `OperationBuilder` stamps that derived id as the client-local
+    // handle in `unsigned.local_target_ref`.
     let strand = arkret_sdk::StrandCreateObject::new(typed_realm_id, did)
         .with_metadata_title(title)
         .with_track(
@@ -36,11 +33,7 @@ pub fn discussion_strand_create(
     let payload = arkret_sdk::ObjectCreatePayload::new(strand)
         .to_value()
         .map_err(|e| anyhow::anyhow!("ak.strand.create payload serialize: {e}"))?;
-    Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::StrandCreate)
-            .target_ref(strand_id)
-            .body(payload),
-    )
+    Ok(OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::StrandCreate).body(payload))
 }
 
 /// Build a canonical `ak.circle.create` operation for a private

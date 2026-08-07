@@ -2777,6 +2777,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::operation::EventExt;
 
     fn test_authoring_generation() -> crate::identity::authoring_generation::AuthoringGeneration {
         crate::identity::authoring_generation::AuthoringGeneration {
@@ -3450,7 +3451,6 @@ mod tests {
         let event = crate::operation::ak_ops::kanban_card_strand_create(
             realm,
             AUTHORITY_CONTROLLER,
-            "ak:strand:01904100-0000-8000-8000-000000000031",
             "ak:space:01904100-0000-8000-8000-000000000032",
             "ak:space:01904100-0000-8000-8000-000000000033",
             "probe card",
@@ -3664,13 +3664,9 @@ mod tests {
                 .map_err(|error| format!("realm never sealed: {error:#}"))?;
 
             let mut accepted = Vec::new();
-            let board_space_id = format!("ak:space:{}", uuid_v7());
-            let list_space_id = format!("ak:space:{}", uuid_v7());
-            let strand_id = format!("ak:strand:{}", uuid_v7());
             let board = crate::operation::ak_ops::space_create(
                 &realm_id,
                 &actor,
-                &board_space_id,
                 "board",
                 "probe board",
                 None,
@@ -3678,10 +3674,14 @@ mod tests {
             )
             .and_then(|builder| builder.build_sdk_event("inkson"))
             .map_err(|error| format!("board event build failed: {error:#}"))?;
+            // Both container Spaces are named by their own create Events.
+            let board_space_id = board
+                .local_target_ref()
+                .ok_or_else(|| "board event carries no derived Space id".to_owned())?
+                .to_owned();
             let list = crate::operation::ak_ops::space_create(
                 &realm_id,
                 &actor,
-                &list_space_id,
                 "list",
                 "probe list",
                 None,
@@ -3689,10 +3689,13 @@ mod tests {
             )
             .and_then(|builder| builder.build_sdk_event("inkson"))
             .map_err(|error| format!("list event build failed: {error:#}"))?;
+            let list_space_id = list
+                .local_target_ref()
+                .ok_or_else(|| "list event carries no derived Space id".to_owned())?
+                .to_owned();
             let card = crate::operation::ak_ops::kanban_card_strand_create(
                 &realm_id,
                 &actor,
-                &strand_id,
                 &board_space_id,
                 &list_space_id,
                 "probe card",

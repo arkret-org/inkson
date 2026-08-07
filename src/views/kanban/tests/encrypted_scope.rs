@@ -59,7 +59,6 @@ fn unknown_scope_security_blocks_plaintext_private_content_fail_closed() {
     let board_create = crate::operation::ak_ops::space_create(
         TEST_REALM_ID,
         "did:web:alice.example",
-        "ak:space:00000000-0000-8000-8000-0000000000aa",
         "board",
         "Roadmap",
         None,
@@ -677,7 +676,6 @@ fn encrypted_scope_allows_content_only_metadata_create_payloads() {
     let strand = crate::operation::ak_ops::kanban_card_strand_create(
         TEST_REALM_ID,
         "did:web:alice.example",
-        DEMO_STRAND_LEGAL_REVIEW_ID,
         "ak:space:0196419b-0000-8000-8000-000000000001",
         "ak:space:0196419b-0000-8000-8000-000000000002",
         "private card title",
@@ -689,7 +687,6 @@ fn encrypted_scope_allows_content_only_metadata_create_payloads() {
     let space = crate::operation::ak_ops::space_create(
         TEST_REALM_ID,
         "did:web:alice.example",
-        "ak:space:0196419b-0000-8000-8000-000000000002",
         "list",
         "private list title",
         Some("ak:space:0196419b-0000-8000-8000-000000000001"),
@@ -715,7 +712,6 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
     let board = crate::operation::ak_ops::space_create(
         TEST_REALM_ID,
         "did:web:alice.example",
-        "ak:space:0196419b-0000-8000-8000-00000000aa01",
         "board",
         "ZZTEST board title",
         None,
@@ -733,7 +729,6 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
     let list = crate::operation::ak_ops::space_create(
         TEST_REALM_ID,
         "did:web:alice.example",
-        "ak:space:0196419b-0000-8000-8000-00000000aa02",
         "list",
         "Todos list title",
         Some("ak:space:0196419b-0000-8000-8000-00000000aa01"),

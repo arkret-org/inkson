@@ -852,9 +852,12 @@ fn derived_recovery_member_did(controller_or_actor: &str) -> String {
 /// folder / board / list); it lives inside a Realm (`realm_id`) and
 /// has no membership / policy / E2EE of its own — all security
 /// semantics inherit from the home Realm.
+///
+/// No Space id is taken: a create payload carries none, because the Space id is
+/// derived from this create Event (spec `zh/models/common-fields.md` section
+/// 6.0). The builder stamps the derived id as `unsigned.local_target_ref`.
 #[allow(clippy::too_many_arguments)]
 pub fn build_space_create_event(
-    space_id: &str,
     realm_id: &str,
     actor_id: &str,
     title: &str,
@@ -871,21 +874,10 @@ pub fn build_space_create_event(
     // effects copy.
     let space_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|e| anyhow::anyhow!("invalid realm_id for space.create: {e:?}"))?;
-    let space_object_id = arkret_sdk::SpaceId::new(space_id.to_owned())
-        .map_err(|e| anyhow::anyhow!("invalid space_id for space.create: {e:?}"))?;
     let space_created_by = arkret_sdk::Did::new(actor_id.to_owned())
         .map_err(|e| anyhow::anyhow!("invalid created_by DID for space.create: {e:?}"))?;
-    let mut space_object = arkret_sdk::Space::new(
-        space_object_id,
-        space_realm_id,
-        kind,
-        title,
-        space_created_by,
-    );
-    // A create payload carries no object id: the Space id is derived from this
-    // create Event (spec `zh/models/common-fields.md` section 6.0). The
-    // `space_id` argument survives only as a caller-local correlation handle.
-    space_object.id = None;
+    let mut space_object =
+        arkret_sdk::Space::create_object(space_realm_id, kind, title, space_created_by);
     space_object.state = Some(arkret_sdk::SpaceState::Active);
     if let Some(summary) = summary
         && !summary.trim().is_empty()
@@ -924,7 +916,6 @@ pub fn build_space_create_event(
         .to_value()
         .map_err(|e| anyhow::anyhow!("ak.space.create payload serialize: {e}"))?;
     OperationBuilder::new(realm_id, actor_id, arkret_sdk::EventKind::SpaceCreate)
-        .target_ref(space_id)
         .body(space_body)
         .requirements(event_requirements_with_schema("ak.schema.space.v1"))
         .created_at(created_at)

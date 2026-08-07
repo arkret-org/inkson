@@ -13,7 +13,7 @@ use crate::components::{
 };
 use crate::models::SubmitEventResult;
 use crate::operation::{
-    OperationBuilder, ak_ops, sdk_event_local_operation_id, trim_realm_id, uuid_v7,
+    EventExt, OperationBuilder, ak_ops, sdk_event_local_operation_id, trim_realm_id, uuid_v7,
 };
 use crate::payload::sdk_payload_value;
 use crate::routes::Route;
@@ -3135,12 +3135,10 @@ pub fn ChatPanel(
                                         let selected_scope_circle_id = selected_scope_circle
                                             .as_ref()
                                             .map(|scope| scope.circle_id.clone());
-                                        let strand_id = format!("ak:strand:{}", uuid_v7());
                                         let rank = format!("r{}", chrono::Utc::now().timestamp_millis());
                                         let op = match ak_ops::discussion_strand_create(
                                             &realm,
                                             &actor,
-                                            &strand_id,
                                             &title,
                                         ) {
                                             Ok(builder) => {
@@ -3190,6 +3188,17 @@ pub fn ChatPanel(
                                                 {
                                                     tracks.remove("synthesis");
                                                 }
+                                                // The edits above changed the content the id is a
+                                                // function of, and the Strand this create names is a
+                                                // function of that id in turn.
+                                                if let Err(error) =
+                                                    crate::operation::rederive_event_identity(&mut op)
+                                                {
+                                                    status_msg.set(format!(
+                                                        "Could not create Strand: {error}"
+                                                    ));
+                                                    return;
+                                                }
                                                 op
                                             }
                                             Err(error) => {
@@ -3198,6 +3207,15 @@ pub fn ChatPanel(
                                                 ));
                                                 return;
                                             }
+                                        };
+                                        // The Strand is named by its own create Event; the builder
+                                        // stamped `retype(event_id)` as the local handle.
+                                        let Some(strand_id) = op.local_target_ref().map(ToOwned::to_owned)
+                                        else {
+                                            status_msg.set(
+                                                "Could not create Strand: ak.strand.create carries no derived Strand id".to_owned(),
+                                            );
+                                            return;
                                         };
                                         let api_token = token();
                                         let wait_for = active_sync_token(sync_cursor());

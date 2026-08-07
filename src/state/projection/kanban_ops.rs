@@ -66,6 +66,7 @@ fn kanban_operation_from_typed(event: &arkret_sdk::Event) -> Option<RawOperation
             "created_at": arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
             "write_state": "synced",
             "body": event.payload,
+            "local_target_ref": arkret_sdk::schema::derived_object_id(&event),
         }),
     })
 }
@@ -92,6 +93,13 @@ pub(crate) fn raw_operation_from_event(
     let operation_id = json_path_string(Some(event), &["operation_id"])
         .or_else(|| json_path_string(Some(event), &["event_id"]))
         .unwrap_or_else(|| format!("remote-{expected_kind}"));
+    // An `id_source: event_derived` create carries no `object.id`; the object
+    // it names is `retype(event_id)`. Derived from the envelope's own
+    // `event_id` through the registry, never from the author's `unsigned` hint
+    // — the hint is not covered by the signature.
+    let local_target_ref = json_path_string(Some(event), &["event_id"])
+        .and_then(|event_id| arkret_sdk::EventId::new(event_id).ok())
+        .and_then(|event_id| arkret_sdk::schema::derived_object_id_for_kind(&kind, &event_id));
     // Canonical envelopes expose `actor_id` / `sender_actor_id` only;
     // forbidden `sender` fields are not accepted.
     let actor_id = json_path_string(Some(event), &["actor_id"])
@@ -118,6 +126,7 @@ pub(crate) fn raw_operation_from_event(
             "created_at": created_at,
             "write_state": "synced",
             "body": body,
+            "local_target_ref": local_target_ref,
         }),
     })
 }

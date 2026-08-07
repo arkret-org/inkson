@@ -123,7 +123,12 @@ fn strand_view_from_create_op(
         .and_then(|metadata| metadata.get("fields"))
         .or_else(|| object.get("fields"));
 
-    let strand_id = json_path_string(Some(object), &["id"])
+    // `local_target_ref` first: a create payload carries no `object.id` — the
+    // Strand is `retype(create.event_id)`, published on the record by the
+    // ingest funnel. The rest stay as fallbacks for records captured before the
+    // id became Event-derived.
+    let strand_id = json_path_string(Some(&record.payload), &["local_target_ref"])
+        .or_else(|| json_path_string(Some(object), &["id"]))
         .or_else(|| json_path_string(Some(body), &["strand_id"]))
         .or_else(|| json_path_string(Some(body), &["effect", "strand_id"]))?;
 
@@ -415,9 +420,12 @@ mod tests {
     const LIST_A: &str = "ak:space:019f1071-f553-8410-a2c9-53028e995ed3";
     const LIST_B: &str = "ak:space:019f1071-aaaa-8410-a2c9-53028e995ed3";
 
+    /// `ak.space.create` is `id_source: event_derived`: the payload carries no
+    /// `object.id`, and the Space is `retype(event_id)`. The fixture therefore
+    /// names the Space by retyping `id` into the envelope's `event_id`, exactly
+    /// as an authored create does.
     fn space_create_event(id: &str, kind: &str, title: &str, parent: Option<&str>) -> Value {
         let mut object = json!({
-            "id": id,
             "kind": kind,
             "title": title,
             "realm_id": REALM,
@@ -426,13 +434,23 @@ mod tests {
             object["parent_space_id"] = json!(parent);
         }
         json!({
-            "event_id": format!("ak:event:{id}"),
+            "event_id": event_id_naming(id, "ak:space:"),
             "kind": "ak.space.create",
             "realm_id": REALM,
             "actor_id": "did:web:creator.example",
             "created_at": "2026-06-28T00:00:00.000Z",
             "payload": { "object": object },
         })
+    }
+
+    /// The `event_id` a create must carry for the receiver to derive `object_id`.
+    fn event_id_naming(object_id: &str, kind_prefix: &str) -> String {
+        format!(
+            "ak:event:{}",
+            object_id
+                .strip_prefix(kind_prefix)
+                .expect("fixture object id carries its kind prefix")
+        )
     }
 
     /// Mirrors the real canonical `ak.strand.create` envelope: position lives in
@@ -447,14 +465,13 @@ mod tests {
         created_at: &str,
     ) -> Value {
         json!({
-            "event_id": format!("ak:event:{id}"),
+            "event_id": event_id_naming(id, "ak:strand:"),
             "kind": "ak.strand.create",
             "realm_id": REALM,
             "actor_id": actor,
             "created_at": created_at,
             "payload": {
                 "object": {
-                    "id": id,
                     "schema": "ak.schema.strand.v1",
                     "realm_id": REALM,
                     "created_by": actor,
@@ -566,15 +583,17 @@ mod tests {
 
     #[test]
     fn client_core_domain_projector_golden_matches_inkson_board_projection() {
+        // Each create names its object by `retype(event_id)`, and carries no
+        // `object.id` — the shape an authored create actually has.
+        let card = "ak:strand:01904100-0000-8000-8000-000000000301";
         let events = vec![
             sdk_event(
-                "ak:event:01904100-0000-8000-8000-000000000111",
+                &event_id_naming(BOARD, "ak:space:"),
                 "ak.space.create",
                 1,
                 "2026-07-08T00:00:00.000Z",
                 json!({
                     "object": {
-                        "id": BOARD,
                         "kind": "board",
                         "title": "Board1",
                         "realm_id": REALM
@@ -582,13 +601,12 @@ mod tests {
                 }),
             ),
             sdk_event(
-                "ak:event:01904100-0000-8000-8000-000000000112",
+                &event_id_naming(LIST_A, "ak:space:"),
                 "ak.space.create",
                 2,
                 "2026-07-08T00:00:01.000Z",
                 json!({
                     "object": {
-                        "id": LIST_A,
                         "kind": "list",
                         "title": "Todos",
                         "realm_id": REALM,
@@ -597,13 +615,12 @@ mod tests {
                 }),
             ),
             sdk_event(
-                "ak:event:01904100-0000-8000-8000-000000000113",
+                &event_id_naming(card, "ak:strand:"),
                 "ak.strand.create",
                 3,
                 "2026-07-08T00:00:02.000Z",
                 json!({
                     "object": {
-                        "id": "ak:strand:01904100-0000-8000-8000-000000000301",
                         "schema": "ak.schema.strand.v1",
                         "realm_id": REALM,
                         "created_by": "did:webvh:z6mkfixture:alice.example",

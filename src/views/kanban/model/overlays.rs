@@ -765,8 +765,12 @@ pub(crate) fn local_space_create_from_raw_operation(
 
     let body = payload.get("body").or_else(|| payload.get("payload"))?;
     let object = body.get("object").unwrap_or(body);
-    let id = json_path_string(Some(object), &["id"])
-        .or_else(|| json_path_string(Some(body), &["space_id"]))
+    // `local_target_ref` first: a create payload carries no `object.id` — the
+    // Space is `retype(create.event_id)`, published on the record by the ingest
+    // funnel. `object.id` stays as a fallback for records captured before the
+    // id became Event-derived.
+    let id = json_path_string(Some(payload), &["local_target_ref"])
+        .or_else(|| json_path_string(Some(object), &["id"]))
         .or_else(|| json_path_string(Some(body), &["space_id"]))?;
     let space_kind = json_path_string(Some(object), &["kind"])
         .or_else(|| json_path_string(Some(body), &["space_kind"]))?;

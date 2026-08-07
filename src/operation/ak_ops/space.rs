@@ -8,20 +8,24 @@ use super::{
 /// Build a `ak.space.create` operation for Board/List container Spaces.
 ///
 /// Board/List containers are Space objects and the security boundary is
-/// Realm. The optional
-/// `parent_space_id` + `rank` fields carry the board/list structural
-/// placement while the object id and event kind stay canonical.
+/// Realm. The optional `parent_space_id` + `rank` fields carry the board/list
+/// structural placement while the event kind stays canonical.
+///
+/// No Space id is taken or minted: `ak.space.create` is
+/// `id_source: event_derived`, so the id is `retype(create.event_id)` and the
+/// payload MUST omit it (spec `zh/models/common-fields.md` section 6.0).
+/// [`OperationBuilder`] stamps the derived id as `unsigned.local_target_ref`
+/// once the envelope exists — callers that need to name the new Space read it
+/// back from there.
 pub fn space_create(
     realm_id: &str,
     actor: &str,
-    container_space_id: &str,
     kind: &str,
     title: &str,
     parent_space_id: Option<&str>,
     rank: Option<&str>,
 ) -> anyhow::Result<OperationBuilder> {
-    let mut object = arkret_sdk::Space::new(
-        space_id_value(container_space_id)?,
+    let mut object = arkret_sdk::Space::create_object(
         realm_id_value(&trim_realm_id(realm_id))?,
         kind,
         title,
@@ -34,11 +38,7 @@ pub fn space_create(
         object.rank = Some(rank.to_owned());
     }
     let body = object_create_payload_value(object, "ak.space.create payload serialize")?;
-    Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::SpaceCreate)
-            .target_ref(container_space_id)
-            .body(body),
-    )
+    Ok(OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::SpaceCreate).body(body))
 }
 
 /// Build a `ak.space.restore` operation. Reverses `realm_archive`

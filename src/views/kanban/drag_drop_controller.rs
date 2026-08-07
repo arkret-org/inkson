@@ -39,6 +39,9 @@ pub(super) fn submit_kanban_operation_event(
             "created_at": created_at,
             "write_state": "queued",
             "body": operation.payload.clone(),
+            // A create payload carries no object id, so the record has to say
+            // which object this Event names or the projection cannot key it.
+            "local_target_ref": operation.local_target_ref(),
         }),
     );
     board_status.set(format!(
@@ -219,7 +222,10 @@ pub(super) fn submit_kanban_move(
     token: Signal<String>,
     realm_id: String,
     actor_id: String,
-    subject: String,
+    // `subject` is the Strand the move targets, or `None` for
+    // `ak.strand.create` — a new card is named by its own create Event, so its
+    // id only exists once the envelope has been built.
+    subject: Option<String>,
     kind: &'static str,
     value: serde_json::Value,
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
@@ -261,19 +267,17 @@ pub(super) fn submit_kanban_move(
         crate::operation::ak_ops::kanban_card_strand_create(
             &realm_id,
             &actor_id,
-            &subject,
             board_space_id,
             list_space_id,
             title,
             rank,
         )
     } else {
-        crate::operation::ak_ops::strand_position_update(
-            &realm_id,
-            &actor_id,
-            &subject,
-            value.clone(),
-        )
+        let Some(subject) = subject.as_deref() else {
+            board_status.set(format!("cannot submit {kind}: no target Strand"));
+            return;
+        };
+        crate::operation::ak_ops::strand_position_update(&realm_id, &actor_id, subject, value.clone())
     };
     let envelope = match envelope {
         Ok(builder) => builder.build_sdk_event("inkson"),
@@ -294,6 +298,25 @@ pub(super) fn submit_kanban_move(
         return;
     }
     let wire_kind = event.kind.as_str().to_owned();
+    // A create names its Strand by `retype(event_id)`; the builder stamped that
+    // id as the local handle. Every other kind was given its subject up front.
+    let subject = match subject {
+        Some(subject) => subject,
+        None => {
+            let Some(derived) = event.local_target_ref() else {
+                board_status
+                    .set(format!("cannot submit {kind}: no derived Strand id"));
+                return;
+            };
+            derived.to_owned()
+        }
+    };
+    let mut value = value;
+    if kind == "ak.strand.create"
+        && let Some(effect) = value.as_object_mut()
+    {
+        effect.insert("strand_id".to_owned(), Value::String(subject.clone()));
+    }
     let op_id = sdk_event_local_operation_id(&event).to_owned();
     let cell_id = value
         .get("board_space_id")
@@ -330,6 +353,9 @@ pub(super) fn submit_kanban_move(
             "effect": value,
             "wire_kind": wire_kind.clone(),
             "body": event.payload.clone(),
+            // A create payload carries no object id, so the record has to say
+            // which object this Event names or the projection cannot key it.
+            "local_target_ref": event.local_target_ref(),
             "write_state": "queued",
         }),
     );

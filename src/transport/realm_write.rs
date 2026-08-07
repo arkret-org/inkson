@@ -182,9 +182,7 @@ pub async fn create_space_under_realm(
             "realm_id is required for ak.space.create — Space must live inside a Realm"
         ));
     }
-    let space_id = arkret_sdk::SpaceId::new_v7_at(crate::clock::now_unix_ms()).into_string();
     let event = build_space_create_event(
-        &space_id,
         realm_id,
         actor_id,
         title,
@@ -193,6 +191,8 @@ pub async fn create_space_under_realm(
         parent_space_id,
         default_realm_id,
     )?;
+    // The Space is named by its create Event, not by this call site.
+    let space_id = arkret_sdk::SpaceId::from_event_id(&event.event_id).into_string();
     submitter.submit_sdk_event(&event).await?;
 
     Ok(SpaceCreateResult {

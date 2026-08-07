@@ -452,6 +452,25 @@ impl OperationBuilder {
     }
 }
 
+/// Re-derive an Event's content-bound identity after its payload was edited.
+///
+/// `event_id` is a function of the finished Event (spec
+/// `zh/conformance/encoding.md` section 4.0), and for an `event_derived` create
+/// the object id is a function of `event_id` in turn. A surface that edits the
+/// payload after [`OperationBuilder::build_sdk_event`] therefore invalidates
+/// both; this restores them in the one order that has a fixed point.
+pub(crate) fn rederive_event_identity(event: &mut Event) -> anyhow::Result<()> {
+    event.event_id = event
+        .derive_event_id()
+        .map_err(|err| anyhow::anyhow!("re-derive event_id after payload edit: {err}"))?;
+    if let Some(object_id) = arkret_sdk::schema::derived_object_id(event) {
+        event
+            .unsigned
+            .insert("local_target_ref".to_owned(), Value::String(object_id));
+    }
+    Ok(())
+}
+
 /// Free-function form of [`EventExt::local_operation_id`]: the local
 /// reconciliation/dedupe key for an SDK event — the optimistic write chain's
 /// `unsigned.local_operation_idempotency_alias` when present, else the event

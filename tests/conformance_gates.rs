@@ -456,7 +456,6 @@ fn build_realm_create_event_matches_event_schema() {
 #[test]
 fn build_space_create_event_matches_event_schema() {
     let mut envelope = event_builders::build_space_create_event(
-        TEST_SPACE_ID,
         TEST_REALM_ID,
         TEST_ACTOR_ID,
         "Launch checklist",

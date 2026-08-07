@@ -529,10 +529,9 @@ fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
 #[test]
 fn space_create_payload_matches_spec_schema() {
     // Spec requires payload.object.realm_id to match the
-    // `^ak:realm:UUID7` pattern; the product Space id remains a
-    // separate `ak:space:*` object id.
+    // `^ak:realm:UUID7` pattern; the Space's own id is absent from a create
+    // payload and derived from this Event.
     let event = build_space_create_event(
-        "ak:space:0196419b-0000-8000-8000-000000000010",
         "ak:realm:0196419b-0000-8000-8000-000000000001",
         "did:web:alice.example",
         "Roadmap",
