@@ -217,7 +217,7 @@ mod tests {
         );
         let mut projections = BTreeMap::new();
         projections.insert(
-            "ak:realm:0196419b-0000-8000-8000-000000000001".to_owned(),
+            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-".to_owned(),
             json!({
                 "encryption_profile": "mls_rfc9420",
                 "content_encryption_floor": "e2ee_required",
@@ -270,7 +270,7 @@ mod tests {
     fn visible_low_floor_realm_prompts_without_pcr_projection() {
         let mut projections = BTreeMap::new();
         projections.insert(
-            "ak:realm:0196419b-0000-8000-8000-000000000001".to_owned(),
+            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-".to_owned(),
             json!({
                 "summary": {
                     "encryption_profile": "none"
@@ -288,7 +288,7 @@ mod tests {
     fn mls_realm_with_missing_floor_fields_is_inconclusive_without_pcr_projection() {
         let mut projections = BTreeMap::new();
         projections.insert(
-            "ak:realm:0196419b-0000-8000-8000-000000000001".to_owned(),
+            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-".to_owned(),
             json!({
                 "summary": {
                     "encryption_profile": "mls_rfc9420"
@@ -308,7 +308,7 @@ mod tests {
     fn explicit_allow_plaintext_floor_prompts_without_pcr_projection() {
         let mut projections = BTreeMap::new();
         projections.insert(
-            "ak:realm:0196419b-0000-8000-8000-000000000001".to_owned(),
+            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-".to_owned(),
             json!({
                 "summary": {
                     "encryption_profile": "mls_rfc9420",
@@ -328,7 +328,7 @@ mod tests {
     fn recommended_collaboration_realm_suppresses_prompt_without_pcr_projection() {
         let mut projections = BTreeMap::new();
         projections.insert(
-            "ak:realm:0196419b-0000-8000-8000-000000000001".to_owned(),
+            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-".to_owned(),
             json!({
                 "summary": {
                     "encryption_profile": "mls_rfc9420",

@@ -9,7 +9,7 @@ fn local_projection_commands_wait_for_the_projector() {
     let path = temp_state_path("local-projection-command-queue");
     let mut store = LocalStateStore::with_path(path);
     let operation_id = "ak:op:0196419b-0000-7000-8000-000000000001";
-    let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000001";
+    let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
 
     store.enqueue_local_projection_command(
         operation_id,
@@ -33,7 +33,7 @@ fn local_projection_commands_wait_for_the_projector() {
 fn mls_encrypted_projection_detects_epoch_pause_scope() {
     let path = temp_state_path("mls-encrypted-projection");
     let mut store = LocalStateStore::with_path(path);
-    let realm = "ak:realm:0196419b-0000-8000-8000-0000000000ee";
+    let realm = "ak:realm:AZl7EK1HY5gtksGJR-c5LC0hIz-9eSozZxy9EqwP2wTw";
     store.save_realm_tree_projection(
         realm.to_owned(),
         json!({
@@ -46,7 +46,7 @@ fn mls_encrypted_projection_detects_epoch_pause_scope() {
     );
     assert!(store.realm_projection_is_mls_encrypted(realm));
 
-    let plain = "ak:realm:0196419b-0000-8000-8000-0000000000ef";
+    let plain = "ak:realm:ARHSf2mxKS6wI8GpuAtLKy-RJVOSL_M_UEJprJwbHfO2";
     store.save_realm_tree_projection(
         plain.to_owned(),
         json!({
@@ -64,7 +64,7 @@ fn mls_encrypted_projection_detects_epoch_pause_scope() {
 fn mls_encrypted_projection_reads_canonical_realm_create_state_event() {
     let path = temp_state_path("mls-encrypted-state-event-projection");
     let mut store = LocalStateStore::with_path(path);
-    let realm = "ak:realm:0196419b-0000-8000-8000-0000000000f0";
+    let realm = "ak:realm:AbL5fawW_ixBPm33UQ3u2DB4FgKEE52qRcPacwGPz9Hh";
     store.save_realm_tree_projection(
         realm,
         json!({
@@ -90,14 +90,14 @@ fn minimal_metadata_projection_detected_from_profiles_arrays() {
     let path = temp_state_path("minimal-metadata-projection");
     let mut store = LocalStateStore::with_path(path);
 
-    let top = "ak:realm:0196419b-0000-8000-8000-0000000000a1";
+    let top = "ak:realm:Af7kHhjQt9bXM9MVmV6uu7VNZY1P_sjoIUGS2rxLV8Qt";
     store.save_realm_tree_projection(
         top.to_owned(),
         json!({ "profiles": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1] }),
     );
     assert!(store.realm_projection_is_minimal_metadata(top));
 
-    let nested = "ak:realm:0196419b-0000-8000-8000-0000000000a2";
+    let nested = "ak:realm:Ad0zM3xkilGkLE8K9IPZrZvbQzit2do46Wb6ECOCaX6k";
     store.save_realm_tree_projection(
         nested.to_owned(),
         json!({
@@ -111,7 +111,7 @@ fn minimal_metadata_projection_detected_from_profiles_arrays() {
     );
     assert!(store.realm_projection_is_minimal_metadata(nested));
 
-    let plain = "ak:realm:0196419b-0000-8000-8000-0000000000a3";
+    let plain = "ak:realm:AUsIM7jMWF-QEkZ3Fd8dVqgxiIcM5iASgTtudL5PCcGL";
     store.save_realm_tree_projection(
         plain.to_owned(),
         json!({ "profiles": ["ak.profile.core.v1"] }),
@@ -119,10 +119,9 @@ fn minimal_metadata_projection_detected_from_profiles_arrays() {
     assert!(!store.realm_projection_is_minimal_metadata(plain));
 
     // Unknown Realm (no projection) ⇒ treated as non-minimal.
-    assert!(
-        !store
-            .realm_projection_is_minimal_metadata("ak:realm:0196419b-0000-8000-8000-0000000000a9")
-    );
+    assert!(!store.realm_projection_is_minimal_metadata(
+        "ak:realm:AcN-V6vbQWbYV_LFa1cc3Vo7blS7mIpHd7DQDo9mePUM"
+    ));
 }
 
 #[test]
@@ -130,7 +129,7 @@ fn member_handle_cache_is_realm_and_digest_scoped() {
     let path = temp_state_path("member-handle-cache");
     let mut store = LocalStateStore::with_path(path);
     let subject = "did:webvh:zQmMember";
-    let realm = "ak:realm:0196419b-0000-8000-8000-000000000001";
+    let realm = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     store.save_member_handle_lookup(
         subject,
         Some(realm.to_owned()),
@@ -162,7 +161,7 @@ fn member_handle_cache_is_realm_and_digest_scoped() {
         store
             .cached_member_handle_lookup(
                 subject,
-                Some("ak:realm:0196419b-0000-8000-8000-000000000002"),
+                Some("ak:realm:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL"),
                 Some("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             )
             .is_none()
@@ -176,7 +175,7 @@ fn member_handle_cache_records_fresh_negative_lookup() {
     let subject = "did:webvh:zQmNoVisibleHandle";
     store.save_member_handle_lookup(
         subject,
-        Some("ak:realm:0196419b-0000-8000-8000-000000000001".to_owned()),
+        Some("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-".to_owned()),
         None,
         None,
         0,
@@ -187,7 +186,7 @@ fn member_handle_cache_records_fresh_negative_lookup() {
     let entry = store
         .cached_member_handle_lookup(
             subject,
-            Some("ak:realm:0196419b-0000-8000-8000-000000000001"),
+            Some("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"),
             None,
         )
         .expect("fresh negative entry");
@@ -198,8 +197,8 @@ fn member_handle_cache_records_fresh_negative_lookup() {
 fn apply_snapshot_chunks_imports_projection_status_and_encrypted_payload() {
     let path = temp_state_path("snapshot-apply");
     let mut store = LocalStateStore::with_path(path.clone());
-    let message_id = "ak:message:01904100-0000-8000-8000-0000000000a1";
-    let realm_id = "ak:realm:01904100-0000-8000-8000-0000000000aa";
+    let message_id = "ak:message:AYqEzQ3jW02EHkMjxFQTlyeowxPQXJE4fI6JGOnzi23t";
+    let realm_id = "ak:realm:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml";
     let encrypted_message = json!({
         "schema": "ak.schema.encrypted_envelope.v1",
         "scheme": "mls_rfc9420",
@@ -266,9 +265,9 @@ fn apply_snapshot_chunks_imports_projection_status_and_encrypted_payload() {
 fn retain_realm_tree_projections_prunes_per_realm_caches() {
     let path = temp_state_path("retain-prunes");
     let mut store = LocalStateStore::with_path(path);
-    const KEEP: &str = "ak:realm:01964137-0000-8000-8000-000000000010";
-    const DROP_A: &str = "ak:realm:01964137-0000-8000-8000-000000000011";
-    const DROP_B: &str = "ak:realm:01964137-0000-8000-8000-000000000012";
+    const KEEP: &str = "ak:realm:AV56KkeEaMSR4caEiVYFp1MtJk3sQ_Zn0VETrzEWQlU3";
+    const DROP_A: &str = "ak:realm:AYzH43fmsgS6dn7noiHeYxAKUUdkhaJBnOGaWvu3MlBC";
+    const DROP_B: &str = "ak:realm:AQTZ4G3sx16Z36gJq1yhgC_kqqoCagJgkyhUHGh3A_EM";
     // Seed three realms with overlapping per-realm caches.
     for id in [KEEP, DROP_A, DROP_B] {
         store.save_realm_tree_projection(id, serde_json::json!({"name": id}));
@@ -282,7 +281,7 @@ fn retain_realm_tree_projections_prunes_per_realm_caches() {
             "ak:device:01964137-0000-7000-8000-000000000001",
             DROP_A,
             None,
-            "ak:event:01964137-0000-8000-8000-000000000021",
+            "ak:event:AUJCoQiXEV11T2wYGgq5vjXcfFcLnKQHPCp3GyzHYTDe",
         )
         .unwrap();
     store.seed_read_cursor_projection(drop_marker).unwrap();
@@ -292,7 +291,7 @@ fn retain_realm_tree_projections_prunes_per_realm_caches() {
             "ak:device:01964137-0000-7000-8000-000000000001",
             KEEP,
             None,
-            "ak:event:01964137-0000-8000-8000-000000000022",
+            "ak:event:AXSojayi5PgA26VxFw98EsOKL49Nzr4Vvr9LPxdqgzZP",
         )
         .unwrap();
     store.seed_read_cursor_projection(keep_marker).unwrap();

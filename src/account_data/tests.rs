@@ -152,7 +152,7 @@ fn set_tracks_server_revision() {
 
 #[test]
 fn realm_remark_key_round_trip() {
-    let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000000";
+    let realm_id = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
     let key = realm_remark_account_data_key(realm_id);
     assert_eq!(key, format!("ak.contacts.realm.{realm_id}"));
     assert_eq!(realm_id_from_realm_remark_key(&key), Some(realm_id));
@@ -179,7 +179,7 @@ fn realm_remark_serialises_minimal_payload() {
     // Empty fields MUST NOT appear on the wire — keeps the payload
     // tombstone-friendly and avoids leaking placeholder data.
     let remark = test_realm_remark(
-        "ak:realm:0196419b-0000-8000-8000-000000000000",
+        "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
         "Acme · Eng",
     );
     let wire = serde_json::to_value(&remark).unwrap();
@@ -187,7 +187,7 @@ fn realm_remark_serialises_minimal_payload() {
         wire["subject"],
         serde_json::json!({
             "kind": "realm",
-            "id": "ak:realm:0196419b-0000-8000-8000-000000000000"
+            "id": "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j"
         })
     );
     assert_eq!(wire["local_name"], "Acme · Eng");
@@ -200,7 +200,7 @@ fn realm_remark_serialises_minimal_payload() {
 
 #[test]
 fn realm_remark_display_name_prefers_local_name() {
-    let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000001";
+    let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     let r = test_realm_remark(realm_id, "Acme · Eng");
     assert_eq!(r.display_name("Engineering"), "Acme · Eng");
     let empty = test_realm_remark(realm_id, "   ");
@@ -209,7 +209,7 @@ fn realm_remark_display_name_prefers_local_name() {
 
 #[test]
 fn realm_remark_is_empty_treats_whitespace_as_tombstone() {
-    let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000002";
+    let realm_id = "ak:realm:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
     let r = test_realm_remark(realm_id, "   ");
     assert!(r.is_empty());
     let r2 = test_realm_remark(realm_id, "x");
@@ -218,7 +218,7 @@ fn realm_remark_is_empty_treats_whitespace_as_tombstone() {
 
 #[test]
 fn realm_remark_pinned_builder_preserves_private_fields() {
-    let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000000";
+    let realm_id = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
     let existing = RealmRemark {
         version: 1,
         subject: RealmRemarkSubject {
@@ -262,7 +262,7 @@ fn realm_remark_pinned_builder_preserves_private_fields() {
 
 #[test]
 fn realm_remark_unpin_builder_can_tombstone_empty_remark() {
-    let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000000";
+    let realm_id = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
     let existing = RealmRemark::with_pinned_preserving_fields(
         test_realm_id(realm_id),
         None,
@@ -593,7 +593,7 @@ fn merge_client_ui_theme_prefers_remote_when_different() {
 #[test]
 fn build_account_data_set_emits_canonical_kind() {
     let op = build_account_data_set(
-        "ak:realm:0196419b-0000-8000-8000-000000000001",
+        "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice",
         &AccountDataKey::ClientReadReceipts,
         json!({"send": false}),
@@ -610,7 +610,7 @@ fn build_account_data_set_emits_canonical_kind() {
 #[test]
 fn productivity_account_data_keys_use_sdk_private_derivation() {
     let ns = b"inkson-account-data-test-key";
-    let target_ref = "ak:strand:01904100-0000-8000-8000-000000000001";
+    let target_ref = "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let snooze = snooze_account_data_key(ns, target_ref).unwrap();
     let saved = saved_account_data_key(ns, "Focus", target_ref).unwrap();
     let draft = draft_account_data_key(
@@ -620,9 +620,11 @@ fn productivity_account_data_keys_use_sdk_private_derivation() {
         DRAFT_MESSAGE_SLOT,
     )
     .unwrap();
-    let manifest =
-        search_index_manifest_account_data_key(ns, "ak:realm:01904100-0000-8000-8000-000000000001")
-            .unwrap();
+    let manifest = search_index_manifest_account_data_key(
+        ns,
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+    )
+    .unwrap();
     let transfer = file_transfer_account_data_key(ns, "0123456789abcdefghijkl").unwrap();
 
     for key in [&snooze, &saved, &draft, &manifest, &transfer] {
@@ -633,16 +635,17 @@ fn productivity_account_data_keys_use_sdk_private_derivation() {
 }
 
 #[test]
-fn scheduled_send_key_requires_message_typed_id() {
+fn scheduled_send_key_requires_independent_scheduled_send_id() {
     assert!(
-        scheduled_send_account_data_key("ak:message:01904100-0000-8000-8000-000000000001").is_ok()
+        scheduled_send_account_data_key("ak:scheduled_send:01904100-0000-7000-8000-000000000003")
+            .is_ok()
     );
-    assert!(scheduled_send_account_data_key("not-a-message-id").is_err());
+    assert!(scheduled_send_account_data_key("not-a-scheduled-send-id").is_err());
 }
 
 #[test]
 fn contact_and_realm_remarks_are_encrypted_account_data() {
-    let realm_id = "ak:realm:01904100-0000-8000-8000-000000000001";
+    let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let realm_key = realm_remark_account_data_key(realm_id);
     let actor_key = contact_remark_account_data_key("did:web:alice.example");
 
@@ -671,9 +674,10 @@ fn contact_and_realm_remarks_are_encrypted_account_data() {
 
 #[test]
 fn private_view_and_notification_inbox_are_encrypted_account_data() {
-    let realm_id = "ak:realm:01904100-0000-8000-8000-000000000001";
-    let view_key = private_view_account_data_key("ak:view:01904100-0000-8000-8000-848727f328fe")
-        .expect("valid view id");
+    let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let view_key =
+        private_view_account_data_key("ak:view:AaiFHUI8GObKlPqeNvnl4E37L9moM-J0DjA4_UN9FvhR")
+            .expect("valid view id");
     let inbox_key =
         notification_inbox_account_data_key("ak:notification:01904100-0000-7000-8000-848727f328ff")
             .expect("valid notification id");
@@ -705,16 +709,17 @@ fn private_view_and_notification_inbox_are_encrypted_account_data() {
     }
 
     assert!(
-        private_view_account_data_key("ak:realm:01904100-0000-8000-8000-848727f328fe").is_err()
+        private_view_account_data_key("ak:realm:AaiFHUI8GObKlPqeNvnl4E37L9moM-J0DjA4_UN9FvhR")
+            .is_err()
     );
     assert!(notification_inbox_account_data_key("not-a-notification-id").is_err());
 }
 
 #[test]
 fn private_account_data_builders_emit_encrypted_payload() {
-    let key = "ak.scheduled_send.v1:ak:message:01904100-0000-8000-8000-000000000001";
+    let key = "ak.scheduled_send.v1:ak:scheduled_send:01904100-0000-7000-8000-000000000003";
     let op = build_private_account_data_set(
-        "ak:realm:0196419b-0000-8000-8000-000000000001",
+        "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice",
         key,
         json!({"ciphertext": "opaque"}),
@@ -728,7 +733,7 @@ fn private_account_data_builders_emit_encrypted_payload() {
     assert_eq!(op.payload["encrypted_payload"]["ciphertext"], "opaque");
 
     let tombstone = build_private_account_data_tombstone(
-        "ak:realm:0196419b-0000-8000-8000-000000000001",
+        "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice",
         key,
         1,
@@ -743,12 +748,12 @@ fn private_account_data_builder_emits_required_revision() {
     let key = draft_account_data_key(
         b"inkson-account-data-test-key",
         arkret_sdk::DraftKind::Message,
-        "ak:realm:01904100-0000-8000-8000-000000000001",
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         DRAFT_MESSAGE_SLOT,
     )
     .unwrap();
     let op = build_private_account_data_set(
-        "ak:realm:0196419b-0000-8000-8000-000000000001",
+        "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice",
         &key,
         json!({"ciphertext": "opaque"}),
@@ -765,10 +770,10 @@ fn private_account_data_builder_emits_required_revision() {
 #[test]
 fn generic_builder_does_not_put_private_values_under_body() {
     let key = AccountDataKey::Custom(
-        "ak.scheduled_send.v1:ak:message:01904100-0000-8000-8000-000000000001".to_owned(),
+        "ak.scheduled_send.v1:ak:scheduled_send:01904100-0000-7000-8000-000000000003".to_owned(),
     );
     let op = build_account_data_set(
-        "ak:realm:0196419b-0000-8000-8000-000000000001",
+        "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice",
         &key,
         json!({"ciphertext": "opaque"}),
@@ -782,7 +787,7 @@ fn generic_builder_does_not_put_private_values_under_body() {
 #[test]
 fn build_account_data_tombstone_emits_canonical_payload() {
     let op = build_account_data_tombstone(
-        "ak:realm:0196419b-0000-8000-8000-000000000001",
+        "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice",
         &AccountDataKey::ClientReadReceipts,
         3,
@@ -799,7 +804,7 @@ fn build_account_data_tombstone_emits_canonical_payload() {
 #[test]
 fn draft_sync_value_requires_origin_device_id_and_current_slot_shape() {
     let missing_origin = json!({
-        "target_ref": "ak:realm:01904100-0000-8000-8000-000000000001",
+        "target_ref": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "kind": "message",
         "draft_slot": "compose",
         "content": {"body": "draft"},
@@ -809,7 +814,7 @@ fn draft_sync_value_requires_origin_device_id_and_current_slot_shape() {
     assert!(draft_sync_value_from_account_data(&missing_origin).is_err());
 
     let bad_slot = build_message_draft_sync_value(
-        "ak:realm:01904100-0000-8000-8000-000000000001",
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         json!({"body": "draft"}),
         "01970e589d21-0000-a13f9c2e",
         "ak:device:01904100-0000-7000-8000-000000000001",
@@ -831,7 +836,7 @@ fn draft_sync_value_requires_origin_device_id_and_current_slot_shape() {
 #[test]
 fn draft_merge_uses_hlc_then_origin_device_tiebreaker() {
     let local = build_message_draft_sync_value(
-        "ak:realm:01904100-0000-8000-8000-000000000001",
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         json!({"body": "local"}),
         "01970e589d21-0000-a13f9c2e",
         "ak:device:01904100-0000-7000-8000-000000000001",
@@ -839,7 +844,7 @@ fn draft_merge_uses_hlc_then_origin_device_tiebreaker() {
     )
     .unwrap();
     let newer_remote = build_message_draft_sync_value(
-        "ak:realm:01904100-0000-8000-8000-000000000001",
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         json!({"body": "remote"}),
         "01970e589d22-0000-a13f9c2e",
         "ak:device:01904100-0000-7000-8000-000000000002",
@@ -852,7 +857,7 @@ fn draft_merge_uses_hlc_then_origin_device_tiebreaker() {
     assert_eq!(merged.conflict_copy.unwrap().content["body"], "local");
 
     let same_hlc_higher_device = build_message_draft_sync_value(
-        "ak:realm:01904100-0000-8000-8000-000000000001",
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         json!({"body": "device wins"}),
         "01970e589d21-0000-a13f9c2e",
         "ak:device:01904100-0000-7000-8000-000000000002",
@@ -867,7 +872,7 @@ fn draft_merge_uses_hlc_then_origin_device_tiebreaker() {
 #[test]
 fn draft_merge_fails_closed_for_same_hlc_and_device_with_different_content() {
     let local = build_message_draft_sync_value(
-        "ak:realm:01904100-0000-8000-8000-000000000001",
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         json!({"body": "a"}),
         "01970e589d21-0000-a13f9c2e",
         "ak:device:01904100-0000-7000-8000-000000000001",
@@ -875,7 +880,7 @@ fn draft_merge_fails_closed_for_same_hlc_and_device_with_different_content() {
     )
     .unwrap();
     let remote = build_message_draft_sync_value(
-        "ak:realm:01904100-0000-8000-8000-000000000001",
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         json!({"body": "b"}),
         "01970e589d21-0000-a13f9c2e",
         "ak:device:01904100-0000-7000-8000-000000000001",

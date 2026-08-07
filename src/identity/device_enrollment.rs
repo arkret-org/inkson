@@ -184,17 +184,17 @@ mod tests {
 
     fn signed_device_authorize(device_id: &str) -> serde_json::Value {
         json!({
-            "event_id": "ak:event:01964137-0000-8000-8000-000000000000",
+            "event_id": "ak:event:AbXK2aG2XS8Rx4qSoMG86HcFoZFxVGzkCdy-43-p20aY",
             "kind": "ak.device.authorize",
-            "realm_id": "ak:realm:01964137-0000-8000-8000-000000000001",
-            "scope_ref": {"kind": "realm", "realm_id": "ak:realm:01964137-0000-8000-8000-000000000001"},
+            "realm_id": "ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5",
+            "scope_ref": {"kind": "realm", "realm_id": "ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5"},
             "actor_id": "did:webvh:example:users:alice",
             "executed_by": "did:webvh:example:auth-server",
             "authorization_ref": "did:webvh:example:users:alice#device-enrollment",
             "actor_seq": 1,
             "created_at": "2026-06-17T00:00:00.000Z",
             "hlc": "019641370000-0000-12345678",
-            "prev_refs": ["ak:event:01964137-0000-8000-8000-000000000099"],
+            "prev_refs": ["ak:event:ASlHbbnJj2aIvNxwyukjGz90ltQwXHCbjIihxsRDrRR5"],
             "payload": {
                 "principal_id": "did:webvh:example:users:alice",
                 "device_id": device_id,
@@ -226,7 +226,7 @@ mod tests {
         let parsed = parse_signed_device_authorize(
             &event,
             device_id,
-            "ak:event:01964137-0000-8000-8000-000000000099",
+            "ak:event:ASlHbbnJj2aIvNxwyukjGz90ltQwXHCbjIihxsRDrRR5",
         )
         .expect("parse");
         assert_eq!(parsed.kind.as_str(), "ak.device.authorize");
@@ -237,17 +237,17 @@ mod tests {
     fn accepts_e2e_service_attested_device_authorize() {
         let device_id = "ak:device:01964137-0000-7000-8000-0000000000f1";
         let event = json!({
-            "event_id": "ak:event:01964137-0000-8000-8000-00000000d0e1",
+            "event_id": "ak:event:AUEB_ptfZUY6YeC12kXscy3wKXPZW3nKY6gxd4MDL1dQ",
             "kind": "ak.device.authorize",
-            "realm_id": "ak:realm:01964137-0000-8000-8000-00000000c0de",
-            "scope_ref": {"kind": "realm", "realm_id": "ak:realm:01964137-0000-8000-8000-00000000c0de"},
+            "realm_id": "ak:realm:AfemzjcBM8EHTIcl-OklLPTtpG9FdBAR0esckgToqzon",
+            "scope_ref": {"kind": "realm", "realm_id": "ak:realm:AfemzjcBM8EHTIcl-OklLPTtpG9FdBAR0esckgToqzon"},
             "actor_id": "did:web:first.example",
             "executed_by": "did:web:auth.local.host",
             "authorization_ref": "did:web:first.example#device-enrollment",
             "actor_seq": 1,
             "created_at": "2026-06-22T00:00:00.000Z",
             "hlc": "019641370000-0000-12345678",
-            "prev_refs": ["ak:event:01964137-0000-8000-8000-00000000beef"],
+            "prev_refs": ["ak:event:AbSbnwPP3OqyTeuawZO5QxvgT67G6Y9KwWt98Zmx4pTG"],
             "refs": [],
             "payload": {
                 "principal_id": "did:web:first.example",
@@ -274,7 +274,7 @@ mod tests {
         let parsed = parse_signed_device_authorize(
             &event,
             device_id,
-            "ak:event:01964137-0000-8000-8000-00000000beef",
+            "ak:event:AbSbnwPP3OqyTeuawZO5QxvgT67G6Y9KwWt98Zmx4pTG",
         )
         .expect("parse");
         assert_eq!(parsed.kind.as_str(), "ak.device.authorize");
@@ -287,7 +287,7 @@ mod tests {
         let err = parse_signed_device_authorize(
             &event,
             "ak:device:01964137-0000-7000-8000-0000000000ff",
-            "ak:event:01964137-0000-8000-8000-000000000099",
+            "ak:event:ASlHbbnJj2aIvNxwyukjGz90ltQwXHCbjIihxsRDrRR5",
         )
         .expect_err("mismatch must fail closed");
         assert!(
@@ -304,7 +304,7 @@ mod tests {
         let err = parse_signed_device_authorize(
             &event,
             device_id,
-            "ak:event:01964137-0000-8000-8000-000000000099",
+            "ak:event:ASlHbbnJj2aIvNxwyukjGz90ltQwXHCbjIihxsRDrRR5",
         )
         .expect_err("unsigned must fail closed");
         assert!(err.to_string().contains("unsigned"));
@@ -318,7 +318,7 @@ mod tests {
         let err = parse_signed_device_authorize(
             &event,
             device_id,
-            "ak:event:01964137-0000-8000-8000-000000000099",
+            "ak:event:ASlHbbnJj2aIvNxwyukjGz90ltQwXHCbjIihxsRDrRR5",
         )
         .expect_err("wrong kind must fail closed");
         assert!(err.to_string().contains("unexpected event kind"));
@@ -332,7 +332,7 @@ mod tests {
         let err = parse_signed_device_authorize(
             &event,
             device_id,
-            "ak:event:01964137-0000-8000-8000-000000000099",
+            "ak:event:ASlHbbnJj2aIvNxwyukjGz90ltQwXHCbjIihxsRDrRR5",
         )
         .expect_err("post-bootstrap sequence must fail closed");
         assert!(err.to_string().contains("expected 1"));
@@ -345,7 +345,7 @@ mod tests {
         let err = parse_signed_device_authorize(
             &event,
             device_id,
-            "ak:event:01964137-0000-8000-8000-0000000000ff",
+            "ak:event:AdVFm9Eyns52cFWR93OmGlKaDKaSotPq--9cYx2SqAuy",
         )
         .expect_err("wrong bootstrap predecessor must fail closed");
         assert!(err.to_string().contains("expected sole bootstrap create"));

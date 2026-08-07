@@ -247,18 +247,18 @@ mod tests {
         serde_json::from_value(json!({
             "id": "ak:grant:0196419b-0000-7000-8000-000000000000",
             "schema": "ak.schema.capability.v1",
-            "realm_id": "ak:realm:0196419b-0000-8000-8000-000000000001",
+            "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
             "issuer": "did:web:alice.example",
             "subject": subject,
             "actions": ["ak.message.create"],
             "resources": [
-                {"kind": "realm", "realm_id": "ak:realm:0196419b-0000-8000-8000-000000000001"}
+                {"kind": "realm", "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"}
             ],
             "issued_at": "2026-01-01T00:00:00.000Z",
             "expires_at": "2026-12-31T00:00:00.000Z",
             "issuer_authority_refs": [{
                 "kind": "realm_root",
-                "realm_id": "ak:realm:0196419b-0000-8000-8000-000000000001",
+                "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
                 "cell_ref": "ak:cell:ak.component.realm.authority_root.v1:null",
                 "controller_epoch_at_issuance": 0,
                 "authority_generation": 0

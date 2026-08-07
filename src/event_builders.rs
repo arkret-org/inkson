@@ -405,7 +405,7 @@ fn build_realm_genesis_object(
 
     let mut object = arkret_sdk::Realm::new(
         // Placeholder: cleared below, since a create payload carries no id.
-        arkret_sdk::RealmId::new("ak:realm:00000000-0000-8000-8000-000000000000")
+        arkret_sdk::RealmId::new("ak:realm:ASyOHakrqmsRPkLKvhTD20V-YWCl-X7zYrlca5tdQLaR")
             .expect("placeholder realm id is canonical"),
         title,
         created_by,
@@ -487,7 +487,7 @@ fn build_realm_create_event_from_object(
     // The builder emits the closed `realm_genesis` scope for this kind, so the
     // realm id passed here is a placeholder the envelope never carries.
     OperationBuilder::new(
-        arkret_sdk::RealmId::new("ak:realm:00000000-0000-8000-8000-000000000000")
+        arkret_sdk::RealmId::new("ak:realm:ASyOHakrqmsRPkLKvhTD20V-YWCl-X7zYrlca5tdQLaR")
             .expect("placeholder realm id is canonical")
             .into_string(),
         actor_id,
@@ -1839,7 +1839,8 @@ mod notary_derivation_tests {
             "did:web:alice.example",
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
-            arkret_sdk::EventId::new("ak:event:01964137-0000-8000-8000-000000000098").unwrap(),
+            arkret_sdk::EventId::new("ak:event:AStKv4uwui9iKv7StOHRotQgjBDBvjla-y05nQAwQaJf")
+                .unwrap(),
         )
         .unwrap();
 
@@ -2029,7 +2030,7 @@ mod notary_derivation_tests {
 
     #[test]
     fn realm_authority_and_relinquish_builders_preserve_distinct_authorization_modes() {
-        let realm = "ak:realm:01964137-0000-8000-8000-000000000077";
+        let realm = "ak:realm:ASxFeEp6tO9V7cjI3A4hL2nyI_lMtmbnR6TzaYTi-EgH";
         let transfer: arkret_sdk::RealmOwnerTransferPayload = serde_json::from_value(json!({
             "realm_id": realm,
             "expected_state_digest": format!("sha256:{}", "1".repeat(64)),

@@ -368,9 +368,9 @@ pub fn register_web_protocol_handler(landing: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    const R: &str = "01904100-0000-8000-8000-0000000000aa";
-    const F: &str = "01904100-0000-8000-8000-0000000000bb";
-    const M: &str = "01904100-0000-8000-8000-0000000000dd";
+    const R: &str = "AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml";
+    const F: &str = "AQ5uuUVXlrGqR79MEUmEPOIMYQIdRhgBIsTAtH3mgNpC";
+    const M: &str = "Ae7X76GvvRfNzRJ816sY6MNBQbaRxwkzKMLbQPQsG5sq";
     const VIA: &str = "did:web:relay.example";
     const LANDING: &str = "https://share.arkret.example";
 

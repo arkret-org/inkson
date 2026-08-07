@@ -25,7 +25,7 @@ fn mls_snapshot_persists_and_round_trips_through_store() {
     // record.
     use crate::mls::persistence::encrypt_state;
     let path = temp_state_path("mls-snapshot-persist");
-    let realm = "ak:realm:01904100-0000-8000-8000-000000000029";
+    let realm = "ak:realm:AR9U75vD82XqGon9r2GYv6cwT3_W8U4BtjeOCoODErj_";
     let envelope = encrypt_state(
         realm,
         "deadbeef",
@@ -67,7 +67,7 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
     let path = temp_state_path("logout-preserves-mls");
     let realm = "ak:realm:logout-preserves";
     let actor = "did:web:alice.example";
-    let strand = "ak:strand:0196419b-0000-8000-8000-000000000002";
+    let strand = "ak:strand:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
     let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let secure = MemorySecureKeyStore::new();
     let grant = PersistedSessionGrant {

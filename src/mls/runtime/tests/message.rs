@@ -29,7 +29,7 @@ fn seed_history_share_policy_projection(state: &mut crate::state::LocalStateStor
         realm,
         json!({
             "state": {"events": [{
-                "event_id": "ak:event:01904100-0000-8000-8000-0000000000e7",
+                "event_id": "ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc",
                 "kind": "ak.realm.history_sharing_policy",
                 "payload": {
                     "allowed_key_sources": ["verified_member_device"],
@@ -78,7 +78,7 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
     super::seed_genesis_governance_proof(&mut state, realm);
     state.save_realm_tree_projection(
@@ -139,7 +139,7 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ak:realm:01904100-0000-8000-8000-00000000feed";
+    let realm = "ak:realm:AekaXR7egHsJjC7lxnkHz8popOxRV27nKlKY8RDyuOBa";
 
     super::seed_genesis_governance_proof(&mut state, realm);
     seed_complete_rfc9420_projection(&mut state, realm, actor);
@@ -204,7 +204,7 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ak:realm:01904100-0000-8000-8000-0000000000f8";
+    let realm = "ak:realm:AcysOZi_v0RXNBYf47wJaNxuBSTq_WGE_xQtBPfwAWoj";
 
     super::seed_genesis_governance_proof(&mut state, realm);
     ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
@@ -249,7 +249,7 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ak:realm:01904100-0000-8000-8000-0000000000f9";
+    let realm = "ak:realm:AS5FqwC40o7__sjiREHUnzw9YDYeOTIYVGSZyZasRuaN";
 
     super::seed_genesis_governance_proof(&mut state, realm);
     ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
@@ -296,7 +296,7 @@ async fn authoring_exporter_aead_content_retains_history_secret() {
     // realm_id (see `prepare_history_secrets` → `PendingHistorySecrets::persist`), so
     // this test MUST use a realm id no other test writes, or the `is_none()`
     // precondition below would observe another test's retained secret.
-    let realm = "ak:realm:01904100-0000-8000-8000-0000000000f7";
+    let realm = "ak:realm:Ae6wQDaXscJ6lZGbcWqFv_CW7o0_w5CGmtuB6TvlwNh2";
     let history_store = crate::secure_key_store::default_secure_key_store("inkson");
     let history_key = crate::secure_key_store::mls_history_secret_store_key(realm);
     let _ = history_store.delete_secret(&history_key);
@@ -421,14 +421,14 @@ fn two_member_group_with_bob_snapshot(
 fn historical_author_view_survives_epoch_rotation() {
     let mut state = temp_state_store("historical-author-view");
     let secure = MemorySecureKeyStore::new();
-    let realm = "ak:realm:01904100-0000-8000-8000-0000000000c1";
+    let realm = "ak:realm:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000c2";
     let mut alice_group =
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
     let epoch_one_snapshot = state.mls_snapshot_for(realm).unwrap();
     let epoch_one_ref =
-        arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-0000000000c3").unwrap();
+        arkret_sdk::EventId::new("ak:event:AR9d8WoyQJCOjt6n46diPUzg9zsrG9OZ9TAgE1rz6tJa").unwrap();
     state
         .record_mls_group_state_ref_for_effective_scope(
             realm,
@@ -468,7 +468,7 @@ fn historical_author_view_survives_epoch_rotation() {
         &salt,
     );
     let epoch_two_ref =
-        arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-0000000000c4").unwrap();
+        arkret_sdk::EventId::new("ak:event:AWhyWU9v6_Jf6dcpqJcl22lGSxmg31pmhZOT0-xJVYVj").unwrap();
     state
         .record_mls_group_state_ref_for_effective_scope(
             realm,
@@ -501,7 +501,7 @@ fn historical_author_view_survives_epoch_rotation() {
             bob_device,
             &epoch_one_snapshot.group_id,
             epoch_one_snapshot.epoch,
-            "ak:event:01904100-0000-8000-8000-0000000000ff",
+            "ak:event:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
         )
         .is_none(),
         "non-winning historical ref must fail closed"
@@ -526,7 +526,7 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
     ));
     let mut state = crate::state::LocalStateStore::with_path(path.clone());
     let secure = MemorySecureKeyStore::new();
-    let realm = "ak:realm:01904100-0000-8000-8000-0000000000b1";
+    let realm = "ak:realm:AZaaHAEvC1DejakImwHCcJHb0F1pgE-Jd-3_9BGirbuW";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
 
@@ -592,8 +592,8 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
 fn circle_scoped_decrypt_uses_and_advances_only_the_circle_snapshot() {
     let mut state = temp_state_store("circle-scoped-receive-chain");
     let secure = MemorySecureKeyStore::new();
-    let realm = "ak:realm:01904100-0000-8000-8000-0000000000b3";
-    let circle = "ak:circle:01904100-0000-8000-8000-0000000000b4";
+    let realm = "ak:realm:Ab-u0alSwVcrUhqmeFQmMzuYs83_IrjXlRSBnpm-B-JL";
+    let circle = "ak:circle:AZSmUwZFkNevUaVm0adiKDKw0OuAQqfAX6DFwhnIqF9I";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b5";
 
@@ -647,7 +647,7 @@ fn out_of_order_skipped_keys_survive_restart() {
     ));
     let mut state = crate::state::LocalStateStore::with_path(path.clone());
     let secure = MemorySecureKeyStore::new();
-    let realm = "ak:realm:01904100-0000-8000-8000-0000000000c1";
+    let realm = "ak:realm:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000c2";
 
@@ -690,7 +690,7 @@ fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-0000000000d1";
-    let realm = "ak:realm:01904100-0000-8000-8000-0000000000d2";
+    let realm = "ak:realm:AbTY4xkfqhJ_gKIwE_mty8Xoat_WVCf7dqfoHV5C3ziC";
 
     super::seed_genesis_governance_proof(&mut state, realm);
     seed_complete_rfc9420_projection(&mut state, realm, actor);
@@ -731,7 +731,7 @@ fn plaintext_cache_outlives_group_state() {
     // not a ratchet replay, is the §5.6-compliant re-render path.
     let mut state = temp_state_store("plaintext-cache-outlives");
     let secure = MemorySecureKeyStore::new();
-    let realm = "ak:realm:01904100-0000-8000-8000-0000000000e1";
+    let realm = "ak:realm:AWLjsk0JkbLdfBfaY2GoxT61q1Ttw6HFu7sU-XGFywHc";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000e2";
 
@@ -757,19 +757,22 @@ fn encrypted_write_with_snapshot_requires_existing_device_secret() {
     let mut state = temp_state_store("missing-secret");
     let store = MemorySecureKeyStore::new();
     let envelope = crate::mls::persistence::encrypt_state(
-        "ak:realm:01904100-0000-8000-8000-000000000001",
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "group-for-missing-secret-test",
         1,
         b"not-a-real-group-state",
         "other-device-secret",
         b"deterministic-salt",
     );
-    state.save_mls_snapshot("ak:realm:01904100-0000-8000-8000-000000000001", envelope);
+    state.save_mls_snapshot(
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+        envelope,
+    );
 
     let error = encrypt_values_with_device_snapshot(
         &mut state,
         &store,
-        "ak:realm:01904100-0000-8000-8000-000000000001",
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "did:web:alice.example",
         "ak:device:01904100-0000-7000-8000-000000000001",
         "text/plain",
@@ -791,7 +794,7 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ak:realm:01904100-0000-8000-8000-000000000003";
+    let realm = "ak:realm:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy";
     let store = MemorySecureKeyStore::new();
     let secret = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
     let identity = ArkretMlsIdentity::new_basic(
@@ -846,7 +849,7 @@ fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
     let secure = MemorySecureKeyStore::new();
     let _ = load_or_create_device_snapshot_secret(&secure, actor, device).unwrap();
     let mut state = temp_state_store("persist-on-accept");
-    let realm = "ak:realm:01904100-0000-8000-8000-000000000099";
+    let realm = "ak:realm:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk";
 
     state.save_realm_tree_projection(
         realm,
@@ -953,7 +956,7 @@ fn malformed_welcome_is_counted_not_swallowed() {
 fn welcome_without_verified_seal_proof_does_not_persist_snapshot() {
     let mut state = temp_state_store("welcome-keypackage-state");
     let store = MemorySecureKeyStore::new();
-    let realm = "ak:realm:01904100-0000-8000-8000-0000000000c1";
+    let realm = "ak:realm:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000c2";
     let alice = arkret_sdk::ArkretMlsIdentity::new_basic(
@@ -1079,16 +1082,16 @@ fn durable_welcome_payload_without_claim_envelope_fails_closed() {
 fn durable_welcome_projection_context_is_removed_without_hiding_unknown_payload_fields() {
     let projected = json!({
         "keypackage_ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-        "event_id": "ak:event:01904100-0000-8000-8000-000000000001",
+        "event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "sender": "did:web:alice.example",
         "hlc": "019041000000-0001-00000001",
         "executed_by": "did:key:z6MkExecutor",
-        "authorization_ref": "ak:event:01904100-0000-8000-8000-000000000002",
+        "authorization_ref": "ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
         "seal_ref": "ak:seal:sha256:1111111111111111111111111111111111111111111111111111111111111111",
         "seal_basis": {"state_root": "sha256:3333333333333333333333333333333333333333333333333333333333333333"},
         "preconditions": {"expected_epoch": 0},
         "effects": {"next_epoch": 1},
-        "accepted_event_id": "ak:event:01904100-0000-8000-8000-000000000001",
+        "accepted_event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "unexpected_business_field": true
     });
 
@@ -1118,8 +1121,8 @@ fn durable_welcome_projection_context_is_removed_without_hiding_unknown_payload_
 
 #[test]
 fn local_welcome_hint_filters_by_realm_group_id() {
-    let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
-    let other_realm = "ak:realm:01904100-0000-8000-8000-000000000002";
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let other_realm = "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";
     let messages = vec![
         json!({
             "kind": "ak.mls.welcome",
@@ -1193,7 +1196,7 @@ fn realm_key_share_envelope(
         hi,
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
         sealed,
-        "ak:event:01904100-0000-8000-8000-0000000000e7",
+        "ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc",
         "ak:grant:01904100-0000-7000-8000-0000000000e8",
     )
     .unwrap();
@@ -1210,7 +1213,7 @@ async fn ingest_realm_key_share_installs_history_secrets() {
     // key; bob ingests the share and both secrets land in local state.
     let mut state = temp_state_store("history-share-ingest");
     let secure = MemorySecureKeyStore::new();
-    let realm = "ak:realm:01904100-0000-8000-8000-0000000000e1";
+    let realm = "ak:realm:AWLjsk0JkbLdfBfaY2GoxT61q1Ttw6HFu7sU-XGFywHc";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000e2";
     let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
@@ -1261,7 +1264,7 @@ async fn ingest_realm_key_share_accepts_projected_payload_envelope() {
     // history key.
     let mut state = temp_state_store("history-share-projected-payload");
     let secure = MemorySecureKeyStore::new();
-    let realm = "ak:realm:01904100-0000-8000-8000-0000000000e8";
+    let realm = "ak:realm:AZV8TSjbB741nPG6kgQB9mWmkp150Bbwo0_akJK6PiSb";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000e9";
     let alice_actor = "did:web:alice.example";
@@ -1284,7 +1287,7 @@ async fn ingest_realm_key_share_accepts_projected_payload_envelope() {
         "sender_principal_id": alice_actor,
         "sender_device_id": alice_device,
         "realm_id": realm,
-        "operation_id": "ak:event:01904100-0000-8000-8000-0000000000ee",
+        "operation_id": "ak:event:AT4Mf1sJBtwy4lOrQHfsPt7KtsUYo1LogrjcZnl5oAco",
         "payload": local.get("payload").unwrap().clone(),
     });
 
@@ -1309,7 +1312,7 @@ async fn ingest_realm_key_share_accepts_projected_payload_envelope() {
     assert_eq!(realm_key_share_sender_device_pair(&legacy), None);
     assert_eq!(
         realm_key_share_message_operation_id(&projected).as_deref(),
-        Some("ak:event:01904100-0000-8000-8000-0000000000ee")
+        Some("ak:event:AT4Mf1sJBtwy4lOrQHfsPt7KtsUYo1LogrjcZnl5oAco")
     );
     let mut ingestable = projected.clone();
     ingestable
@@ -1338,7 +1341,7 @@ async fn ingest_realm_key_share_accepts_soland_content_payload_envelope() {
     // pre-join history secret was never installed and the card stayed locked.
     let mut state = temp_state_store("history-share-content-payload");
     let secure = MemorySecureKeyStore::new();
-    let realm = "ak:realm:01904100-0000-8000-8000-0000000000f0";
+    let realm = "ak:realm:AfIJFv2OZq7YFmfcgrysn4iCCeZnltKXmDNUzrSqwI4W";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000f1";
     let alice_actor = "did:web:alice.example";
@@ -1361,7 +1364,7 @@ async fn ingest_realm_key_share_accepts_soland_content_payload_envelope() {
         "sender_principal_id": alice_actor,
         "sender_device_id": alice_device,
         "content": {
-            "operation_id": "ak:event:01904100-0000-8000-8000-0000000000f2",
+            "operation_id": "ak:event:ATz4yMg8D3eSMJ7kiPNr0BF70hg3o_DBZklFZd5GZSuJ",
             "realm_id": realm,
             "payload": local.get("payload").unwrap().clone(),
         },
@@ -1381,7 +1384,7 @@ async fn ingest_realm_key_share_accepts_soland_content_payload_envelope() {
     );
     assert_eq!(
         realm_key_share_message_operation_id(&projected).as_deref(),
-        Some("ak:event:01904100-0000-8000-8000-0000000000f2")
+        Some("ak:event:ATz4yMg8D3eSMJ7kiPNr0BF70hg3o_DBZklFZd5GZSuJ")
     );
     let mut ingestable = projected.clone();
     ingestable
@@ -1406,7 +1409,7 @@ async fn history_secrets_do_not_land_in_account_state_json() {
         "inkson-test-history-secret-at-rest-{}.json",
         crate::operation::uuid_v7()
     ));
-    let realm = "ak:realm:01904100-0000-8000-8000-0000000000d9";
+    let realm = "ak:realm:AXvyUPOvo5Qk9949wzuDh-KUILfma63VBd9DGnUBfjE0";
     let secret = vec![9u8; 32];
     let store = crate::secure_key_store::default_secure_key_store("inkson");
     let key = crate::secure_key_store::mls_history_secret_store_key(realm);
@@ -1454,7 +1457,7 @@ async fn tier3_history_decrypt_reads_provider_exporter_aead_content() {
     // content the live receive ratchet cannot.
     let mut state = temp_state_store("history-share-tier3");
     let secure = MemorySecureKeyStore::new();
-    let realm = "ak:realm:01904100-0000-8000-8000-0000000000f1";
+    let realm = "ak:realm:AUAf2-oZl31wupPqnQLO-zloaqgMoX5xk2tpVSbi8zjD";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000f2";
     let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
@@ -1537,7 +1540,7 @@ async fn tier3_history_decrypt_works_without_local_snapshot() {
     // SDK path. Regression guard for the "must have a snapshot first" relaxation.
     let mut state = temp_state_store("history-share-no-snapshot");
     let secure = MemorySecureKeyStore::new();
-    let realm = "ak:realm:01904100-0000-8000-8000-0000000000f3";
+    let realm = "ak:realm:AYd_8hAWkXg06E-2jKNuFJxTBlVdowhIf2VtLQ5ufh4q";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000f4";
     let history_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -1611,7 +1614,7 @@ fn realm_key_share_sender_signature_round_trips() {
     let did = crate::identity::did_key::did_key_from_verifying_key(&verifying);
     let _signer_guard = ActiveSignerGuard::install(seed, &did);
 
-    let realm = "ak:realm:01904100-0000-8000-8000-0000000000f5";
+    let realm = "ak:realm:AVzY-77xn68hVvme76fUgb86dEYJni4MCLds2DwWxKZ4";
     let recipient_actor = "did:web:bob.example";
     let recipient_device = "ak:device:01904100-0000-7000-8000-0000000000f6";
     let sender_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
@@ -1626,7 +1629,7 @@ fn realm_key_share_sender_signature_round_trips() {
         4,
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
         "c2VhbGVk".to_owned(),
-        "ak:event:01904100-0000-8000-8000-0000000000e7",
+        "ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc",
         "ak:grant:01904100-0000-7000-8000-0000000000e8",
     )
     .unwrap();

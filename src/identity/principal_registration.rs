@@ -293,9 +293,6 @@ fn build_bootstrap_create_event_with_registry(
                 arkret_bootstrap::DID_INCEPTION_REF_ROLE,
             ),
             capability_action_registry_digest,
-            // Placeholder: the builder needs an id up front, but the real one
-            // is a function of the finished envelope and is stamped below.
-            event_id: arkret_sdk::EventId::new(crate::operation::PLACEHOLDER_EVENT_ID)?,
             created_at,
             hlc: arkret_sdk::Hlc::new(checkpoint.bootstrap_hlc.clone())?,
         },

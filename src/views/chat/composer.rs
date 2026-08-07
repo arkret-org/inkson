@@ -1280,7 +1280,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     });
                                     return;
                                 }
-                                let local_id = new_chat_message_id();
+                                let local_id = new_chat_local_id();
                                 messages.write().push(ChatMessage {
                                     realm_id: realm.clone(),
                                     id: local_id.clone(),
@@ -1707,7 +1707,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         );
                                         return;
                                     }
-                                    let local_id = new_chat_message_id();
+                                    let local_id = new_chat_local_id();
                                     let private_strand_id = session.private_strand_id.clone();
                                     messages.write().push(ChatMessage {
                                         realm_id: session.source_realm_id.clone(),
@@ -1832,7 +1832,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 // encrypted path (it was silently dropped before).
                                 let reply_to = reply_to_message()
                                     .filter(|value| !value.trim().is_empty());
-                                let message_id = new_chat_message_id();
+                                let message_id = new_chat_local_id();
                                 messages.write().push(ChatMessage {
                                     realm_id: realm.clone(),
                                     id: message_id.clone(),

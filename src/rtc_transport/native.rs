@@ -432,8 +432,10 @@ mod tests {
                 scheme: arkret_sdk::ParticipantBinding::SCHEMA.to_owned(),
                 sig: "sig".to_owned(),
                 issuer_kid: arkret_sdk::DidUrl::new("did:web:media.example#key-1").unwrap(),
-                realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-9b64700c6ee8")
-                    .unwrap(),
+                realm_id: arkret_sdk::RealmId::new(
+                    "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs",
+                )
+                .unwrap(),
                 call_id: arkret_sdk::CallId::new("ak:call:0196441c-0000-7000-8000-000000000000")
                     .unwrap(),
                 focus_id: "fra-1".to_owned(),
@@ -454,7 +456,7 @@ mod tests {
             frame_key: zeroize::Zeroizing::new(vec![7u8; 32]),
             desired_media: DesiredMedia::audio_video(),
             device_id: "ak:device:01904100-0000-7000-8000-000000000005".to_owned(),
-            realm_id: "ak:realm:01904100-0000-8000-8000-9b64700c6ee8".to_owned(),
+            realm_id: "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs".to_owned(),
             call_id: "ak:call:0196441c-0000-7000-8000-000000000000".to_owned(),
             epoch_id: 0,
         }
@@ -462,8 +464,10 @@ mod tests {
 
     fn ice_config() -> arkret_sdk::IceConfig {
         arkret_sdk::IceConfig {
-            realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-9b64700c6ee8")
-                .unwrap(),
+            realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs",
+            )
+            .unwrap(),
             call_id: "ak:call:0196441c-0000-7000-8000-000000000000".to_owned(),
             actor_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
             ice_servers: Vec::new(),

@@ -178,6 +178,26 @@ pub(crate) struct AuthoredEventAttempt {
     pub(crate) canonical_body_bytes: Vec<u8>,
 }
 
+/// Frozen scheduler-to-transport handoff persisted inside the durable outbound
+/// queue. Once this record exists, retries are driven exclusively from these
+/// bytes; the editable account-data plan is no longer an authoring source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ScheduledSendSubmissionState {
+    Ready,
+    SubmissionUncertain,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ScheduledSendDispatchRecord {
+    pub(crate) scheduled_send_id: arkret_identifiers::ScheduledSendId,
+    pub(crate) event_id: arkret_sdk::EventId,
+    pub(crate) message_id: arkret_sdk::MessageId,
+    pub(crate) canonical_signed_event_bytes: Vec<u8>,
+    pub(crate) submission_state: ScheduledSendSubmissionState,
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct QueuedSdkEvent {
@@ -192,6 +212,8 @@ pub(crate) struct QueuedSdkEvent {
     pub(crate) authoring_generation: crate::identity::authoring_generation::AuthoringGeneration,
     #[serde(deserialize_with = "deserialize_required_nullable")]
     pub(crate) post_accept: Option<PostAcceptAction>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub(crate) scheduled_dispatch: Option<ScheduledSendDispatchRecord>,
 }
 
 impl QueuedSdkEvent {
@@ -214,6 +236,7 @@ impl QueuedSdkEvent {
             supersedes_event_id,
             authoring_generation,
             post_accept,
+            scheduled_dispatch: None,
         })
     }
 
@@ -242,6 +265,57 @@ impl QueuedSdkEvent {
             supersedes_event_id,
             authoring_generation,
             post_accept,
+            scheduled_dispatch: None,
+        })
+    }
+
+    fn scheduled_authored(
+        scheduled_send_id: arkret_identifiers::ScheduledSendId,
+        envelope: arkret_sdk::Event,
+        authoring_generation: crate::identity::authoring_generation::AuthoringGeneration,
+    ) -> arkret_sdk::Result<Self> {
+        if envelope.kind.as_str() != arkret_sdk::events::EventKind::MESSAGE_CREATE {
+            return Err(arkret_sdk::Error::Protocol(
+                "scheduled dispatch must contain ak.message.create".to_owned(),
+            ));
+        }
+        if envelope.proofs.is_empty() {
+            return Err(arkret_sdk::Error::Protocol(
+                "scheduled dispatch Event must already be signed".to_owned(),
+            ));
+        }
+        let derived_event_id = envelope.derive_event_id()?;
+        if derived_event_id != envelope.event_id {
+            return Err(arkret_sdk::Error::Protocol(
+                "scheduled dispatch Event id does not match its canonical content".to_owned(),
+            ));
+        }
+        let event_id = envelope.event_id.clone();
+        let message_id = arkret_sdk::MessageId::from_event_id(&event_id);
+        let canonical_signed_event_bytes = arkret_sdk::canonical::canonical_json_bytes(&envelope)?;
+        let intent = EventIntent::from_event(envelope.clone());
+        let intent_digest = intent.digest()?;
+        Ok(Self {
+            intent,
+            intent_digest: intent_digest.clone(),
+            local_operation_id: scheduled_send_id.to_string(),
+            authoring_idempotency_key: event_id.to_string(),
+            authored_attempt: Some(AuthoredEventAttempt {
+                intent_digest,
+                envelope,
+                transport_idempotency_key: event_id.to_string(),
+                canonical_body_bytes: canonical_signed_event_bytes.clone(),
+            }),
+            supersedes_event_id: None,
+            authoring_generation,
+            post_accept: None,
+            scheduled_dispatch: Some(ScheduledSendDispatchRecord {
+                scheduled_send_id,
+                event_id,
+                message_id,
+                canonical_signed_event_bytes,
+                submission_state: ScheduledSendSubmissionState::Ready,
+            }),
         })
     }
 
@@ -250,6 +324,17 @@ impl QueuedSdkEvent {
             .as_ref()
             .map(|attempt| attempt.envelope.clone())
             .unwrap_or_else(|| self.intent.to_unauthored_event())
+    }
+
+    fn mark_scheduled_submission_uncertain(&mut self) -> bool {
+        let Some(dispatch) = self.scheduled_dispatch.as_mut() else {
+            return false;
+        };
+        if dispatch.submission_state != ScheduledSendSubmissionState::Ready {
+            return false;
+        }
+        dispatch.submission_state = ScheduledSendSubmissionState::SubmissionUncertain;
+        true
     }
 }
 
@@ -343,6 +428,24 @@ fn decode_queued_sdk_event(content: Value) -> arkret_sdk::Result<QueuedSdkEvent>
         if EventIntent::from_event(attempt.envelope.clone()) != queued.intent {
             return Err(arkret_sdk::Error::Protocol(
                 "queued Inkson SDK authored envelope changes the bound semantic intent".to_owned(),
+            ));
+        }
+    }
+    if let Some(dispatch) = queued.scheduled_dispatch.as_ref() {
+        let attempt = queued.authored_attempt.as_ref().ok_or_else(|| {
+            arkret_sdk::Error::Protocol(
+                "scheduled dispatch record requires a frozen authored attempt".to_owned(),
+            )
+        })?;
+        if queued.local_operation_id != dispatch.scheduled_send_id.as_str()
+            || queued.intent.kind.as_str() != arkret_sdk::events::EventKind::MESSAGE_CREATE
+            || queued.intent.event_id != dispatch.event_id
+            || attempt.envelope.event_id != dispatch.event_id
+            || arkret_sdk::MessageId::from_event_id(&dispatch.event_id) != dispatch.message_id
+            || attempt.canonical_body_bytes != dispatch.canonical_signed_event_bytes
+        {
+            return Err(arkret_sdk::Error::Protocol(
+                "scheduled dispatch record does not match its immutable authored Event".to_owned(),
             ));
         }
     }
@@ -480,6 +583,19 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                     return Ok(OutboundSubmitOutcome::Terminal { reason });
                 }
             };
+            if queued.mark_scheduled_submission_uncertain() {
+                // Persist the uncertainty boundary before the first HTTP write.
+                // A crash after this point can only resume the exact signed
+                // bytes carried by the record; it cannot consult or rebuild the
+                // editable scheduled-send plan.
+                return Ok(OutboundSubmitOutcome::Prepared {
+                    content: serde_json::to_value(queued).map_err(|error| {
+                        garth::Error::Protocol(format!(
+                            "encode frozen scheduled dispatch record: {error}"
+                        ))
+                    })?,
+                });
+            }
             if queued.authored_attempt.is_none() {
                 let mut event = queued.intent.to_unauthored_event();
                 event.unsigned.insert(
@@ -628,6 +744,15 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                             return Ok(OutboundSubmitOutcome::Terminal {
                                 reason: "CAS frontier scope does not match queued Event".to_owned(),
                             });
+                        }
+                        if queued.scheduled_dispatch.is_some() {
+                            let reason = "frozen scheduled dispatch hit an explicit actor frontier conflict; the signed Event is retained and must not be rebuilt from the editable plan".to_owned();
+                            self.results
+                                .rejected
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                .insert(item.transaction_id, error);
+                            return Ok(OutboundSubmitOutcome::Rejected { reason });
                         }
                         let replacement = self
                             .owner
@@ -1599,6 +1724,27 @@ impl EventSubmitter {
             state_store,
         )
         .await
+    }
+
+    /// Freezes and durably persists a fully signed scheduled message before
+    /// any submission I/O. The caller must pass the authoring generation used
+    /// to produce `signed_event`; resolving or editing the plan after this
+    /// boundary is forbidden.
+    #[allow(dead_code)] // Scheduler UI is not wired yet; this is its durable transport boundary.
+    pub(crate) async fn submit_scheduled_send_event(
+        &self,
+        scheduled_send_id: arkret_identifiers::ScheduledSendId,
+        signed_event: arkret_sdk::Event,
+        authoring_generation: crate::identity::authoring_generation::AuthoringGeneration,
+    ) -> anyhow::Result<SubmitEventResult> {
+        let _single_writer = outbound_submit_lock().lock().await;
+        let queued = QueuedSdkEvent::scheduled_authored(
+            scheduled_send_id,
+            signed_event.clone(),
+            authoring_generation,
+        )?;
+        self.enqueue_and_drive_sdk_event(&signed_event, queued, None)
+            .await
     }
 
     /// Persist an MLS Add commit together with the exact signed Welcome(s) and
@@ -2911,6 +3057,10 @@ mod tests {
         }
     }
 
+    fn fixture_event_id(event_id: &str) -> arkret_sdk::EventId {
+        arkret_sdk::EventId::new(event_id).unwrap()
+    }
+
     #[test]
     fn account_authority_client_allows_only_insecure_loopback() {
         assert!(account_authority_http_client("http://localhost:8787").is_ok());
@@ -2921,7 +3071,7 @@ mod tests {
     #[test]
     fn managed_agent_pcr_genesis_does_not_bypass_control_proposal_ack_authoring() {
         let mut managed = realm_create_sdk_event(
-            "ak:event:01904100-0000-8000-8000-000000000020",
+            "ak:event:Af2HCFbsrVezIXsZGcgB3mjkpqGK-C4DmteWaG3H0Xbh",
             "did:web:agent.example",
             None,
         );
@@ -2936,7 +3086,7 @@ mod tests {
         assert!(!uses_bare_online_anchor_submission(true, &managed));
 
         let ordinary = realm_create_sdk_event(
-            "ak:event:01904100-0000-8000-8000-000000000022",
+            "ak:event:Ab0jbIKlPZ-M3WbarZlCPLYtkCWggYwWZeRDlW-ShdQ9",
             "did:web:alice.example",
             None,
         );
@@ -2967,6 +3117,92 @@ mod tests {
     }
 
     #[test]
+    fn scheduled_dispatch_crash_retry_preserves_exact_signed_event_bytes() {
+        let mut event: arkret_sdk::Event = serde_json::from_value(json!({
+            "event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            "kind": "ak.message.create",
+            "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            "scope_ref": {
+                "kind": "realm",
+                "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
+            },
+            "actor_id": "did:web:alice.example",
+            "actor_seq": 7,
+            "created_at": "2026-08-07T00:00:00.000Z",
+            "hlc": "01986f440000-0001-a13f9c2e",
+            "prev_refs": [],
+            "payload": {
+                "strand_id": "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
+                "track_name": "discussion",
+                "content": {"kind": "ak.content.text", "body": "frozen scheduled text"}
+            },
+            "proofs": []
+        }))
+        .unwrap();
+        event.refresh_content_bound_identity().unwrap();
+        let signer = crate::event_signer::build_ed25519_device_signer(
+            [73; 32],
+            "did:web:alice.example",
+            "ak:device:01904100-0000-7000-8000-000000000001",
+        );
+        signer
+            .sign_sdk_event_with_context(
+                &mut event,
+                crate::event_signer::EventProofContext::default(),
+            )
+            .unwrap();
+
+        let scheduled_send_id = arkret_identifiers::ScheduledSendId::new(
+            "ak:scheduled_send:01904100-0000-7000-8000-000000000003".to_owned(),
+        )
+        .unwrap();
+        let queued = QueuedSdkEvent::scheduled_authored(
+            scheduled_send_id.clone(),
+            event.clone(),
+            test_authoring_generation(),
+        )
+        .unwrap();
+        let frozen_bytes = queued
+            .scheduled_dispatch
+            .as_ref()
+            .unwrap()
+            .canonical_signed_event_bytes
+            .clone();
+
+        // Simulate the durable record being reopened after scheduler handoff.
+        let persisted = serde_json::to_value(&queued).unwrap();
+        let mut reopened = decode_queued_sdk_event(persisted).unwrap();
+        assert!(reopened.mark_scheduled_submission_uncertain());
+
+        // The Prepared outcome is persisted before HTTP. A crash with an
+        // unknown submission result reopens this exact record, and a retry may
+        // not transition or author it again.
+        let prepared = serde_json::to_value(&reopened).unwrap();
+        let mut retry = decode_queued_sdk_event(prepared).unwrap();
+        assert!(!retry.mark_scheduled_submission_uncertain());
+        let dispatch = retry.scheduled_dispatch.as_ref().unwrap();
+        assert_eq!(dispatch.scheduled_send_id, scheduled_send_id);
+        assert_eq!(dispatch.event_id, event.event_id);
+        assert_eq!(
+            dispatch.message_id,
+            arkret_sdk::MessageId::from_event_id(&event.event_id)
+        );
+        assert_eq!(
+            dispatch.submission_state,
+            ScheduledSendSubmissionState::SubmissionUncertain
+        );
+        assert_eq!(dispatch.canonical_signed_event_bytes, frozen_bytes);
+        assert_eq!(
+            retry
+                .authored_attempt
+                .as_ref()
+                .unwrap()
+                .canonical_body_bytes,
+            frozen_bytes
+        );
+    }
+
+    #[test]
     fn event_intent_digest_ignores_authoring_freshness_fields() {
         let mut first = sdk_event_without_proof("did:web:alice.example");
         first.unsigned.insert(
@@ -2976,10 +3212,9 @@ mod tests {
         let mut second = first.clone();
         second.actor_seq = 42;
         second.hlc = None;
-        second.prev_refs = vec![
-            arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000099".to_owned())
-                .unwrap(),
-        ];
+        second.prev_refs = vec![fixture_event_id(
+            "ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk",
+        )];
         second.unsigned.insert(
             "local_operation_idempotency_alias".to_owned(),
             Value::String("attempt-two".to_owned()),
@@ -3008,7 +3243,7 @@ mod tests {
     #[test]
     fn capability_payload_validation_does_not_mutate_queue_intent() {
         let mut event = crate::operation::ak_ops::capability_grant_actions(
-            "ak:realm:01904100-0000-8000-8000-000000000001",
+            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "did:web:alice.example",
             "ak:grant:01904100-0000-7000-8000-000000000002",
             "did:web:bob.example",
@@ -3090,21 +3325,22 @@ mod tests {
 
     #[test]
     fn pending_chat_projection_ignores_sent_items_and_other_conversations() {
-        let realm =
-            arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001".to_owned())
-                .unwrap();
+        let realm = arkret_sdk::RealmId::new(
+            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
+        )
+        .unwrap();
         let actor = "did:web:alice.example";
         let mut queue = garth::SendQueue::new();
         let pending = sdk_event_with_kind(
-            "ak:event:01904100-0000-8000-8000-000000000001",
+            "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             realm.as_str(),
             "ak.message.create",
             actor,
         );
         let mut pending = pending;
         pending.payload = serde_json::from_value(json!({
-            "message_id": "ak:message:01904100-0000-8000-8000-000000000001",
-            "strand_id": "ak:strand:01904100-0000-8000-8000-000000000010"
+            "message_id": "ak:message:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            "strand_id": "ak:strand:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h"
         }))
         .unwrap();
         queue
@@ -3131,14 +3367,14 @@ mod tests {
             .unwrap();
 
         let mut other_conversation = sdk_event_with_kind(
-            "ak:event:01904100-0000-8000-8000-000000000003",
+            "ak:event:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
             realm.as_str(),
             "ak.message.create",
             actor,
         );
         other_conversation.payload = serde_json::from_value(json!({
-            "message_id": "ak:message:01904100-0000-8000-8000-000000000003",
-            "strand_id": "ak:strand:01904100-0000-8000-8000-000000000099"
+            "message_id": "ak:message:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
+            "strand_id": "ak:strand:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk"
         }))
         .unwrap();
         queue
@@ -3165,7 +3401,7 @@ mod tests {
             .unwrap();
 
         let sent = sdk_event_with_kind(
-            "ak:event:01904100-0000-8000-8000-000000000002",
+            "ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
             realm.as_str(),
             "ak.message.create",
             actor,
@@ -3208,7 +3444,7 @@ mod tests {
             .mark_sent(
                 &sent_transaction,
                 arkret_sdk::EventId::new(
-                    "ak:event:01904100-0000-8000-8000-000000000099".to_owned(),
+                    "ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk".to_owned(),
                 )
                 .unwrap(),
                 vec![crate::authorization_lease::test_support::receipt(
@@ -3222,20 +3458,20 @@ mod tests {
             pending_chat_message_ids_from_snapshot(
                 &queue.snapshot(),
                 realm.as_str(),
-                "ak:strand:01904100-0000-8000-8000-000000000010",
+                "ak:strand:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
             ),
             std::collections::BTreeSet::from([
-                "ak:message:01904100-0000-8000-8000-000000000001".to_owned()
+                "ak:message:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned()
             ])
         );
     }
 
     fn sdk_event_without_proof(actor_id: &str) -> arkret_sdk::Event {
         serde_json::from_value(json!({
-            "event_id": "ak:event:01904100-0000-8000-8000-000000000001",
+            "event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "kind": "ak.presence",
-            "realm_id": "ak:realm:01904100-0000-8000-8000-000000000001",
-            "scope_ref": {"kind": "realm", "realm_id": "ak:realm:01904100-0000-8000-8000-000000000001"},
+            "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            "scope_ref": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
             "actor_id": actor_id,
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00.000Z",
@@ -3301,10 +3537,10 @@ mod tests {
         event
     }
 
-    const AUTHORITY_GENESIS_EVENT: &str = "ak:event:01904100-0000-8000-8000-00000000000c";
+    const AUTHORITY_GENESIS_EVENT: &str = "ak:event:ASgi2U7PbVyNs4UpiQAoXKoHv84g07gpBvuddCGiMMG1";
     /// Any well-formed Realm id: used by the non-genesis events below, which
     /// still carry `realm_id` on the wire.
-    const AUTHORITY_REALM: &str = "ak:realm:01904100-0000-8000-8000-00000000000a";
+    const AUTHORITY_REALM: &str = "ak:realm:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ";
     const AUTHORITY_CONTROLLER: &str = "did:web:alice.example";
     const AUTHORITY_DIGEST: &str =
         "sha256:0000000000000000000000000000000000000000000000000000000000000000";
@@ -3346,7 +3582,7 @@ mod tests {
         // A create for a *different* Realm: a different genesis Event id, so a
         // different derived Realm id.
         let other_realm = realm_create_sdk_event(
-            "ak:event:01904100-0000-8000-8000-00000000000b",
+            "ak:event:ASyFf0qTUQ55a2qZp5fuTXRnIgf3ovKChQZ_XSkxdIPK",
             "did:web:mallory.example",
             Some(AUTHORITY_DIGEST),
         );
@@ -3358,7 +3594,7 @@ mod tests {
         .realm_id
         .to_string();
         let other_kind = sdk_event_with_kind(
-            "ak:event:01904100-0000-8000-8000-00000000000d",
+            "ak:event:AZpUEIyW7TNKR7LXG3WwW7XhlXVKyRQXiuhWXSw19pzj",
             &authority_realm,
             "ak.strand.create",
             AUTHORITY_CONTROLLER,
@@ -3388,7 +3624,7 @@ mod tests {
         };
         let event = |actor: &str| {
             sdk_event_with_kind(
-                "ak:event:01904100-0000-8000-8000-00000000000e",
+                "ak:event:AZMiGxiOThkUT3Dwv05wKz3ho14d39lB0b9ep3sMSDrM",
                 AUTHORITY_REALM,
                 "ak.strand.create",
                 actor,
@@ -3424,7 +3660,7 @@ mod tests {
             controller_id: AUTHORITY_CONTROLLER.to_owned(),
         };
         let mut with_grant = sdk_event_with_kind(
-            "ak:event:01904100-0000-8000-8000-00000000000f",
+            "ak:event:ARqNvcWYATpece6_sbb4Q7uWv69NgLVVEdYxo8OrmqyW",
             AUTHORITY_REALM,
             "ak.strand.create",
             AUTHORITY_CONTROLLER,
@@ -3436,7 +3672,7 @@ mod tests {
         assert_eq!(realm_authority_root_claim(&with_grant, Some(&root)), None);
 
         let mut executed_by_service = sdk_event_with_kind(
-            "ak:event:01904100-0000-8000-8000-000000000010",
+            "ak:event:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
             AUTHORITY_REALM,
             "ak.strand.create",
             AUTHORITY_CONTROLLER,
@@ -3462,7 +3698,7 @@ mod tests {
     async fn stamp_realm_authority_root_claim_stamps_from_cached_create_facts() {
         // Unique Realm id: the create-facts cache is process-global and tests
         // run in parallel.
-        let realm = "ak:realm:01904100-0000-8000-8000-0000000000aa";
+        let realm = "ak:realm:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml";
         realm_create_authority_cache()
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -3473,7 +3709,7 @@ mod tests {
                 },
             );
         let mut event = sdk_event_with_kind(
-            "ak:event:01904100-0000-8000-8000-000000000011",
+            "ak:event:AU2FuZ5Cmuwsb0J0xuJwH47SCEL34D7oJWb4JivTH934",
             realm,
             "ak.strand.create",
             AUTHORITY_CONTROLLER,
@@ -3497,7 +3733,7 @@ mod tests {
     /// resolvable.
     #[tokio::test]
     async fn frozen_intent_replay_must_not_upgrade_the_authorization_claim() {
-        let realm = "ak:realm:01904100-0000-8000-8000-0000000000ad";
+        let realm = "ak:realm:Aa9ST4mV9PwPifTwudPs8hENCT9iNyCpkWSVDjEH7hJ_";
         realm_create_authority_cache()
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -3510,7 +3746,7 @@ mod tests {
         // Outage-era intent: owner-authored kind, but no claim was resolvable
         // at enqueue time.
         let mut event = sdk_event_with_kind(
-            "ak:event:01904100-0000-8000-8000-000000000013",
+            "ak:event:AfYjtj18lO9CeLkb1-l4BiiXSDtfZT21Z_Ez69OUDDEK",
             realm,
             "ak.message.create",
             AUTHORITY_CONTROLLER,
@@ -3544,8 +3780,8 @@ mod tests {
         // fail the submit — a member's ordinary grant path stays usable when
         // the create lookup is unavailable.
         let mut event = sdk_event_with_kind(
-            "ak:event:01904100-0000-8000-8000-000000000012",
-            "ak:realm:01904100-0000-8000-8000-0000000000ab",
+            "ak:event:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu",
+            "ak:realm:ARKSHgBichO7ZjwprTMf4UrKn7x1GHkl16zz6U4xm586",
             "ak.strand.create",
             AUTHORITY_CONTROLLER,
         );
@@ -3561,7 +3797,7 @@ mod tests {
         // freeze a stamped intent, author the envelope from it the way the
         // outbound drive does, and require `EventIntent` equality — the exact
         // check `decode_queued_sdk_event` enforces on the persisted attempt.
-        let realm = "ak:realm:01904100-0000-8000-8000-0000000000ac";
+        let realm = "ak:realm:AU2D21msYuLaXwOH8_eGJzFL4TqkaJ0gxxClWY-3IywJ";
         realm_create_authority_cache()
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -3574,8 +3810,8 @@ mod tests {
         let event = crate::operation::ak_ops::kanban_card_strand_create(
             realm,
             AUTHORITY_CONTROLLER,
-            "ak:space:01904100-0000-8000-8000-000000000032",
-            "ak:space:01904100-0000-8000-8000-000000000033",
+            "ak:space:Aa5chVG-4dxTy5sBQLuc7faYg5r3Odrl_3Q7uLf7FY_Y",
+            "ak:space:ARO6sshXyY_8aIrsd0F5-zoAcfxTRnG5n7zA6tFwGX2l",
             "probe card",
             "a0",
         )
@@ -3616,10 +3852,9 @@ mod tests {
             Value::String("authoring-key".to_owned()),
         );
         authored.actor_seq = 7;
-        authored.prev_refs = vec![
-            arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000034".to_owned())
-                .unwrap(),
-        ];
+        authored.prev_refs = vec![fixture_event_id(
+            "ak:event:AdymfEYKFegRsXpyi5Or3ormR7igvbwtXIp8HyMfOvWE",
+        )];
         authored.hlc = Some(arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap());
         authored.seal_ref = Some(
             arkret_sdk::SealId::new(
@@ -3895,9 +4130,9 @@ mod tests {
         let hook = InksonPostAcceptHook {
             state_store: Some(handle),
         };
-        let realm_id = "ak:realm:01904100-0000-8000-8000-000000000001";
+        let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
         let event = sdk_event_with_kind(
-            "ak:event:01904100-0000-8000-8000-000000000001",
+            "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             realm_id,
             "ak.mls.commit",
             "did:web:alice.example",
@@ -3944,7 +4179,8 @@ mod tests {
             )
             .unwrap();
         let event_id =
-            arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000001").unwrap();
+            arkret_sdk::EventId::new("ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap();
 
         hook.post_accept(&item, &event_id, false).await.unwrap();
         hook.post_accept(&item, &event_id, true).await.unwrap();
@@ -3963,15 +4199,15 @@ mod tests {
 
     #[test]
     fn queued_mls_admission_round_trips_exact_welcome_material() {
-        let realm_id = "ak:realm:01904100-0000-8000-8000-000000000001";
+        let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
         let commit = sdk_event_with_kind(
-            "ak:event:01904100-0000-8000-8000-000000000010",
+            "ak:event:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
             realm_id,
             "ak.mls.commit",
             "did:web:alice.example",
         );
         let mut welcome = sdk_event_with_kind(
-            "ak:event:01904100-0000-8000-8000-000000000011",
+            "ak:event:AU2FuZ5Cmuwsb0J0xuJwH47SCEL34D7oJWb4JivTH934",
             realm_id,
             "ak.mls.welcome",
             "did:web:alice.example",
@@ -4047,9 +4283,9 @@ mod tests {
             move |read| read(&read_store.lock().unwrap()),
             move |write| write(&mut write_store.lock().unwrap()),
         );
-        let realm_id = "ak:realm:01904100-0000-8000-8000-000000000001";
+        let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
         let welcome = sdk_event_with_kind(
-            "ak:event:01904100-0000-8000-8000-000000000011",
+            "ak:event:AU2FuZ5Cmuwsb0J0xuJwH47SCEL34D7oJWb4JivTH934",
             realm_id,
             "ak.mls.welcome",
             "did:web:alice.example",
@@ -4078,7 +4314,8 @@ mod tests {
         let error = persist_post_accept_action(
             Some(&handle),
             action,
-            arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000099").unwrap(),
+            arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
+                .unwrap(),
         )
         .await
         .unwrap_err();
@@ -4092,7 +4329,8 @@ mod tests {
     fn apply_actor_frontier_stamps_next_sequence_and_predecessor() {
         let mut event = sdk_event_without_proof("did:web:alice.example");
         let frontier_event_id =
-            arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000002").unwrap();
+            arkret_sdk::EventId::new("ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1")
+                .unwrap();
         let frontier = arkret_sdk::RealmActorFrontierView::new(
             event.realm_id.clone(),
             arkret_sdk::Did::new("did:web:alice.example").unwrap(),
@@ -4148,7 +4386,8 @@ mod tests {
             event.actor_id.clone(),
             8,
             vec![
-                arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000002").unwrap(),
+                arkret_sdk::EventId::new("ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1")
+                    .unwrap(),
             ],
             arkret_sdk::canonical::DigestSuite::Sha256,
         )
@@ -4271,7 +4510,8 @@ mod tests {
             arkret_sdk::Did::new("did:web:bob.example").unwrap(),
             8,
             vec![
-                arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000002").unwrap(),
+                arkret_sdk::EventId::new("ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1")
+                    .unwrap(),
             ],
             arkret_sdk::canonical::DigestSuite::Sha256,
         )
@@ -4287,7 +4527,8 @@ mod tests {
     #[test]
     fn actor_seq_cas_conflict_classifier_is_narrow() {
         let current_frontier = arkret_sdk::RealmActorFrontierView::new(
-            arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001").unwrap(),
+            arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap(),
             arkret_sdk::Did::new("did:web:alice.example").unwrap(),
             0,
             vec![],
@@ -4323,20 +4564,21 @@ mod tests {
 
     #[test]
     fn mls_genesis_event_lookup_filters_kind_and_realm() {
-        let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
-        let other_realm = "ak:realm:01904100-0000-8000-8000-000000000099";
+        let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+        let other_realm = "ak:realm:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk";
         let expected =
-            arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000003").unwrap();
+            arkret_sdk::EventId::new("ak:event:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy")
+                .unwrap();
         let outcome = arkret_sdk::EventsQueryOutcome {
             events: vec![
                 sdk_event_with_kind(
-                    "ak:event:01904100-0000-8000-8000-000000000001",
+                    "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
                     realm,
                     "ak.message.create",
                     "did:web:alice.example",
                 ),
                 sdk_event_with_kind(
-                    "ak:event:01904100-0000-8000-8000-000000000002",
+                    "ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
                     other_realm,
                     "ak.mls.genesis",
                     "did:web:alice.example",
@@ -4362,7 +4604,7 @@ mod tests {
         assert_eq!(
             mls_genesis_event_id_from_events(
                 &outcome,
-                "ak:realm:01904100-0000-8000-8000-000000000123"
+                "ak:realm:AfXCJ1DUe3g7MVHuVBpMsl89749WyrXAJP7EvoU9mwBH"
             ),
             None
         );

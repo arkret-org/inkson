@@ -142,20 +142,23 @@ mod tests {
         let mut event = arkret_sdk::Event::new(
             arkret_sdk::EventKind::STRAND_UPDATE,
             arkret_sdk::ScopeRef::Realm {
-                realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001")
-                    .unwrap(),
+                realm_id: arkret_sdk::RealmId::new(
+                    "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                )
+                .unwrap(),
             },
             arkret_sdk::Did::new("did:web:alice.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             json!({
-                "strand_id": "ak:strand:01904100-0000-8000-8000-000000000002",
+                "strand_id": "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
                 "patch": {"title": {"$op": "set", "value": "Updated"}}
             }),
         )
         .unwrap();
         event.event_id =
-            arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000101").unwrap();
+            arkret_sdk::EventId::new("ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z")
+                .unwrap();
 
         let records = kanban_operations_from_client_events(&[garth::ClientEvent::Event(event)]);
 
@@ -163,7 +166,7 @@ mod tests {
         assert_eq!(records[0].payload["kind"], "ak.strand.update");
         assert_eq!(
             records[0].payload["body"]["strand_id"],
-            "ak:strand:01904100-0000-8000-8000-000000000002"
+            "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1"
         );
     }
 }

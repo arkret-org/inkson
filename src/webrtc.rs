@@ -188,13 +188,7 @@ pub fn build_call_recording_start(
     mode: arkret_sdk::RecordingMode,
     visible_notice: bool,
 ) -> OperationBuilder {
-    let event_id = arkret_sdk::EventId::new_v7_at(crate::clock::now_unix_ms());
-    let start_ref_field = match capture_kind {
-        arkret_sdk::RecordingCaptureKind::Recording => "recording_start_event_id",
-        arkret_sdk::RecordingCaptureKind::Transcript => "transcript_start_event_id",
-    };
     OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::CallRecordingStart)
-        .event_id(event_id.clone())
         .target_ref(call_id)
         .body(json!({
             "call_id": call_id,
@@ -204,7 +198,6 @@ pub fn build_call_recording_start(
             "mode": mode,
             "visible_notice": visible_notice,
             "result": {
-                start_ref_field: event_id,
                 "retention": {
                     "consent_confirmed": true
                 }
@@ -243,7 +236,7 @@ mod tests {
     #[test]
     fn call_state_emits_canonical_kind() {
         let op = build_call_state(
-            "ak:realm:0196419b-0000-8000-8000-0000000000ac",
+            "ak:realm:AedjkD9d4O8HsmPTELawvNXaIESdgksYx6jB4w3TZG0J",
             "did:web:alice",
             "ak:call:c1",
             Some(CallState::Connecting),
@@ -258,7 +251,7 @@ mod tests {
     #[test]
     fn call_recording_start_uses_current_schema() {
         let op = build_call_recording_start(
-            "ak:realm:0196419b-0000-8000-8000-0000000000ac",
+            "ak:realm:AedjkD9d4O8HsmPTELawvNXaIESdgksYx6jB4w3TZG0J",
             "did:web:alice",
             "ak:call:c1",
             "rtc-recording-r1",
@@ -272,9 +265,15 @@ mod tests {
         assert_eq!(op.payload["capture_kind"], "recording");
         assert_eq!(op.payload["mode"], "audio_video");
         assert_eq!(op.payload["visible_notice"], true);
-        assert_eq!(
-            op.payload["result"]["recording_start_event_id"],
-            op.event_id.as_str()
+        assert!(
+            op.payload["result"]
+                .get("recording_start_event_id")
+                .is_none()
+        );
+        assert!(
+            op.payload["result"]
+                .get("transcript_start_event_id")
+                .is_none()
         );
         assert_eq!(op.payload["result"]["retention"]["consent_confirmed"], true);
         assert!(!op.payload.contains_key("consent_actors"));
@@ -283,7 +282,7 @@ mod tests {
     #[test]
     fn call_recording_start_supports_transcript_capture_kind() {
         let op = build_call_recording_start(
-            "ak:realm:0196419b-0000-8000-8000-0000000000ac",
+            "ak:realm:AedjkD9d4O8HsmPTELawvNXaIESdgksYx6jB4w3TZG0J",
             "did:web:alice",
             "ak:call:c1",
             "rtc-transcript-t1",
@@ -295,9 +294,15 @@ mod tests {
         assert_eq!(op.kind, "ak.call.recording.start");
         assert_eq!(op.payload["capture_kind"], "transcript");
         assert_eq!(op.payload["mode"], "audio");
-        assert_eq!(
-            op.payload["result"]["transcript_start_event_id"],
-            op.event_id.as_str()
+        assert!(
+            op.payload["result"]
+                .get("recording_start_event_id")
+                .is_none()
+        );
+        assert!(
+            op.payload["result"]
+                .get("transcript_start_event_id")
+                .is_none()
         );
     }
 
@@ -327,7 +332,7 @@ mod tests {
 
     fn seq_key() -> CallSignalSeqKey {
         CallSignalSeqKey {
-            realm_id: "ak:realm:01904100-0000-8000-8000-000000000001".to_owned(),
+            realm_id: "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
             call_id: TEST_CALL.to_owned(),
             sender_actor_id: TEST_ACTOR.to_owned(),
             sender_device_id: TEST_DEVICE.to_owned(),

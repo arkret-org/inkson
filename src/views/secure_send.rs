@@ -216,7 +216,7 @@ pub(crate) fn build_secure_send(
     actor: &str,
     device_id: &str,
     strand_id: &str,
-    message_id: &str,
+    _local_message_id: &str,
     reply_to: Option<&str>,
     plaintext_bytes: &[u8],
     metadata_plaintext_bytes: Option<&[u8]>,
@@ -314,9 +314,6 @@ pub(crate) fn build_secure_send(
     .map_err(|err| format!("MLS encrypted envelope build failed: {err}"))?;
     let typed_strand_id = arkret_sdk::StrandId::new(strand_id.to_owned())
         .map_err(|err| format!("Send Secure strand id invalid: {err:?}"))?;
-    let message_event_id = arkret_sdk::MessageId::new(message_id.to_owned())
-        .map_err(|err| format!("Send Secure message id invalid: {err}"))?
-        .event_id();
     let encrypted_content =
         arkret_sdk::MlsEncryptedPayload::<arkret_sdk::ContentBlock>::new(encrypted_envelope)
             .map_err(|err| format!("MLS ContentBlock envelope type mismatch: {err}"))?;
@@ -356,7 +353,6 @@ pub(crate) fn build_secure_send(
         .map_err(|err| format!("Send Secure payload encode failed: {err}"))?;
     let message_envelope =
         OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MessageCreate)
-            .event_id(message_event_id)
             .body(msg_payload_value)
             .build_sdk_event("inkson");
 

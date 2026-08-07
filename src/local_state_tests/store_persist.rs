@@ -241,7 +241,7 @@ fn local_state_store_persists_notifications_and_mute_preferences() {
     let notification = crate::state::projection::notifications::test_event_notification(
         1,
         arkret_sdk::NotificationKind::Message,
-        "ak:realm:0196419b-0000-8000-8000-000000000001",
+        "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         None,
         serde_json::json!({"body": "Hello"}),
     );
@@ -249,14 +249,17 @@ fn local_state_store_persists_notifications_and_mute_preferences() {
     store.save_notification_projection(vec![notification]);
     store.set_notification_read(notification_id.clone(), true);
     store.set_notification_archived(notification_id.clone(), true);
-    store.set_realm_muted("ak:realm:0196419b-0000-8000-8000-000000000001", true);
+    store.set_realm_muted(
+        "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+        true,
+    );
     store.set_notification_kind_enabled("message", false);
 
     let reader = LocalStateStore::with_path(path);
     assert_eq!(reader.notification_projection().len(), 1);
     assert!(reader.notification_state_for(&notification_id).read);
     assert!(reader.notification_state_for(&notification_id).archived);
-    assert!(reader.is_realm_muted("ak:realm:0196419b-0000-8000-8000-000000000001"));
+    assert!(reader.is_realm_muted("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"));
     assert!(!reader.notification_kind_enabled("message"));
 }
 
@@ -289,8 +292,8 @@ fn local_state_store_persists_private_read_cursors() {
     let path = temp_state_path("read-cursor");
     let mut store = LocalStateStore::with_path(path.clone());
     const DEVICE_ID: &str = "ak:device:01964137-0000-7000-8000-000000000001";
-    const REALM_ID: &str = "ak:realm:01964137-0000-8000-8000-000000000010";
-    const EVENT_ID: &str = "ak:event:01964137-0000-8000-8000-000000000020";
+    const REALM_ID: &str = "ak:realm:AV56KkeEaMSR4caEiVYFp1MtJk3sQ_Zn0VETrzEWQlU3";
+    const EVENT_ID: &str = "ak:event:AapALysveT_m0ubp6kTGkXSK9371_ilR-kAJwNFmxyjr";
     let marker = store
         .build_read_cursor_candidate("did:web:alice.example", DEVICE_ID, REALM_ID, None, EVENT_ID)
         .unwrap();
@@ -316,15 +319,20 @@ fn local_state_store_persists_canonical_read_cursor_outcome() {
     let path = temp_state_path("read-cursor-outcome");
     let mut store = LocalStateStore::with_path(path.clone());
     let outcome = arkret_sdk::ReadMarkerOutcome {
-        realm_id: arkret_sdk::RealmId::new("ak:realm:01964137-0000-8000-8000-000000000010")
+        realm_id: arkret_sdk::RealmId::new("ak:realm:AV56KkeEaMSR4caEiVYFp1MtJk3sQ_Zn0VETrzEWQlU3")
             .unwrap(),
         actor_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
         device_id: arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001")
             .unwrap(),
-        read_scope: read_scope_for_cursor("ak:realm:01964137-0000-8000-8000-000000000010", None),
+        read_scope: read_scope_for_cursor(
+            "ak:realm:AV56KkeEaMSR4caEiVYFp1MtJk3sQ_Zn0VETrzEWQlU3",
+            None,
+        ),
         position: ReadCursorPosition {
-            event_id: arkret_sdk::EventId::new("ak:event:01964137-0000-8000-8000-000000000020")
-                .unwrap(),
+            event_id: arkret_sdk::EventId::new(
+                "ak:event:AapALysveT_m0ubp6kTGkXSK9371_ilR-kAJwNFmxyjr",
+            )
+            .unwrap(),
             hlc: arkret_sdk::Hlc::new("019641370000-0001-deadbeef").unwrap(),
         },
         updated_at: chrono::DateTime::parse_from_rfc3339("2026-07-30T00:00:00.000Z")
@@ -335,11 +343,14 @@ fn local_state_store_persists_canonical_read_cursor_outcome() {
     store.apply_read_cursor_outcome(outcome).unwrap();
 
     let persisted = LocalStateStore::with_path(path)
-        .read_cursor_for("ak:realm:01964137-0000-8000-8000-000000000010", None)
+        .read_cursor_for(
+            "ak:realm:AV56KkeEaMSR4caEiVYFp1MtJk3sQ_Zn0VETrzEWQlU3",
+            None,
+        )
         .expect("canonical read cursor outcome persisted");
     assert_eq!(
         persisted.body.position.event_id.as_str(),
-        "ak:event:01964137-0000-8000-8000-000000000020"
+        "ak:event:AapALysveT_m0ubp6kTGkXSK9371_ilR-kAJwNFmxyjr"
     );
     assert_eq!(
         persisted.updated_at.to_rfc3339(),
@@ -364,14 +375,14 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
             "schema": "ak.schema.read_cursor.v1",
             "actor_id": "did:web:alice.example",
             "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
-            "realm_id": "ak:realm:01904100-0000-8000-8000-000000000002",
+            "realm_id": "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
             "read_scope": {
                 "kind": "strand",
-                "container_ref": "ak:strand:01904100-0000-8000-8000-000000000003",
+                "container_ref": "ak:strand:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
                 "track_name": "discussion"
             },
             "position": {
-                "event_id": "ak:event:01904100-0000-8000-8000-000000000004",
+                "event_id": "ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM",
                 "hlc": "019041000000-0001-deadbeef"
             },
             "updated_at": "2026-06-24T00:00:00.000Z"
@@ -382,14 +393,14 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
     let reader = LocalStateStore::with_path(path);
     let marker = reader
         .read_cursor_for(
-            "ak:realm:01904100-0000-8000-8000-000000000002",
-            Some("ak:strand:01904100-0000-8000-8000-000000000003"),
+            "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
+            Some("ak:strand:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy"),
         )
         .expect("read cursor update persisted");
     assert_eq!(marker.actor, "did:web:alice.example");
     assert_eq!(
         marker.body.position.event_id.as_str(),
-        "ak:event:01904100-0000-8000-8000-000000000004"
+        "ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM"
     );
 }
 
@@ -398,6 +409,11 @@ fn local_state_store_accepts_server_read_cursor_winner_with_lower_hlc() {
     let path = temp_state_path("read-cursor-server-winner");
     let mut store = LocalStateStore::with_path(path.clone());
     let envelope = |message_suffix: &str, event_suffix: &str, hlc: &str, sent_at: &str| {
+        let event_seed = u8::from_str_radix(&event_suffix[event_suffix.len() - 2..], 16).unwrap();
+        let event_id = arkret_sdk::EventId::from_digest(
+            arkret_sdk::canonical::DigestSuite::Sha256,
+            [event_seed; 32],
+        );
         serde_json::from_value(serde_json::json!({
             "message_id": format!(
                 "ak:device_message:01904100-0000-7000-8000-{message_suffix}"
@@ -413,14 +429,14 @@ fn local_state_store_accepts_server_read_cursor_winner_with_lower_hlc() {
                 "schema": "ak.schema.read_cursor.v1",
                 "actor_id": "did:web:alice.example",
                 "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
-                "realm_id": "ak:realm:01904100-0000-8000-8000-000000000002",
+                "realm_id": "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
                 "read_scope": {
                     "kind": "strand",
-                    "container_ref": "ak:strand:01904100-0000-8000-8000-000000000003",
+                    "container_ref": "ak:strand:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
                     "track_name": "discussion"
                 },
                 "position": {
-                    "event_id": format!("ak:event:01904100-0000-8000-8000-{event_suffix}"),
+                    "event_id": event_id,
                     "hlc": hlc
                 },
                 "updated_at": sent_at
@@ -440,6 +456,8 @@ fn local_state_store_accepts_server_read_cursor_winner_with_lower_hlc() {
         "019041000000-0001-deadbeef",
         "2026-06-24T00:00:01.000Z",
     );
+    let canonical_server_event_id =
+        arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [5; 32]);
 
     assert_eq!(store.ingest_to_device_messages(&[locally_known]), 1);
     assert_eq!(
@@ -450,13 +468,13 @@ fn local_state_store_accepts_server_read_cursor_winner_with_lower_hlc() {
     let reader = LocalStateStore::with_path(path);
     let marker = reader
         .read_cursor_for(
-            "ak:realm:01904100-0000-8000-8000-000000000002",
-            Some("ak:strand:01904100-0000-8000-8000-000000000003"),
+            "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
+            Some("ak:strand:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy"),
         )
         .expect("canonical server read cursor persisted");
     assert_eq!(
         marker.body.position.event_id.as_str(),
-        "ak:event:01904100-0000-8000-8000-000000000005"
+        canonical_server_event_id.as_str()
     );
     assert_eq!(
         marker.body.position.hlc.as_str(),
@@ -547,7 +565,7 @@ fn local_state_store_dismisses_answered_realm_key_request_by_message_id() {
             "key_scope": {
                 "effective_scope": {
                     "kind": "realm",
-                    "realm_id": "ak:realm:0196419b-0000-8000-8000-000000000003"
+                    "realm_id": "ak:realm:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2"
                 },
                 "from_epoch": 0,
                 "to_epoch": 0
@@ -584,10 +602,10 @@ fn local_state_store_dismisses_answered_realm_key_request_by_message_id() {
 fn local_state_store_keeps_thread_read_cursors_separate() {
     let path = temp_state_path("thread-read-cursor");
     let mut store = LocalStateStore::with_path(path);
-    const REALM_ID: &str = "ak:realm:01964137-0000-8000-8000-000000000011";
-    const TOPIC_EVENT_ID: &str = "ak:event:01964137-0000-8000-8000-000000000021";
+    const REALM_ID: &str = "ak:realm:AYzH43fmsgS6dn7noiHeYxAKUUdkhaJBnOGaWvu3MlBC";
+    const TOPIC_EVENT_ID: &str = "ak:event:AUJCoQiXEV11T2wYGgq5vjXcfFcLnKQHPCp3GyzHYTDe";
     const THREAD_ID: &str = "ak:thread:01964137-0000-7000-8000-000000000031";
-    const THREAD_EVENT_ID: &str = "ak:event:01964137-0000-8000-8000-000000000022";
+    const THREAD_EVENT_ID: &str = "ak:event:AXSojayi5PgA26VxFw98EsOKL49Nzr4Vvr9LPxdqgzZP";
     let topic_marker = store
         .build_read_cursor_candidate(
             "did:web:alice.example",

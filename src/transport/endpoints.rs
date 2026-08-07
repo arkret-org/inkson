@@ -231,7 +231,7 @@ impl DirectoryEndpoints<'_> {
         let describe = self.transport.describe_cached().await?;
         if !crate::models::service_supports_operation(
             describe,
-            arkret_sdk::ServiceOperationId::SELF_SNAPSHOT_READ_MANIFEST_HEAD,
+            arkret_sdk::ServiceOperationId::SELF_SNAPSHOT_QUERY_MANIFEST_HEAD,
         ) {
             return Ok(None);
         }

@@ -207,8 +207,10 @@ mod directory_refresh_tests {
             grants: vec![arkret_sdk::GrantSnapshot {
                 grant_id: arkret_sdk::GrantId::new("ak:grant:01964137-0000-7000-8000-000000000010")
                     .unwrap(),
-                realm_id: arkret_sdk::RealmId::new("ak:realm:01964137-0000-8000-8000-000000000011")
-                    .unwrap(),
+                realm_id: arkret_sdk::RealmId::new(
+                    "ak:realm:AYzH43fmsgS6dn7noiHeYxAKUUdkhaJBnOGaWvu3MlBC",
+                )
+                .unwrap(),
                 status: None,
                 grant_digest: None,
                 expires_at: None,
@@ -285,7 +287,7 @@ mod directory_refresh_tests {
                 )
                 .unwrap(),
                 authorized_event_ref: arkret_sdk::EventId::new(
-                    "ak:event:01964137-0000-8000-8000-000000000099",
+                    "ak:event:ASlHbbnJj2aIvNxwyukjGz90ltQwXHCbjIihxsRDrRR5",
                 )
                 .unwrap(),
                 expires_at: None,
@@ -368,7 +370,7 @@ mod directory_refresh_tests {
                 agent_id,
                 controller_id,
                 principal_control_realm_id: arkret_sdk::RealmId::new(
-                    "ak:realm:01964137-0000-8000-8000-000000000001".to_owned(),
+                    "ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5".to_owned(),
                 )
                 .unwrap(),
                 controller_authorization_ref: arkret_sdk::DidUrl::new(
@@ -447,7 +449,7 @@ mod directory_refresh_tests {
             pairing_mode: mode,
             pairing_request_id: arkret_sdk::OpaqueLocalId::new("pairing-request-2").unwrap(),
             pairing_code: Some("fresh-code".to_owned()),
-            expires_at: chrono::DateTime::parse_from_rfc3339("2026-07-18T01:00:00.000Z")
+            expires_at: chrono::DateTime::parse_from_rfc3339("2099-07-18T01:00:00.000Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
         }

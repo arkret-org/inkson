@@ -288,24 +288,18 @@ pub(crate) fn build_chat_reaction_add_operation(
 }
 
 pub(crate) fn is_schema_message_id(value: &str) -> bool {
-    let Some(suffix) = value.trim().strip_prefix("ak:message:") else {
-        return false;
-    };
-    !suffix.is_empty()
-        && suffix
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
+    arkret_sdk::MessageId::new(value.trim().to_owned()).is_ok()
 }
 
-pub(crate) fn new_chat_message_id() -> String {
-    format!("ak:message:{}", uuid_v7())
+pub(crate) fn new_chat_local_id() -> String {
+    format!("local-message:{}", uuid_v7())
 }
 
-pub(crate) fn schema_message_id_or_new(value: &str) -> String {
+pub(crate) fn message_id_or_new_local_id(value: &str) -> String {
     if is_schema_message_id(value) {
         value.trim().to_owned()
     } else {
-        new_chat_message_id()
+        new_chat_local_id()
     }
 }
 
@@ -315,7 +309,7 @@ pub(crate) fn chat_message_create_operation(
     actor: &str,
     strand_id: &str,
     _channel_kind: &str,
-    message_id: &str,
+    local_message_id: &str,
     body: &str,
     mentions: &[MentionNode],
     reply_to: Option<&str>,
@@ -325,7 +319,7 @@ pub(crate) fn chat_message_create_operation(
         actor,
         strand_id,
         _channel_kind,
-        message_id,
+        local_message_id,
         body,
         mentions,
         reply_to,
@@ -462,7 +456,7 @@ fn chat_message_create_operation_with_content_and_expiry(
     realm_id: &str,
     actor: &str,
     strand_id: &str,
-    message_id: &str,
+    _local_message_id: &str,
     body: &str,
     mut content: arkret_sdk::ContentBlock,
     mentions: &[MentionNode],
@@ -499,9 +493,6 @@ fn chat_message_create_operation_with_content_and_expiry(
     }
     // T2.3: v1 wire uses `track_name` — a display-only message segment
     // identifier — instead of the removed `branch` top-level field.
-    let message_event_id = arkret_sdk::MessageId::new(message_id.to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid message_id {message_id:?}: {err}"))?
-        .event_id();
     let mut payload = arkret_sdk::MessageCreatePayload::with_content(
         strand_id_value(strand_id)?,
         "discussion",
@@ -517,7 +508,6 @@ fn chat_message_create_operation_with_content_and_expiry(
         payload = payload.with_expiry(expiry);
     }
     OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MessageCreate)
-        .event_id(message_event_id)
         .target_ref(strand_id)
         .body(sdk_payload_value(
             payload.to_value(),

@@ -1,7 +1,7 @@
 use super::*;
 use crate::state::projection_views::{RsvpCellProjectionView, RsvpHeadProjectionView};
 
-const TEST_CALENDAR_STRAND_ID: &str = "ak:strand:0196419b-0000-8000-8000-000000000901";
+const TEST_CALENDAR_STRAND_ID: &str = "ak:strand:Ac_zaRRyp7i2guabQjAsFr7CdWBbP2ULfqGAcp4_we-V";
 
 #[test]
 fn calendar_patch_writes_one_activation_pair_and_clears_the_legacy_shape() {
@@ -428,8 +428,12 @@ fn calendar_overlay_replaces_the_whole_schedule_subtree() {
 }
 
 fn rsvp_head(digest_byte: u8, basis: &str, status: &str) -> RsvpHeadProjectionView {
+    let source_event_id = arkret_sdk::EventId::from_digest(
+        arkret_sdk::canonical::DigestSuite::Sha256,
+        [digest_byte; 32],
+    );
     RsvpHeadProjectionView {
-        source_event_id: format!("ak:event:01904100-0000-8000-8000-0000000000{digest_byte:02x}"),
+        source_event_id: source_event_id.to_string(),
         source_event_digest: format!("sha256:{}", format!("{digest_byte:02x}").repeat(32)),
         entry: json!({
             "schedule_basis_refs": [basis],

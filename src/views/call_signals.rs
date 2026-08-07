@@ -609,7 +609,7 @@ mod tests {
 
     use super::*;
 
-    const TEST_REALM: &str = "ak:realm:0196419b-0000-8000-8000-000000000000";
+    const TEST_REALM: &str = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
     const TEST_CALL: &str = "ak:call:01964200-0000-7000-8000-000000000001";
     const PEER_ACTOR: &str = "did:web:bob.example";
     const PEER_DEVICE: &str = "ak:device:01904100-0000-7000-8000-b0b0b0000001";

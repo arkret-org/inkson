@@ -329,7 +329,7 @@ mod tests {
 
     use super::*;
 
-    const TEST_REALM: &str = "ak:realm:01904100-0000-8000-8000-000000000001";
+    const TEST_REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     const TEST_DEVICE: &str = "ak:device:01904100-0000-7000-8000-00000000d001";
 
     /// Build a `ak.member.identity.update` payload whose `member_identity`
@@ -391,7 +391,7 @@ mod tests {
         let signer = SigningKey::from_bytes(&[7u8; 32]);
         seed_directory(actor, TEST_DEVICE, &signer);
         let event = json!({
-            "event_id": "ak:event:01904100-0000-8000-8000-00000000000a",
+            "event_id": "ak:event:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ",
             "kind": "ak.member.identity.update",
             "payload": signed_payload(actor, TEST_DEVICE, "Alice v1", &signer),
         });
@@ -418,7 +418,7 @@ mod tests {
         let real = SigningKey::from_bytes(&[1u8; 32]);
         seed_directory(actor, TEST_DEVICE, &real);
         let event = json!({
-            "event_id": "ak:event:01904100-0000-8000-8000-00000000000d",
+            "event_id": "ak:event:AZpUEIyW7TNKR7LXG3WwW7XhlXVKyRQXiuhWXSw19pzj",
             "kind": "ak.member.identity.update",
             "payload": signed_payload(actor, TEST_DEVICE, "Impersonator", &attacker),
         });
@@ -439,7 +439,7 @@ mod tests {
         let actor = "did:web:nobody.example";
         let signer = SigningKey::from_bytes(&[3u8; 32]);
         let event = json!({
-            "event_id": "ak:event:01904100-0000-8000-8000-00000000000e",
+            "event_id": "ak:event:AZMiGxiOThkUT3Dwv05wKz3ho14d39lB0b9ep3sMSDrM",
             "kind": "ak.member.identity.update",
             "payload": signed_payload(actor, TEST_DEVICE, "Unresolved", &signer),
         });
@@ -451,9 +451,9 @@ mod tests {
     fn encrypted_carrier_marks_decryption_pending() {
         let mut store = MemberIdentityStore::new();
         let actor = "did:web:alice.example";
-        let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
+        let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
         let event = json!({
-            "event_id": "ak:event:01904100-0000-8000-8000-00000000000b",
+            "event_id": "ak:event:ASyFf0qTUQ55a2qZp5fuTXRnIgf3ovKChQZ_XSkxdIPK",
             "kind": "ak.member.identity.update",
             "payload": {
                 "realm_id": realm,
@@ -482,7 +482,7 @@ mod tests {
         let actor = "did:web:alice.example";
         let signer = SigningKey::from_bytes(&[7u8; 32]);
         let event = json!({
-            "event_id": "ak:event:01904100-0000-8000-8000-00000000000c",
+            "event_id": "ak:event:ASgi2U7PbVyNs4UpiQAoXKoHv84g07gpBvuddCGiMMG1",
             "kind": "ak.strand.move",
             "payload": signed_payload(actor, TEST_DEVICE, "Alice", &signer),
         });
@@ -499,7 +499,8 @@ mod tests {
         // keeps the SDK surface honest.
         let identity = MemberIdentity {
             schema: arkret_sdk::SchemaId::MEMBER_IDENTITY_V1.to_owned(),
-            realm_id: RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001").unwrap(),
+            realm_id: RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap(),
             actor_id: Did::new("did:web:alice.example".to_owned()).unwrap(),
             subject_id: Did::new("did:web:alice.example".to_owned()).unwrap(),
             display_profile: DisplayProfile {

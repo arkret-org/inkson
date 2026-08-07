@@ -420,17 +420,14 @@ pub(crate) async fn ensure_governance_anchor<S: GovernanceProofStateStore>(
     }
     let realm = arkret_sdk::RealmId::new(realm_id.to_owned())
         .map_err(|error| format!("invalid Realm id for governance anchor bootstrap: {error}"))?;
-    // Retyping only holds between kinds fixed to the same id_form. A PCR id is a
-    // v7 derived from the principal DID, so `retype` would name a nonexistent
-    // Event; those Realms anchor on their did_inception root instead (2.5.4 T2),
-    // which this client does not implement yet — fail closed rather than send a
-    // request built on a fabricated id.
-    if realm.uuid().get_version_num() != 8 {
-        return Err(format!(
+    // Only a collaboration Realm carries the genesis Event token. A PCR id is
+    // subject-derived and therefore has no Event identity to retype; those
+    // Realms anchor on their did_inception root instead (2.5.4 T2).
+    let create_event_id = realm.event_id().ok_or_else(|| {
+        format!(
             "governance anchor bootstrap for {realm_id} needs the 2.5.4 T2 identity-root path: a Principal Control Realm id derives from the principal DID, not from a create Event (state_mismatch)"
-        ));
-    }
-    let create_event_id = arkret_sdk::EventId::from_uuid(realm.uuid());
+        )
+    })?;
     let http = api
         .sdk_http_client()
         .map_err(|error| format!("build governance anchor bootstrap client: {error}"))?;
@@ -1373,7 +1370,7 @@ mod tests {
             "ak.member.state",
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(
-                    "ak:realm:01904100-0000-8000-8000-000000000001".to_owned(),
+                    "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
                 )
                 .unwrap(),
             },
@@ -1499,7 +1496,7 @@ mod tests {
         let seal = arkret_sdk::Seal {
             id: arkret_sdk::SealId::new(format!("ak:seal:{root}")).unwrap(),
             realm_id: arkret_sdk::RealmId::new(
-                "ak:realm:01904100-0000-8000-8000-0000000000c1".to_owned(),
+                "ak:realm:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN".to_owned(),
             )
             .unwrap(),
             predecessor_refs: Vec::new(),
@@ -1613,7 +1610,7 @@ mod tests {
     #[test]
     fn incomplete_chunk_acquisition_survives_state_store_restart() {
         let path = temp_state_path("mls-governance-acquisition");
-        let realm_id = "ak:realm:01904100-0000-8000-8000-000000000001";
+        let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
         let request;
         let expected_chunk;
         {

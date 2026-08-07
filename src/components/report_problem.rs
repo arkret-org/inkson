@@ -238,7 +238,7 @@ mod tests {
     fn report_body_redacts_stable_identifiers_from_tracing() {
         let body = build_report_body(
             &[
-                "actor=did:web:alice.example realm=ak:realm:01964137-0000-8000-8000-000000000001"
+                "actor=did:web:alice.example realm=ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5"
                     .to_owned(),
                 "handle alice@example.com opened web+arkret:realm/demo".to_owned(),
             ],

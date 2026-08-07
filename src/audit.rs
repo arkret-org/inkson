@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn audit_accessed_emits_canonical_kind() {
         let op = build_audit_accessed(
-            "ak:realm:0196419b-0000-8000-8000-0000000000ac",
+            "ak:realm:AedjkD9d4O8HsmPTELawvNXaIESdgksYx6jB4w3TZG0J",
             "did:web:alice",
             "ak:event:abc",
             "did:key:zDevice",
@@ -221,7 +221,7 @@ mod tests {
     #[test]
     fn audit_ryw_receipt_lists_devices() {
         let op = build_audit_ryw_receipt(
-            "ak:realm:0196419b-0000-8000-8000-0000000000ac",
+            "ak:realm:AedjkD9d4O8HsmPTELawvNXaIESdgksYx6jB4w3TZG0J",
             "did:web:alice",
             "ak:event:abc",
             vec!["did:key:zA".into(), "did:key:zB".into()],
@@ -257,9 +257,9 @@ mod tests {
     #[test]
     fn presentation_request_carries_claim_list_under_the_correlation_subject() {
         let op = build_presentation_request(
-            "ak:realm:0196419b-0000-8000-8000-0000000000ac",
+            "ak:realm:AedjkD9d4O8HsmPTELawvNXaIESdgksYx6jB4w3TZG0J",
             "did:web:alice",
-            "ak:event:0196419b-0000-8000-8000-0000000000d1",
+            "ak:event:AUN9rLfFy2ZZ0Q_Pb0Ceep1zwqVi-IUSNePtOMdV3dhj",
             "did:web:bob",
             vec!["display_name".into(), "avatar".into()],
         )
@@ -267,13 +267,13 @@ mod tests {
         assert_eq!(op.kind, "ak.identity.presentation_request");
         assert_eq!(
             op.payload["request_id"],
-            "ak:event:0196419b-0000-8000-8000-0000000000d1"
+            "ak:event:AUN9rLfFy2ZZ0Q_Pb0Ceep1zwqVi-IUSNePtOMdV3dhj"
         );
         assert_eq!(op.payload["value"]["requested_claims"][0], "display_name");
         let writes = crate::operation::direct_registered_cell_writes(&op).unwrap();
         assert_eq!(
             writes[0].cell.as_str(),
-            "ak:cell:ak.component.identity.presentation.v1:ak:event:0196419b-0000-8000-8000-0000000000d1"
+            "ak:cell:ak.component.identity.presentation.v1:ak:event:AUN9rLfFy2ZZ0Q_Pb0Ceep1zwqVi-IUSNePtOMdV3dhj"
         );
     }
 
@@ -282,10 +282,10 @@ mod tests {
     #[test]
     fn disclosure_receipt_records_counterparty_under_the_holder_subject() {
         let op = build_disclosure_receipt(
-            "ak:realm:0196419b-0000-8000-8000-0000000000ac",
+            "ak:realm:AedjkD9d4O8HsmPTELawvNXaIESdgksYx6jB4w3TZG0J",
             "did:web:alice",
             "did:web:alice",
-            "ak:event:0196419b-0000-8000-8000-0000000000d1",
+            "ak:event:AUN9rLfFy2ZZ0Q_Pb0Ceep1zwqVi-IUSNePtOMdV3dhj",
             "did:web:bob",
             vec!["email".into()],
         )

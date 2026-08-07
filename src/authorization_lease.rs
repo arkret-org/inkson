@@ -749,8 +749,10 @@ mod tests {
 
     fn scope() -> arkret_sdk::ScopeRef {
         arkret_sdk::ScopeRef::Realm {
-            realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001")
-                .unwrap(),
+            realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            )
+            .unwrap(),
         }
     }
 
@@ -887,7 +889,8 @@ mod tests {
             controller_id,
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
-            arkret_sdk::EventId::new("ak:event:01964137-0000-8000-8000-000000000098").unwrap(),
+            arkret_sdk::EventId::new("ak:event:AStKv4uwui9iKv7StOHRotQgjBDBvjla-y05nQAwQaJf")
+                .unwrap(),
         )
         .unwrap();
         let mut target = event();
@@ -925,7 +928,8 @@ mod tests {
             controller_id,
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
-            arkret_sdk::EventId::new("ak:event:01964137-0000-8000-8000-000000000098").unwrap(),
+            arkret_sdk::EventId::new("ak:event:AStKv4uwui9iKv7StOHRotQgjBDBvjla-y05nQAwQaJf")
+                .unwrap(),
         )
         .unwrap();
         let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
@@ -969,7 +973,8 @@ mod tests {
             controller_id.as_str(),
             authorization_ref.as_str(),
             "ak:trust_domain:did.web.example",
-            arkret_sdk::EventId::new("ak:event:01964137-0000-8000-8000-000000000098").unwrap(),
+            arkret_sdk::EventId::new("ak:event:AStKv4uwui9iKv7StOHRotQgjBDBvjla-y05nQAwQaJf")
+                .unwrap(),
         )
         .unwrap();
         accepted.push(
@@ -981,7 +986,6 @@ mod tests {
                     revoked_at: Utc::now(),
                     reason: Some("replacement".to_owned()),
                 },
-                arkret_sdk::EventId::new("ak:event:01964137-0000-8000-8000-0000000000aa").unwrap(),
                 arkret_sdk::ScopeRef::Realm {
                     realm_id: realm_id.clone(),
                 },

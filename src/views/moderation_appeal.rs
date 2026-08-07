@@ -302,11 +302,11 @@ mod tests {
     #[test]
     fn build_appeal_submit_op_emits_canonical_kind() {
         let op = build_appeal_submit_op(
-            "ak:realm:01904100-0000-8000-8000-000000000001",
+            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "did:web:alice.example",
             "ak:appeal:01904100-0000-7000-8000-000000000002",
-            "ak:event:01904100-0000-8000-8000-000000000003",
-            "ak:event:01904100-0000-8000-8000-000000000003",
+            "ak:event:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
+            "ak:event:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
             "inline:I was misidentified.",
         )
         .expect("build appeal op")
@@ -314,7 +314,7 @@ mod tests {
         assert_eq!(op.kind, "ak.moderation.appeal.submit");
         assert_eq!(
             op.payload["realm_id"],
-            "ak:realm:01904100-0000-8000-8000-000000000001"
+            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
         );
         assert!(op.payload["appeal_id"].is_string());
         assert!(!op.payload.contains_key("schema"));
@@ -332,11 +332,11 @@ mod tests {
     #[test]
     fn build_appeal_submit_op_rejects_bad_appeal_id() {
         let err = build_appeal_submit_op(
-            "ak:realm:01904100-0000-8000-8000-000000000001",
+            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "did:web:alice.example",
             "appeal-1",
-            "ak:event:01904100-0000-8000-8000-000000000003",
-            "ak:event:01904100-0000-8000-8000-000000000003",
+            "ak:event:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
+            "ak:event:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
             "blob:reason",
         );
         assert!(err.is_err());

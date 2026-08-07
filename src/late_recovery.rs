@@ -459,7 +459,7 @@ mod tests {
     fn ev(orig_min: i64, rec_min: i64, revoked: bool) -> LateRecoveredEvent {
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
         LateRecoveredEvent {
-            event_id: "ak:event:01904100-0000-8000-8000-000000000001".to_owned(),
+            event_id: "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
             actor_id: "did:web:alice.example".to_owned(),
             original_received_at: base + Duration::minutes(orig_min),
             recovered_at: base + Duration::minutes(rec_min),
@@ -499,16 +499,20 @@ mod tests {
         use arkret_sdk::{AccessKind, AuditPolicyAccessPayload, Did, EventId, RealmId};
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
         let payload = AuditPolicyAccessPayload {
-            realm_id: RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001").unwrap(),
+            realm_id: RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap(),
             actor: Did::new("did:web:alice.example").unwrap(),
             access_kind: AccessKind::E2EELateRecovery,
             late_recovery_original_event_id: Some(
-                EventId::new("ak:event:01904100-0000-8000-8000-000000000007").unwrap(),
+                EventId::new("ak:event:ATFrN4sYtiDvJD5G4wKxYY3xMKfo-Xqa_o9Xkb-XnzFN").unwrap(),
             ),
             observed_at: base + Duration::minutes(30),
         };
         let ev = LateRecoveredEvent::from_audit_policy_access(&payload, base, false).unwrap();
-        assert_eq!(ev.event_id, "ak:event:01904100-0000-8000-8000-000000000007");
+        assert_eq!(
+            ev.event_id,
+            "ak:event:ATFrN4sYtiDvJD5G4wKxYY3xMKfo-Xqa_o9Xkb-XnzFN"
+        );
         assert_eq!(ev.lag_minutes(), 30);
         assert!(!should_filter_recovered_event(&ev));
     }
@@ -518,7 +522,8 @@ mod tests {
         use arkret_sdk::{AccessKind, AuditPolicyAccessPayload, Did, RealmId};
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
         let payload = AuditPolicyAccessPayload {
-            realm_id: RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001").unwrap(),
+            realm_id: RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap(),
             actor: Did::new("did:web:alice.example").unwrap(),
             access_kind: AccessKind::Audit,
             late_recovery_original_event_id: None,
@@ -676,17 +681,17 @@ mod tests {
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
         let event = serde_json::json!({
             "kind": "ak.audit.policy_access",
-            "event_id": "ak:event:01904100-0000-8000-8000-000000000099",
+            "event_id": "ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk",
             "original_received_at": "2026-05-19T23:45:00.000Z",
             "late_recovery": {
                 "receiver_visible_at_t0": true,
                 "source_rechecked_current_share_policy": true
             },
             "payload": {
-                "realm_id": "ak:realm:01904100-0000-8000-8000-000000000001",
+                "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
                 "actor": "did:web:alice.example",
                 "access_kind": "e2ee_late_recovery",
-                "late_recovery_original_event_id": "ak:event:01904100-0000-8000-8000-000000000007",
+                "late_recovery_original_event_id": "ak:event:ATFrN4sYtiDvJD5G4wKxYY3xMKfo-Xqa_o9Xkb-XnzFN",
                 "observed_at": arkret_sdk::canonical::format_timestamp_canonical(base)
             }
         });
@@ -696,7 +701,7 @@ mod tests {
             LateRecoveryAuditAccessConversion::LateRecovered(recovered) => {
                 assert_eq!(
                     recovered.event_id,
-                    "ak:event:01904100-0000-8000-8000-000000000007"
+                    "ak:event:ATFrN4sYtiDvJD5G4wKxYY3xMKfo-Xqa_o9Xkb-XnzFN"
                 );
                 assert_eq!(recovered.lag_minutes(), 15);
             }
@@ -710,10 +715,10 @@ mod tests {
                 "source_rechecked_current_share_policy": true
             },
             "payload": {
-                "realm_id": "ak:realm:01904100-0000-8000-8000-000000000001",
+                "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
                 "actor": "did:web:alice.example",
                 "access_kind": "e2ee_late_recovery",
-                "late_recovery_original_event_id": "ak:event:01904100-0000-8000-8000-000000000007",
+                "late_recovery_original_event_id": "ak:event:ATFrN4sYtiDvJD5G4wKxYY3xMKfo-Xqa_o9Xkb-XnzFN",
                 "observed_at": arkret_sdk::canonical::format_timestamp_canonical(base)
             }
         });

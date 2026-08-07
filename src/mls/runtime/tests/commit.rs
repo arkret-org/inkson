@@ -18,14 +18,17 @@ fn mls_remove_membership_frontier_requires_revocation_evidence() {
 
 #[test]
 fn mls_remove_membership_frontier_is_canonicalized_without_seal_fallback() {
-    let b = event_id("ak:event:0196419b-0000-8000-8000-000000000002");
-    let a = event_id("ak:event:0196419b-0000-8000-8000-000000000001");
+    let b = event_id("ak:event:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL");
+    let a = event_id("ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-");
 
     let frontier = canonical_mls_remove_membership_frontier(&[b.clone(), a.clone(), b]).unwrap();
 
     assert_eq!(
         frontier,
-        vec![a, event_id("ak:event:0196419b-0000-8000-8000-000000000002")]
+        vec![
+            a,
+            event_id("ak:event:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL")
+        ]
     );
 }
 

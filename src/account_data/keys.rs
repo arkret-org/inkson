@@ -89,11 +89,11 @@ pub fn reminder_account_data_key(id: &str) -> anyhow::Result<String> {
     arkret_sdk::reminder_account_data_key(id).map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
-pub fn scheduled_send_account_data_key(planned_message_id: &str) -> anyhow::Result<String> {
-    let planned_message_id = arkret_sdk::MessageId::new(planned_message_id.to_owned())
+pub fn scheduled_send_account_data_key(scheduled_send_id: &str) -> anyhow::Result<String> {
+    let scheduled_send_id = arkret_identifiers::ScheduledSendId::new(scheduled_send_id.to_owned())
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     Ok(arkret_sdk::scheduled_send_account_data_key(
-        &planned_message_id,
+        &scheduled_send_id,
     ))
 }
 

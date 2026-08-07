@@ -156,9 +156,9 @@ mod tests {
     #[test]
     fn promote_ops_emit_circle_strand_and_private_relation() {
         let (ids, ops) = build_promote_ops(
-            "ak:realm:0196419b-0000-8000-8000-000000000001",
+            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
             "did:web:alice.example",
-            "ak:strand:0196419b-0000-8000-8000-000000000003",
+            "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2",
             "Private discussion",
         )
         .expect("promote ops build");
@@ -178,7 +178,7 @@ mod tests {
         assert_eq!(ops[2].kind.as_str(), "ak.relation.create");
         assert_eq!(
             ops[0].payload["object"]["realm_id"],
-            "ak:realm:0196419b-0000-8000-8000-000000000001"
+            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
         );
         assert_eq!(ops[1].payload["object"]["scope_circle_id"], ids.circle_id);
         // The relation travels on the object branch, the only one the
@@ -196,7 +196,7 @@ mod tests {
         assert_eq!(relation["from_ref"], ids.discussion_strand_id);
         assert_eq!(
             relation["to_ref"],
-            "ak:strand:0196419b-0000-8000-8000-000000000003"
+            "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2"
         );
         for event in &ops {
             arkret_sdk::schema::event_payload_validator_catalog()

@@ -537,7 +537,7 @@ mod tests {
     use crate::state::LocalStateStore;
 
     const ACTOR: &str = "did:web:alice.example";
-    const REALM: &str = "ak:realm:01904100-0000-8000-8000-000000000041";
+    const REALM: &str = "ak:realm:AUOIeY-cRu4Vmsf-xStVp_Hacq8lfzdbOzYdwA-NGpkX";
 
     fn temp_store(name: &str) -> LocalStateStore {
         let stamp = std::time::SystemTime::now()

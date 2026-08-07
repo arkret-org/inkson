@@ -505,7 +505,7 @@ mod tests {
         let document = did_document(&recipient, &pk32);
 
         let resolved = resolve_recovery_recipient(&recipient, &document).unwrap();
-        let realm = "ak:realm:01904100-0000-8000-8000-e2eeae0d0001";
+        let realm = "ak:realm:AXGA0fM2a_L3afx2ffIvrX5YVKbExabYEkxTUwvKu9HR";
         let rows = vec![(7u64, vec![7u8; 32]), (8u64, vec![8u8; 32])];
         let payload = seal_history_secrets(
             &resolved,
@@ -515,7 +515,7 @@ mod tests {
             8,
             json!("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             "ak:device:01904100-0000-7000-8000-00000000ae01",
-            "ak:event:01904100-0000-8000-8000-00000000ae02",
+            "ak:event:ARhex1PXZeCpFVCK_yTvm5WW9Gign9csUAegFQnCdErh",
             json!({}),
         )
         .unwrap();

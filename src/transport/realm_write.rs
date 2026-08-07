@@ -768,8 +768,9 @@ pub async fn appeal_overturn_atomic(
 /// replacement `ak.moderation.decision` (target = original target) is not
 /// in the same batch, and cross-checks that the appeal-decision's
 /// `modify_decision_ref` equals that new decision's event id. This helper
-/// mints the replacement decision id, stamps it as `modify_decision_ref`,
-/// and submits both events as one transaction.
+/// completes the replacement decision first, stamps its content-bound id as
+/// `modify_decision_ref`, and submits the replacement, appeal decision, and
+/// original-decision lift as one transaction.
 ///
 /// Returns the minted replacement `decision_id` alongside the batch result
 /// so the caller can surface it.
@@ -779,18 +780,15 @@ pub async fn appeal_modify_atomic(
     actor_id: &str,
     appeal_id: &str,
     target_ref: &str,
+    decision_ref: &str,
     new_verdict: &str,
     new_reason_code: &str,
     appeal_reason_text_ref: &str,
 ) -> anyhow::Result<(String, arkret_sdk::EventsSubmitOutcome)> {
-    let new_decision_id = arkret_sdk::EventId::new_v7_at(crate::clock::now_unix_ms()).into_string();
-    let mut new_decision =
+    let new_decision =
         ak_ops::moderation_decision(realm_id, actor_id, target_ref, new_verdict, new_reason_code)?
             .build_sdk_event("inkson")?;
-    // The reducer matches `modify_decision_ref` against the new decision's
-    // EVENT id, so pin the SDK Event id to the same value we report.
-    new_decision.event_id = arkret_sdk::EventId::new(new_decision_id.clone())
-        .map_err(|err| anyhow::anyhow!("replacement decision id is invalid: {err}"))?;
+    let new_decision_id = new_decision.event_id.to_string();
     let appeal_event = ak_ops::moderation_appeal_decision(
         realm_id,
         actor_id,
@@ -800,9 +798,20 @@ pub async fn appeal_modify_atomic(
         Some(&new_decision_id),
     )
     .build_sdk_event("inkson")?;
-    let result =
-        sign_and_submit_moderation_batch(submitter, realm_id, vec![appeal_event, new_decision])
-            .await?;
+    let lift_event = ak_ops::moderation_decision_lift(
+        realm_id,
+        actor_id,
+        target_ref,
+        decision_ref,
+        "appeal_modify",
+    )?
+    .build_sdk_event("inkson")?;
+    let result = sign_and_submit_moderation_batch(
+        submitter,
+        realm_id,
+        vec![new_decision, appeal_event, lift_event],
+    )
+    .await?;
     Ok((new_decision_id, result))
 }
 

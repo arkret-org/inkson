@@ -415,10 +415,10 @@ pub(crate) fn project_board(
 mod tests {
     use super::*;
 
-    const REALM: &str = "ak:realm:019f1071-0000-8000-8000-000000000000";
-    const BOARD: &str = "ak:space:019f1071-e3e3-85b1-be7e-bdfa1b8f73ff";
-    const LIST_A: &str = "ak:space:019f1071-f553-8410-a2c9-53028e995ed3";
-    const LIST_B: &str = "ak:space:019f1071-aaaa-8410-a2c9-53028e995ed3";
+    const REALM: &str = "ak:realm:AeEFmfOZxsx5kLi2kpOJu8m7TFXZ_G8E4019rUp4wmT6";
+    const BOARD: &str = "ak:space:AS3C70xWY61C92FHN-fwh70BB5DHc-kVXN2_nFVHXamA";
+    const LIST_A: &str = "ak:space:AXDc1EwPcJZuThaCiR4FHq4V7rQ4I9QBR1YmEVB4xroH";
+    const LIST_B: &str = "ak:space:AVcONsY9NXkyxnm3-GILG2GEKqeoyPiGmxPiVikKKl1t";
 
     /// `ak.space.create` is `id_source: event_derived`: the payload carries no
     /// `object.id`, and the Space is `retype(event_id)`. The fixture therefore
@@ -585,7 +585,7 @@ mod tests {
     fn client_core_domain_projector_golden_matches_inkson_board_projection() {
         // Each create names its object by `retype(event_id)`, and carries no
         // `object.id` — the shape an authored create actually has.
-        let card = "ak:strand:01904100-0000-8000-8000-000000000301";
+        let card = "ak:strand:AbZt0K_NvenxSDAkOnSDRtorrvUXhGqxSoqT2bFL7m8H";
         let events = vec![
             sdk_event(
                 &event_id_naming(BOARD, "ak:space:"),
@@ -670,7 +670,7 @@ mod tests {
             space_create_event(BOARD, "board", "Board1", None),
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
             strand_create_event(
-                "ak:strand:019f1072-0001-83b2-9c7e-1bb33a924b5c",
+                "ak:strand:AaDn_ypTG8vV4ToKfz6JtG2xnepF9QDlafPZCT-UYPyR",
                 "did:web:alice.example",
                 "alice card",
                 BOARD,
@@ -679,7 +679,7 @@ mod tests {
                 "2026-06-28T00:01:00.000Z",
             ),
             strand_create_event(
-                "ak:strand:019f1072-0002-83b2-9c7e-1bb33a924b5c",
+                "ak:strand:AfHHAbZEhEweHE9b7WfITgHFGzMsezbGka7mm16yesUQ",
                 "did:web:bob.example",
                 "bob card",
                 BOARD,
@@ -705,7 +705,7 @@ mod tests {
 
     #[test]
     fn strand_move_relocates_card_to_target_list() {
-        let strand = "ak:strand:019f1072-0003-83b2-9c7e-1bb33a924b5c";
+        let strand = "ak:strand:AbUSKDI2pz1ELsNdkqfrIZykyrA9jKL9yISLtXB_6qU5";
         let events = vec![
             space_create_event(BOARD, "board", "Board1", None),
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
@@ -739,7 +739,7 @@ mod tests {
 
     #[test]
     fn strand_archive_marks_card_archived_for_maintenance_drawer() {
-        let strand = "ak:strand:019f1072-0004-83b2-9c7e-1bb33a924b5c";
+        let strand = "ak:strand:AdVU7b0NwVjyucaE-ZRGksbrifDFqHbytR9znwTjsAwy";
         let events = vec![
             space_create_event(BOARD, "board", "Board1", None),
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
@@ -791,7 +791,7 @@ mod tests {
     /// `effect`; folding it must surface the card immediately (optimistic).
     #[test]
     fn local_optimistic_card_create_op_projects_into_its_list() {
-        let strand = "ak:strand:019f1072-1001-83b2-9c7e-1bb33a924b5c";
+        let strand = "ak:strand:ARsrCf4UUcTpMLKXFa8Ws1geEfG61cX73bhSeY851_Ns";
         let ops = [
             kanban_operations_from_events(&[
                 space_create_event(BOARD, "board", "Board1", None),
@@ -852,7 +852,7 @@ mod tests {
     /// card without waiting for a server round-trip.
     #[test]
     fn local_optimistic_cas_move_op_relocates_card() {
-        let strand = "ak:strand:019f1072-1002-83b2-9c7e-1bb33a924b5c";
+        let strand = "ak:strand:AehHUAw7pG3uDCWpiYTXKGpYyIQ9S_ZjiBFq0AkbTrVN";
         let mut ops = kanban_operations_from_events(&[
             space_create_event(BOARD, "board", "Board1", None),
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
@@ -1040,7 +1040,7 @@ mod tests {
 
     #[test]
     fn real_cas_move_builder_relocates_card() {
-        let strand = "ak:strand:019f1072-2002-83b2-9c7e-1bb33a924b5c";
+        let strand = "ak:strand:ATNM2hIwr2IImD7_Vm-Ze42J3ky6Xpa4CG1kNnH8_Zf3";
         let move_body = crate::operation::ak_ops::strand_position_cas_update(
             REALM,
             "did:web:alice.example",

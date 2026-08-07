@@ -60,7 +60,7 @@ fn keypackage_claim_request_carries_required_capabilities() {
     let _guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
     let body = mls_api_helpers::build_mls_keypackage_claim_request(
         "did:web:alice.example",
-        "ak:realm:0196419b-0000-8000-8000-000000000000",
+        "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
         "did:web:bob.example",
         "did:web:arkret.example",
         "AAAAAAAAAAAAAAAAAAAAAA",

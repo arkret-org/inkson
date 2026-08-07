@@ -1112,7 +1112,7 @@ mod tests {
     use crate::canonical::canonical_json_bytes;
     use crate::operation::{EventProofAudience, OperationBuilder, set_proof_mode};
 
-    const TEST_REALM_ID: &str = "ak:realm:01964137-0000-8000-8000-000000000001";
+    const TEST_REALM_ID: &str = "ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5";
     const TEST_DEVICE_ID: &str = "ak:device:01964137-0000-7000-8000-000000000001";
 
     fn reset() -> impl Drop {
@@ -1270,7 +1270,7 @@ mod tests {
             arkret_sdk::EventKind::MessageCreate,
         )
         .body(json!({
-            "strand_id": "ak:strand:0196419b-0000-8000-8000-0000000000f1",
+            "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
             "track_name": "discussion",
             "content": {"kind": "ak.content.text", "body": "hi"}
         }))
@@ -1316,7 +1316,7 @@ mod tests {
             arkret_sdk::EventKind::MessageCreate,
         )
         .body(json!({
-            "strand_id": "ak:strand:0196419b-0000-8000-8000-0000000000f1",
+            "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
             "track_name": "discussion",
             "content": {"kind": "ak.content.text", "body": "actor-rooted"}
         }))
@@ -1359,7 +1359,7 @@ mod tests {
             arkret_sdk::EventKind::MessageCreate,
         )
         .body(json!({
-            "strand_id": "ak:strand:0196419b-0000-8000-8000-0000000000f1",
+            "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
             "track_name": "discussion",
             "content": {"kind": "ak.content.text", "body": "verifiable"}
         }))
@@ -1419,7 +1419,7 @@ mod tests {
             arkret_sdk::EventKind::MessageCreate,
         )
         .body(json!({
-            "strand_id": "ak:strand:0196419b-0000-8000-8000-0000000000f1",
+            "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
             "track_name": "discussion",
             "content": {"kind": "ak.content.text", "body": "bound"}
         }))
@@ -1470,7 +1470,7 @@ mod tests {
         let _g = reset();
         let signer = build_ed25519_device_signer([10u8; 32], "did:web:sdk.example", TEST_DEVICE_ID);
         let mut event: arkret_sdk::Event = serde_json::from_value(json!({
-            "event_id": "ak:event:01904100-0000-8000-8000-000000000001",
+            "event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "kind": "ak.message.create",
             "realm_id": TEST_REALM_ID,
             "scope_ref": {"kind": "realm", "realm_id": TEST_REALM_ID},
@@ -1513,7 +1513,7 @@ mod tests {
         let _g = reset();
         let signer = build_ed25519_device_signer([12u8; 32], "did:web:sdk.example", TEST_DEVICE_ID);
         let mut event: arkret_sdk::Event = serde_json::from_value(json!({
-            "event_id": "ak:event:01904100-0000-8000-8000-000000000011",
+            "event_id": "ak:event:AU2FuZ5Cmuwsb0J0xuJwH47SCEL34D7oJWb4JivTH934",
             "kind": "ak.message.create",
             "realm_id": TEST_REALM_ID,
             "scope_ref": {"kind": "realm", "realm_id": TEST_REALM_ID},
@@ -1551,7 +1551,7 @@ mod tests {
             "ak:device:01904100-0000-7000-8000-000000000014",
         );
         let mut event: arkret_sdk::Event = serde_json::from_value(json!({
-            "event_id": "ak:event:01904100-0000-8000-8000-000000000012",
+            "event_id": "ak:event:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu",
             "kind": "ak.message.create",
             "realm_id": TEST_REALM_ID,
             "scope_ref": {"kind": "realm", "realm_id": TEST_REALM_ID},
@@ -1674,7 +1674,7 @@ mod tests {
             arkret_sdk::EventKind::MessageCreate,
         )
         .body(json!({
-            "strand_id": "ak:strand:0196419b-0000-8000-8000-0000000000f1",
+            "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
             "track_name": "discussion",
             "content": {"kind": "ak.content.text", "body": "auto"}
         }))
@@ -1702,7 +1702,7 @@ mod tests {
             arkret_sdk::EventKind::MessageCreate,
         )
         .body(json!({
-            "strand_id": "ak:strand:0196419b-0000-8000-8000-0000000000f1",
+            "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
             "track_name": "discussion",
             "content": {"kind": "ak.content.text", "body": "no"}
         }))

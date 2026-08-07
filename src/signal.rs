@@ -577,7 +577,7 @@ pub(crate) mod test_support {
             scheme: arkret_wire::signal::SIGNAL_AEAD_SCHEME.to_owned(),
             key_ref: arkret_wire::SignalKeyRef {
                 algorithm: "MLS-EXPORTER-AEAD".to_owned(),
-                group_state_ref: "ak:event:01964200-0000-8000-8000-000000000004".to_owned(),
+                group_state_ref: "ak:event:AZVgkcivLIz2PjwUcjuT5bTb6295nnowDbSQak0QfNCa".to_owned(),
             },
             purpose: arkret_wire::signal::SIGNAL_AEAD_PURPOSE.to_owned(),
             aead_profile: "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519".to_owned(),
@@ -649,7 +649,7 @@ mod tests {
     use super::*;
 
     fn realm() -> arkret_sdk::RealmId {
-        arkret_sdk::RealmId::new("ak:realm:0196419b-0000-8000-8000-000000000000").unwrap()
+        arkret_sdk::RealmId::new("ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j").unwrap()
     }
 
     fn actor() -> arkret_sdk::Did {
@@ -664,7 +664,7 @@ mod tests {
     fn typing_body_is_ciphertext_content_not_header_metadata() {
         let payload = SignalPayload::Typing {
             strand_id: arkret_sdk::StrandId::new(
-                "ak:strand:01964200-0000-8000-8000-000000000001".to_owned(),
+                "ak:strand:Aa6k_ga4nHTT-mJwrlDP8oeaq3P1Wg9B6K8RtTXZyUY0".to_owned(),
             )
             .unwrap(),
             typing: true,
@@ -675,7 +675,7 @@ mod tests {
         assert_eq!(body["kind"], "ak.typing");
         assert_eq!(
             body["strand_id"],
-            "ak:strand:01964200-0000-8000-8000-000000000001"
+            "ak:strand:Aa6k_ga4nHTT-mJwrlDP8oeaq3P1Wg9B6K8RtTXZyUY0"
         );
         // `track_name` is optional on the wire and an absent value resolves to
         // `discussion` on the receiver, so a sender that does not select a
@@ -693,10 +693,12 @@ mod tests {
         let frame = arkret_sdk::MessageStreamFrame::Keyframe(
             arkret_sdk::MessageStreamKeyframe::new(
                 8,
-                arkret_sdk::StrandId::new("ak:strand:01964200-0000-8000-8000-000000000001")
+                arkret_sdk::StrandId::new("ak:strand:Aa6k_ga4nHTT-mJwrlDP8oeaq3P1Wg9B6K8RtTXZyUY0")
                     .unwrap(),
-                arkret_sdk::MessageId::new("ak:message:01964200-0000-8000-8000-000000000002")
-                    .unwrap(),
+                arkret_sdk::MessageId::new(
+                    "ak:message:AdivMIiemZ8QCSxNhw_XxuE2l2aHRyO5pQ9NSob7hLEO",
+                )
+                .unwrap(),
                 0,
                 arkret_sdk::MessageStreamId::new(
                     "ak:message_stream:01964200-0000-7000-8000-000000000003",
@@ -757,11 +759,13 @@ mod tests {
     fn read_receipt_body_carries_the_canonical_receipt_object() {
         let payload = SignalPayload::ReadReceipt {
             strand_id: arkret_sdk::StrandId::new(
-                "ak:strand:01964200-0000-8000-8000-000000000001".to_owned(),
+                "ak:strand:Aa6k_ga4nHTT-mJwrlDP8oeaq3P1Wg9B6K8RtTXZyUY0".to_owned(),
             )
             .unwrap(),
-            event_id: arkret_sdk::EventId::new("ak:event:01964200-0000-8000-8000-000000000002")
-                .unwrap(),
+            event_id: arkret_sdk::EventId::new(
+                "ak:event:AdivMIiemZ8QCSxNhw_XxuE2l2aHRyO5pQ9NSob7hLEO",
+            )
+            .unwrap(),
         };
         let body: Value =
             serde_json::from_slice(&payload.to_plaintext(&actor(), SignalSequence(2)).unwrap())
@@ -781,7 +785,7 @@ mod tests {
         assert_eq!(body["read_scope"]["kind"], "strand");
         assert_eq!(
             body["read_scope"]["object_ref"],
-            "ak:strand:01964200-0000-8000-8000-000000000001"
+            "ak:strand:Aa6k_ga4nHTT-mJwrlDP8oeaq3P1Wg9B6K8RtTXZyUY0"
         );
         assert_eq!(body["read_scope"]["track_name"], "discussion");
     }
@@ -858,7 +862,7 @@ mod tests {
             scheme: arkret_wire::signal::SIGNAL_AEAD_SCHEME.to_owned(),
             key_ref: arkret_wire::SignalKeyRef {
                 algorithm: "MLS-EXPORTER-AEAD".to_owned(),
-                group_state_ref: "ak:event:01964200-0000-8000-8000-000000000004".to_owned(),
+                group_state_ref: "ak:event:AZVgkcivLIz2PjwUcjuT5bTb6295nnowDbSQak0QfNCa".to_owned(),
             },
             purpose: arkret_wire::signal::SIGNAL_AEAD_PURPOSE.to_owned(),
             aead_profile: "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519".to_owned(),

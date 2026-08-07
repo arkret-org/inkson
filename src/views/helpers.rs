@@ -578,10 +578,10 @@ mod tests {
     }
 
     #[test]
-    fn short_protocol_id_compacts_typed_uuid_tail() {
+    fn short_protocol_id_compacts_typed_event_derived_token() {
         assert_eq!(
-            short_protocol_id("ak:space:0196419b-0000-8000-8000-000000000000"),
-            "ak:space:0196419b...000000"
+            short_protocol_id("ak:space:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j"),
+            "ak:space:AcbFC8Ni...VQQ74j"
         );
     }
 

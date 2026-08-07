@@ -243,8 +243,8 @@ fn seal_view_from_sync_body_parses_structured_bottoms() {
                     "ak:cell:ak.component.strand.position.v1:ak:space:board:ak:strand:card"
                 ],
                 "event_ids": [
-                    "ak:event:0196419b-0000-8000-8000-000000000001",
-                    "ak:event:0196419b-0000-8000-8000-000000000002"
+                    "ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+                    "ak:event:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL"
                 ],
                 "heads": [
                     {"list_space_id": "ak:space:list-a", "rank": "U"},
@@ -263,7 +263,7 @@ fn seal_view_from_sync_body_parses_structured_bottoms() {
     assert_eq!(info.heads.len(), 2);
     assert_eq!(
         info.heads[0].move_id,
-        "ak:event:0196419b-0000-8000-8000-000000000001"
+        "ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
     );
     assert_eq!(
         info.heads[1]
@@ -351,8 +351,8 @@ fn conflict_bottoms_body(cell: &str) -> serde_json::Value {
                 "kind": "conflict",
                 "cells": [cell],
                 "event_ids": [
-                    "ak:event:0196419b-0000-8000-8000-000000000001",
-                    "ak:event:0196419b-0000-8000-8000-000000000002"
+                    "ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+                    "ak:event:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL"
                 ]
             }
         }]
@@ -432,7 +432,7 @@ fn sync_body_with_seal_view_still_replaces_the_stored_view() {
 
 #[test]
 fn sync_merge_keeps_the_verified_governance_proof_a_bare_set_would_evict() {
-    let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let anchor = "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
     let body = conflict_bottoms_body("ak:cell:ak.component.member.state.v1:did:webvh:zfixture:a");
 

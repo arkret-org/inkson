@@ -9,7 +9,7 @@ use crate::state::isolated_store_for_tests as temp_state_store;
 
 fn genesis_governance_binding(group_id: &str) -> arkret_sdk::MlsGovernanceBindingPayload {
     let realm_id =
-        arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001").unwrap();
+        arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19").unwrap();
     let security_frontier_digest = arkret_sdk::Hash::new(
         "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     )
@@ -33,7 +33,7 @@ fn build_mls_genesis_payload_has_required_fields() {
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
     super::seed_genesis_governance_proof(&mut state, realm);
     let summary = ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
@@ -107,7 +107,7 @@ fn existing_epoch_zero_snapshot_restores_genesis_summary() {
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
     super::seed_genesis_governance_proof(&mut state, realm);
     let fresh = ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
@@ -131,7 +131,7 @@ fn legacy_epoch_zero_snapshot_without_governance_binding_fails_closed() {
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let secret = load_or_create_device_snapshot_secret(&secure, actor, device).unwrap();
     let identity = arkret_sdk::ArkretMlsIdentity::new_basic(
         arkret_sdk::Did::new(actor.to_owned()).unwrap(),
@@ -162,7 +162,7 @@ fn legacy_epoch_zero_snapshot_without_governance_binding_fails_closed() {
 #[test]
 fn mls_genesis_emitted_flag_is_idempotent() {
     let mut state = temp_state_store("genesis-idempotent");
-    let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     assert!(!state.mls_genesis_emitted_for(realm));
     state.mark_mls_genesis_emitted(realm);
     assert!(state.mls_genesis_emitted_for(realm));
@@ -174,7 +174,7 @@ fn mls_genesis_emitted_flag_is_idempotent() {
 #[test]
 fn pending_genesis_event_round_trips_exactly_and_clears_on_accept() {
     let mut state = temp_state_store("pending-genesis-event");
-    let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let actor = "did:web:alice.example";
     let group_id = arkret_sdk::base64url_encode(realm.as_bytes());
     let binding = genesis_governance_binding(&group_id);
@@ -218,7 +218,7 @@ fn pending_genesis_event_round_trips_exactly_and_clears_on_accept() {
 #[test]
 fn mls_history_backup_body_decodes_to_snapshot_envelope() {
     let envelope = crate::mls::persistence::encrypt_state(
-        "ak:realm:01904100-0000-8000-8000-000000000001",
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "group-a",
         8,
         b"opaque sdk state",
@@ -251,7 +251,7 @@ fn mls_history_backup_body_decodes_to_snapshot_envelope() {
 #[test]
 fn mls_history_backup_decode_rejects_metadata_mismatch() {
     let envelope = crate::mls::persistence::encrypt_state(
-        "ak:realm:01904100-0000-8000-8000-000000000001",
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "group-a",
         8,
         b"opaque sdk state",
@@ -283,7 +283,7 @@ fn restore_mls_history_backup_saves_snapshot_when_fresh() {
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ak:realm:01904100-0000-8000-8000-000000000004";
+    let realm = "ak:realm:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM";
     let store = MemorySecureKeyStore::new();
     let secret = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
     let identity = ArkretMlsIdentity::new_basic(
@@ -294,7 +294,7 @@ fn restore_mls_history_backup_saves_snapshot_when_fresh() {
     let group = identity.create_group(realm.as_bytes()).unwrap();
     let record = group.export_state_record().unwrap();
     let group_state_event_id =
-        arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-0000000000aa").unwrap();
+        arkret_sdk::EventId::new("ak:event:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml").unwrap();
     let mut envelope = crate::mls::persistence::encrypt_state(
         realm,
         &record.group_id,
@@ -343,7 +343,7 @@ fn restore_mls_history_backup_rejects_epoch_rollback() {
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ak:realm:01904100-0000-8000-8000-000000000002";
+    let realm = "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";
     let store = MemorySecureKeyStore::new();
     let secret = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
     let identity = ArkretMlsIdentity::new_basic(
@@ -404,7 +404,7 @@ fn cross_device_recovery_restores_history_without_local_secret() {
     let actor = "did:web:alice.example";
     let device_a = "ak:device:01904100-0000-7000-8000-00000000000a";
     let device_b = "ak:device:01904100-0000-7000-8000-00000000000b";
-    let realm = "ak:realm:01904100-0000-8000-8000-0000000000ab";
+    let realm = "ak:realm:ARKSHgBichO7ZjwprTMf4UrKn7x1GHkl16zz6U4xm586";
     let passphrase: &[u8] = b"correct horse battery staple";
 
     // --- Device A: account secret + a real MLS group + history backup body.

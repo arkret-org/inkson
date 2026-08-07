@@ -156,7 +156,6 @@ pub(crate) fn trim_realm_id(value: &str) -> String {
 /// only pre-checks that the contract is evaluable.
 #[derive(Debug)]
 pub struct OperationBuilder {
-    event_id: Option<arkret_sdk::EventId>,
     realm_id: String,
     circle_id: Option<String>,
     actor: String,
@@ -179,7 +178,6 @@ pub struct OperationBuilder {
 impl OperationBuilder {
     pub fn new(realm_id: impl Into<String>, actor: impl Into<String>, op_type: EventKind) -> Self {
         Self {
-            event_id: None,
             realm_id: realm_id.into(),
             circle_id: None,
             actor: actor.into(),
@@ -202,13 +200,6 @@ impl OperationBuilder {
 
     pub fn target_ref(mut self, target_ref: impl Into<String>) -> Self {
         self.target_ref = Some(target_ref.into());
-        self
-    }
-
-    /// Pin the Event identifier before envelope construction. This is required
-    /// when the payload atomically self-binds to its containing Event.
-    pub fn event_id(mut self, event_id: arkret_sdk::EventId) -> Self {
-        self.event_id = Some(event_id);
         self
     }
 
@@ -304,20 +295,6 @@ impl OperationBuilder {
     }
 
     pub fn build_sdk_event(self, node_id: &str) -> anyhow::Result<arkret_sdk::Event> {
-        self.build_sdk_event_with_deps(node_id, Vec::new())
-    }
-
-    #[allow(clippy::expect_used)]
-    pub fn build_with_deps(self, node_id: &str, deps: Vec<String>) -> Event {
-        self.build_sdk_event_with_deps(node_id, deps)
-            .expect("OperationBuilder emitted an invalid SDK Event")
-    }
-
-    pub fn build_sdk_event_with_deps(
-        self,
-        node_id: &str,
-        deps: Vec<String>,
-    ) -> anyhow::Result<arkret_sdk::Event> {
         let _ = node_id;
         let operation_id =
             arkret_sdk::OperationId::new_v7_at(crate::clock::now_unix_ms()).into_string();
@@ -333,13 +310,6 @@ impl OperationBuilder {
             unsigned.insert("local_authz_ref".to_owned(), Value::String(authz_ref));
         }
         let realm_id = trim_realm_id(&self.realm_id);
-        let prev_refs = deps
-            .into_iter()
-            .map(|dep| {
-                arkret_sdk::EventId::new(dep)
-                    .map_err(|err| anyhow::anyhow!("invalid prev_refs event id: {err}"))
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
         let realm_id = arkret_sdk::RealmId::new(realm_id)
             .map_err(|err| anyhow::anyhow!("invalid realm_id: {err}"))?;
         // Spec realm-and-space.md section 2.5.0: a Realm genesis carries the
@@ -367,30 +337,16 @@ impl OperationBuilder {
         let hlc = arkret_sdk::Hlc::new("000000000000-0000-00000000")
             .map_err(|err| anyhow::anyhow!("placeholder HLC is invalid: {err}"))?;
         let created_at = self.created_at.unwrap_or_else(crate::clock::now_utc_millis);
-        let mut event = if let Some(event_id) = self.event_id {
-            arkret_sdk::Event::new_with_id_at(
-                event_id,
-                self.op_type.as_str(),
-                scope_ref,
-                actor_id,
-                1,
-                hlc,
-                self.body,
-                created_at,
-            )
-        } else {
-            arkret_sdk::Event::new_at(
-                self.op_type.as_str(),
-                scope_ref,
-                actor_id,
-                1,
-                hlc,
-                self.body,
-                created_at,
-            )
-        }
+        let mut event = arkret_sdk::Event::new_at(
+            self.op_type.as_str(),
+            scope_ref,
+            actor_id,
+            1,
+            hlc,
+            self.body,
+            created_at,
+        )
         .map_err(|err| anyhow::anyhow!("SDK Event construction failed: {err}"))?;
-        event.prev_refs = prev_refs;
         event.refs = self.refs;
         event.causal_refs = self.causal_refs;
         event.preconditions = self.preconditions;
@@ -458,10 +414,9 @@ impl OperationBuilder {
 /// Re-derive an Event's content-bound identity after its payload was edited.
 ///
 /// `event_id` is a function of the finished Event (spec
-/// `zh/conformance/encoding.md` section 4.0), and for an `event_derived` create
-/// the object id is a function of `event_id` in turn. A surface that edits the
-/// payload after [`OperationBuilder::build_sdk_event`] therefore invalidates
-/// both; this restores them in the one order that has a fixed point.
+/// `zh/conformance/encoding.md` section 4.0). Event-derived create payloads
+/// omit their own object id, so refreshing the Event identity is a single
+/// acyclic step; the retyped object id is stored only as a local unsigned hint.
 pub(crate) fn rederive_event_identity(event: &mut Event) -> anyhow::Result<()> {
     rederive_event_identity_with_digest_suite(event, arkret_sdk::canonical::DigestSuite::Sha256)
 }
@@ -571,16 +526,11 @@ impl EventExt for Event {
 /// Generate a bare UUIDv7 for local opaque correlation values.
 ///
 /// The returned value is not itself an Arkret wire identifier.
-/// Protocol identifiers must use the SDK's concrete typed constructors (for
-/// example `RealmId::new_v7_at`) instead of adding a wire prefix to this value.
+/// Protocol identifiers must use the SDK's concrete typed constructors instead
+/// of adding a wire prefix to this value. Event-derived ids are materialized
+/// only after the containing Event's full digest is known.
 /// The SDK still owns UUID layout and monotonicity; Inkson supplies only its
 /// platform-safe clock reading.
-/// A canonical-shaped `event_id` that stands in while an envelope is being
-/// assembled. Every builder that needs an id before the content is final uses
-/// this one and re-derives before submit — the real id is a function of the
-/// finished Event (spec `zh/conformance/encoding.md` section 4.0).
-pub const PLACEHOLDER_EVENT_ID: &str = "ak:event:00000000-0000-8000-8000-000000000000";
-
 pub fn uuid_v7() -> String {
     arkret_sdk::identifiers::uuid_v7_at(crate::clock::now_unix_ms()).to_string()
 }

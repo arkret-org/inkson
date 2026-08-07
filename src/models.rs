@@ -468,7 +468,7 @@ mod tests {
         // decode and broke every event submit ("error decoding response body").
         let value = serde_json::json!({
             "status": "accepted",
-            "accepted": ["ak:event:0196419b-0000-8000-8000-000000000001"],
+            "accepted": ["ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"],
             "duplicate": [],
             "rejected": [],
             "realm_actor_frontiers": [],
@@ -478,7 +478,7 @@ mod tests {
         let outcome: super::SubmitEventResult = serde_json::from_value(value).unwrap();
         assert_eq!(
             outcome.event_id,
-            "ak:event:0196419b-0000-8000-8000-000000000001"
+            "ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
         );
         assert_eq!(outcome.status, "accepted");
         assert_eq!(outcome.cursor, "sx:cursor-1");
@@ -495,9 +495,9 @@ mod tests {
                 "bidirectional_scopes": ["direct_message"],
                 "effective_scopes": ["direct_message"],
                 "direct_conversation": {
-                    "realm_id": "ak:realm:01964137-0000-8000-8000-00000000d0b1",
-                    "main_strand_id": "ak:strand:01964137-0000-8000-8000-00000000d0b2",
-                    "binding_event_ref": "ak:event:0196419b-0000-8000-8000-000000000103",
+                    "realm_id": "ak:realm:AUEAoXMJeJWBETvkqm7gk4imduk7g-l8bim19OPFQDaO",
+                    "main_strand_id": "ak:strand:Ae9PN2rTd0Dojs9yS8iLnfheJtjSEZ3mgDDyONpztHUd",
+                    "binding_event_ref": "ak:event:AQmnyvvBmKOWOEOSD2rAYsVBQn6vJ_wdbdUY8CKUGB5c",
                     "state": "found"
                 },
                 "agents": [{
@@ -507,9 +507,9 @@ mod tests {
                     "agent_slug": "helper",
                     "avatar_blob_ref": "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
                     "direct_conversation": {
-                        "realm_id": "ak:realm:01964137-0000-8000-8000-0000000000b1",
-                        "main_strand_id": "ak:strand:01964137-0000-8000-8000-0000000000b2",
-                        "binding_event_ref": "ak:event:01964137-0000-8000-8000-0000000000b3",
+                        "realm_id": "ak:realm:Ab8b2glgQEo48OSA-g8P4SfHSFLwgN1jG8Jv-AlcdVnI",
+                        "main_strand_id": "ak:strand:AQAG6N7vDa1nxssksTCIdqNm-FTDJoKuBrHIclJ7FBy0",
+                        "binding_event_ref": "ak:event:ARhOgV4T1qZleEVITbO4iNd_ggoy771-VwFQBRHzRm4x",
                         "state": "found"
                     }
                 }]
@@ -539,12 +539,12 @@ mod tests {
         let value = serde_json::json!({
             "status": "duplicate",
             "accepted": [],
-            "duplicate": ["ak:event:0196419b-0000-8000-8000-000000000002"],
+            "duplicate": ["ak:event:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL"],
         });
         let outcome: super::SubmitEventResult = serde_json::from_value(value).unwrap();
         assert_eq!(
             outcome.event_id,
-            "ak:event:0196419b-0000-8000-8000-000000000002"
+            "ak:event:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL"
         );
         assert_eq!(outcome.status, "duplicate");
         assert_eq!(outcome.cursor, "");
@@ -631,7 +631,7 @@ mod tests {
             "holder_allowed_introduction_kinds": ["consent_grant", "locator_ref"],
             "explicit_address_behavior": "drop",
             "unknown_invites": "quarantine",
-            "trusted_realm_ids": ["ak:realm:01904100-0000-8000-8000-000000000001"],
+            "trusted_realm_ids": ["ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"],
             "trusted_principal_services": ["did:web:ps.example"],
             "denied_subjects": ["did:web:spammer.example"],
             "disclosure": {"high_trust": "opaque", "low_trust": "opaque"},
@@ -647,7 +647,7 @@ mod tests {
         assert_eq!(re["trusted_principal_services"][0], "did:web:ps.example");
         assert_eq!(
             re["trusted_realm_ids"][0],
-            "ak:realm:01904100-0000-8000-8000-000000000001"
+            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
         );
     }
 
@@ -674,7 +674,7 @@ mod tests {
             request_event_ref: None,
             response_event_ref: Some(
                 arkret_sdk::EventId::new(
-                    "ak:event:01904100-0000-8000-8000-000000000001".to_owned(),
+                    "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
                 )
                 .unwrap(),
             ),

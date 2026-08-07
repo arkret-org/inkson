@@ -236,8 +236,8 @@ mod tests {
 
     use super::*;
 
-    const EVENT_ID: &str = "ak:event:01904100-0000-8000-8000-00000000000a";
-    const MESSAGE_ID: &str = "ak:message:01904100-0000-8000-8000-00000000000a";
+    const EVENT_ID: &str = "ak:event:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ";
+    const MESSAGE_ID: &str = "ak:message:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ";
 
     fn key(actor: &str) -> ReadPositionKey {
         ReadPositionKey {
@@ -341,8 +341,10 @@ mod tests {
             sent_at: at,
             expires_at: at + chrono::Duration::seconds(30),
             scope_ref: arkret_sdk::ScopeRef::Realm {
-                realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001")
-                    .unwrap(),
+                realm_id: arkret_sdk::RealmId::new(
+                    "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                )
+                .unwrap(),
             },
             seal_ref: arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "a".repeat(64)))
                 .unwrap(),
@@ -374,7 +376,7 @@ mod tests {
             assert!(strand_read_position(&plaintext, receipt_of(&plaintext)).is_none());
         }
 
-        let strand = "ak:strand:01904100-0000-8000-8000-00000000000b";
+        let strand = "ak:strand:ASyFf0qTUQ55a2qZp5fuTXRnIgf3ovKChQZ_XSkxdIPK";
         let plaintext = receipt(json!({
             "kind": "ak.receipt.read",
             "read_scope": {"kind": "strand", "object_ref": strand, "track_name": "discussion"},
@@ -386,7 +388,7 @@ mod tests {
         assert_eq!(key.actor_id, "did:web:a");
         assert_eq!(
             key.realm_id,
-            "ak:realm:01904100-0000-8000-8000-000000000001"
+            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
         );
         // The receipt names an Event id; the timeline is keyed by the same
         // UUIDv7 retyped as a Message id.

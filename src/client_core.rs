@@ -519,7 +519,8 @@ mod tests {
             .unwrap();
         let transport = super::InksonRealmEventsTransport::new(http);
         let realm_id =
-            arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001").unwrap();
+            arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap();
 
         let (initial, initial_context) = transport.subscribe_request(&realm_id, None);
         assert_eq!(initial.realms, vec![realm_id.as_str().to_owned()]);
@@ -597,7 +598,8 @@ mod tests {
                 .unwrap();
         let transport = super::InksonRealmEventsTransport::new(http);
         let realm_id =
-            arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001").unwrap();
+            arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap();
         let mut source = tokio::time::timeout(
             Duration::from_secs(2),
             transport.open_realm_events(&realm_id, None),
@@ -645,11 +647,14 @@ mod tests {
         };
         let realm_scope = garth::CursorScope::RealmEvents {
             service_id: None,
-            realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001")
-                .unwrap(),
+            realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            )
+            .unwrap(),
         };
         let event_id =
-            arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000001").unwrap();
+            arkret_sdk::EventId::new("ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap();
 
         adapter
             .save(account_scope.clone(), "ak:cursor:account".to_owned())
@@ -752,7 +757,8 @@ mod tests {
             crate::state::LocalStateStore::with_path(path.clone()),
         );
         let realm_id =
-            arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001").unwrap();
+            arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap();
         let event = arkret_sdk::Event::new(
             arkret_sdk::EventKind::MESSAGE_CREATE,
             arkret_sdk::ScopeRef::Realm {
@@ -763,7 +769,7 @@ mod tests {
             arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             serde_json::json!({
                 "content": {"kind": "ak.content.text", "body": "hello"},
-                "strand_id": "ak:strand:01904100-0000-8000-8000-000000000002",
+                "strand_id": "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
                 "track_name": "discussion"
             }),
         )

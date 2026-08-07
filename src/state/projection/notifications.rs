@@ -329,9 +329,12 @@ pub(crate) fn test_event_notification(
     source_event_id: Option<&str>,
     preview: Value,
 ) -> StoredNotification {
-    let source_event_id = source_event_id
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| format!("ak:event:0196419b-0000-8000-8000-{ordinal:012x}"));
+    let source_event_id = source_event_id.map(ToOwned::to_owned).unwrap_or_else(|| {
+        let mut digest = [0_u8; 32];
+        digest[..8].copy_from_slice(&ordinal.to_be_bytes());
+        arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, digest)
+            .to_string()
+    });
     StoredNotification::Event {
         notification: Notification {
             id: arkret_sdk::NotificationId::new(format!(

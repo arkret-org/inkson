@@ -15,7 +15,7 @@ use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
     AgentKeyPairRequestBody, AgentKeySupersession, AgentPairingBootstrap,
     AgentRequestedScopeDisclosure, AgentRuntimeApprovalControllerProjection,
-    AgentSigningKeyBinding, Did, DidUrl, Event, EventId, GrantConstraint, GrantConstraintEffect,
+    AgentSigningKeyBinding, Did, DidUrl, Event, GrantConstraint, GrantConstraintEffect,
     GrantConstraintKind, GrantConstraintSubkind, Hash, KeyState, NonEmptyString, OpaqueLocalId,
     Proof, RealmId, RequestId,
 };
@@ -689,7 +689,6 @@ pub fn build_agent_key_authorization_for_pairing(
     } else {
         Vec::new()
     };
-    let authorize_event_id = EventId::new_v7_at(crate::clock::now_unix_ms());
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("no active controller signer is available"))?;
     let controller_verification_method = DidUrl::new(
@@ -701,35 +700,22 @@ pub fn build_agent_key_authorization_for_pairing(
     .map_err(anyhow::Error::msg)?;
     let agent_key_id = NonEmptyString::new(request.verification_method.as_str().to_owned())
         .map_err(anyhow::Error::msg)?;
-    let mut signing_key_binding =
-        arkret_signatures::agent_evidence::prepare_agent_signing_key_binding(
+    let signing_key_binding_core =
+        arkret_signatures::agent_evidence::prepare_agent_signing_key_binding_core(
             request.agent_id.clone(),
             agent_key_id.clone(),
             request.verification_method.clone(),
             &request.public_key,
-            authorize_event_id.clone(),
             issued_at,
             None,
             controller.clone(),
-            controller_verification_method.clone(),
         )
         .map_err(|reason| anyhow::anyhow!(reason.as_str()))?;
-    let binding_bytes = arkret_signatures::agent_evidence::agent_signing_key_binding_signing_bytes(
-        &signing_key_binding,
-    )
-    .map_err(|reason| anyhow::anyhow!(reason.as_str()))?;
-    let controller_jws = signer.detached_jws_over_payload_with_kid(
-        controller_verification_method.as_str(),
-        &binding_bytes,
-    )?;
-    arkret_signatures::agent_evidence::finish_agent_signing_key_binding(
-        &mut signing_key_binding,
-        &controller_jws,
-    )
-    .map_err(|reason| anyhow::anyhow!(reason.as_str()))?;
     let signing_key_binding_digest =
-        arkret_signatures::agent_evidence::agent_signing_key_binding_digest(&signing_key_binding)
-            .map_err(|reason| anyhow::anyhow!(reason.as_str()))?;
+        arkret_signatures::agent_evidence::agent_signing_key_binding_core_digest(
+            &signing_key_binding_core,
+        )
+        .map_err(|reason| anyhow::anyhow!(reason.as_str()))?;
     let payload = AgentKeyAuthorizePayload {
         agent_id: request.agent_id.clone(),
         key_id: agent_key_id.clone(),
@@ -762,14 +748,33 @@ pub fn build_agent_key_authorization_for_pairing(
     )?;
     let mut event = arkret_event_draft::build_agent_key_authorize_event(
         &payload,
-        authorize_event_id,
         arkret_sdk::ScopeRef::Realm { realm_id },
         request.agent_id.clone(),
-        controller,
+        controller.clone(),
         authorization_ref,
         1,
         hlc,
     )?;
+    let signing_key_binding_to_sign =
+        arkret_signatures::agent_evidence::materialize_agent_signing_key_binding(
+            signing_key_binding_core,
+            event.event_id.clone(),
+            controller_verification_method.clone(),
+        )
+        .map_err(|reason| anyhow::anyhow!(reason.as_str()))?;
+    let binding_bytes = arkret_signatures::agent_evidence::agent_signing_key_binding_to_sign_bytes(
+        &signing_key_binding_to_sign,
+    )
+    .map_err(|reason| anyhow::anyhow!(reason.as_str()))?;
+    let controller_jws = signer.detached_jws_over_payload_with_kid(
+        controller_verification_method.as_str(),
+        &binding_bytes,
+    )?;
+    let signing_key_binding = arkret_signatures::agent_evidence::finish_agent_signing_key_binding(
+        signing_key_binding_to_sign,
+        &controller_jws,
+    )
+    .map_err(|reason| anyhow::anyhow!(reason.as_str()))?;
     event.unsigned.insert(
         "pairing_request_id".to_owned(),
         json!(request.pairing_request_id),

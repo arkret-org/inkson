@@ -10,7 +10,7 @@ import {
 
 registerStrandsBeforeEach();
 
-const DEMO_REALM = "ak:realm:0196419b-0000-8000-8000-000000000000";
+const DEMO_REALM = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
 
 test("chat reloads sent messages and keeps actor sequence increasing", async ({ page }) => {
   await refreshServer(page);

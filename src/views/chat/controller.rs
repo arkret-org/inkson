@@ -690,7 +690,7 @@ impl ChatController {
 
     pub fn retry_message(mut self, context: ChatCommandContext, message: ChatMessage) {
         let local_id = message.id;
-        let retry_message_id = schema_message_id_or_new(&local_id);
+        let retry_message_id = message_id_or_new_local_id(&local_id);
         if let Some(found) = self
             .messages
             .write()

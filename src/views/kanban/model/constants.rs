@@ -1,4 +1,5 @@
-pub(crate) const DEMO_BOARD_SPACE_ID: &str = "ak:space:0196419b-0000-8000-8000-00000000b0a0";
+pub(crate) const DEMO_BOARD_SPACE_ID: &str =
+    "ak:space:AY61QviMxoJ0ALEn5U39bA7Qbi1BxHCrOq4950m2JRjM";
 
 /// Maximum number of times a CAS-conflicted Move is automatically
 /// rebased + re-submitted before the UI surfaces it as Quarantined and
@@ -89,17 +90,17 @@ pub(crate) fn actor_is_current_account(actor_id: &str, account_did: &str) -> boo
 }
 
 pub(crate) const DEMO_STRAND_LEGAL_REVIEW_ID: &str =
-    "ak:strand:0196419b-0000-8000-8000-000000000101";
+    "ak:strand:AUftf_3k2fRKMG0NFlHe5iEMBOUpxMwYMRu-yhMJl-yz";
 pub(crate) const DEMO_STRAND_ONBOARDING_COPY_ID: &str =
-    "ak:strand:0196419b-0000-8000-8000-000000000102";
+    "ak:strand:ASZZoDGudNfXFZynKh4xcEpb5d8kLZQXRpycxlg1qyW-";
 pub(crate) const DEMO_STRAND_SECURITY_SIGNOFF_ID: &str =
-    "ak:strand:0196419b-0000-8000-8000-000000000103";
+    "ak:strand:AQmnyvvBmKOWOEOSD2rAYsVBQn6vJ_wdbdUY8CKUGB5c";
 pub(crate) const DEMO_STRAND_REVIEW_DISCUSSION_ID: &str =
-    "ak:strand:0196419b-0000-8000-8000-000000000201";
+    "ak:strand:AVBgYTmzSkzTSd1dlFH4ZADaQRkVcx_iTAvXdxlTfxrg";
 pub(crate) const DEMO_STRAND_SUPPORT_DISCUSSION_ID: &str =
-    "ak:strand:0196419b-0000-8000-8000-000000000202";
+    "ak:strand:AUiTFJVo328Rc7lc2Le2mjzL_ELZ-uQUn1Fq-C1QNAbh";
 pub(crate) const DEMO_STRAND_SECURITY_REVIEW_ID: &str =
-    "ak:strand:0196419b-0000-8000-8000-000000000203";
+    "ak:strand:AVKDZWS92w01isZDuPKuX-DiJymAf0Qcvf0A6qz8Gy-0";
 pub(crate) const KANBAN_PRIVATE_STRAND_PATCH_PATHS: &[&str] = &[
     "body",
     "synthesis",

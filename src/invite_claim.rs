@@ -192,7 +192,7 @@ mod tests {
         let body = arkret_sdk::InviteSubjectProofBody::from_wire_parts(
             "did:web:alice.example",
             "ak:invite:0196419b-0000-7000-8000-000000000001",
-            "ak:realm:0196419b-0000-8000-8000-000000000010",
+            "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "nonce-claim-proof-1",
             "did:web:verify.example",
@@ -211,7 +211,7 @@ mod tests {
             "verification_service_id": "did:web:verify.example",
             "verification_method": "did:web:verify.example#invite-key",
             "subject_id": "did:web:alice.example",
-            "realm_id": "ak:realm:0196419b-0000-8000-8000-000000000010",
+            "realm_id": "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
             "audience": "arkret.invite.claim",
             "claim_nonce": "nonce-claim-proof-1",
             "expires_at": "2099-01-01T00:00:00.000Z",
@@ -219,7 +219,7 @@ mod tests {
         });
         let body = build_invite_claim_body(
             "ak:invite:0196419b-0000-7000-8000-000000000001",
-            "ak:realm:0196419b-0000-8000-8000-000000000010",
+            "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
             "did:web:alice.example",
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "nonce-claim-proof-1",
@@ -234,7 +234,7 @@ mod tests {
         let expected_transcript_digest = arkret_sdk::invite_subject_proof_transcript_digest(
             "did:web:alice.example",
             "ak:invite:0196419b-0000-7000-8000-000000000001",
-            "ak:realm:0196419b-0000-8000-8000-000000000010",
+            "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "nonce-claim-proof-1",
             "did:web:verify.example",

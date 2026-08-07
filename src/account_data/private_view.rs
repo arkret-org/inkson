@@ -135,19 +135,19 @@ mod tests {
     use super::*;
     use crate::account_data::private_view_account_data_key;
 
-    const VIEW_ID: &str = "ak:view:01904100-0000-8000-8000-848727f328fe";
+    const VIEW_ID: &str = "ak:view:AaiFHUI8GObKlPqeNvnl4E37L9moM-J0DjA4_UN9FvhR";
 
     fn private_view_plaintext() -> Value {
         json!({
             "schema": "ak.schema.view.v1",
             "id": VIEW_ID,
-            "realm_id": "ak:realm:01904100-0000-8000-8000-fd3637e8361f",
+            "realm_id": "ak:realm:AX-N4k3nJ3KKtkbL-adKMKRyKUlTWlwhxQVvjmvEBEVB",
             "kind": "collection",
             "visibility": "private",
             "state": "active",
             "renderer": "board",
             "title": "Quarterly plan",
-            "query": {"realm_ids": ["ak:realm:01904100-0000-8000-8000-fd3637e8361f"]},
+            "query": {"realm_ids": ["ak:realm:AX-N4k3nJ3KKtkbL-adKMKRyKUlTWlwhxQVvjmvEBEVB"]},
             "collection": {},
             "created_by": "did:web:alice.example",
             "created_at": "2026-06-01T00:00:00.000Z"
@@ -193,7 +193,8 @@ mod tests {
     #[test]
     fn private_view_must_be_stored_under_its_own_view_id() {
         let foreign_key =
-            private_view_account_data_key("ak:view:01904100-0000-8000-8000-848727f328ff").unwrap();
+            private_view_account_data_key("ak:view:ATmtapZXfxsLwiLRxOBYnVvhLCkfPsu9iZzgt9b60vhK")
+                .unwrap();
         assert!(private_view_from_plaintext(&foreign_key, &private_view_plaintext()).is_err());
     }
 

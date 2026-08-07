@@ -1032,7 +1032,7 @@ mod tests {
 
     #[test]
     fn bootstrap_merges_realm_welcome_from_durable_dispatcher_inbox() {
-        let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000011";
+        let realm_id = "ak:realm:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg";
         let welcome = durable_welcome(
             "ak:device_message:0196419b-0000-7000-8000-000000000021",
             realm_id,
@@ -1053,14 +1053,14 @@ mod tests {
 
     #[test]
     fn bootstrap_applies_only_current_realm_welcomes_and_preserves_ack_boundary() {
-        let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000014";
+        let realm_id = "ak:realm:AcQV37Nr-Ulm-nqFSnugsZ9MU-I0QBLO7VHTvtcwYWns";
         let current = durable_welcome(
             "ak:device_message:0196419b-0000-7000-8000-000000000026",
             realm_id,
         );
         let other = durable_welcome(
             "ak:device_message:0196419b-0000-7000-8000-000000000027",
-            "ak:realm:0196419b-0000-8000-8000-000000000099",
+            "ak:realm:AVtcXI0sfnw9Pex-qynbBUykPtV8niszMj0Ko75SINJ2",
         );
         let mut messages = serde_json::json!({
             "messages": [current.clone(), other],
@@ -1078,7 +1078,7 @@ mod tests {
 
     #[test]
     fn bootstrap_deduplicates_identical_durable_welcome_and_rejects_conflict() {
-        let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000012";
+        let realm_id = "ak:realm:AZiQUXWgexBvj0pdmSuNERtMTAFCjqds5-eP8K9OsgEo";
         let welcome = durable_welcome(
             "ak:device_message:0196419b-0000-7000-8000-000000000022",
             realm_id,
@@ -1106,7 +1106,7 @@ mod tests {
 
     #[test]
     fn bootstrap_ignores_unrelated_and_expired_local_messages() {
-        let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000013";
+        let realm_id = "ak:realm:AYo4JWk3bfuR2mX8uX3xALbEPXprrdP2ZWF-dKYP01Wf";
         let mut other_kind = durable_welcome(
             "ak:device_message:0196419b-0000-7000-8000-000000000023",
             realm_id,
@@ -1114,7 +1114,7 @@ mod tests {
         other_kind["kind"] = Value::String("ak.secret.send".to_owned());
         let other_realm = durable_welcome(
             "ak:device_message:0196419b-0000-7000-8000-000000000024",
-            "ak:realm:0196419b-0000-8000-8000-000000000099",
+            "ak:realm:AVtcXI0sfnw9Pex-qynbBUykPtV8niszMj0Ko75SINJ2",
         );
         let mut expired = durable_welcome(
             "ak:device_message:0196419b-0000-7000-8000-000000000025",

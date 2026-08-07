@@ -4818,8 +4818,8 @@ mod tests {
 
     #[test]
     fn history_share_authorization_ref_uses_projected_verified_member_policy_move() {
-        let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
-        let event_id = "ak:event:01904100-0000-8000-8000-000000000101";
+        let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+        let event_id = "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z";
         let mut store = temp_store("history-share-policy-ref");
         store.save_realm_tree_projection(
             realm,
@@ -4843,13 +4843,13 @@ mod tests {
 
     #[test]
     fn history_share_authorization_ref_rejects_policy_without_member_device_source() {
-        let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
+        let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
         let mut store = temp_store("history-share-policy-ref-denied");
         store.save_realm_tree_projection(
             realm,
             json!({
                 "state": {"events": [{
-                    "event_id": "ak:event:01904100-0000-8000-8000-000000000102",
+                    "event_id": "ak:event:AbHexNOxiiU334tA-ZHyM5pRxJxbMY0jvwlMVDY3Xjrz",
                     "event_kind": "ak.realm.history_sharing_policy",
                     "payload": {"allowed_key_sources": ["realm_recovery_key"]}
                 }]}
@@ -4861,7 +4861,7 @@ mod tests {
 
     #[test]
     fn history_share_authorization_ref_accepts_normative_backfill_event_shape() {
-        let event_id = "ak:event:01904100-0000-8000-8000-000000000103";
+        let event_id = "ak:event:AeLTDNGUwM2EGo4nQytxc9MqJJpT8OusC3zL0yeh0FyX";
         let events = vec![json!({
             "event_id": event_id,
             "kind": "ak.realm.history_sharing_policy",
@@ -5710,9 +5710,10 @@ mod tests {
 
     #[test]
     fn mention_policy_reads_realm_effective_bit() {
-        let realm_id =
-            arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-000000000001".to_owned())
-                .unwrap();
+        let realm_id = arkret_sdk::RealmId::new(
+            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
+        )
+        .unwrap();
         let entries = vec![AgentParticipationEntry {
             scope: ParticipationScope::Realm { realm_id },
             selection: ParticipationBits {
@@ -5725,8 +5726,10 @@ mod tests {
             version: 1,
         }];
 
-        let (policy, selection) =
-            mention_state_from_entries(&entries, "ak:realm:01904100-0000-8000-8000-000000000001");
+        let (policy, selection) = mention_state_from_entries(
+            &entries,
+            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+        );
         assert_eq!(policy, AgentMentionPolicy::Allowed);
         assert!(selection.accept_third_party_mention);
     }
@@ -5737,8 +5740,8 @@ mod tests {
     const SELF_DID: &str = "did:web:self.example";
     const SELF_DEVICE: &str = "ak:device:01904100-0000-7000-8000-0000000000bb";
     const PROVIDER_DEVICE: &str = "ak:device:01904100-0000-7000-8000-0000000000aa";
-    const TEST_REALM: &str = "ak:realm:01904100-0000-8000-8000-0000000000ab";
-    const OTHER_REALM: &str = "ak:realm:01904100-0000-8000-8000-0000000000ac";
+    const TEST_REALM: &str = "ak:realm:ARKSHgBichO7ZjwprTMf4UrKn7x1GHkl16zz6U4xm586";
+    const OTHER_REALM: &str = "ak:realm:AU2D21msYuLaXwOH8_eGJzFL4TqkaJ0gxxClWY-3IywJ";
 
     #[test]
     fn plans_request_when_prejoin_gap_and_provider_exist() {
@@ -6161,7 +6164,7 @@ mod tests {
 
     #[test]
     fn mention_state_uses_realm_participation_entry() {
-        let realm = "ak:realm:0196419b-0000-8000-8000-000000000000";
+        let realm = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
         let realm_id = arkret_sdk::RealmId::new(realm.to_owned()).unwrap();
         let entry = AgentParticipationEntry {
             scope: ParticipationScope::Realm { realm_id },

@@ -500,7 +500,7 @@ fn AppealReviewRow(
                                         "modify" => with_event_submitter(&base, api_token, |sub| async move {
                                             crate::transport::realm_write::appeal_modify_atomic(
                                                 &sub, &realm, &actor, &appeal_id, &target_ref,
-                                                "require_review", "appeal_modify", &reason_text,
+                                                &decision_ref, "require_review", "appeal_modify", &reason_text,
                                             )
                                             .await
                                             .map(|(new_id, _)| format!(

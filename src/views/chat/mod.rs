@@ -1499,7 +1499,7 @@ async fn submit_source_routed_sidecar_message(
     let content_value =
         sdk_payload_value(content.to_value(), "Sidecar routed content block serialize")?;
     let content_bytes = serde_json::to_vec(&content_value)?;
-    let message_id = new_chat_message_id();
+    let message_id = new_chat_local_id();
     let circle_id = view.sidecar.backing_circle_id.to_string();
     // Client-local pending intent (§7.2.4): a rejected submit leaves NO
     // durable exchange state, and retrying the same composer intent MUST
@@ -4220,7 +4220,7 @@ pub fn ChatPanel(
                                                     &realm,
                                                     &actor,
                                                     &target_strand,
-                                                    &new_chat_message_id(),
+                                                    &new_chat_local_id(),
                                                     &body,
                                                 ) {
                                                     Ok(operation) => operation,

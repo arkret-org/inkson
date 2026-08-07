@@ -18,7 +18,8 @@ use reqwest::StatusCode;
 use serde_json::json;
 
 fn snapshot_contract_event_id(suffix: &str) -> arkret_sdk::EventId {
-    arkret_sdk::EventId::new(format!("ak:event:01904100-0000-8000-8000-{suffix}")).unwrap()
+    let seed = u8::from_str_radix(&suffix[suffix.len() - 2..], 16).unwrap();
+    arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [seed; 32])
 }
 
 fn snapshot_contract_hash(seed: u8) -> arkret_sdk::Hash {
@@ -29,7 +30,7 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
     let snapshot_id =
         arkret_sdk::SnapshotId::new("ak:snapshot:01904100-0000-7000-8000-0000000000cc").unwrap();
     let realm_id =
-        arkret_sdk::RealmId::new("ak:realm:01904100-0000-8000-8000-0000000000cc").unwrap();
+        arkret_sdk::RealmId::new("ak:realm:AeI0Z4D734iPt9RpF51PAg0CRjLSQmxPqv9NgUmBJiQi").unwrap();
     let service_id = arkret_sdk::Did::new("did:web:server.local").unwrap();
     let items = vec![arkret_sdk::SnapshotMaterializedItem {
         kind: "realm".to_owned(),
@@ -208,7 +209,7 @@ fn inkson_accepts_server_contract_payloads() {
         "kind": "delta",
         "cursor": "ak:cursor:contract-sync",
         "realms": {
-            "ak:realm:0196419b-0000-8000-8000-000000000000": {
+            "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j": {
                 "timeline": {"events": [], "limited": false}
             }
         }
@@ -221,7 +222,7 @@ fn inkson_accepts_server_contract_payloads() {
     .unwrap();
     assert!(
         sync.realm_projections
-            .contains_key("ak:realm:0196419b-0000-8000-8000-000000000000")
+            .contains_key("ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j")
     );
 
     let directory: inkson::models::ServiceDescribe = serde_json::from_value(json!({
@@ -263,20 +264,20 @@ fn inkson_accepts_server_contract_payloads() {
 
     let resolved: inkson::models::ResolveRealmOutcome = serde_json::from_value(json!({
         "realm_preview": {
-            "realm_id": "ak:realm:0196419b-0000-8000-8000-000000000000",
+            "realm_id": "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
             "title": "Arkret Demo Realm",
             "summary": "Shared demo Realm served by server",
             "tags": ["demo"],
             "public": true,
             "category": "collaboration",
             "as_of": "2026-05-30T00:00:00.000Z",
-            "source_refs": ["ak:event:0196419b-0000-8000-8000-000000000001"],
+            "source_refs": ["ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"],
             "policy_revision": "contract-rev"
         },
         "stripped_state": [],
         "join_rule": "public",
         "join_candidates": [{
-            "realm_id": "ak:realm:0196419b-0000-8000-8000-000000000000",
+            "realm_id": "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
             "service_id": "did:web:server.local",
             "service_kind": "principal_server",
             "role": "primary",
@@ -301,7 +302,7 @@ fn inkson_accepts_server_contract_payloads() {
 
     let submit: inkson::models::SubmitEventResult = serde_json::from_value(json!({
         "status": "accepted",
-        "accepted": ["ak:event:019640ca-0000-8000-8000-000000000000"],
+        "accepted": ["ak:event:AVH7487ydDzo_3WXy2IlHWvtBeElcucZHd5d5hYKcjZl"],
         "duplicate": [],
         "rejected": [],
         "realm_actor_frontiers": [],
@@ -312,7 +313,7 @@ fn inkson_accepts_server_contract_payloads() {
     assert_eq!(submit.status, "accepted");
     assert_eq!(
         submit.event_id,
-        "ak:event:019640ca-0000-8000-8000-000000000000"
+        "ak:event:AVH7487ydDzo_3WXy2IlHWvtBeElcucZHd5d5hYKcjZl"
     );
     assert_eq!(submit.cursor, "sx:1760000000000");
 
@@ -356,19 +357,19 @@ fn inkson_accepts_server_contract_payloads() {
         "grants": [{
             "id": "ak:grant:0196419b-0000-7000-8000-000000000000",
             "schema": arkret_wire::SchemaId::CAPABILITY_V1,
-            "realm_id": "ak:realm:0196419b-0000-8000-8000-000000000001",
+            "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
             "issuer": "did:web:server.local",
             "subject": "did:web:alice.example",
             "issuer_authority_refs": [{
                 "kind": "realm_root",
-                "realm_id": "ak:realm:0196419b-0000-8000-8000-000000000001",
+                "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
                 "cell_ref": "ak:cell:ak.component.realm.authority_root.v1:null",
                 "controller_epoch_at_issuance": 0,
                 "authority_generation": 0
             }],
             "actions": ["ak.message.create"],
             "resources": [
-                {"kind": "realm", "realm_id": "ak:realm:0196419b-0000-8000-8000-000000000001"}
+                {"kind": "realm", "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"}
             ],
             "issued_at": "2026-04-28T12:00:00.000Z"
         }],
@@ -652,7 +653,7 @@ fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
         "kind": "delta",
         "cursor": "ak:cursor:v1-bucket",
         "realms": {
-            "ak:realm:0196419b-0000-8000-8000-000000000001": {
+            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-": {
                 "timeline": {"events": [], "limited": false}
             }
         },
@@ -668,7 +669,7 @@ fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
     assert_eq!(sync.cursor, "ak:cursor:v1-bucket");
     assert!(
         sync.realm_projections
-            .contains_key("ak:realm:0196419b-0000-8000-8000-000000000001")
+            .contains_key("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-")
     );
     assert!(sync.updates.to_device.is_empty());
     assert!(sync.updates.account_data.is_empty());
@@ -740,7 +741,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
         secret,
         chrono::Utc::now(),
     );
-    let realm_id = "ak:realm:01904100-0000-8000-8000-0000000000cd";
+    let realm_id = "ak:realm:ATEG2QCavtpxeXB5vkEeQqzkPjtieb9NlGtUvdteawYZ";
     let mut realm_remark = RealmRemark::new(
         arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
         chrono::Utc::now(),
@@ -753,7 +754,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
         arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
-        "strand_id": "ak:strand:01904100-0000-8000-8000-0000000000ce",
+        "strand_id": "ak:strand:ATNFZ7OyO1sA-yc6npfN39mg4TRii1-srFlAECgEuwdk",
         "track_name": "discussion",
         "content": {"kind": "ak.content.text", "body": "hello"},
         "mentions": [{
@@ -788,7 +789,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     let directory = arkret_models_discovery::DirectoryRealmSearchOutcome {
         realms: vec![arkret_models_discovery::RealmPreview {
             realm_id: arkret_sdk::RealmId::new(
-                "ak:realm:01904100-0000-8000-8000-000000000001".to_owned(),
+                "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
             )
             .unwrap(),
             alias: None,
@@ -806,7 +807,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
             history_visibility: None,
             join_candidates: Vec::new(),
             as_of: Utc::now(),
-            source_refs: vec!["ak:event:01904100-0000-8000-8000-000000000002".to_owned()],
+            source_refs: vec!["ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1".to_owned()],
             policy_revision: "contract-rev".to_owned(),
             stale: None,
             divergent: None,
@@ -847,7 +848,7 @@ fn inkson_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
     let bob_keys = bob.key_package_record().unwrap();
 
     alice
-        .create_group(b"ak:realm:0196419b-0000-8000-8000-000000000000")
+        .create_group(b"ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j")
         .unwrap();
     let add_result = alice.add_member(&bob_keys).unwrap();
     bob.join_from_welcome(&add_result.welcome).unwrap();

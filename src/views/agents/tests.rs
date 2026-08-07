@@ -328,7 +328,7 @@ mod personal_agent_tests {
         let outcome = arkret_sdk::AgentProvisionComplete {
             agent_id: arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
             principal_control_realm_id: arkret_sdk::RealmId::new(
-                "ak:realm:01964137-0000-8000-8000-000000000005",
+                "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
             )
             .unwrap(),
             controller_authorization_ref: arkret_sdk::DidUrl::new(
@@ -375,7 +375,7 @@ mod personal_agent_tests {
         let outcome = arkret_sdk::AgentProvisionComplete {
             agent_id: arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
             principal_control_realm_id: arkret_sdk::RealmId::new(
-                "ak:realm:01964137-0000-8000-8000-000000000005",
+                "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
             )
             .unwrap(),
             controller_authorization_ref: arkret_sdk::DidUrl::new(
@@ -518,7 +518,7 @@ mod personal_agent_tests {
         let key_state: arkret_sdk::KeyState = serde_json::from_value(serde_json::json!({
             "agent_id": agent,
             "controller_id": controller,
-            "principal_control_realm_id": "ak:realm:01964137-0000-8000-8000-000000000005",
+            "principal_control_realm_id": "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
             "controller_authorization_ref": "did:web:controller.example#controller-authorization",
             "pcr_recovery": {"status": "pending"},
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
@@ -692,7 +692,7 @@ mod personal_agent_tests {
         let noncanonical_key_state = serde_json::json!({
             "agent_id": agent,
             "controller_id": controller,
-            "principal_control_realm_id": "ak:realm:01964137-0000-8000-8000-000000000005",
+            "principal_control_realm_id": "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
             "controller_authorization_ref": "did:web:controller.example#controller-authorization",
             "status": "active",
             "runtime_state": "pending_runtime_key",
@@ -721,7 +721,7 @@ mod personal_agent_tests {
         let agent = "did:web:agents.example:summary";
         let verification_method =
             "did:web:agents.example:summary#ak:device:01964137-0000-7000-8000-000000000008";
-        let old_event = "ak:event:01999999-0000-8000-8000-0000000000aa";
+        let old_event = "ak:event:AfCohWegfBhEKqSVC-suYPF9jT5A0uR-BnFk1GppvjQz";
         let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
             [41u8; 32],
             controller,
@@ -732,10 +732,8 @@ mod personal_agent_tests {
         let key_state: arkret_sdk::KeyState = serde_json::from_value(serde_json::json!({
             "agent_id": agent,
             "controller_id": controller,
-            "principal_control_realm_id": "ak:realm:01964137-0000-8000-8000-000000000005",
+            "principal_control_realm_id": "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
             "controller_authorization_ref": "did:web:controller.example#controller-authorization",
-            "status": "active",
-            "runtime_state": "replacing",
             "pcr_recovery": {"status": "pending"},
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "pairing_code": "12345678",
@@ -870,13 +868,13 @@ mod personal_agent_tests {
     #[test]
     fn act_on_behalf_message_operation_carries_dual_identity_and_approval() {
         let operation = build_act_on_behalf_message_operation(
-            "ak:realm:01904100-0000-8000-8000-000000000001",
+            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "did:web:alice.example",
             "did:web:agents.example:summary",
             "ak:grant:01904100-0000-7000-8000-000000000002",
             "ak:agent-action-request:01904100-0000-7000-8000-000000000003",
             "nonce-01904100",
-            "ak:strand:01904100-0000-8000-8000-000000000004",
+            "ak:strand:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM",
             "approved message",
         )
         .unwrap();

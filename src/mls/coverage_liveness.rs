@@ -254,7 +254,7 @@ mod tests {
         )
     }
 
-    const REALM: &str = "ak:realm:01904100-0000-8000-8000-000000000001";
+    const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
     #[test]
     fn coverage_repair_needs_both_a_refusal_and_local_group_material() {

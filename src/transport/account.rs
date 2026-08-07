@@ -930,7 +930,7 @@ mod tests {
                     "binding_state": "verified"
                 },
                 "profile": {
-                    "id": "ak:actor_profile:01970000-0000-8000-8000-000000000001",
+                    "id": "ak:actor_profile:ASZ8VNF9qzH4Hcjd-1qOOKONYlZmfQOIRvMYdkQ0XXBH",
                     "schema": "ak.schema.actor_profile.v1",
                     "principal_id": "did:web:alice.example",
                     "actor_kind": "user",
@@ -993,10 +993,14 @@ mod tests {
     #[test]
     fn effective_owned_agent_reply_does_not_request_another_governance_write() {
         let scope = arkret_sdk::ParticipationScope::Strand {
-            realm_id: arkret_sdk::RealmId::new("ak:realm:01970000-0000-8000-8000-000000000001")
-                .expect("realm id"),
-            strand_id: arkret_sdk::StrandId::new("ak:strand:01970000-0000-8000-8000-000000000002")
-                .expect("strand id"),
+            realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:ASZ8VNF9qzH4Hcjd-1qOOKONYlZmfQOIRvMYdkQ0XXBH",
+            )
+            .expect("realm id"),
+            strand_id: arkret_sdk::StrandId::new(
+                "ak:strand:AcsXlJSItqSzy43Swu0nFz2ijj4Yaf0RgjmoTeivRt8M",
+            )
+            .expect("strand id"),
         };
         let outcome: arkret_sdk::AgentParticipationOutcome = serde_json::from_value(json!({
             "ok": true,
@@ -1025,11 +1029,11 @@ mod tests {
                 "state": "found",
                 "coordinates": {
                     "pair_key": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                    "realm_id": "ak:realm:01970000-0000-8000-8000-000000000001",
-                    "main_strand_id": "ak:strand:01970000-0000-8000-8000-000000000002",
-                    "binding_event_ref": "ak:event:01970000-0000-8000-8000-000000000003"
+                    "realm_id": "ak:realm:ASZ8VNF9qzH4Hcjd-1qOOKONYlZmfQOIRvMYdkQ0XXBH",
+                    "main_strand_id": "ak:strand:AcsXlJSItqSzy43Swu0nFz2ijj4Yaf0RgjmoTeivRt8M",
+                    "binding_event_ref": "ak:event:AZ6GqZWWvnQ2KFwbBD-MenomzWNz-31MUAuKzBXIP0zv"
                 },
-                "active_mls_generation_ref": "ak:event:01970000-0000-8000-8000-000000000004",
+                "active_mls_generation_ref": "ak:event:AYzJYUhgTz2x0CgaGJf0NxMJJVlUkwYIF8Q-9PGE-gXn",
                 "send_blockers": []
             }))
             .expect("found Direct Conversation outcome");
@@ -1043,11 +1047,11 @@ mod tests {
         let coordinates = direct_conversation_coordinates(&outcome).expect("found coordinates");
         assert_eq!(
             coordinates.realm_id.as_str(),
-            "ak:realm:01970000-0000-8000-8000-000000000001"
+            "ak:realm:ASZ8VNF9qzH4Hcjd-1qOOKONYlZmfQOIRvMYdkQ0XXBH"
         );
         assert_eq!(
             coordinates.main_strand_id.as_str(),
-            "ak:strand:01970000-0000-8000-8000-000000000002"
+            "ak:strand:AcsXlJSItqSzy43Swu0nFz2ijj4Yaf0RgjmoTeivRt8M"
         );
     }
 

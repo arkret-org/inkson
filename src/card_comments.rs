@@ -183,7 +183,7 @@ mod tests {
     use super::*;
 
     /// A syntactically valid Strand id for payloads that get schema-validated.
-    const CARD_STRAND_ID: &str = "ak:strand:01904100-0000-8000-8000-000000000001";
+    const CARD_STRAND_ID: &str = "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
     #[test]
     fn new_comment_extracts_mentions_eagerly() {
@@ -225,11 +225,11 @@ mod tests {
     #[test]
     fn build_payload_threads_via_reply_to() {
         let comment = CardComment::new(CARD_STRAND_ID, "agreed")
-            .with_reply_to("ak:message:01904100-0000-8000-8000-000000000002");
+            .with_reply_to("ak:message:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1");
         let payload = build_card_comment_payload(&comment).expect("builds");
         assert_eq!(
             payload["reply_to"],
-            "ak:message:01904100-0000-8000-8000-000000000002"
+            "ak:message:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1"
         );
     }
 

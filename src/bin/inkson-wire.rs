@@ -107,7 +107,8 @@ fn range_completeness(input: Value) -> Result<Value> {
         verification_method.clone(),
     );
     let observed_at = arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now());
-    let event_id = EventId::new("ak:event:019fbeef-0000-8000-8000-000000000001".to_owned())?;
+    let event_id =
+        EventId::new("ak:event:AQsJJ-0WQT9HoqD7KlOdlGMGOsuB_Ncu1svH5gbe3KL4".to_owned())?;
     let mut payload = arkret_sdk::RangeCompletenessAttestation {
         attestation_id: "ak:attestation:019fbeef-0000-7000-8000-000000000001".to_owned(),
         schema: "ak.schema.range_completeness_attestation.v1".to_owned(),

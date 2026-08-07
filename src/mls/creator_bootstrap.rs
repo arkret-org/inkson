@@ -316,7 +316,7 @@ mod tests {
     }
 
     const ACTOR: &str = "did:web:alice.example";
-    const REALM: &str = "ak:realm:01904100-0000-8000-8000-000000000001";
+    const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
     #[test]
     fn creator_of_an_encrypted_realm_without_local_mls_state_is_pending() {

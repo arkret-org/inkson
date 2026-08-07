@@ -72,12 +72,12 @@ fn proof_mode_labels_are_distinct() {
 #[test]
 fn operation_builder_generates_valid_envelope() {
     let op = OperationBuilder::new(
-        "ak:realm:0196419b-0000-8000-8000-0000000000aa",
+        "ak:realm:AXKJvMpMFIFTD9GYNEzOeImU-2ytvLCtsCq3Mrq9-Ci8",
         "did:web:alice",
         arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
-        "strand_id": "ak:strand:0196419b-0000-8000-8000-0000000000f1",
+        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
         "track_name": "discussion",
         "content": {"kind": "ak.content.text", "body": "hello"}
     }))
@@ -86,7 +86,7 @@ fn operation_builder_generates_valid_envelope() {
     assert!(!op.local_operation_id().is_empty());
     assert_eq!(
         op.realm_id.as_str(),
-        "ak:realm:0196419b-0000-8000-8000-0000000000aa"
+        "ak:realm:AXKJvMpMFIFTD9GYNEzOeImU-2ytvLCtsCq3Mrq9-Ci8"
     );
     assert_eq!(op.actor_id.as_str(), "did:web:alice");
     assert_eq!(op.kind.as_str(), "ak.message.create");
@@ -106,12 +106,12 @@ fn operation_builder_generates_valid_envelope() {
 #[test]
 fn operation_builder_delegates_event_time_normalization_to_the_sdk() {
     let op = OperationBuilder::new(
-        "ak:realm:0196419b-0000-8000-8000-0000000000aa",
+        "ak:realm:AXKJvMpMFIFTD9GYNEzOeImU-2ytvLCtsCq3Mrq9-Ci8",
         "did:web:alice",
         arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
-        "strand_id": "ak:strand:0196419b-0000-8000-8000-0000000000f1",
+        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
         "track_name": "discussion",
         "content": {"kind": "ak.content.text", "body": "hello"}
     }))
@@ -128,12 +128,12 @@ fn operation_builder_delegates_event_time_normalization_to_the_sdk() {
 #[test]
 fn operation_round_trip_serde() {
     let op = OperationBuilder::new(
-        "ak:realm:0196419b-0000-8000-8000-0000000000ab",
+        "ak:realm:Ac3EwB_awdKZ0dXZDsjIRnTX_zdhqT84eUG5NXqUbg0f",
         "did:web:bob",
         arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
-        "strand_id": "ak:strand:0196419b-0000-8000-8000-0000000000f1",
+        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
         "track_name": "discussion",
         "content": {"kind": "ak.content.text", "body": "hello world"}
     }))
@@ -146,12 +146,12 @@ fn operation_round_trip_serde() {
 #[test]
 fn operation_builder_can_emit_signed_authorization_binding() {
     let op = OperationBuilder::new(
-        "ak:realm:0196419b-0000-8000-8000-0000000000ab",
+        "ak:realm:Ac3EwB_awdKZ0dXZDsjIRnTX_zdhqT84eUG5NXqUbg0f",
         "did:web:bob",
         arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
-        "strand_id": "ak:strand:0196419b-0000-8000-8000-0000000000f1",
+        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
         "track_name": "discussion",
         "content": {"kind": "ak.content.text", "body": "hello world"}
     }))
@@ -184,12 +184,12 @@ fn operation_builder_can_emit_signed_authorization_binding() {
 #[test]
 fn event_envelope_accepts_current_optional_top_level_fields() {
     let op = OperationBuilder::new(
-        "ak:realm:0196419b-0000-8000-8000-0000000000ab",
+        "ak:realm:Ac3EwB_awdKZ0dXZDsjIRnTX_zdhqT84eUG5NXqUbg0f",
         "did:web:bob",
         arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
-        "strand_id": "ak:strand:0196419b-0000-8000-8000-0000000000f1",
+        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
         "track_name": "discussion",
         "content": {"kind": "ak.content.text", "body": "hello world"}
     }))
@@ -200,7 +200,7 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
     let mut with_stale_field = value.clone();
     with_stale_field.as_object_mut().unwrap().insert(
         "effective_scope".to_owned(),
-        json!({"kind": "realm", "realm_id": "ak:realm:0196419b-0000-8000-8000-0000000000ab"}),
+        json!({"kind": "realm", "realm_id": "ak:realm:Ac3EwB_awdKZ0dXZDsjIRnTX_zdhqT84eUG5NXqUbg0f"}),
     );
     assert!(serde_json::from_value::<Event>(with_stale_field).is_err());
     let object = value.as_object_mut().unwrap();
@@ -219,7 +219,7 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
         parsed.scope_ref,
         arkret_wire::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(
-                "ak:realm:0196419b-0000-8000-8000-0000000000ab".to_owned()
+                "ak:realm:Ac3EwB_awdKZ0dXZDsjIRnTX_zdhqT84eUG5NXqUbg0f".to_owned()
             )
             .unwrap(),
         }
@@ -241,12 +241,12 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
 #[test]
 fn event_envelope_rejects_unknown_top_level_fields() {
     let op = OperationBuilder::new(
-        "ak:realm:0196419b-0000-8000-8000-0000000000ab",
+        "ak:realm:Ac3EwB_awdKZ0dXZDsjIRnTX_zdhqT84eUG5NXqUbg0f",
         "did:web:bob",
         arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
-        "strand_id": "ak:strand:0196419b-0000-8000-8000-0000000000f1",
+        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
         "track_name": "discussion",
         "content": {"kind": "ak.content.text", "body": "hello world"}
     }))
@@ -266,10 +266,10 @@ fn event_envelope_rejects_unknown_top_level_fields() {
 #[test]
 fn kanban_card_strand_create_carries_position_in_metadata_fields() {
     let op = ak_ops::kanban_card_strand_create(
-        "ak:realm:0196419b-0000-8000-8000-000000000001",
+        "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice.example",
-        "ak:space:0196419b-0000-8000-8000-000000000002",
-        "ak:space:0196419b-0000-8000-8000-000000000003",
+        "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL",
+        "ak:space:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2",
         "Move-backed card",
         "h1",
     )
@@ -279,11 +279,11 @@ fn kanban_card_strand_create_carries_position_in_metadata_fields() {
     assert_eq!(op.kind.as_str(), "ak.strand.create");
     assert_eq!(
         op.realm_id.as_str(),
-        "ak:realm:0196419b-0000-8000-8000-000000000001"
+        "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
     );
     assert_eq!(
         op.payload["object"]["realm_id"],
-        "ak:realm:0196419b-0000-8000-8000-000000000001"
+        "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
     );
     assert_eq!(
         op.payload["object"]["tracks"]["synthesis"]["profile"],
@@ -295,11 +295,11 @@ fn kanban_card_strand_create_carries_position_in_metadata_fields() {
     );
     assert_eq!(
         op.payload["object"]["metadata"]["fields"]["board_space_id"],
-        "ak:space:0196419b-0000-8000-8000-000000000002"
+        "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL"
     );
     assert_eq!(
         op.payload["object"]["metadata"]["fields"]["list_space_id"],
-        "ak:space:0196419b-0000-8000-8000-000000000003"
+        "ak:space:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2"
     );
     assert_eq!(
         op.payload["object"]["metadata"]["title"],
@@ -316,7 +316,7 @@ fn kanban_card_strand_create_carries_position_in_metadata_fields() {
 
 #[test]
 fn mls_commit_builder_matches_registered_payload_schema() {
-    let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000001";
+    let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     let group_id = "ak:mls_group:kanban-test";
     let governance_binding = arkret_sdk::MlsGovernanceBindingPayload::realm(
         arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
@@ -342,7 +342,7 @@ fn mls_commit_builder_matches_registered_payload_schema() {
     };
     let payload = arkret_sdk::MlsCommitPayload::new(
         0,
-        "ak:event:0196419b-0000-8000-8000-000000000001",
+        "ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         Vec::new(),
         &commit,
         governance_binding,
@@ -363,7 +363,7 @@ fn mls_commit_builder_matches_registered_payload_schema() {
 #[test]
 fn discussion_strand_create_emits_discussion_track() {
     let op = ak_ops::discussion_strand_create(
-        "ak:realm:0196419b-0000-8000-8000-000000000000",
+        "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
         "did:web:alice.example",
         "Ops",
     )
@@ -394,9 +394,9 @@ fn discussion_strand_create_emits_discussion_track() {
 
 #[test]
 fn strand_tracks_update_primary_uses_is_primary_patch_key() {
-    let strand_id = "ak:strand:0196419b-0000-8000-8000-000000000001";
+    let strand_id = "ak:strand:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     let op = ak_ops::strand_tracks_update_set_primary(
-        "ak:realm:0196419b-0000-8000-8000-000000000010",
+        "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
         "did:web:alice.example",
         strand_id,
         "discussion",
@@ -417,9 +417,9 @@ fn strand_tracks_update_primary_uses_is_primary_patch_key() {
 
 #[test]
 fn strand_update_patch_uses_canonical_payload_patch() {
-    let strand_id = "ak:strand:0196419b-0000-8000-8000-000000000002";
+    let strand_id = "ak:strand:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
     let op = ak_ops::strand_update_patch(
-        "ak:realm:0196419b-0000-8000-8000-000000000010",
+        "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
         "did:web:alice.example",
         strand_id,
         json!({
@@ -439,11 +439,11 @@ fn strand_update_patch_uses_canonical_payload_patch() {
 
 #[test]
 fn strand_update_builders_match_registered_object_patch_schema() {
-    let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000001";
+    let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     let actor = "did:web:alice.example";
-    let strand_id = "ak:strand:0196419b-0000-8000-8000-000000000002";
-    let board_space_id = "ak:space:0196419b-0000-8000-8000-000000000010";
-    let list_space_id = "ak:space:0196419b-0000-8000-8000-000000000011";
+    let strand_id = "ak:strand:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
+    let board_space_id = "ak:space:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo";
+    let list_space_id = "ak:space:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg";
 
     let events = [
         ak_ops::strand_update_patch(
@@ -488,13 +488,13 @@ fn strand_update_builders_match_registered_object_patch_schema() {
 #[test]
 fn strand_position_cas_update_rejects_incomplete_effect_position() {
     let error = ak_ops::strand_position_cas_update(
-        "ak:realm:0196419b-0000-8000-8000-000000000001",
+        "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice",
         "ak.strand.move",
-        "ak:space:0196419b-0000-8000-8000-000000000010",
-        "ak:strand:0196419b-0000-8000-8000-000000000020",
+        "ak:space:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
+        "ak:strand:AUuXpUO-yBwwyCNB7AS1IIm5_sgsxyEsG7PBmmkXdFog",
         json!({
-            "list_space_id": "ak:space:0196419b-0000-8000-8000-000000000030",
+            "list_space_id": "ak:space:ASnqpJQi0G5Ljanp7UQXjmcIaFVqDSvBNupH4kpQaTzc",
             "rank": "a1"
         }),
         Value::Null,
@@ -511,11 +511,11 @@ fn strand_position_cas_update_rejects_incomplete_effect_position() {
 
 #[test]
 fn object_patch_family_builders_match_registered_payload_schema() {
-    let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000001";
+    let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     let actor = "did:web:alice.example";
-    let strand_id = "ak:strand:0196419b-0000-8000-8000-000000000002";
-    let morph_id = "ak:morph:0196419b-0000-8000-8000-000000000003";
-    let space_id = "ak:space:0196419b-0000-8000-8000-000000000004";
+    let strand_id = "ak:strand:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
+    let morph_id = "ak:morph:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";
+    let space_id = "ak:space:ASc_XP_IqOBAY6GgbPMLFCeZmi0uBNaWvHazHgmn-B8K";
 
     let events = [
         ak_ops::strand_tracks_update_set_primary(realm_id, actor, strand_id, "discussion")
@@ -569,17 +569,17 @@ fn object_patch_family_builders_match_registered_payload_schema() {
 #[test]
 fn strand_position_cas_update_emits_canonical_move_payload() {
     let op = ak_ops::strand_position_cas_update(
-        "ak:realm:0196419b-0000-8000-8000-000000000001",
+        "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice",
         "ak.strand.move",
-        "ak:space:0196419b-0000-8000-8000-000000000010",
-        "ak:strand:0196419b-0000-8000-8000-000000000020",
+        "ak:space:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
+        "ak:strand:AUuXpUO-yBwwyCNB7AS1IIm5_sgsxyEsG7PBmmkXdFog",
         json!({
-            "list_space_id": "ak:space:0196419b-0000-8000-8000-000000000030",
+            "list_space_id": "ak:space:ASnqpJQi0G5Ljanp7UQXjmcIaFVqDSvBNupH4kpQaTzc",
             "rank": "a1"
         }),
         json!({
-            "list_space_id": "ak:space:0196419b-0000-8000-8000-000000000040",
+            "list_space_id": "ak:space:AeQLz_7_lGwMdENhkoPlgbKh0MqfZ-5HB8Vz5zWCeClm",
             "rank": "b1"
         }),
     )
@@ -589,16 +589,16 @@ fn strand_position_cas_update_emits_canonical_move_payload() {
     assert_eq!(op.kind.as_str(), "ak.strand.move");
     assert_eq!(
         op.payload["board_space_id"],
-        "ak:space:0196419b-0000-8000-8000-000000000010"
+        "ak:space:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo"
     );
     assert_eq!(
         op.payload["target_space_id"],
-        "ak:space:0196419b-0000-8000-8000-000000000040"
+        "ak:space:AeQLz_7_lGwMdENhkoPlgbKh0MqfZ-5HB8Vz5zWCeClm"
     );
     assert_eq!(op.payload["rank"], "b1");
     assert_eq!(
         op.payload["expected_position"]["space_id"],
-        "ak:space:0196419b-0000-8000-8000-000000000030"
+        "ak:space:ASnqpJQi0G5Ljanp7UQXjmcIaFVqDSvBNupH4kpQaTzc"
     );
     assert_eq!(op.payload["expected_position"]["rank"], "a1");
     assert!(!op.payload.contains_key("position"));
@@ -607,17 +607,17 @@ fn strand_position_cas_update_emits_canonical_move_payload() {
 #[test]
 fn strand_position_cas_update_emits_canonical_reorder_payload() {
     let op = ak_ops::strand_position_cas_update(
-        "ak:realm:0196419b-0000-8000-8000-000000000001",
+        "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice",
         "ak.strand.reorder",
-        "ak:space:0196419b-0000-8000-8000-000000000010",
-        "ak:strand:0196419b-0000-8000-8000-000000000020",
+        "ak:space:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
+        "ak:strand:AUuXpUO-yBwwyCNB7AS1IIm5_sgsxyEsG7PBmmkXdFog",
         json!({
-            "list_space_id": "ak:space:0196419b-0000-8000-8000-000000000030",
+            "list_space_id": "ak:space:ASnqpJQi0G5Ljanp7UQXjmcIaFVqDSvBNupH4kpQaTzc",
             "rank": "a1"
         }),
         json!({
-            "list_space_id": "ak:space:0196419b-0000-8000-8000-000000000030",
+            "list_space_id": "ak:space:ASnqpJQi0G5Ljanp7UQXjmcIaFVqDSvBNupH4kpQaTzc",
             "rank": "a2"
         }),
     )
@@ -627,11 +627,11 @@ fn strand_position_cas_update_emits_canonical_reorder_payload() {
     assert_eq!(op.kind.as_str(), "ak.strand.reorder");
     assert_eq!(
         op.payload["board_space_id"],
-        "ak:space:0196419b-0000-8000-8000-000000000010"
+        "ak:space:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo"
     );
     assert_eq!(
         op.payload["space_id"],
-        "ak:space:0196419b-0000-8000-8000-000000000030"
+        "ak:space:ASnqpJQi0G5Ljanp7UQXjmcIaFVqDSvBNupH4kpQaTzc"
     );
     assert_eq!(op.payload["rank"], "a2");
     assert_eq!(op.payload["expected_position"]["rank"], "a1");
@@ -643,11 +643,11 @@ fn strand_position_cas_update_emits_canonical_reorder_payload() {
 #[test]
 fn space_create_emits_canonical_space_object() {
     let op = ak_ops::space_create(
-        "ak:realm:0196419b-0000-8000-8000-000000000001",
+        "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice",
         "list",
         "To Do",
-        Some("ak:space:0196419b-0000-8000-8000-000000000003"),
+        Some("ak:space:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2"),
         Some("U"),
     )
     .expect("builds")
@@ -663,13 +663,13 @@ fn space_create_emits_canonical_space_object() {
     assert!(op.payload["object"].get("id").is_none());
     assert_eq!(
         op.payload["object"]["realm_id"],
-        "ak:realm:0196419b-0000-8000-8000-000000000001"
+        "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
     );
     assert!(op.payload["object"].get("space_id").is_none());
     assert_eq!(op.payload["object"]["kind"], "list");
     assert_eq!(
         op.payload["object"]["parent_space_id"],
-        "ak:space:0196419b-0000-8000-8000-000000000003"
+        "ak:space:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2"
     );
     assert_eq!(op.payload["object"]["rank"], "U");
     assert_eq!(op.payload["object"]["created_by"], "did:web:alice");
@@ -683,18 +683,18 @@ fn space_create_emits_canonical_space_object() {
 #[test]
 fn canonical_digest_is_stable_across_key_order() {
     let mut op_a = OperationBuilder::new(
-        "ak:realm:0196419b-0000-8000-8000-0000000000ab",
+        "ak:realm:Ac3EwB_awdKZ0dXZDsjIRnTX_zdhqT84eUG5NXqUbg0f",
         "did:web:alice",
         arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
         "track_name": "discussion",
-        "strand_id": "ak:strand:0196419b-0000-8000-8000-0000000000f1",
+        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
         "content": {"kind": "ak.content.text", "body": "hello"}
     }))
     .build("node");
     op_a.event_id =
-        arkret_sdk::EventId::new("ak:event:0196419b-0000-8000-8000-0000000000ff").unwrap();
+        arkret_sdk::EventId::new("ak:event:AUD01bF1nvRNX9DV18CzK2rYYQ_JlSJq2mzqGMlz12Yf").unwrap();
     op_a.hlc = Some(arkret_sdk::Hlc::new("000000000000-0000-00000000".to_owned()).unwrap());
     op_a.actor_seq = 1;
 
@@ -702,7 +702,7 @@ fn canonical_digest_is_stable_across_key_order() {
     let mut op_b = op_a.clone();
     op_b.payload = serde_json::from_value(json!({
         "content": {"body": "hello", "kind": "ak.content.text"},
-        "strand_id": "ak:strand:0196419b-0000-8000-8000-0000000000f1",
+        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
         "track_name": "discussion"
     }))
     .unwrap();
@@ -717,12 +717,12 @@ fn canonical_digest_is_stable_across_key_order() {
 fn sign_ed25519_attaches_typed_proof() {
     use ed25519_dalek::SigningKey;
     let mut op = OperationBuilder::new(
-        "ak:realm:01904100-0000-8000-8000-000000000001",
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "did:web:alice",
         arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
-        "strand_id": "ak:strand:0196419b-0000-8000-8000-0000000000f1",
+        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
         "track_name": "discussion",
         "content": {"kind": "ak.content.text", "body": "hi"}
     }))
@@ -741,12 +741,12 @@ fn sign_ed25519_attaches_typed_proof() {
 #[test]
 fn sdk_event_conversion_accepts_unsigned_builder_for_signing() {
     let op = OperationBuilder::new(
-        "ak:realm:01904100-0000-8000-8000-000000000001",
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "did:web:alice.example",
         arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
-        "strand_id": "ak:strand:0196419b-0000-8000-8000-0000000000f1",
+        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
         "track_name": "discussion",
         "content": {"kind": "ak.content.text", "body": "hi"}
     }))
@@ -764,12 +764,12 @@ fn sdk_submit_event_conversion_preserves_signed_digest() {
     use ed25519_dalek::SigningKey;
 
     let mut op = OperationBuilder::new(
-        "ak:realm:01904100-0000-8000-8000-000000000001",
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "did:web:alice.example",
         arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
-        "strand_id": "ak:strand:0196419b-0000-8000-8000-0000000000f1",
+        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
         "track_name": "discussion",
         "content": {"kind": "ak.content.text", "body": "hi"}
     }))
@@ -792,12 +792,12 @@ fn sdk_submit_event_conversion_preserves_signed_digest() {
 #[test]
 fn require_proof_fails_when_unsigned() {
     let mut op = OperationBuilder::new(
-        "ak:realm:0196419b-0000-8000-8000-0000000000ab",
+        "ak:realm:Ac3EwB_awdKZ0dXZDsjIRnTX_zdhqT84eUG5NXqUbg0f",
         "did:web:alice",
         arkret_sdk::EventKind::MessageCreate,
     )
     .body(json!({
-        "strand_id": "ak:strand:0196419b-0000-8000-8000-0000000000f1",
+        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
         "track_name": "discussion",
         "content": {"kind": "ak.content.text", "body": "hi"}
     }))
@@ -816,7 +816,7 @@ fn invite_helpers_emit_canonical_kinds() {
     let introduction_evidence_digest =
         crate::canonical::canonical_sha256(&json!({"kind": "explicit_address"})).unwrap();
     let create = ak_ops::invite_create_structured(
-        "ak:realm:01904100-0000-8000-8000-000000000010",
+        "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:alice.example",
         invite_id,
         "did:web:bob.example",
@@ -874,7 +874,7 @@ fn invite_helpers_emit_canonical_kinds() {
     );
 
     let accept = ak_ops::invite_accept(
-        "ak:realm:01904100-0000-8000-8000-000000000010",
+        "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:bob.example",
         invite_id,
     )
@@ -889,7 +889,7 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(accept_writes.len(), 2);
 
     let cancel = ak_ops::invite_cancel(
-        "ak:realm:01904100-0000-8000-8000-000000000010",
+        "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:alice.example",
         invite_id,
         "did:web:bob.example",
@@ -940,7 +940,7 @@ fn invite_helpers_emit_canonical_kinds() {
     // Event that would be rejected at admission.
     assert!(
         ak_ops::invite_cancel(
-            "ak:realm:01904100-0000-8000-8000-000000000010",
+            "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
             "did:web:alice.example",
             invite_id,
             "did:web:bob.example",
@@ -951,7 +951,7 @@ fn invite_helpers_emit_canonical_kinds() {
     );
 
     let revoke = ak_ops::invite_revoke(
-        "ak:realm:01904100-0000-8000-8000-000000000010",
+        "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:alice.example",
         invite_id,
         None,
@@ -968,9 +968,9 @@ fn invite_helpers_emit_canonical_kinds() {
 
 #[test]
 fn space_lifecycle_helpers_emit_canonical_kinds() {
-    let container_space_id = "ak:space:01904100-0000-8000-8000-1fb50799ad42";
+    let container_space_id = "ak:space:Af5YDKFhOiySm76T_pF7GQrzaF8vEejTcqTWpmnqGUid";
     let archive = ak_ops::realm_archive(
-        "ak:realm:01904100-0000-8000-8000-1fb50799ad40",
+        "ak:realm:AZ7DNT9vCENKLtcPIF0C8XeSO8NfAhWfKokXMXi127n4",
         "did:web:alice.example",
         container_space_id,
     )
@@ -981,7 +981,7 @@ fn space_lifecycle_helpers_emit_canonical_kinds() {
     assert_eq!(archive.local_target_ref(), Some(container_space_id));
 
     let restore = ak_ops::space_restore(
-        "ak:realm:01904100-0000-8000-8000-1fb50799ad40",
+        "ak:realm:AZ7DNT9vCENKLtcPIF0C8XeSO8NfAhWfKokXMXi127n4",
         "did:web:alice.example",
         container_space_id,
     )
@@ -994,9 +994,9 @@ fn space_lifecycle_helpers_emit_canonical_kinds() {
 
 #[test]
 fn strand_lifecycle_helpers_emit_canonical_kinds() {
-    let strand_id = "ak:strand:01904100-0000-8000-8000-1fb50799ad50";
+    let strand_id = "ak:strand:ARkwFWDTPrObvpqVAL9kBsWkK8GrMr5FDO--3PcMFEwU";
     let archive = ak_ops::strand_archive(
-        "ak:realm:0196419b-0000-8000-8000-0000000000aa",
+        "ak:realm:AXKJvMpMFIFTD9GYNEzOeImU-2ytvLCtsCq3Mrq9-Ci8",
         "did:web:alice.example",
         strand_id,
     )
@@ -1009,7 +1009,7 @@ fn strand_lifecycle_helpers_emit_canonical_kinds() {
     assert_registered_payload_valid(&archive);
 
     let restore = ak_ops::strand_restore(
-        "ak:realm:0196419b-0000-8000-8000-0000000000aa",
+        "ak:realm:AXKJvMpMFIFTD9GYNEzOeImU-2ytvLCtsCq3Mrq9-Ci8",
         "did:web:alice.example",
         strand_id,
     )
@@ -1029,7 +1029,7 @@ fn strand_lifecycle_helpers_emit_canonical_kinds() {
 fn applet_helpers_emit_canonical_kinds_and_target_refs() {
     let service_id = "did:web:applet.example";
     let applet_id = "did:web:applet.example";
-    let realm = "ak:realm:0196419b-0000-8000-8000-0000000000aa";
+    let realm = "ak:realm:AXKJvMpMFIFTD9GYNEzOeImU-2ytvLCtsCq3Mrq9-Ci8";
     let actor = "did:web:alice.example";
 
     let disc =
@@ -1051,7 +1051,7 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
         realm,
         actor,
         applet_id,
-        "ak:event:01904100-0000-8000-8000-aa55aa55aa56",
+        "ak:event:ASAl6MaOVSeP0yXGVmHl5fA_Ch7m5_D_PgvPyd3UP2_9",
         "external_network",
         "applet_unavailable",
         true,
@@ -1064,7 +1064,7 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
     assert_eq!(err.payload["applet_id"], applet_id);
     assert_eq!(
         err.payload["failed_transaction_ref"],
-        "ak:event:01904100-0000-8000-8000-aa55aa55aa56"
+        "ak:event:ASAl6MaOVSeP0yXGVmHl5fA_Ch7m5_D_PgvPyd3UP2_9"
     );
     assert_eq!(err.payload["error_class"], "external_network");
     assert_eq!(err.payload["error_code"], "applet_unavailable");
@@ -1076,7 +1076,7 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
             realm,
             actor,
             applet_id,
-            "ak:event:01904100-0000-8000-8000-aa55aa55aa56",
+            "ak:event:ASAl6MaOVSeP0yXGVmHl5fA_Ch7m5_D_PgvPyd3UP2_9",
             "unregistered_class",
             "applet_unavailable",
             true,
@@ -1089,9 +1089,9 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
 
 #[test]
 fn message_revise_builder_uses_content_payload_schema() {
-    let message_id = "ak:message:01904100-0000-8000-8000-000000000123";
+    let message_id = "ak:message:AfXCJ1DUe3g7MVHuVBpMsl89749WyrXAJP7EvoU9mwBH";
     let event = ak_ops::message_revise_content(
-        "ak:realm:0196419b-0000-8000-8000-0000000000aa",
+        "ak:realm:AXKJvMpMFIFTD9GYNEzOeImU-2ytvLCtsCq3Mrq9-Ci8",
         "did:web:alice.example",
         message_id,
         arkret_sdk::ContentBlock::text("updated body"),
@@ -1123,7 +1123,7 @@ mod realm_organization_builder_tests {
 
     use super::*;
 
-    const REALM_ID: &str = "ak:realm:0196419b-0000-8000-8000-000000000010";
+    const REALM_ID: &str = "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo";
     const ACTOR: &str = "did:web:alice.example";
     const ORG_DID: &str = "did:webvh:example.test:orgs:org1";
     const ORG_VM: &str = "did:webvh:example.test:orgs:org1#k1";

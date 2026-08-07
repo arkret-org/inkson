@@ -6,9 +6,9 @@ use super::*;
 fn sync_event_states_update_submission_by_event_id() {
     let path = temp_state_path("move-event-state");
     let mut store = LocalStateStore::with_path(path);
-    let realm = "ak:realm:0196419b-0000-8000-8000-000000000001";
+    let realm = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     let local_id = "sha256:local-submit";
-    let event_id = "ak:event:0196419b-0000-8000-8000-0000000000aa";
+    let event_id = "ak:event:AXKJvMpMFIFTD9GYNEzOeImU-2ytvLCtsCq3Mrq9-Ci8";
     store.record_move_submission_with_event_id(
         local_id,
         Some(event_id.to_owned()),
@@ -41,8 +41,8 @@ fn sync_event_states_update_submission_by_event_id() {
 fn sync_event_states_update_submission_keyed_by_event_id() {
     let path = temp_state_path("move-event-state");
     let mut store = LocalStateStore::with_path(path);
-    let realm = "ak:realm:0196419b-0000-8000-8000-000000000001";
-    let event_id = "ak:event:0196419b-0000-8000-8000-0000000000bb";
+    let realm = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+    let event_id = "ak:event:AXYOPItXAzTTu_rqIAINR7C7AvNSR5bjjBslclmJ9ZVt";
     store.record_move_submission(
         event_id,
         realm,
@@ -74,9 +74,9 @@ fn sync_event_states_update_submission_keyed_by_event_id() {
 fn sync_event_states_update_submission_when_event_and_move_ids_are_present() {
     let path = temp_state_path("move-event-and-move-id-state");
     let mut store = LocalStateStore::with_path(path);
-    let realm = "ak:realm:0196419b-0000-8000-8000-000000000001";
+    let realm = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     let move_id = "sha256:local-submit-with-server-event";
-    let event_id = "ak:event:0196419b-0000-8000-8000-0000000000cc";
+    let event_id = "ak:event:AfbvDP-Jqz3hzfK3cKfuiVdW52Ok5br5hib19xfECd7t";
     store.record_move_submission(
         move_id,
         realm,

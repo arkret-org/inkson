@@ -461,7 +461,7 @@ fn realm_bootstrap_rejects_handle_seed_without_directory_evidence() {
 #[test]
 fn member_state_ban_event_uses_realm_scoped_member_cell() {
     let event = build_member_state_transition_event(
-        "ak:realm:0196419b-0000-8000-8000-000000000010",
+        "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
         "did:web:alice.example",
         "did:web:bob.example",
         Some("join"),
@@ -473,7 +473,7 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
     assert_eq!(event.kind.as_str(), "ak.member.state");
     assert_eq!(
         event.payload["realm_id"],
-        "ak:realm:0196419b-0000-8000-8000-000000000010"
+        "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo"
     );
     assert_eq!(event.payload["actor_id"], "did:web:bob.example");
     assert_eq!(event.payload["membership"], "ban");
@@ -500,7 +500,7 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
 
 #[test]
 fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
-    let strand_id = "ak:strand:0196419b-0000-8000-8000-000000000002";
+    let strand_id = "ak:strand:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
     let mut patch = arkret_sdk::Patch::new();
     patch
         .insert_op(
@@ -513,7 +513,7 @@ fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
         .to_value()
         .unwrap();
     let event = OperationBuilder::new(
-        "ak:realm:0196419b-0000-8000-8000-000000000010",
+        "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
         "did:web:alice.example",
         arkret_sdk::EventKind::StrandUpdate,
     )
@@ -532,7 +532,7 @@ fn space_create_payload_matches_spec_schema() {
     // `^ak:realm:UUID7` pattern; the Space's own id is absent from a create
     // payload and derived from this Event.
     let event = build_space_create_event(
-        "ak:realm:0196419b-0000-8000-8000-000000000001",
+        "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice.example",
         "Roadmap",
         Some("Q3 planning"),
@@ -621,7 +621,7 @@ fn realm_join_and_discovery_authoring_rejects_values_outside_spec_enums() {
         crate::event_signer::ActiveSignerTestGuard::replace(Some(std::sync::Arc::new(
             crate::event_signer::build_ed25519_signer([43_u8; 32], "did:web:alice.example"),
         )));
-    let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000001";
+    let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     let actor_id = "did:web:alice.example";
 
     assert!(

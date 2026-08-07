@@ -624,7 +624,7 @@ mod tests {
         // The typed MLS-history backup parses `realm_id` through the SDK
         // identifier, so this fixture needs a canonical id rather than a label.
         let envelope = encrypt_state(
-            "ak:realm:0196419b-0000-8000-8000-0000000004d2",
+            "ak:realm:AaMEOXZMosCc7hvMzXuceDOBTDkSvFz1SpIwlCE_GMGd",
             "aaaa",
             42,
             b"placeholder",
@@ -665,7 +665,7 @@ mod tests {
         assert_eq!(body["contents"][0]["item_kind"], "mls_group_state");
         assert_eq!(
             body["contents"][0]["realm_id"],
-            "ak:realm:0196419b-0000-8000-8000-0000000004d2"
+            "ak:realm:AaMEOXZMosCc7hvMzXuceDOBTDkSvFz1SpIwlCE_GMGd"
         );
         assert_eq!(body["contents"][0]["mls_group_id"], "aaaa");
         assert_eq!(body["contents"][0]["epoch"], 42);
@@ -687,7 +687,7 @@ mod tests {
             .expect("MLS history backup should decrypt");
         assert_eq!(
             parsed.realm_id,
-            "ak:realm:0196419b-0000-8000-8000-0000000004d2"
+            "ak:realm:AaMEOXZMosCc7hvMzXuceDOBTDkSvFz1SpIwlCE_GMGd"
         );
         assert_eq!(parsed.epoch, 42);
     }
@@ -768,7 +768,7 @@ mod tests {
         )
         .unwrap();
         let group = identity
-            .create_group(b"ak:realm:01904100-0000-8000-8000-000000000028")
+            .create_group(b"ak:realm:Afa-XWDzmMaAI5o0i4JEB845_F-vdio4zG-xF_FzJHK1")
             .unwrap();
         let record = group.export_state_record().unwrap();
         let original_group_id = record.group_id.clone();
@@ -776,7 +776,7 @@ mod tests {
 
         let bytes = serde_json::to_vec(&record).unwrap();
         let envelope = encrypt_state(
-            "ak:realm:01904100-0000-8000-8000-000000000028",
+            "ak:realm:Afa-XWDzmMaAI5o0i4JEB845_F-vdio4zG-xF_FzJHK1",
             &original_group_id,
             original_epoch,
             &bytes,

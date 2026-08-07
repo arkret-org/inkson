@@ -517,8 +517,8 @@ mod tests {
 
     #[test]
     fn local_index_search_returns_decrypted_projection_message() {
-        let realm_id = "ak:realm:01904100-0000-8000-8000-000000000901".to_owned();
-        let event_id = "ak:event:01904100-0000-8000-8000-000000000902";
+        let realm_id = "ak:realm:AXvyk2cSPhfYUHVSaDoVqdjSO3t5IXRAqpG-6hQjjUAx".to_owned();
+        let event_id = "ak:event:AR9_0Dn3PqKpHpxvh0C4oIGwx_MZWw6y7PjVc300c93v";
         let realms = std::collections::BTreeMap::from([(
             realm_id.clone(),
             json!({
@@ -530,7 +530,7 @@ mod tests {
                     "created_at": "2026-06-19T00:00:00.000Z",
                     "content": {
                         "realm_id": realm_id,
-                        "message_id": "ak:message:01904100-0000-8000-8000-000000000903",
+                        "message_id": "ak:message:AW8-c0F9KfRq5YWdUYT1ilfjIDzjU3jCt-GT8KmVIeCA",
                         "body": "alpha local body"
                     }
                 }]}
@@ -569,19 +569,19 @@ mod tests {
 
     #[test]
     fn local_index_search_skips_encrypted_placeholders_without_plaintext() {
-        let realm_id = "ak:realm:01904100-0000-8000-8000-000000000911".to_owned();
+        let realm_id = "ak:realm:AUDoMj48Sty9R0GpFRg5qxBDzi-E7jGXZGe_mi0yHbpJ".to_owned();
         let realms = std::collections::BTreeMap::from([(
             realm_id.clone(),
             json!({
                 "summary": {"summary": "Encrypted Realm"},
                 "timeline": {"events": [{
                     "kind": "ak.message.create",
-                    "event_id": "ak:event:01904100-0000-8000-8000-000000000912",
+                    "event_id": "ak:event:AXJBg5RPw2O28Q_GeztGzhWf2jDciYN15ub4OYYpJ1tQ",
                     "actor_id": "did:web:alice.example",
                     "created_at": "2026-06-19T00:00:00.000Z",
                     "content": {
                         "realm_id": realm_id,
-                        "message_id": "ak:message:01904100-0000-8000-8000-000000000913",
+                        "message_id": "ak:message:ATHkwzVL1fX0caFp7tHaPiGqpGaXLOTd3HKGEy34sduZ",
                         "encrypted_content": {"schema": "ak.schema.encrypted_envelope.v1"}
                     }
                 }]}
@@ -606,9 +606,9 @@ mod tests {
     #[test]
     fn local_index_search_excludes_known_sidecar_private_strands() {
         let actor_id = "did:web:alice.example";
-        let realm_id = "ak:realm:01904100-0000-8000-8000-000000000931".to_owned();
-        let source_strand_id = "ak:strand:01904100-0000-8000-8000-000000000932".to_owned();
-        let private_strand_id = "ak:strand:01904100-0000-8000-8000-000000000933".to_owned();
+        let realm_id = "ak:realm:Af2ZEitZ_Nla84KWtbRYoWWmZopTUKtZlKf7sz4QHbfy".to_owned();
+        let source_strand_id = "ak:strand:AavbN9CgiOJRw5dWi7yMN2_jReUUAXLb-_EF2y2WL8lz".to_owned();
+        let private_strand_id = "ak:strand:AXdAxsk7SCCmOD-PFAqpB6niI3wLXUfvBsBwG4NVUmRq".to_owned();
         let mut store = LocalStateStore::default();
         let pending = crate::sidecar::PendingSidecarSubmission {
             controller_id: actor_id.to_owned(),
@@ -618,7 +618,7 @@ mod tests {
             .unwrap(),
             private_strand_id: private_strand_id.clone(),
             backing_circle_id: arkret_sdk::CircleId::new(
-                "ak:circle:01904100-0000-8000-8000-000000000935",
+                "ak:circle:Acg6iB8ocZMFQV8PLom83qOVvRu_F8926x8rDw8RLFla",
             )
             .unwrap(),
             exchange_id: arkret_sdk::AgentSidecarExchangeId::new("SearchPrivateStrand001").unwrap(),
@@ -637,7 +637,7 @@ mod tests {
                 coordinator_agent_id: None,
                 source_frontier_anchor: None,
             },
-            message_id: "ak:message:01904100-0000-8000-8000-000000000936".to_owned(),
+            message_id: "ak:message:ASiSP84x2Juep0Q8j2fao1vAfdzqs8Y728RHY5FFyKDb".to_owned(),
             local_operation_id: "local-sidecar-search-test".to_owned(),
         };
         crate::sidecar::save_pending_sidecar_submission(&mut store, "search-test", &pending)
@@ -648,7 +648,7 @@ mod tests {
                 "summary": {"summary": "Search containment Realm"},
                 "timeline": {"events": [{
                     "kind": "ak.message.create",
-                    "event_id": "ak:event:01904100-0000-8000-8000-000000000937",
+                    "event_id": "ak:event:AYE4Fy6EKDe_TOXKws3PPuPKjL-Qf6okkHXSc94b3s2b",
                     "actor_id": actor_id,
                     "created_at": "2026-07-29T00:00:00.000Z",
                     "content": {
@@ -675,8 +675,8 @@ mod tests {
 
     #[test]
     fn local_index_search_respects_realm_kind_and_limit_filters() {
-        let first_realm_id = "ak:realm:01904100-0000-8000-8000-000000000921".to_owned();
-        let second_realm_id = "ak:realm:01904100-0000-8000-8000-000000000922".to_owned();
+        let first_realm_id = "ak:realm:AbPEQpgBpoYJaOBy6gq9_f6CcaazIEyAHgl0qdlWisCQ".to_owned();
+        let second_realm_id = "ak:realm:ATGx6cCE_Pkzu-zRPgFdc43Tfv-MY96fKCW_fBBM3N1_".to_owned();
         let realms = std::collections::BTreeMap::from([
             (
                 first_realm_id.clone(),
@@ -684,7 +684,7 @@ mod tests {
                     "summary": {"summary": "First Realm"},
                     "timeline": {"events": [{
                         "kind": "ak.message.create",
-                        "event_id": "ak:event:01904100-0000-8000-8000-000000000923",
+                        "event_id": "ak:event:Ae8oasaCa8YvwE4_ULb5-ictCSzTCZoyn5KqQ81wpvDG",
                         "actor_id": "did:web:alice.example",
                         "created_at": "2026-06-19T00:00:00.000Z",
                         "content": {"realm_id": first_realm_id, "body": "needle first"}
@@ -697,7 +697,7 @@ mod tests {
                     "summary": {"summary": "Second Realm"},
                     "timeline": {"events": [{
                         "kind": "ak.message.create",
-                        "event_id": "ak:event:01904100-0000-8000-8000-000000000924",
+                        "event_id": "ak:event:AatXc8rOoiOfXgpJeRROJV9yNH3ydNHDDoc6VbiwNThT",
                         "actor_id": "did:web:bob.example",
                         "created_at": "2026-06-19T00:00:00.000Z",
                         "content": {"realm_id": second_realm_id, "body": "needle second"}

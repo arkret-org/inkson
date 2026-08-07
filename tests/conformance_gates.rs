@@ -236,8 +236,8 @@ fn test_signing_key() -> &'static SigningKey {
     })
 }
 
-const TEST_REALM_ID: &str = "ak:realm:0196419b-0000-8000-8000-000000000001";
-const TEST_SPACE_ID: &str = "ak:space:0196419b-0000-8000-8000-000000000002";
+const TEST_REALM_ID: &str = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+const TEST_SPACE_ID: &str = "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
 const TEST_ACTOR_ID: &str = "did:web:alice.example";
 const TEST_SERVICE_ID: &str = "did:web:server.example";
 const TEST_INVITEE_DID: &str = "did:web:bob.example";
@@ -354,12 +354,11 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
         "validator accepted an empty object; resolver wiring is broken"
     );
 
-    // Correct shape but wrong event_id pattern (should reject — uuid7
-    // pattern requires `7<...>` in time-hi field).
+    // Correct envelope shape but an invalid Event identity token.
     let bogus = serde_json::json!({
         "event_id": "ak:event:not-a-uuid",
         "kind": "ak.realm.create",
-        "realm_id": "ak:realm:0196419b-0000-8000-8000-000000000001",
+        "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "actor_id": "did:web:alice.example",
         "actor_seq": 1,
         "created_at": "2026-05-21T13:00:00.000Z",
@@ -378,9 +377,9 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
     // branch of the top-level `allOf`. If this slips through, the
     // schema validator is silently degraded to a syntax-only checker.
     let reducer_missing_required = serde_json::json!({
-        "event_id": "ak:event:0196419b-0000-8777-8000-000000000003",
+        "event_id": "ak:event:AZEAhO4CFzelWMJKtLZI-HSeK3Nh28YP3M24_4uLoFAF",
         "kind": "ak.realm.create",
-        "realm_id": "ak:realm:0196419b-0000-8000-8000-000000000001",
+        "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "actor_id": "did:web:alice.example",
         "actor_seq": 1,
         "created_at": "2026-05-21T13:00:00.000Z",
@@ -874,7 +873,7 @@ fn managed_agent_pcr_genesis_leaves_history_sharing_policy_to_the_profile() {
         TEST_ACTOR_ID,
         "did:web:alice.example#delegation-0",
         "ak:trust_domain:server.example",
-        arkret_sdk::EventId::new("ak:event:01964137-0000-8000-8000-000000000098")
+        arkret_sdk::EventId::new("ak:event:AStKv4uwui9iKv7StOHRotQgjBDBvjla-y05nQAwQaJf")
             .expect("fixture provision Event id"),
     )
     .expect("build_managed_agent_pcr_bootstrap_events succeeds");

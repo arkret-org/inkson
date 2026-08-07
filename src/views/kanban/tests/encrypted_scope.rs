@@ -78,7 +78,7 @@ fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
     let encrypted_payload = crate::crypto::compose_local_encrypted_message(
         "did:web:alice.example",
         "ak:device:01904100-0000-7000-8000-000000000001",
-        "ak:space:0196419b-0000-8000-8000-000000000000",
+        "ak:space:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
         "ak:message:kanban-patch-test",
         "private synthesis",
     )
@@ -128,8 +128,8 @@ fn encrypted_private_patch_without_mls_snapshot_is_blocked_before_queueing() {
 
     let error = encrypt_private_card_detail_patch_values_with_store(
         patch,
-        "ak:realm:01904100-0000-8000-8000-000000000001",
-        "ak:strand:01904100-0000-8000-8000-0000000000ff",
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+        "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
         "did:web:alice.example",
         "ak:device:01904100-0000-7000-8000-000000000001",
         &mut state,
@@ -140,7 +140,7 @@ fn encrypted_private_patch_without_mls_snapshot_is_blocked_before_queueing() {
     assert!(error.contains("MLS Welcome"));
     assert!(
         state
-            .mls_snapshot_for("ak:realm:01904100-0000-8000-8000-000000000001")
+            .mls_snapshot_for("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
             .is_none()
     );
     assert!(state.load().raw_operations.is_empty());
@@ -151,7 +151,7 @@ fn encrypted_private_patch_without_mls_snapshot_is_blocked_before_queueing() {
 fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
     use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
 
-    let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
     let alice = ArkretMlsIdentity::new_basic(
@@ -195,7 +195,7 @@ fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
     let patch = json!({
         "body": {"$op": "set", "value": "private body from invited member"},
     });
-    let strand_id = "ak:strand:01904100-0000-8000-8000-0000000000ff";
+    let strand_id = "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ";
 
     let error = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, bob_actor, bob_device, &mut state, &secure,
@@ -217,7 +217,7 @@ fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
 fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
     use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
 
-    let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b3";
     let alice = ArkretMlsIdentity::new_basic(
@@ -266,7 +266,7 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
     let patch = json!({
         "body": {"$op": "set", "value": "private body from invited member"},
     });
-    let strand_id = "ak:strand:01904100-0000-8000-8000-0000000000ff";
+    let strand_id = "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ";
 
     let blocked = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, bob_actor, bob_device, &mut state, &secure,
@@ -314,7 +314,7 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
 fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let mut state = temp_state_store("creator-bootstrap-mls");
     state.save_realm_tree_projection(
         realm,
@@ -344,7 +344,7 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
         "body": {"$op": "set", "value": "private body"},
     });
 
-    let strand_id = "ak:strand:01904100-0000-8000-8000-0000000000ff";
+    let strand_id = "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ";
     let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, actor, device, &mut state, &secure,
     )
@@ -378,7 +378,7 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
         genesis.event_id.as_str()
     );
     let accepted_genesis =
-        arkret_sdk::EventId::new("ak:event:0196419b-0000-8000-8000-000000000099").unwrap();
+        arkret_sdk::EventId::new("ak:event:AVtcXI0sfnw9Pex-qynbBUykPtV8niszMj0Ko75SINJ2").unwrap();
     let mut rebound_patch = patched.clone();
     assert_eq!(
         rebind_encrypted_group_state_ref(&mut rebound_patch, &genesis.event_id, &accepted_genesis)
@@ -404,7 +404,7 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
 fn encrypted_private_patch_repairs_persisted_epoch_zero_without_genesis_reference() {
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let mut state = temp_state_store("creator-persisted-epoch-zero");
     state.save_realm_tree_projection(
         realm,
@@ -451,7 +451,7 @@ fn encrypted_private_patch_repairs_persisted_epoch_zero_without_genesis_referenc
     let patch = json!({
         "body": {"$op": "set", "value": "first description"},
     });
-    let strand_id = "ak:strand:01904100-0000-8000-8000-0000000000ff";
+    let strand_id = "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ";
     let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, actor, device, &mut state, &secure,
     )
@@ -474,7 +474,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ak:realm:01904100-0000-8000-8000-000000000001";
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let mut state = temp_state_store("ready-mls");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let secret =
@@ -521,7 +521,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     // Match the accepted-Seal frontier installed by
     // `seed_test_governance_proof`; the emitted binding must carry that exact
     // verified frontier.
-    let base_group_state_ref = "ak:event:01904100-0000-8000-8000-0000000000aa";
+    let base_group_state_ref = "ak:event:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml";
     state.set_realm_seal_view(
         realm,
         crate::state::LocalSealView {
@@ -552,7 +552,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
         "body": {"$op": "set", "value": "private body"},
     });
 
-    let strand_id = "ak:strand:01904100-0000-8000-8000-0000000000ff";
+    let strand_id = "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ";
     let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, actor, device, &mut state, &secure,
     )
@@ -602,13 +602,13 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     assert!(!commit.payload.contains_key("effects"));
     assert_eq!(
         commit.payload["governance_binding"]["realm_id"],
-        json!("ak:realm:01904100-0000-8000-8000-000000000001")
+        json!("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
     );
     assert_eq!(
         commit.payload["governance_binding"]["effective_scope"],
         json!({
             "kind": "realm",
-            "realm_id": "ak:realm:01904100-0000-8000-8000-000000000001",
+            "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         })
     );
     assert_eq!(
@@ -635,8 +635,8 @@ fn encrypted_metadata_only_patch_does_not_require_mls_snapshot() {
 
     let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
         patch.clone(),
-        "ak:space:01904100-0000-8000-8000-000000000001",
-        "ak:strand:01904100-0000-8000-8000-0000000000ff",
+        "ak:space:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+        "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
         "did:web:alice.example",
         "ak:device:01904100-0000-7000-8000-000000000001",
         &mut state,
@@ -657,8 +657,8 @@ fn encrypted_scope_allows_structural_strand_position_update() {
         "did:web:alice.example",
         DEMO_STRAND_LEGAL_REVIEW_ID,
         json!({
-            "board_space_id": "ak:space:0196419b-0000-8000-8000-000000000001",
-            "list_space_id": "ak:space:0196419b-0000-8000-8000-000000000002",
+            "board_space_id": "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+            "list_space_id": "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL",
             "rank": "U",
         }),
     )
@@ -676,8 +676,8 @@ fn encrypted_scope_allows_content_only_metadata_create_payloads() {
     let strand = crate::operation::ak_ops::kanban_card_strand_create(
         TEST_REALM_ID,
         "did:web:alice.example",
-        "ak:space:0196419b-0000-8000-8000-000000000001",
-        "ak:space:0196419b-0000-8000-8000-000000000002",
+        "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+        "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL",
         "private card title",
         "U",
     )
@@ -689,7 +689,7 @@ fn encrypted_scope_allows_content_only_metadata_create_payloads() {
         "did:web:alice.example",
         "list",
         "private list title",
-        Some("ak:space:0196419b-0000-8000-8000-000000000001"),
+        Some("ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"),
         Some("U"),
     )
     .expect("builds")
@@ -731,7 +731,7 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
         "did:web:alice.example",
         "list",
         "Todos list title",
-        Some("ak:space:0196419b-0000-8000-8000-00000000aa01"),
+        Some("ak:space:Acu6LoN-LFmj9DSd_alwrkXEKF2pIHOHM94FS3OE0CC9"),
         Some("r001"),
     )
     .expect("builds")
@@ -746,7 +746,7 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
     let list_rank_update = crate::operation::ak_ops::space_update_patch(
         TEST_REALM_ID,
         "did:web:alice.example",
-        "ak:space:0196419b-0000-8000-8000-00000000aa02",
+        "ak:space:Af1Pi9BryFSPKbIS5B4pB9_rXFtOAL3hL4MoyX6i-uCE",
         json!({ "rank": "r000" }),
     )
     .expect("builds")
@@ -801,9 +801,9 @@ fn sidecar_track_patch_encrypts_with_only_the_circle_snapshot() {
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
     let device = "ak:device:0196419b-0000-7000-8000-000000000021";
-    let realm = "ak:realm:0196419b-0000-8000-8000-000000000022";
-    let circle = "ak:circle:0196419b-0000-8000-8000-000000000023";
-    let strand = "ak:strand:0196419b-0000-8000-8000-000000000024";
+    let realm = "ak:realm:AYkxMogpjqRFcRiejZN897KN1bjKnAjkbNCCRbsgxeHR";
+    let circle = "ak:circle:ATglM2Ok0jsPzyPkbQub_EuKAtcyKvX2itC1Y7229amh";
+    let strand = "ak:strand:AWSjtu5m07wmq4GIr0siQOr8dsPMpOK3Wel8pRMGO3ZU";
     let identity = arkret_sdk::ArkretMlsIdentity::new_basic(
         arkret_sdk::Did::new(actor.to_owned()).unwrap(),
         arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
@@ -835,8 +835,10 @@ fn sidecar_track_patch_encrypts_with_only_the_circle_snapshot() {
             Some(circle),
             &post_state.group_id,
             post_state.epoch,
-            arkret_sdk::EventId::new("ak:event:0196419b-0000-8000-8000-000000000027".to_owned())
-                .unwrap(),
+            arkret_sdk::EventId::new(
+                "ak:event:AXOcDC3EfKDsROtRCskvfBlBSDUo6v4NxBuFO3jguIWC".to_owned(),
+            )
+            .unwrap(),
         )
         .unwrap();
     let realm_identity = arkret_sdk::ArkretMlsIdentity::new_basic(
@@ -865,8 +867,10 @@ fn sidecar_track_patch_encrypts_with_only_the_circle_snapshot() {
         .unwrap(),
         desired_access_digest: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64))).unwrap(),
         control_frontier: vec![
-            arkret_sdk::NonEmptyString::new("ak:event:0196419b-0000-8000-8000-000000000026")
-                .unwrap(),
+            arkret_sdk::NonEmptyString::new(
+                "ak:event:AWayOxLqYDB7vOFfk4_1lduA5vDNHd7gwk_LRwQOnGDJ",
+            )
+            .unwrap(),
         ],
     };
     let context = SidecarTrackWriteContext {

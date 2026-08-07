@@ -1103,10 +1103,11 @@ mod tests {
             std::process::id(),
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
         ));
-        let realm_id = "ak:realm:01904100-0000-8000-8000-000000000001";
+        let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
         let group_id = "010203";
         let event_id =
-            arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000099").unwrap();
+            arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
+                .unwrap();
         let snapshot = crate::mls::persistence::MlsSnapshotEnvelope {
             realm_id: realm_id.to_owned(),
             group_id: group_id.to_owned(),
@@ -1140,10 +1141,11 @@ mod tests {
             std::process::id(),
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
         ));
-        let realm_id = "ak:realm:01904100-0000-8000-8000-000000000001";
+        let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
         let group_id = "010203";
         let event_id =
-            arkret_sdk::EventId::new("ak:event:01904100-0000-8000-8000-000000000099").unwrap();
+            arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
+                .unwrap();
         let snapshot = crate::mls::persistence::MlsSnapshotEnvelope {
             realm_id: realm_id.to_owned(),
             group_id: group_id.to_owned(),
@@ -1210,7 +1212,7 @@ mod tests {
             std::process::id(),
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
         ));
-        let realm_id = "ak:realm:01904100-0000-8000-8000-000000000001";
+        let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
         let group_id = "010203";
         let snapshot = crate::mls::persistence::MlsSnapshotEnvelope {
             realm_id: realm_id.to_owned(),
@@ -1232,7 +1234,7 @@ mod tests {
             json!({
                 "state": {
                     "events": [{
-                        "event_id": "ak:event:01904100-0000-8000-8000-000000000099",
+                        "event_id": "ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk",
                         "realm_id": realm_id,
                         "kind": "ak.mls.genesis",
                         "payload": {

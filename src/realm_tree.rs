@@ -1032,7 +1032,7 @@ mod tests {
     #[test]
     fn sync_projection_title_accepts_invite_title_aliases() {
         let nodes = realm_tree_nodes_from_sync_realms(&BTreeMap::from([(
-            "ak:realm:01904100-0000-8000-8000-000000000002".to_owned(),
+            "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1".to_owned(),
             json!({
                 "realm_title": "Launch Planning",
                 "summary": {}
@@ -1045,7 +1045,7 @@ mod tests {
 
     #[test]
     fn sync_projection_reads_canonical_window_start_realm_metadata() {
-        let id = "ak:realm:01904100-0000-8000-8000-000000000005";
+        let id = "ak:realm:AVWVGlDqGwJJ7DILnxJ4oq7JGdtoXGIQaK4PoiEf2yBZ";
         let nodes = realm_tree_nodes_from_sync_realms(&BTreeMap::from([(
             id.to_owned(),
             json!({
@@ -1067,7 +1067,7 @@ mod tests {
 
     #[test]
     fn sync_projection_recovers_title_from_canonical_realm_create_state_event() {
-        let id = "ak:realm:01904100-0000-8000-8000-000000000006";
+        let id = "ak:realm:AWgGCEbMHnelRQfzqg1C_onV9Ej_FdpdAZyM_JoFgAd3";
         let nodes = realm_tree_nodes_from_sync_realms(&BTreeMap::from([(
             id.to_owned(),
             json!({
@@ -1186,7 +1186,7 @@ mod tests {
 
     #[test]
     fn projection_title_hint_fills_missing_summary_title() {
-        let id = "ak:realm:01904100-0000-8000-8000-000000000003";
+        let id = "ak:realm:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy";
         let body = json!({
             "summary": {
                 "strand": {"title": "General strand"}
@@ -1201,7 +1201,7 @@ mod tests {
 
     #[test]
     fn projection_title_hint_does_not_override_server_title() {
-        let id = "ak:realm:01904100-0000-8000-8000-000000000004";
+        let id = "ak:realm:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM";
         let body = json!({
             "summary": {"title": "Server Realm"}
         });
@@ -1365,7 +1365,7 @@ mod tests {
 
     #[test]
     fn direct_conversation_role_uses_typed_sync_projection_not_category_or_tags() {
-        let realm_id = "ak:realm:0196419b-0000-8000-8000-000000000701";
+        let realm_id = "ak:realm:AXqScWrSVbMRHSSnD37HwS-fgoTGt3HbHkvBV3SttpCU";
         let strong = realm_tree_nodes_from_sync_realms_with_roles(
             &BTreeMap::from([(
                 realm_id.to_owned(),
@@ -1688,12 +1688,12 @@ mod tests {
     fn sync_projection_keeps_real_space_with_inlined_primary_strand() {
         let mut spaces = BTreeMap::new();
         spaces.insert(
-            "ak:space:0196419b-0000-8000-8000-000000000000".to_owned(),
+            "ak:space:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j".to_owned(),
             json!({
                 "ephemeral": [],
-                "realm_id": "ak:realm:0196419b-0000-8000-8000-000000000001",
+                "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
                 "strands": [{
-                    "strand_id": "ak:strand:0196419b-0000-8000-8000-000000000000",
+                    "strand_id": "ak:strand:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
                     "title": "Arkret Demo Realm",
                 }],
                 "summary": {
@@ -1702,7 +1702,7 @@ mod tests {
                     "summary": "Shared demo Space served by soland",
                     "tags": ["demo"],
                     "strand": {
-                        "strand_id": "ak:strand:0196419b-0000-8000-8000-000000000000",
+                        "strand_id": "ak:strand:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
                         "title": "Arkret Demo Realm",
                         "tracks": { "discussion": { "enabled": true } },
                     },
@@ -1717,7 +1717,7 @@ mod tests {
         assert_eq!(previews.len(), 1);
         assert_eq!(
             previews[0].id,
-            "ak:space:0196419b-0000-8000-8000-000000000000"
+            "ak:space:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j"
         );
         assert_eq!(previews[0].title, "Arkret Demo Realm");
         assert_eq!(previews[0].category.as_deref(), Some("collaboration"));
@@ -1727,19 +1727,19 @@ mod tests {
     fn sync_projection_keeps_realm_ids_from_account_subscribe() {
         let mut spaces = BTreeMap::new();
         spaces.insert(
-            "ak:realm:019e4cdc-b435-8e52-9ada-39d5ec134729".to_owned(),
+            "ak:realm:ARDR2oN-Bh8J55KxFHM6s_izSsUg0-1gh3XfOjfjJ9HE".to_owned(),
             json!({
                 "bottom_cells": [],
                 "ephemeral": [],
                 "strands": [{
-                    "strand_id": "ak:strand:019e4cdc-b435-8e52-9ada-39d5ec134729",
+                    "strand_id": "ak:strand:ARDR2oN-Bh8J55KxFHM6s_izSsUg0-1gh3XfOjfjJ9HE",
                     "kind": "discussion",
                     "title": "Test"
                 }],
                 "state": [],
                 "state_after": {
                     "events": [{
-                        "strand_id": "ak:strand:019e4cdc-b435-8e52-9ada-39d5ec134729",
+                        "strand_id": "ak:strand:ARDR2oN-Bh8J55KxFHM6s_izSsUg0-1gh3XfOjfjJ9HE",
                         "kind": "discussion",
                         "title": "Test"
                     }]
@@ -1747,7 +1747,7 @@ mod tests {
                 "summary": {
                     "category": null,
                     "strand": {
-                        "strand_id": "ak:strand:019e4cdc-b435-8e52-9ada-39d5ec134729",
+                        "strand_id": "ak:strand:ARDR2oN-Bh8J55KxFHM6s_izSsUg0-1gh3XfOjfjJ9HE",
                         "kind": "discussion",
                         "title": "Test"
                     },
@@ -1765,7 +1765,7 @@ mod tests {
         assert_eq!(previews.len(), 1);
         assert_eq!(
             previews[0].id,
-            "ak:realm:019e4cdc-b435-8e52-9ada-39d5ec134729"
+            "ak:realm:ARDR2oN-Bh8J55KxFHM6s_izSsUg0-1gh3XfOjfjJ9HE"
         );
         assert_eq!(previews[0].title, "Test");
         assert_eq!(previews[0].kind, RealmTreeNodeKind::Realm);
