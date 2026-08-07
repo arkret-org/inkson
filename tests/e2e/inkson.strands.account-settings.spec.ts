@@ -477,7 +477,7 @@ test("account settings split account/server info and surface personal agents", a
     "ak.self.keys.keypackages.upload.create",
     "ak.self.keys.keypackages.command.consume",
     "ak.self.keys.keypackages.command.revoke",
-    "ak.self.device_messages.query.list",
+    "ak.self.device_messages.read.list",
     "ak.self.device_messages.command.ack",
   ]);
   expect(JSON.stringify(provisionBody.requested_scope.resources)).not.toContain("realm_id");

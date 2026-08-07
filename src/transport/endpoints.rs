@@ -115,7 +115,7 @@ impl KeysEndpoints<'_> {
     }
 
     /// Resolve a scanned/pasted pairing token into the staged bootstrap
-    /// (`ak.open.device_pairing.query.resolve`).
+    /// (`ak.open.device_pairing.read.resolve`).
     pub async fn device_pairing_resolve(
         &self,
         body: &arkret_sdk::DevicePairingResolveRequestBody,
@@ -128,7 +128,7 @@ impl KeysEndpoints<'_> {
     }
 
     /// Poll whether a staged pairing request has been authorized
-    /// (`ak.open.device_pairing.query.status`).
+    /// (`ak.open.device_pairing.read.status`).
     pub async fn device_pairing_status(
         &self,
         body: &arkret_sdk::DevicePairingStatusRequestBody,
@@ -231,7 +231,7 @@ impl DirectoryEndpoints<'_> {
         let describe = self.transport.describe_cached().await?;
         if !crate::models::service_supports_operation(
             describe,
-            arkret_sdk::ServiceOperationId::SELF_SNAPSHOT_QUERY_MANIFEST_HEAD,
+            arkret_sdk::ServiceOperationId::SELF_SNAPSHOT_READ_MANIFEST_HEAD,
         ) {
             return Ok(None);
         }

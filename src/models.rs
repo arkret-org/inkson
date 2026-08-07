@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// App-local current-account projection derived from the spec
-/// `ak.self.account.query.viewer` response. `handle` is populated only from a
+/// `ak.self.account.read.viewer` response. `handle` is populated only from a
 /// signed `primary_handle_claim.handle`; an empty string means the server did
 /// not include handle evidence in the viewer response.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -195,7 +195,7 @@ pub fn service_is_v1_principal_server_ready(description: &ServiceDescribe) -> bo
 // newtype around it. We re-export the inner struct under the inkson-local
 // name so call sites (`registry_mode` read in `views/dashboard.rs`) stay
 // unchanged while the field shapes are now SDK-owned.
-// `ak.self.account.query.describe` decodes into the SDK's authoritative
+// `ak.self.account.read.describe` decodes into the SDK's authoritative
 // `arkret_sdk::ServiceDescribe`; the former inkson-local describe mirror was
 // removed in favor of the wire type.
 /// App runtime state derived from validated canonical account-subscribe frames.
@@ -736,7 +736,7 @@ impl From<arkret_sdk::EventsQueryOutcome> for BackfillView {
     }
 }
 
-// `ak.self.snapshot.query.manifest_head` returns the full signed
+// `ak.self.snapshot.read.manifest_head` returns the full signed
 // `ak.schema.snapshot.v1` manifest. See `api::TransportClient::snapshot_head`.
 
 pub use arkret_models_collaboration::governance::authorization::AuthzCheckOutcome;
@@ -745,7 +745,7 @@ pub use arkret_models_collaboration::governance::authorization::AuthzCheckOutcom
 /// former inkson-local `InvitesView` mirror was removed in favor of the wire
 /// type.
 pub use arkret_models_collaboration::governance::authorization::AuthzInviteList;
-/// `ak.self.authz.grants.query.effective` response. soland serialises the SDK
+/// `ak.self.authz.grants.read.effective` response. soland serialises the SDK
 /// `GrantList` (`grants: Vec<CapabilityGrant>`) verbatim, so the client
 /// decodes the same authoritative wire contract instead of a weakly-typed
 /// local mirror.

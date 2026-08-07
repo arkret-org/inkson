@@ -6,7 +6,7 @@
 //! relationship". This panel makes the lifecycle states explicit.
 //!
 //! Read side: the verified relationships and declared hints are read from the
-//! spec-canonical projection `ak.self.realm_organization.query.list`
+//! spec-canonical projection `ak.self.realm_organization.read.list`
 //! (`GET /_arkret/self/realms/{realm_id}/organizations`) via
 //! [`crate::transport::TransportClient::list_realm_organizations`]. The server only returns
 //! `verified_active` / `revoked_or_expired` rows plus

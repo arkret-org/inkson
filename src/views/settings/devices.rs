@@ -162,7 +162,7 @@ fn build_pair_payload(
 #[allow(clippy::expect_used)]
 /// Compact base64url handoff token embedded in the pairing QR deep-link.
 /// Mirrors the agent-pairing token (`{"r":request_id,"c":code}`); the resolving
-/// device decodes it and calls `ak.open.device_pairing.query.resolve`.
+/// device decodes it and calls `ak.open.device_pairing.read.resolve`.
 fn build_device_pairing_handoff_token(
     device_pairing_request_id: &str,
     pairing_code: &str,
@@ -195,7 +195,7 @@ fn build_device_pairing_deep_link(
 }
 
 /// Parse a scanned/pasted pairing deep-link (or a bare token) into the compact
-/// handoff token expected by `ak.open.device_pairing.query.resolve`.
+/// handoff token expected by `ak.open.device_pairing.read.resolve`.
 fn extract_device_pairing_token(input: &str) -> Option<String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {

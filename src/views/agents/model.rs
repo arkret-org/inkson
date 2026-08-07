@@ -259,7 +259,7 @@ impl AgentServiceScopePreset {
                 // is immutable after provisioning (key-management §4.5), so
                 // revoke must be part of the default ceiling from day one.
                 "ak.self.keys.keypackages.command.revoke",
-                "ak.self.device_messages.query.list",
+                "ak.self.device_messages.read.list",
                 "ak.self.device_messages.command.ack",
                 "ak.self.signal.command.send",
             ],

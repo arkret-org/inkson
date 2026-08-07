@@ -84,7 +84,7 @@ pub fn private_view_account_data_plaintext(
 
 /// Private-View keys inside a full account-data listing.
 ///
-/// `ak.self.account_data.query.list` returns every entry and takes no prefix
+/// `ak.self.account_data.read.list` returns every entry and takes no prefix
 /// parameter, so the holder narrows the page locally.
 pub fn private_view_account_data_keys<'a, I>(account_data_keys: I) -> Vec<String>
 where

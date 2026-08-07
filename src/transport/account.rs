@@ -410,7 +410,7 @@ fn owned_agent_reply_update_needed(
 
 /// List the holder-private consent cells visible to the authenticated
 /// actor (cells where the actor is either holder or peer). Spec
-/// `identity/consent-model.md` §3 / OpenAPI `ak.self.consent.query.list`.
+/// `identity/consent-model.md` §3 / OpenAPI `ak.self.consent.read.list`.
 pub async fn consent_cells(
     http: &arkret_sdk::http_client::Client,
 ) -> anyhow::Result<arkret_sdk::ConsentCellList> {

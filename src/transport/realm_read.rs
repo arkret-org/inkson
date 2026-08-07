@@ -86,7 +86,7 @@ pub async fn collection_projection(
 }
 
 /// Read the verified Realm ↔ organization relationships projection
-/// (`ak.self.realm_organization.query.list`,
+/// (`ak.self.realm_organization.read.list`,
 /// `GET /_arkret/self/realms/{realm_id}/organizations`).
 ///
 /// The server only returns `verified_active` / `revoked_or_expired`

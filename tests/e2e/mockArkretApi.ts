@@ -1168,45 +1168,45 @@ export async function mockArkretApi(
           "events.submit",
         ],
         supported_operations: [
-          "ak.server.query.describe",
+          "ak.server.read.describe",
           "ak.self.account.stream.subscribe",
-          "ak.self.account.query.describe",
-          "ak.self.account.query.viewer",
+          "ak.self.account.read.describe",
+          "ak.self.account.read.viewer",
           "ak.self.account.command.update_profile",
           "ak.self.events.read.scan",
           "ak.self.events.stream.subscribe",
           "ak.self.events.read.describe",
           "ak.self.events.command.submit",
-          "ak.self.space.query.list",
-          "ak.self.strand.query.list",
-          "ak.find.directory.query.search_realms",
-          "ak.find.directory.query.resolve_realm",
-          "ak.find.directory.query.describe",
-          "ak.find.directory.query.search_organizations",
-          "ak.find.directory.query.search_actors",
-          "ak.find.directory.query.resolve_handle",
+          "ak.self.space.read.list",
+          "ak.self.strand.read.list",
+          "ak.find.directory.read.search_realms",
+          "ak.find.directory.read.resolve_realm",
+          "ak.find.directory.read.describe",
+          "ak.find.directory.read.search_organizations",
+          "ak.find.directory.read.search_actors",
+          "ak.find.directory.read.resolve_handle",
           ...(advertiseListHandlesForSubject
-            ? ["ak.find.directory.query.list_handles_for_subject"]
+            ? ["ak.find.directory.read.list_handles_for_subject"]
             : []),
-          "ak.self.authz.query.check",
-          "ak.self.authz.grants.query.effective",
-          "ak.self.authz.invites.query.list",
-          "ak.root.identity.registry.query.describe",
-          "ak.root.identity.query.resolve",
+          "ak.self.authz.read.check",
+          "ak.self.authz.grants.read.effective",
+          "ak.self.authz.invites.read.list",
+          "ak.root.identity.registry.read.describe",
+          "ak.root.identity.read.resolve",
           "ak.root.identity.recovery_policy.resource.get",
           "ak.root.identity.recovery_policy.command.publish",
           "ak.gate.account.command.register",
           "ak.gate.account.command.pair_device",
           "ak.gate.account.command.revoke_session",
-          "ak.self.contact.query.list",
+          "ak.self.contact.read.list",
           "ak.self.contact.command.request",
           "ak.self.contact.command.respond",
           "ak.self.contact.command.tombstone",
           "ak.self.invite_receive_policy.resource.get",
           "ak.self.invite_receive_policy.resource.replace",
-          "ak.self.direct_conversation.query.resolve",
+          "ak.self.direct_conversation.read.resolve",
           "ak.self.circle.command.create",
-          "ak.self.circle.query.list",
+          "ak.self.circle.read.list",
           "ak.self.circle.resource.get",
           "ak.self.circle.member.command.add",
           "ak.self.circle.member.resource.delete",
@@ -1215,31 +1215,31 @@ export async function mockArkretApi(
           "ak.self.circle.command.restore",
           "ak.self.circle.command.tombstone",
           "ak.self.keys.upload.create",
-          "ak.self.keys.query.lookup",
+          "ak.self.keys.read.lookup",
           "ak.self.keys.command.claim",
-          "ak.self.keys.backups.query.list",
+          "ak.self.keys.backups.read.list",
           "ak.self.keys.backups.resource.replace",
-          "ak.self.device_messages.query.list",
+          "ak.self.device_messages.read.list",
           "ak.self.device_messages.command.send",
           "ak.self.device_messages.command.ack",
           "ak.edge.push.command.register_device",
           "ak.edge.push.command.unregister_device",
           "ak.self.blob.upload.create",
           "ak.self.blob.resource.get",
-          "ak.self.media.query.ice_config",
+          "ak.self.media.read.ice_config",
           "ak.self.moderation.command.report",
-          "ak.open.mimi.query.provider_directory",
+          "ak.open.mimi.read.provider_directory",
           "ak.open.mimi.exchange.request_key_material",
-          "ak.open.mimi.query.group_info",
+          "ak.open.mimi.read.group_info",
           "ak.open.mimi.command.update_room",
           "ak.open.mimi.command.notify",
           "ak.open.mimi.command.submit_message",
           "ak.open.mimi.command.request_consent",
           "ak.open.mimi.command.update_consent",
-          "ak.open.mimi.query.identifiers",
+          "ak.open.mimi.read.identifiers",
           "ak.open.mimi.command.report_abuse",
           "ak.open.mimi.command.proxy_download",
-          "ak.open.invite_locator.query.resolve",
+          "ak.open.invite_locator.read.resolve",
           "ak.self.signal.command.send",
         ],
         supported_schema_profiles: ["ak.schema.core.v1"],
@@ -1435,20 +1435,16 @@ export async function mockArkretApi(
 
     if (
       url.pathname === "/_arkret/self/events/frontier" &&
-      ["QUERY", "GET"].includes(route.request().method())
+      route.request().method() === "QUERY"
     ) {
-      const selector =
-        route.request().method() === "QUERY"
-          ? ((await route.request().postDataJSON()) as Record<string, unknown>)
-          : {};
+      const selector = (await route.request().postDataJSON()) as Record<
+        string,
+        unknown
+      >;
       const actorId =
-        typeof selector.actor_id === "string"
-          ? selector.actor_id
-          : url.searchParams.get("actor_id");
+        typeof selector.actor_id === "string" ? selector.actor_id : null;
       const realmId =
-        typeof selector.realm_id === "string"
-          ? selector.realm_id
-          : url.searchParams.get("realm_id");
+        typeof selector.realm_id === "string" ? selector.realm_id : null;
       if (actorId && realmId) {
         const actorEvents = projectionEvents.filter(
           (event) =>
@@ -1601,7 +1597,7 @@ export async function mockArkretApi(
 
     if (
       url.pathname === "/_arkret/self/events/mls-governance-proof" &&
-      ["QUERY", "POST"].includes(route.request().method())
+      route.request().method() === "QUERY"
     ) {
       const request = (await route.request().postDataJSON()) as Record<
         string,
@@ -1751,7 +1747,7 @@ export async function mockArkretApi(
 
     if (
       url.pathname === "/_arkret/self/events/describe" &&
-      ["QUERY", "GET"].includes(route.request().method())
+      route.request().method() === "QUERY"
     ) {
       // Spec ak.self.events.read.describe -> canonical ServiceDescribe shape
       // (17 required fields; inkson decodes the SDK ServerDescription).
@@ -2667,7 +2663,7 @@ export async function mockArkretApi(
         service_kind: "directory_service",
         protocol_version: "1.0",
         supported_profiles: ["ak.profile.directory_service.v1"],
-        supported_operations: ["ak.find.directory.query.describe"],
+        supported_operations: ["ak.find.directory.read.describe"],
         supported_bindings: [{ kind: "http_json" }],
         supported_features: [],
         auth_metadata: { mode: "public_no_auth" },
@@ -2733,20 +2729,17 @@ export async function mockArkretApi(
 
     if (
       url.pathname === "/_arkret/self/events" &&
-      ["QUERY", "GET"].includes(route.request().method())
+      route.request().method() === "QUERY"
     ) {
-      const requestBody =
-        route.request().method() === "QUERY"
-          ? ((await route.request().postDataJSON()) as Record<string, unknown>)
-          : {};
+      const requestBody = (await route.request().postDataJSON()) as Record<
+        string,
+        unknown
+      >;
       const requestedRealms = Array.isArray(requestBody.realms)
         ? requestBody.realms.filter(
             (realm): realm is string => typeof realm === "string",
           )
-        : (url.searchParams.get("realms") ?? "")
-            .split(",")
-            .map((realm) => realm.trim())
-            .filter(Boolean);
+        : [];
       const events = requestedRealms.length
         ? projectionEvents.filter((event) =>
             requestedRealms.includes(eventRealmId(event)),
@@ -2778,7 +2771,7 @@ export async function mockArkretApi(
     }
 
     // NB: no `/_arkret/self/snapshot/head` route. The mock's describe does
-    // not advertise `ak.self.snapshot.query.manifest_head`, so the client falls back to
+    // not advertise `ak.self.snapshot.read.manifest_head`, so the client falls back to
     // event replay before issuing the request. The current wire shape is the
     // full signed `ak.schema.snapshot.v1` manifest (self-id field `id`); the
     // removed `snapshot_ref` pointer DTO is hard-rejected and MUST NOT be

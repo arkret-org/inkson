@@ -277,7 +277,12 @@ pub(super) fn submit_kanban_move(
             board_status.set(format!("cannot submit {kind}: no target Strand"));
             return;
         };
-        crate::operation::ak_ops::strand_position_update(&realm_id, &actor_id, subject, value.clone())
+        crate::operation::ak_ops::strand_position_update(
+            &realm_id,
+            &actor_id,
+            subject,
+            value.clone(),
+        )
     };
     let envelope = match envelope {
         Ok(builder) => builder.build_sdk_event("inkson"),
@@ -304,8 +309,7 @@ pub(super) fn submit_kanban_move(
         Some(subject) => subject,
         None => {
             let Some(derived) = event.local_target_ref() else {
-                board_status
-                    .set(format!("cannot submit {kind}: no derived Strand id"));
+                board_status.set(format!("cannot submit {kind}: no derived Strand id"));
                 return;
             };
             derived.to_owned()

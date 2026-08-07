@@ -34,10 +34,7 @@ pub fn kanban_card_strand_create(
         .with_track("discussion", arkret_sdk::StrandTrackConfig::discussion());
     Ok(
         OperationBuilder::new(&realm_id, actor, arkret_sdk::EventKind::StrandCreate).body(
-            object_create_payload_value(
-                object,
-                "ak.strand.create kanban card payload serialize",
-            )?,
+            object_create_payload_value(object, "ak.strand.create kanban card payload serialize")?,
         ),
     )
 }

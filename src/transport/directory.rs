@@ -85,7 +85,7 @@ pub async fn resolve_realm_with_invite_token(
 }
 
 /// R3.3 (AKP-0011) — resolve a shareable object address (Realm / Strand /
-/// Message) to a directory preview via `ak.find.directory.query.resolve_target`
+/// Message) to a directory preview via `ak.find.directory.read.resolve_target`
 /// (`POST /_arkret/find/directory/resolve-target`).
 ///
 /// `address` is the canonical `web+arkret:` (or HTTPS-fragment) string
@@ -177,7 +177,7 @@ pub async fn resolve_handle(
     Ok(outcome.into())
 }
 
-/// R3.2 (arkret-spec @ b56cab1) — `ak.find.directory.query.list_handles_for_subject`.
+/// R3.2 (arkret-spec @ b56cab1) — `ak.find.directory.read.list_handles_for_subject`.
 ///
 /// Inverse of [`resolve_handle`]: given a known holder/principal
 /// DID, return the current context-visible signed handle claims +

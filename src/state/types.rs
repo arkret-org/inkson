@@ -170,7 +170,7 @@ impl StoredNotification {
     }
 }
 
-/// Realm-scoped cache for `ak.find.directory.query.list_handles_for_subject`.
+/// Realm-scoped cache for `ak.find.directory.read.list_handles_for_subject`.
 ///
 /// Handles are display evidence, not identity keys. Cache entries are
 /// therefore bound to the visible subject DID, the Realm context, and the
@@ -1109,7 +1109,7 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub member_identity_events: BTreeMap<String, BTreeMap<String, Vec<Value>>>,
     /// Display-only cache for reverse handle lookup by subject DID. Entries
-    /// come from validated `ak.find.directory.query.list_handles_for_subject` responses
+    /// come from validated `ak.find.directory.read.list_handles_for_subject` responses
     /// or equivalent roster evidence and are never used as authority for
     /// ACL, attribution, membership, or delivery.
     #[serde(default)]
