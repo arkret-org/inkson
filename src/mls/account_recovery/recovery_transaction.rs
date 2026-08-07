@@ -22,7 +22,7 @@ use arkret_wire::{
     RecoveryTransactionCreateRequest, ReplacementDevicePossessionProof, RiskTier, SchemaId,
     SecurityTransaction, SecurityTransactionBinding, SecurityTransactionCreateRequest,
     SecurityTransactionPreparedPlan, SecurityTransactionState, SecurityTransactionStep,
-    TransactionId,
+    SessionGrantId, TransactionId,
 };
 use dioxus::prelude::WritableExt as _;
 use zeroize::Zeroizing;
@@ -1262,7 +1262,7 @@ pub(crate) async fn execute_enrollment_authority_recovery(
             );
             let request = account_workflow.build_holder_bound_promotion(
                 &transaction_id,
-                arkret_sdk::GrantId::new(old_grant.grant_id)?,
+                SessionGrantId::new(old_grant.grant_id)?,
                 &endpoint,
                 &holder,
             )?;
@@ -1570,7 +1570,7 @@ pub(crate) async fn resume_pending_fresh_device_recovery(
             );
             let request = account_workflow.build_holder_bound_promotion(
                 &transaction_id,
-                arkret_sdk::GrantId::new(old_grant.grant_id)?,
+                SessionGrantId::new(old_grant.grant_id)?,
                 &endpoint,
                 &promotion_holder,
             )?;
@@ -1821,7 +1821,7 @@ pub(crate) async fn execute_cross_signing_recovery(
             );
             let request = account_workflow.build_holder_bound_promotion(
                 &transaction_id,
-                arkret_sdk::GrantId::new(old_grant.grant_id)?,
+                SessionGrantId::new(old_grant.grant_id)?,
                 &endpoint,
                 &holder,
             )?;

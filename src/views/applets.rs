@@ -230,9 +230,7 @@ fn build_formal_applet_install_events(
         .map_err(|error| anyhow::anyhow!("load capability action registry digest: {error}"))?;
     let mut grant_events = Vec::with_capacity(actions.len());
     for action in actions {
-        let grant_id = arkret_sdk::GrantId::new_v7_at(crate::clock::now_unix_ms());
-        let grant = arkret_sdk::CapabilityGrant {
-            id: grant_id.clone(),
+        let grant = arkret_sdk::CapabilityGrantCreateBody {
             schema: arkret_wire::SchemaId::CAPABILITY_V1.to_owned(),
             realm_id: Some(realm_id.clone()),
             issuer: actor.clone(),
@@ -252,12 +250,8 @@ fn build_formal_applet_install_events(
             issued_at,
             not_before: None,
             expires_at: None,
-            updated_by: None,
-            updated_at: None,
-            revoked_by: None,
-            revoked_at: None,
         };
-        let payload = arkret_sdk::CapabilityGrantPayload { grant, grant_id };
+        let payload = arkret_sdk::CapabilityGrantPayload { grant };
         grant_events.push(
             operation_builder_for_scope(
                 &snapshot.effective_scope,
@@ -814,6 +808,11 @@ pub fn AppletsPanel(
                                                     let realm = realm.clone();
                                                     let aid = aid.clone();
                                                     let api_token = token();
+                                                    let actor_id = account_did().trim().to_owned();
+                                                    if actor_id.is_empty() {
+                                                        install_status.set("revoke failed: account is not connected".to_owned());
+                                                        return;
+                                                    }
                                                     install_status.set("revoking applet…".to_owned());
                                                     spawn(async move {
                                                         // Revoke targets the Realm-wide install; a
@@ -826,14 +825,52 @@ pub fn AppletsPanel(
                                                                 return;
                                                             }
                                                         };
-                                                        let body = AppletRevokeRequestBody {
-                                                            effective_scope,
-                                                            reason_code: arkret_sdk::ReasonCode::PolicyRevoked,
-                                                            revoke_mode: AppletRevokeMode::RevokeAll,
-                                                            proof: None,
-                                                        };
-                                                        let result = with_authed_sdk_client(&base, api_token, |http| async move {
-                                                            http.applet_revoke(&aid, &body).await.map_err(anyhow::Error::from)
+                                                        let reason_code = arkret_sdk::ReasonCode::PolicyRevoked;
+                                                        let revoke_mode = AppletRevokeMode::RevokeRuntimeOnly;
+                                                        let result = with_event_submitter(&base, api_token, |submitter| async move {
+                                                            let preview = submitter.http().applet_revoke_preview(
+                                                                &aid,
+                                                                &arkret_sdk::AppletRevokePreviewRequestBody {
+                                                                    effective_scope: effective_scope.clone(),
+                                                                    reason_code: reason_code.clone(),
+                                                                    revoke_mode,
+                                                                },
+                                                            ).await.map_err(anyhow::Error::from)?;
+                                                            if !preview.revoke_plan.membership_removals.is_empty() {
+                                                                anyhow::bail!("runtime revoke preview unexpectedly requires membership Events");
+                                                            }
+                                                            let mut revoke_events = Vec::with_capacity(
+                                                                preview.revoke_plan.capability_revocations.len(),
+                                                            );
+                                                            for intent in &preview.revoke_plan.capability_revocations {
+                                                                revoke_events.push(
+                                                                    crate::operation::ak_ops::capability_revoke(
+                                                                        &realm,
+                                                                        &actor_id,
+                                                                        intent.grant_id.as_str(),
+                                                                        Some(intent.reason_code.as_str()),
+                                                                    )?
+                                                                    .build_sdk_event("inkson")?,
+                                                                );
+                                                            }
+                                                            let capability_revoke_events = submitter
+                                                                .prepare_initial_submissions(revoke_events)
+                                                                .await?;
+                                                            let body = AppletRevokeRequestBody {
+                                                                revoke_plan_digest: preview.revoke_plan_digest,
+                                                                effective_scope,
+                                                                reason_code,
+                                                                revoke_mode,
+                                                                capability_revoke_events,
+                                                                membership_state_events: Vec::new(),
+                                                                proof: None,
+                                                            };
+                                                            let idempotency_key = crate::operation::uuid_v7();
+                                                            submitter.http().applet_revoke(
+                                                                &aid,
+                                                                &idempotency_key,
+                                                                &body,
+                                                            ).await.map_err(anyhow::Error::from)
                                                         })
                                                         .await;
                                                         match result {

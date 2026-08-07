@@ -123,7 +123,6 @@ pub async fn create_realm(
         if invitee.actor_id == actor_id {
             continue;
         }
-        let invite_id = arkret_sdk::InviteId::new_v7_at(crate::clock::now_unix_ms()).into_string();
         let delivery_target = arkret_sdk::InviteDeliveryTarget::principal_server(
             arkret_sdk::Did::new(notary_did.clone())
                 .map_err(|error| anyhow::anyhow!("invalid notary service DID: {error}"))?,
@@ -131,7 +130,6 @@ pub async fn create_realm(
         let event = ak_ops::invite_create_structured(
             &realm_id,
             actor_id,
-            &invite_id,
             &invitee.actor_id,
             None,
             delivery_target,
@@ -605,21 +603,18 @@ pub async fn ban_member(
 
 /// Grant Realm admin authority to `subject` by emitting a
 /// `ak.capability.grant{actions:[ak.realm.admin], subject}` event.
-/// `grant_id` is minted client-side so the caller can correlate the
-/// optimistic row with the eventual projection. P1's `apply_capability`
-/// folds this into the soland authz index, so subsequent
+/// The Grant id is derived from the accepted Event id. P1's
+/// `apply_capability` folds this into the soland authz index, so subsequent
 /// `ak.realm.admin` checks for `subject` pass.
 pub async fn grant_realm_admin(
     submitter: &EventSubmitter,
     realm_id: &str,
     actor_id: &str,
-    grant_id: &str,
     subject: &str,
 ) -> anyhow::Result<SubmitEventResult> {
     let event = ak_ops::capability_grant_actions(
         realm_id,
         actor_id,
-        grant_id,
         subject,
         &["ak.realm.admin"],
         None,

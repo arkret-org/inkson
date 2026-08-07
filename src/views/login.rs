@@ -1402,11 +1402,11 @@ mod tests {
     #[test]
     fn persisted_session_grant_from_login_carries_refresh_material() {
         let device_id = "ak:device:01964137-0000-7000-8000-000000000001";
-        let grant_id = "ak:grant:01964137-0000-7000-8000-000000000001";
+        let grant_id = "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7";
         let grant = SessionGrantState {
             principal_id: arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
             device_id: Some(arkret_sdk::DeviceId::new(device_id.to_owned()).unwrap()),
-            grant_id: arkret_sdk::GrantId::new(grant_id.to_owned()).unwrap(),
+            grant_id: arkret_wire::SessionGrantId::new(grant_id.to_owned()).unwrap(),
             grant_jwt: "grant.jwt".to_owned(),
             expires_at: "2026-05-29T12:00:00.000Z".parse().unwrap(),
             audience: arkret_sdk::Did::new("did:web:local.host".to_owned()).unwrap(),

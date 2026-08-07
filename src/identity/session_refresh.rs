@@ -599,7 +599,7 @@ fn session_grant_state_from_persisted(
             arkret_sdk::DeviceId::new(grant.device_id.trim().to_owned())
                 .map_err(|error| anyhow::anyhow!("invalid refresh device_id: {error}"))?,
         ),
-        grant_id: arkret_sdk::GrantId::new(grant.grant_id.trim().to_owned())
+        grant_id: arkret_wire::SessionGrantId::new(grant.grant_id.trim().to_owned())
             .map_err(|error| anyhow::anyhow!("invalid refresh grant_id: {error}"))?,
         grant_jwt: grant.grant_jwt.clone(),
         expires_at,
@@ -774,8 +774,8 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            grant_id: arkret_sdk::GrantId::new(
-                "ak:grant:01964137-0000-7000-8000-000000000001".to_owned(),
+            grant_id: arkret_wire::SessionGrantId::new(
+                "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7".to_owned(),
             )
             .unwrap(),
             grant_jwt: "grant.jwt.signature".to_owned(),
@@ -822,8 +822,8 @@ mod tests {
             session_grant: "standard.grant.jwt".to_owned(),
             expires_at: Utc::now() + chrono::Duration::hours(1),
             grant_id: Some(
-                arkret_sdk::GrantId::new(
-                    "ak:grant:01964137-0000-7000-8000-000000000002".to_owned(),
+                arkret_wire::SessionGrantId::new(
+                    "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi8".to_owned(),
                 )
                 .unwrap(),
             ),
@@ -839,8 +839,8 @@ mod tests {
                 "ak:transaction:01964137-0000-7000-8000-000000000001",
             )
             .unwrap(),
-            consumed_grant_id: arkret_sdk::GrantId::new(
-                "ak:grant:01964137-0000-7000-8000-000000000001",
+            consumed_grant_id: arkret_wire::SessionGrantId::new(
+                "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7",
             )
             .unwrap(),
             new_grant: serde_json::to_value(promoted).unwrap(),

@@ -4,6 +4,37 @@ use arkret_sdk::identity::{DidResolver, verification_method_did};
 use arkret_sdk::{NotarySig, Seal};
 use dioxus::prelude::{ReadableExt, WritableExt};
 
+pub(crate) fn bind_sidecar_scope(
+    base: &arkret_sdk::MlsGovernanceBindingPayload,
+    sidecar_binding: arkret_sdk::SidecarMlsBinding,
+) -> arkret_wire::Result<arkret_sdk::MlsGovernanceBindingPayload> {
+    arkret_sdk::MlsGovernanceBindingPayload::sidecar(
+        base.realm_id().clone(),
+        sidecar_binding.sidecar_id.clone(),
+        base.mls_group_id(),
+        base.previous_epoch(),
+        base.next_epoch(),
+        base.security_frontier_digest().clone(),
+        sidecar_binding,
+        base.binding_profile(),
+        base.reducer_profile(),
+    )
+}
+
+pub(crate) fn strip_sidecar_scope(
+    binding: &arkret_sdk::MlsGovernanceBindingPayload,
+) -> arkret_wire::Result<arkret_sdk::MlsGovernanceBindingPayload> {
+    arkret_sdk::MlsGovernanceBindingPayload::realm(
+        binding.realm_id().clone(),
+        binding.mls_group_id(),
+        binding.previous_epoch(),
+        binding.next_epoch(),
+        binding.security_frontier_digest().clone(),
+        binding.binding_profile(),
+        binding.reducer_profile(),
+    )
+}
+
 pub(crate) trait GovernanceProofStateStore: Clone {
     fn with_read<R>(&self, read: impl FnOnce(&crate::state::LocalStateStore) -> R) -> R;
     fn with_write<R>(&self, write: impl FnOnce(&mut crate::state::LocalStateStore) -> R) -> R;

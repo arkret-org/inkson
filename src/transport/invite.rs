@@ -439,17 +439,16 @@ impl crate::transport::TransportClient {
             .validate()
             .map_err(|err| anyhow::anyhow!("invalid invite_delivery_target: {err}"))?;
         let introduction_evidence_digest = contact_explicit_address_evidence_digest()?;
-        let invite_id = format!("ak:invite:{}", crate::operation::uuid_v7());
         let event = crate::operation::ak_ops::invite_create_structured(
             realm_id,
             actor_id,
-            &invite_id,
             contact_did,
             None,
             invite_delivery_target,
             &introduction_evidence_digest,
         )?
         .build_sdk_event("inkson")?;
+        let invite_id = arkret_sdk::InviteId::from_event_id(&event.event_id).to_string();
         let submitted = self.event_submitter()?.submit_sdk_event(&event).await?;
         Ok((submitted.event_id, invite_id))
     }

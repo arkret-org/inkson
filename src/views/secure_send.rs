@@ -452,7 +452,7 @@ pub(crate) fn build_sidecar_exchange_control_send(
                 actor,
                 &prepared_commit.envelope,
                 &prepared_commit.previous_governance_binding,
-                sidecar_binding,
+                sidecar_binding.clone(),
             )?;
         (event.event_id.to_string(), Some(event))
     } else {
@@ -472,8 +472,12 @@ pub(crate) fn build_sidecar_exchange_control_send(
     )
     .map_err(|error| format!("Sidecar close encrypted envelope build failed: {error}"))?;
     let payload = arkret_sdk::AgentSidecarExchangeControlPayload {
-        strand_id: arkret_sdk::StrandId::new(private_strand_id.to_owned())
-            .map_err(|error| format!("Sidecar close strand id invalid: {error}"))?,
+        sidecar_id: sidecar_binding.sidecar_id.clone(),
+        source_context_ref:
+            arkret_models_collaboration::sidecar_operations::SidecarContextRef::Strand {
+                strand_id: arkret_sdk::StrandId::new(private_strand_id.to_owned())
+                    .map_err(|error| format!("Sidecar close strand id invalid: {error}"))?,
+            },
         encrypted_payload: encrypted_envelope,
     };
     let refs = control

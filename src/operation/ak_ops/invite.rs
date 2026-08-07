@@ -1,13 +1,12 @@
 //! Invite create / accept / cancel builders.
 
-use serde_json::{Value, json};
+use serde_json::json;
 
-use super::{OperationBuilder, invite_ref_payload_value};
+use super::OperationBuilder;
 
 pub fn invite_create_structured(
     realm_id: &str,
     actor: &str,
-    invite_id: &str,
     invitee: &str,
     role: Option<&str>,
     invite_delivery_target: arkret_sdk::InviteDeliveryTarget,
@@ -17,15 +16,12 @@ pub fn invite_create_structured(
     // digest strings are parsed into SDK newtypes so malformed wire is a
     // build-time error, and `x_role` is carried via the typed extension
     // map (re-prefixed on serialize).
-    let invite_id_typed = arkret_sdk::InviteId::new(invite_id.to_owned())
-        .map_err(|err| anyhow::anyhow!("invite_id not canonical {invite_id:?}: {err}"))?;
     let invitee_did = arkret_sdk::Did::new(invitee.to_owned())
         .map_err(|err| anyhow::anyhow!("invitee not a DID {invitee:?}: {err}"))?;
     let digest = arkret_sdk::Hash::new(introduction_evidence_digest.to_owned())
         .map_err(|err| anyhow::anyhow!("introduction_evidence_digest invalid: {err}"))?;
     let mut payload =
         arkret_models_collaboration::governance::membership_invite::InviteCreatePayload::new(
-            invite_id_typed,
             invitee_did,
             invite_delivery_target,
             digest,
@@ -47,10 +43,19 @@ pub fn invite_accept(
     actor: &str,
     invite_id: &str,
 ) -> anyhow::Result<OperationBuilder> {
-    let body = invite_ref_payload_value(invite_id, None)?;
+    let invite_id_typed = arkret_sdk::InviteId::new(invite_id.to_owned())
+        .map_err(|err| anyhow::anyhow!("invite_id not canonical {invite_id:?}: {err}"))?;
+    let payload = arkret_sdk::InviteAcceptPayload {
+        invite_id: invite_id_typed,
+        delivery_status: arkret_sdk::DeliveryStatus::Unroutable,
+        delivery_binding: None,
+        extensions: Default::default(),
+    };
+    payload.validate()?;
+    let body = serde_json::to_value(payload)?;
     Ok(
         OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::InviteAccept)
-            .target_ref(invite_id)
+            .target_ref(invite_id.to_string())
             .body(body),
     )
 }
@@ -76,24 +81,24 @@ pub fn invite_cancel(
             "ak.invite.cancel target_state must be rejected or revoked, got {target_state:?}"
         );
     }
-    let mut body = invite_ref_payload_value(invite_id, reason)?;
+    let invite_id = arkret_sdk::InviteId::new(invite_id.to_owned())
+        .map_err(|err| anyhow::anyhow!("invite_id not canonical: {err}"))?;
+    let invite_id_ref = invite_id.to_string();
     let invitee = arkret_sdk::Did::new(invitee.to_owned())
         .map_err(|err| anyhow::anyhow!("invitee not a DID {invitee:?}: {err}"))?;
-    body.as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!("invite ref payload is not an object"))?
-        .extend([
-            (
-                "invitee".to_owned(),
-                serde_json::Value::String(invitee.to_string()),
-            ),
-            (
-                "target_state".to_owned(),
-                serde_json::Value::String(target_state.to_owned()),
-            ),
-        ]);
+    let target_state = match target_state {
+        "rejected" => arkret_sdk::InviteCancelTargetState::Rejected,
+        "revoked" => arkret_sdk::InviteCancelTargetState::Revoked,
+        _ => unreachable!("validated invite cancel target state"),
+    };
+    let mut payload = arkret_sdk::InviteCancelPayload::new(invite_id, invitee, target_state);
+    if let Some(reason) = reason {
+        payload = payload.with_reason(reason);
+    }
+    let body = payload.to_value()?;
     Ok(
         OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::InviteCancel)
-            .target_ref(invite_id)
+            .target_ref(invite_id_ref)
             .body(body),
     )
 }
@@ -122,29 +127,33 @@ pub fn invite_revoke(
     if reason_code.trim().is_empty() {
         anyhow::bail!("ak.invite.revoke reason_code is required");
     }
-    let mut body = invite_ref_payload_value(invite_id, None)?;
-    let body = body
-        .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!("invite ref payload is not an object"))?;
-    body.insert(
-        "target_state".to_owned(),
-        serde_json::Value::String(target_state.to_owned()),
-    );
-    body.insert(
-        "reason_code".to_owned(),
-        serde_json::Value::String(reason_code.to_owned()),
-    );
-    if let Some(invitee) = invitee {
-        let invitee = arkret_sdk::Did::new(invitee.to_owned())
-            .map_err(|err| anyhow::anyhow!("invitee not a DID {invitee:?}: {err}"))?;
-        body.insert(
-            "invitee".to_owned(),
-            serde_json::Value::String(invitee.to_string()),
-        );
-    }
+    let invite_id = arkret_sdk::InviteId::new(invite_id.to_owned())
+        .map_err(|err| anyhow::anyhow!("invite_id not canonical: {err}"))?;
+    let invite_id_ref = invite_id.to_string();
+    let invitee = invitee
+        .map(|value| arkret_sdk::Did::new(value.to_owned()))
+        .transpose()
+        .map_err(|err| anyhow::anyhow!("invitee is not a DID: {err}"))?;
+    let target_state = match target_state {
+        "revoked" => arkret_sdk::InviteRevokeTargetState::Revoked,
+        "expired" => arkret_sdk::InviteRevokeTargetState::Expired,
+        "revoked_by_capability_loss" => {
+            arkret_sdk::InviteRevokeTargetState::RevokedByCapabilityLoss
+        }
+        "revoked_by_inviter_left" => arkret_sdk::InviteRevokeTargetState::RevokedByInviterLeft,
+        "invalidated_by_rate_limit" => arkret_sdk::InviteRevokeTargetState::InvalidatedByRateLimit,
+        _ => unreachable!("validated invite revoke target state"),
+    };
+    let payload = arkret_sdk::InviteRevokePayload {
+        invite_id,
+        invitee,
+        target_state,
+        reason: Some(reason_code.to_owned()),
+    };
+    let body = serde_json::to_value(payload)?;
     Ok(
         OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::InviteRevoke)
-            .target_ref(invite_id)
-            .body(Value::Object(body.clone())),
+            .target_ref(invite_id_ref)
+            .body(body),
     )
 }

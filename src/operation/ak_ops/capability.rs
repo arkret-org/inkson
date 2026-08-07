@@ -53,7 +53,6 @@ pub fn capability_revoke(
 pub fn capability_grant_actions(
     realm_id: &str,
     actor: &str,
-    grant_id: &str,
     subject: &str,
     actions: &[&str],
     expires_at: Option<&str>,
@@ -63,7 +62,6 @@ pub fn capability_grant_actions(
     capability_grant_actions_with_resources(
         &realm,
         actor,
-        grant_id,
         subject,
         actions,
         vec![json!({ "kind": "realm", "realm_id": realm })],
@@ -82,7 +80,6 @@ pub fn capability_grant_actions(
 pub fn capability_grant_actions_with_resources(
     realm_id: &str,
     actor: &str,
-    grant_id: &str,
     subject: &str,
     actions: &[&str],
     resources: Vec<Value>,
@@ -91,7 +88,6 @@ pub fn capability_grant_actions_with_resources(
 ) -> anyhow::Result<OperationBuilder> {
     let realm = trim_realm_id(realm_id);
     let realm_typed = arkret_sdk::RealmId::new(realm.clone())?;
-    let grant_id_typed = arkret_sdk::GrantId::new(grant_id.to_owned())?;
     let actor_typed = arkret_sdk::Did::new(actor.to_owned())?;
     let subject_typed = arkret_sdk::Did::new(subject.to_owned())?;
     let resources_typed = resources
@@ -116,8 +112,7 @@ pub fn capability_grant_actions_with_resources(
         .map(str::parse)
         .transpose()
         .map_err(|error| anyhow::anyhow!("invalid capability grant expires_at: {error}"))?;
-    let grant = arkret_sdk::CapabilityGrant {
-        id: grant_id_typed.clone(),
+    let grant = arkret_sdk::CapabilityGrantCreateBody {
         schema: arkret_wire::SchemaId::CAPABILITY_V1.to_owned(),
         realm_id: Some(realm_typed.clone()),
         issuer: actor_typed,
@@ -138,18 +133,10 @@ pub fn capability_grant_actions_with_resources(
         issued_at: crate::clock::now_utc_millis(),
         not_before: None,
         expires_at,
-        updated_by: None,
-        updated_at: None,
-        revoked_by: None,
-        revoked_at: None,
     };
-    let payload = arkret_sdk::CapabilityGrantPayload {
-        grant,
-        grant_id: grant_id_typed,
-    };
+    let payload = arkret_sdk::CapabilityGrantPayload { grant };
     Ok(
         OperationBuilder::new(&realm, actor, arkret_sdk::EventKind::CapabilityGrant)
-            .target_ref(grant_id)
             .body(payload_value(&payload, "capability_grant payload")?),
     )
 }
@@ -163,7 +150,6 @@ mod tests {
         let event = capability_grant_actions(
             "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM",
             "did:web:issuer.example",
-            "ak:grant:019f9000-0000-7000-8000-000000000002",
             "did:web:subject.example",
             &["ak.realm.admin"],
             None,
@@ -194,9 +180,10 @@ mod tests {
         // `grant` object the producer-side table used to stamp.
         let writes = crate::operation::direct_registered_cell_writes(&event).unwrap();
         assert_eq!(writes.len(), 1);
+        let grant_id = arkret_sdk::GrantId::from_event_id(&event.event_id);
         assert_eq!(
             writes[0].cell.as_str(),
-            "ak:cell:ak.component.capability.grant.v1:ak:grant:019f9000-0000-7000-8000-000000000002"
+            format!("ak:cell:ak.component.capability.grant.v1:{grant_id}")
         );
         assert_eq!(writes[0].op.op_type, arkret_sdk::LatticeOpType::Add);
         assert_eq!(

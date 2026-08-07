@@ -315,9 +315,10 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
     let governance_binding =
         crate::mls::governance_proof::cached_verified_binding(state_store, &request)?;
     let governance_binding = match sidecar_binding {
-        Some(binding) => governance_binding
-            .with_sidecar_binding(binding)
-            .map_err(|error| format!("invalid Sidecar MLS governance binding: {error}"))?,
+        Some(binding) => {
+            crate::mls::governance_proof::bind_sidecar_scope(&governance_binding, binding.clone())
+                .map_err(|error| format!("invalid Sidecar MLS governance binding: {error}"))?
+        }
         None => governance_binding,
     };
     let payload = crate::mls::runtime::build_mls_genesis_payload(
@@ -495,9 +496,10 @@ fn mls_commit_event_from_store_for_effective_scope_with_options(
     let governance_binding =
         crate::mls::governance_proof::cached_verified_binding(state_store, &request)?;
     let governance_binding = match sidecar_binding {
-        Some(binding) => governance_binding
-            .with_sidecar_binding(binding)
-            .map_err(|error| format!("invalid Sidecar MLS governance binding: {error}"))?,
+        Some(binding) => {
+            crate::mls::governance_proof::bind_sidecar_scope(&governance_binding, binding.clone())
+                .map_err(|error| format!("invalid Sidecar MLS governance binding: {error}"))?
+        }
         None => governance_binding,
     };
     let payload = arkret_sdk::MlsCommitPayload::new(

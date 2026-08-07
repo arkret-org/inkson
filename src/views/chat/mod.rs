@@ -500,6 +500,7 @@ fn should_route_owned_agent_to_sidecar(
 #[derive(Clone, Debug)]
 struct OwnedAgentSidecarEnsureResult {
     sidecar_id: arkret_sdk::SidecarId,
+    backing_scope_circle_id: arkret_sdk::CircleId,
     private_strand_id: arkret_sdk::StrandId,
     private_relation_id: arkret_sdk::RelationId,
     view: arkret_sdk::AgentSidecarView,
@@ -578,6 +579,7 @@ fn sign_prepared_sidecar_event(
     Ok(event)
 }
 
+#[cfg(any())]
 fn validate_prepared_sidecar_binding(
     create_event: Option<&arkret_sdk::Event>,
     context_attach_event: &arkret_sdk::Event,
@@ -676,6 +678,7 @@ fn validate_prepared_sidecar_binding(
     Ok(())
 }
 
+#[cfg(any())]
 fn accepted_sidecar_coordinates(
     outcome: &arkret_sdk::sidecar_operations::SidecarEnsureOutcome,
     expected_operation_id: &arkret_sdk::ProtocolOperationId,
@@ -714,7 +717,8 @@ fn accepted_sidecar_coordinates(
     }
 }
 
-async fn ensure_owned_agent_sidecar(
+#[cfg(any())]
+async fn ensure_owned_agent_sidecar_legacy_circle_scope(
     base_url: &str,
     api_token: String,
     trace_id: &str,
@@ -1035,10 +1039,31 @@ async fn ensure_owned_agent_sidecar(
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn ensure_owned_agent_sidecar(
+    _base_url: &str,
+    _api_token: String,
+    _trace_id: &str,
+    _controller_id: &str,
+    _device_id: &str,
+    _realm_id: &str,
+    _strand_id: &str,
+    addressed_agent_ids: &[String],
+    _state_store: SyncSignal<LocalStateStore>,
+) -> anyhow::Result<Option<OwnedAgentSidecarEnsureResult>> {
+    if addressed_agent_ids.is_empty() {
+        return Ok(None);
+    }
+    anyhow::bail!(
+        "native Sidecar scope is not yet connected to Inkson's MLS storage; refusing the removed backing-Circle/private-Strand fallback"
+    )
+}
+
 // Invariant assertions: each `expect` message names the check that
 // establishes it a few lines earlier. Rewriting them as `?` would add
 // error paths no caller can reach.
 #[allow(clippy::expect_used)]
+#[cfg(any())]
 async fn reconcile_sidecar_mls_access(
     base_url: &str,
     api_token: String,
@@ -1103,7 +1128,7 @@ async fn reconcile_sidecar_mls_access(
         if pending.as_ref().is_some_and(|pending| {
             pending.sidecar_id != sidecar_id
                 || pending.mls_group_id.as_str() != group_id
-                || pending.desired_access_digest != sidecar_binding.desired_access_digest
+                || pending.desired_access_digest != sidecar_binding.participant_authority_digest
         }) {
             state_store.write().remove_private_data(&pending_key);
             pending = None;
@@ -1197,7 +1222,7 @@ async fn reconcile_sidecar_mls_access(
                 sidecar_id: sidecar_id.clone(),
                 mls_group_id: arkret_sdk::MlsGroupId::new(group_id.clone())
                     .map_err(anyhow::Error::msg)?,
-                desired_access_digest: sidecar_binding.desired_access_digest,
+                desired_access_digest: sidecar_binding.participant_authority_digest,
                 commit,
                 welcomes: admission.welcomes,
                 snapshot: admission.snapshot,
@@ -1252,6 +1277,7 @@ async fn reconcile_sidecar_mls_access(
     .map_err(|error| anyhow::anyhow!(error.display()))
 }
 
+#[cfg(any())]
 async fn reconcile_sidecar_mls_removals(
     base_url: &str,
     api_token: String,
@@ -1384,7 +1410,7 @@ async fn reconcile_sidecar_mls_removals(
             let pending = PendingSidecarMlsRemoval {
                 sidecar_id: sidecar_id.clone(),
                 target_agent_id: removal.agent_id,
-                desired_access_digest: sidecar_binding.desired_access_digest.clone(),
+                desired_access_digest: sidecar_binding.participant_authority_digest.clone(),
                 events,
                 snapshot: draft.post_commit_snapshot,
                 idempotency_key: uuid_v7(),
@@ -1437,7 +1463,7 @@ async fn reconcile_sidecar_mls_removals(
 fn sidecar_mls_binding(view: &arkret_sdk::AgentSidecarView) -> arkret_sdk::SidecarMlsBinding {
     arkret_sdk::SidecarMlsBinding {
         sidecar_id: view.sidecar.id.clone(),
-        desired_access_digest: view.mls_context.desired_access_digest.clone(),
+        participant_authority_digest: view.mls_context.participant_authority_digest.clone(),
         control_frontier: view.mls_context.control_frontier.clone(),
     }
 }
@@ -1447,7 +1473,8 @@ struct SourceRoutedSidecarMessageOutcome {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn submit_source_routed_sidecar_message(
+#[cfg(any())]
+async fn submit_source_routed_sidecar_message_legacy_circle_scope(
     base_url: &str,
     api_token: String,
     controller_id: &str,
@@ -1669,10 +1696,32 @@ async fn submit_source_routed_sidecar_message(
     Ok(SourceRoutedSidecarMessageOutcome { event_id })
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn submit_source_routed_sidecar_message(
+    _base_url: &str,
+    _api_token: String,
+    _controller_id: &str,
+    _device_id: &str,
+    _source_realm_id: &str,
+    _source_strand_id: &str,
+    _private_strand_id: &str,
+    _source_frontier_anchor: Option<&str>,
+    _body: &str,
+    _mentions: &[MentionNode],
+    _addressed_agent_ids: &[String],
+    _state_store: SyncSignal<LocalStateStore>,
+    _view: &arkret_sdk::AgentSidecarView,
+) -> anyhow::Result<SourceRoutedSidecarMessageOutcome> {
+    anyhow::bail!(
+        "native Sidecar scope is not yet connected to Inkson's MLS storage; refusing the removed backing-Circle/private-Strand fallback"
+    )
+}
+
 // Invariant assertions: each `expect` message names the check that
 // establishes it a few lines earlier. Rewriting them as `?` would add
 // error paths no caller can reach.
 #[allow(clippy::expect_used)]
+#[cfg(any())]
 async fn ensure_sidecar_mls_bootstrap(
     base_url: &str,
     api_token: String,
@@ -2376,7 +2425,7 @@ pub fn ChatPanel(
         &selected_realm_id,
     );
     for projection in &sidecar_exchange_projections {
-        private_sidecar_strand_ids.insert(projection.private_strand_id.to_string());
+        private_sidecar_strand_ids.insert(projection.source_track_ref.strand_id.to_string());
     }
     let sidecar_privacy_gate =
         crate::sidecar::SidecarPrivacyGate::from_store(&state_store.read(), &account_did);

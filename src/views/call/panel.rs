@@ -209,10 +209,35 @@ pub fn CallPanel(
                 CallMode::Sfu => participant_list_from_input(&group_input()),
             };
 
-            let call = if active_call_id().is_empty() {
-                format!("ak:call:{}", crate::operation::uuid_v7())
+            let (call, call_create_event) = if active_call_id().is_empty() {
+                let payload = arkret_sdk::CallCreatePayload {
+                    initial_state: arkret_sdk::CallLifecycleState::Ringing,
+                };
+                let payload = match serde_json::to_value(payload) {
+                    Ok(payload) => payload,
+                    Err(error) => {
+                        last_error.set(format!("call create payload failed: {error}"));
+                        return;
+                    }
+                };
+                let event = match crate::operation::OperationBuilder::new(
+                    &realm_id,
+                    &actor,
+                    arkret_sdk::EventKind::CallCreate,
+                )
+                .body(payload)
+                .build_sdk_event("inkson")
+                {
+                    Ok(event) => event,
+                    Err(error) => {
+                        last_error.set(format!("call create build failed: {error:#}"));
+                        return;
+                    }
+                };
+                let call_id = arkret_sdk::CallId::from_event_id(&event.event_id).to_string();
+                (call_id, Some(event))
             } else {
-                active_call_id()
+                (active_call_id(), None)
             };
             let (
                 media_dids,
@@ -246,6 +271,20 @@ pub fn CallPanel(
             let signal_store = signal_store.clone();
 
             spawn(async move {
+                // The durable Call genesis must be accepted before any
+                // signaling or media-plane request references its derived id.
+                if let Some(call_create_event) = call_create_event
+                    && let Err(err) =
+                        with_event_submitter(&base, api_token.clone(), |submitter| async move {
+                            submitter.submit_sdk_event(&call_create_event).await?;
+                            Ok(())
+                        })
+                        .await
+                {
+                    last_error.set(format!("call create failed: {}", err.display()));
+                    return;
+                }
+
                 // 1) Invite signal opens the call (ephemeral `ak.call.signal`).
                 if matches!(mode, CallMode::P2p) {
                     let invite_data = json!({

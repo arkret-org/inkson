@@ -43,8 +43,7 @@ pub fn RealmAdminPanel(
     let mut history_visibility = use_signal(|| "shared".to_owned());
     let mut status_msg = use_signal(String::new);
     // Capability grant/revoke Move-strand inputs (see capability-grant-card)
-    let mut cap_grant_id =
-        use_signal(|| arkret_sdk::GrantId::new_v7_at(crate::clock::now_unix_ms()).into_string());
+    let mut cap_grant_id = use_signal(String::new);
     let mut cap_tag = use_signal(|| "ak.message.create".to_owned());
     let mut cap_subject = use_signal(String::new);
     let mut cap_revoke_reason = use_signal(|| "rotation policy".to_owned());
@@ -1078,7 +1077,7 @@ pub fn RealmAdminPanel(
                     span { "Capability grant / revoke" }
                     span { "Advanced" }
                 }
-                Label { html_for: "cap-grant-id-input", "Grant ID (cell subject)" }
+                Label { html_for: "cap-grant-id-input", "Grant ID (required for revoke only)" }
                 Input {
                     id: "cap-grant-id-input",
                     "data-testid": "cap-grant-id-input",
@@ -1172,12 +1171,11 @@ pub fn RealmAdminPanel(
                                 let base = base.clone();
                                 let realm = realm.clone();
                                 let api_token = token();
-                                let grant_val = cap_grant_id().trim().to_owned();
                                 let tag_val = cap_tag().trim().to_owned();
                                 let subject_val = cap_subject().trim().to_owned();
-                                if grant_val.is_empty() || tag_val.is_empty() || subject_val.is_empty() {
+                                if tag_val.is_empty() || subject_val.is_empty() {
                                     status_msg.set(
-                                        "fill grant_id + tag + subject DID before submitting capability grant".to_owned(),
+                                        "fill tag + subject DID before submitting capability grant".to_owned(),
                                     );
                                     return;
                                 }
@@ -1242,7 +1240,6 @@ pub fn RealmAdminPanel(
                                 let envelope = crate::operation::ak_ops::capability_grant_actions(
                                     &realm,
                                     &actor_id,
-                                    &grant_val,
                                     &subject_val,
                                     &[tag_val.as_str()],
                                     expires_at_opt.as_deref(),
@@ -1422,22 +1419,28 @@ pub fn RealmAdminPanel(
                                     status_msg.set("set admin failed: account is not connected".to_owned());
                                     return;
                                 }
-                                let grant_id = format!("ak:grant:{}", crate::operation::uuid_v7());
-                                admin_grant_id.set(grant_id.clone());
+                                let mut submitted_grant_id = admin_grant_id;
                                 spawn(async move {
                                     match crate::transport::auth::with_event_submitter(
                                         &base,
                                         api_token,
                                         |sub| async move {
-                                            crate::transport::realm_write::grant_realm_admin(&sub, &realm, &actor_id, &grant_id, &subject).await
+                                            crate::transport::realm_write::grant_realm_admin(&sub, &realm, &actor_id, &subject).await
                                         },
                                     )
                                     .await
                                     {
-                                        Ok(resp) => status_msg.set(format!(
-                                            "granted ak.realm.admin: event_id={}",
-                                            short_protocol_id(&resp.event_id)
-                                        )),
+                                        Ok(resp) => {
+                                            if let Ok(event_id) = arkret_sdk::EventId::new(resp.event_id.clone()) {
+                                                submitted_grant_id.set(
+                                                    arkret_sdk::GrantId::from_event_id(&event_id).to_string(),
+                                                );
+                                            }
+                                            status_msg.set(format!(
+                                                "granted ak.realm.admin: event_id={}",
+                                                short_protocol_id(&resp.event_id)
+                                            ));
+                                        }
                                         Err(err) => status_msg.set(format!(
                                             "set admin failed: {}", err.display()
                                         )),

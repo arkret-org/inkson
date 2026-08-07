@@ -259,9 +259,11 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
         crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
             .map_err(MlsRuntimeError::Commit)?;
     if let Some(sidecar_binding) = sidecar_binding {
-        governance_binding = governance_binding
-            .with_sidecar_binding(sidecar_binding)
-            .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
+        governance_binding = crate::mls::governance_proof::bind_sidecar_scope(
+            &governance_binding,
+            sidecar_binding.clone(),
+        )
+        .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
     }
     let remove = group
         .remove_members_by_principal_with_governance_binding(&targets, &governance_binding)
@@ -380,9 +382,10 @@ pub fn build_add_member_commit_for_effective_scope_with_binding(
         crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
             .map_err(MlsRuntimeError::Commit)?;
     let governance_binding = match sidecar_binding {
-        Some(binding) => governance_binding
-            .with_sidecar_binding(binding)
-            .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?,
+        Some(binding) => {
+            crate::mls::governance_proof::bind_sidecar_scope(&governance_binding, binding.clone())
+                .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?
+        }
         None => governance_binding,
     };
     let add = group
@@ -484,9 +487,10 @@ pub fn build_add_members_commit_for_effective_scope_with_binding(
         crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
             .map_err(MlsRuntimeError::Commit)?;
     let governance_binding = match sidecar_binding {
-        Some(binding) => governance_binding
-            .with_sidecar_binding(binding)
-            .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?,
+        Some(binding) => {
+            crate::mls::governance_proof::bind_sidecar_scope(&governance_binding, binding.clone())
+                .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?
+        }
         None => governance_binding,
     };
     let add = group

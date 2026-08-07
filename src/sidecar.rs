@@ -44,7 +44,7 @@ impl HostedSidecarState {
     pub fn mls_binding(&self) -> arkret_sdk::Result<arkret_sdk::SidecarMlsBinding> {
         let binding = arkret_sdk::SidecarMlsBinding {
             sidecar_id: self.sidecar_id.clone(),
-            desired_access_digest: self.mls_context.desired_access_digest.clone(),
+            participant_authority_digest: self.mls_context.participant_authority_digest.clone(),
             control_frontier: self.mls_context.control_frontier.clone(),
         };
         binding.validate()?;
@@ -191,7 +191,7 @@ pub(crate) fn cache_sidecar_exchange_projection(
     }
     let key = sidecar_exchange_fold_cache_key(
         projection.controller_id.as_str(),
-        projection.private_strand_id.as_str(),
+        projection.source_track_ref.strand_id.as_str(),
         projection.exchange_id.as_str(),
     );
     let current = store.load_private_data(account_did, &key).and_then(|raw| {
@@ -1139,9 +1139,9 @@ pub(crate) async fn sync_sidecar_exchange_background(
                     key,
                     serde_json::json!({
                         "sidecar_id": locator.sidecar_id,
-                        "backing_circle_id": locator.backing_circle_id,
-                        "private_strand_id": locator.private_strand_id,
                         "source_context_ref": locator.source_context_ref,
+                        "mapping_event_id": locator.mapping_event_id,
+                        "version": locator.version,
                     })
                     .to_string(),
                 );
@@ -1153,14 +1153,10 @@ pub(crate) async fn sync_sidecar_exchange_background(
             &realm_id,
             &event_values,
         );
-        let hints = locators
-            .iter()
-            .map(|locator| SidecarExchangeScopeHint {
-                private_strand_id: locator.private_strand_id.to_string(),
-                sidecar_id: locator.sidecar_id.clone(),
-                backing_circle_id: locator.backing_circle_id.clone(),
-            })
-            .collect::<Vec<_>>();
+        // Legacy private-Strand/Circle hints cannot be reconstructed from the
+        // native Sidecar mapping contract. Leave that cache empty and refold
+        // only once native Sidecar-scoped history is available.
+        let hints = Vec::<SidecarExchangeScopeHint>::new();
         let refold = refold_sidecar_exchanges_from_history(
             &mut state_store.write(),
             controller_id,
@@ -1186,7 +1182,7 @@ pub(crate) async fn sync_sidecar_exchange_background(
             };
             let binding = arkret_sdk::SidecarMlsBinding {
                 sidecar_id: view.sidecar.id.clone(),
-                desired_access_digest: view.mls_context.desired_access_digest.clone(),
+                participant_authority_digest: view.mls_context.participant_authority_digest.clone(),
                 control_frontier: view.mls_context.control_frontier.clone(),
             };
             submit_pending_sidecar_auto_close(
@@ -1945,8 +1941,11 @@ mod tests {
             },
             pending_access_reconciliations: pending,
             mls_context: arkret_sdk::AgentSidecarMlsContext {
-                desired_access_digest: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64)))
-                    .unwrap(),
+                participant_authority_digest: arkret_sdk::Hash::new(format!(
+                    "sha256:{}",
+                    "1".repeat(64)
+                ))
+                .unwrap(),
                 control_frontier: vec![
                     arkret_sdk::NonEmptyString::new(
                         "ak:event:AVeCvdcuh1hDJWwYlZJb_1yRzWQwN1-pXxgZYTyd7BGT",
@@ -1998,8 +1997,8 @@ mod tests {
         let binding = session.mls_binding().unwrap();
         assert_eq!(binding.sidecar_id, session.sidecar_id);
         assert_eq!(
-            binding.desired_access_digest,
-            session.mls_context.desired_access_digest
+            binding.participant_authority_digest,
+            session.mls_context.participant_authority_digest
         );
         assert_eq!(
             binding.control_frontier,

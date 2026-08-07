@@ -250,7 +250,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
             let lookup_supported = server_description().as_ref().is_some_and(|description| {
                 service_supports_operation(
                     description,
-                    arkret_sdk::ServiceOperationId::FIND_DIRECTORY_QUERY_LIST_HANDLES_FOR_SUBJECT,
+                    arkret_sdk::ServiceOperationId::FIND_DIRECTORY_READ_LIST_HANDLES_FOR_SUBJECT,
                 )
             });
             let key = format!(
@@ -357,7 +357,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
             let lookup_supported = server_description().as_ref().is_some_and(|description| {
                 service_supports_operation(
                     description,
-                    arkret_sdk::ServiceOperationId::FIND_DIRECTORY_QUERY_LIST_HANDLES_FOR_SUBJECT,
+                    arkret_sdk::ServiceOperationId::FIND_DIRECTORY_READ_LIST_HANDLES_FOR_SUBJECT,
                 )
             });
             let mut peers = direct_contact_rows

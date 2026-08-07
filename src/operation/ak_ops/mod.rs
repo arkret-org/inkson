@@ -58,26 +58,6 @@ pub(super) fn did_id(value: &str) -> anyhow::Result<arkret_sdk::Did> {
         .map_err(|err| anyhow::anyhow!("invalid DID {value:?}: {err:?}"))
 }
 
-/// Build a spec `invite_payload` (invite_id-ref anyOf branch) value for
-/// `ak.invite.accept` / `ak.invite.cancel` via the SDK strong type.
-pub(super) fn invite_ref_payload_value(
-    invite_id: &str,
-    reason: Option<&str>,
-) -> anyhow::Result<Value> {
-    let invite_id_typed = arkret_sdk::InviteId::new(invite_id.to_owned())
-        .map_err(|err| anyhow::anyhow!("invite_id not canonical {invite_id:?}: {err}"))?;
-    let mut payload =
-        arkret_models_collaboration::governance::membership_invite::InviteRefPayload::new(
-            invite_id_typed,
-        );
-    if let Some(reason) = reason {
-        payload = payload.with_reason(reason);
-    }
-    payload
-        .to_value()
-        .map_err(|err| anyhow::anyhow!("invite ref payload: {err}"))
-}
-
 pub(super) fn realm_id_value(value: &str) -> anyhow::Result<arkret_sdk::RealmId> {
     arkret_sdk::RealmId::new(value.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid realm id {value:?}: {err:?}"))

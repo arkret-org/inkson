@@ -865,7 +865,8 @@ fn sidecar_track_patch_encrypts_with_only_the_circle_snapshot() {
             "ak:sidecar:0196419b-0000-7000-8000-000000000025".to_owned(),
         )
         .unwrap(),
-        desired_access_digest: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64))).unwrap(),
+        participant_authority_digest: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64)))
+            .unwrap(),
         control_frontier: vec![
             arkret_sdk::NonEmptyString::new(
                 "ak:event:AWayOxLqYDB7vOFfk4_1lduA5vDNHd7gwk_LRwQOnGDJ",

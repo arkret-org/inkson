@@ -2673,9 +2673,6 @@ fn validate_capability_grant_payload(event: &arkret_sdk::Event) -> anyhow::Resul
             .map_err(|error| anyhow::anyhow!("encode capability grant payload: {error}"))?,
     )
     .map_err(|error| anyhow::anyhow!("decode capability grant payload: {error}"))?;
-    if payload.grant.id != payload.grant_id {
-        anyhow::bail!("capability grant id must equal payload grant_id");
-    }
     if payload.grant.issuer != event.actor_id {
         anyhow::bail!("capability grant issuer must equal the Event actor");
     }
@@ -3249,7 +3246,6 @@ mod tests {
         let mut event = crate::operation::ak_ops::capability_grant_actions(
             "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "did:web:alice.example",
-            "ak:grant:01904100-0000-7000-8000-000000000002",
             "did:web:bob.example",
             &["ak.message.create"],
             None,

@@ -25,14 +25,14 @@ use arkret_wire::{
     BackupRotationKind, BackupRotationPlan, BackupSeriesId, CLIENT_STEP_ATTESTATION_SIGNED_FIELDS,
     CanonicalPublicMaterial, ClientStepAttestationAuthData, ControlProposalAck,
     ControlProposalDecisionPolicy, DeviceId, Did, EnrollmentAuthorityRecoveryPlan, Event, EventId,
-    EventInitialSubmission, EventsSubmitBatchRequestBody, GrantId, Hash, NonEmptyString,
-    PayloadProof, PolicyId, PreparedEventUnit, PromoteRecoverySessionGrantOutcome,
+    EventInitialSubmission, EventsSubmitBatchRequestBody, Hash, NonEmptyString, PayloadProof,
+    PolicyId, PreparedEventUnit, PromoteRecoverySessionGrantOutcome,
     PromoteRecoverySessionGrantRequest, ReceiptId, RecoveryAuthorityHolderProof,
     RecoveryAuthorityTicketId, RecoveryBinding, RecoveryPreparedPlan,
     RecoveryTransactionCreateRequest, RiskTier, SecurityRotationTransactionCreateRequest,
     SecurityTransaction, SecurityTransactionBinding, SecurityTransactionCreateRequest,
     SecurityTransactionPreparedPlan, SecurityTransactionState, SecurityTransactionStep,
-    TransactionId, TypedTrustDomainId, proof_kind,
+    SessionGrantId, TransactionId, TypedTrustDomainId, proof_kind,
 };
 use chrono::{DateTime, Utc};
 use garth::{SecurityTransactionEngine, SecurityTransactionStore, SecurityTransactionTransport};
@@ -1527,7 +1527,7 @@ where
     pub fn build_holder_bound_promotion(
         &self,
         transaction_id: &TransactionId,
-        old_grant_id: GrantId,
+        old_grant_id: SessionGrantId,
         account_authority_endpoint: &str,
         holder: &crate::identity::account_auth::grant_dpop::DpopHandle,
     ) -> anyhow::Result<PromoteRecoverySessionGrantRequest> {

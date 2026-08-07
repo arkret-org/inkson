@@ -1339,7 +1339,8 @@ fn verify_welcome_governance_binding(
     )?;
     let verified = crate::mls::governance_proof::cached_verified_binding(state_store, &request)?;
     let proof_binding = if binding.sidecar_binding().is_some() {
-        binding.clone().without_sidecar_binding()
+        crate::mls::governance_proof::strip_sidecar_scope(&binding)
+            .map_err(|error| error.to_string())?
     } else {
         binding.clone()
     };
@@ -2106,9 +2107,9 @@ fn self_update_with_verified_governance_binding(
     let mut binding = crate::mls::governance_proof::cached_verified_binding(state_store, &request)
         .map_err(MlsRuntimeError::Commit)?;
     if let Some(sidecar_binding) = sidecar_binding {
-        binding = binding
-            .with_sidecar_binding(sidecar_binding.clone())
-            .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
+        binding =
+            crate::mls::governance_proof::bind_sidecar_scope(&binding, sidecar_binding.clone())
+                .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
     }
     let envelope = group
         .update_governance_binding(&binding)

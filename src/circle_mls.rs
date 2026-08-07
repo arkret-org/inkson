@@ -128,9 +128,11 @@ fn build_remove_scope_rotate_draft(
         circle_id.ok_or_else(|| {
             "Sidecar MLS removal requires the backing Circle effective scope".to_owned()
         })?;
-        proposal_governance_binding = proposal_governance_binding
-            .with_sidecar_binding(sidecar_binding.clone())
-            .map_err(|error| error.to_string())?;
+        proposal_governance_binding = crate::mls::governance_proof::bind_sidecar_scope(
+            &proposal_governance_binding,
+            sidecar_binding.clone(),
+        )
+        .map_err(|error| error.to_string())?;
     }
     for (proposal, removed_principal) in remove
         .proposals

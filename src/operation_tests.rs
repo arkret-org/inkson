@@ -808,7 +808,7 @@ fn require_proof_fails_when_unsigned() {
 
 #[test]
 fn invite_helpers_emit_canonical_kinds() {
-    let invite_id = "ak:invite:01904100-0000-7000-8000-000000000001";
+    let invite_id = "ak:invite:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7";
     let invite_delivery_target = arkret_sdk::InviteDeliveryTarget {
         recipient_service_id: arkret_sdk::Did::new("did:web:server.example").unwrap(),
         recipient_service_kind: Some("principal_server".to_owned()),
@@ -818,7 +818,6 @@ fn invite_helpers_emit_canonical_kinds() {
     let create = ak_ops::invite_create_structured(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:alice.example",
-        invite_id,
         "did:web:bob.example",
         Some("member"),
         invite_delivery_target.clone(),
@@ -827,7 +826,8 @@ fn invite_helpers_emit_canonical_kinds() {
     .expect("builds")
     .build("node");
     assert_eq!(create.kind.as_str(), "ak.invite.create");
-    assert_eq!(create.payload["invite_id"], invite_id);
+    let derived_invite_id = arkret_sdk::InviteId::from_event_id(&create.event_id).to_string();
+    assert!(!create.payload.contains_key("invite_id"));
     assert_eq!(create.payload["invitee"], "did:web:bob.example");
     assert_eq!(
         create.payload["invite_delivery_target"],
@@ -868,7 +868,7 @@ fn invite_helpers_emit_canonical_kinds() {
             .map(|write| write.cell.as_str())
             .collect::<Vec<_>>(),
         vec![
-            format!("ak:cell:ak.component.invite.lifecycle.v1:{invite_id}").as_str(),
+            format!("ak:cell:ak.component.invite.lifecycle.v1:{derived_invite_id}").as_str(),
             "ak:cell:ak.component.member.state.v1:did:web:bob.example",
         ]
     );
@@ -962,7 +962,7 @@ fn invite_helpers_emit_canonical_kinds() {
     .build("node");
     assert_eq!(revoke.kind.as_str(), "ak.invite.revoke");
     assert_eq!(revoke.payload["target_state"], "revoked");
-    assert_eq!(revoke.payload["reason_code"], "admin_revoke");
+    assert_eq!(revoke.payload["reason"], "admin_revoke");
     assert!(!revoke.payload.contains_key("invitee"));
 }
 

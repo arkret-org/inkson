@@ -3992,10 +3992,6 @@ pub fn RealmMembersPanel(
                                                 return;
                                             }
                                             let wait_for = active_sync_token(sync_cursor());
-                                            let invite_id = format!(
-                                                "ak:invite:{}",
-                                                crate::operation::uuid_v7()
-                                            );
                                             spawn(async move {
                                                 match authed_api_with_sync(&base, api_token, wait_for) {
                                                     Ok(api) => {
@@ -4021,7 +4017,6 @@ pub fn RealmMembersPanel(
                                                         let op = match ak_ops::invite_create_structured(
                                                             &realm,
                                                             &actor,
-                                                            &invite_id,
                                                             &invitee_did,
                                                             None,
                                                             invitee.invite_delivery_target.clone(),
@@ -4041,6 +4036,7 @@ pub fn RealmMembersPanel(
                                                                 return;
                                                             }
                                                         };
+                                                        let invite_id = arkret_sdk::InviteId::from_event_id(&submit_event.event_id).to_string();
                                                         let op_id = submit_event
                                                             .unsigned
                                                             .get("local_operation_idempotency_alias")

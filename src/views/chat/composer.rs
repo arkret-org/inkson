@@ -1230,12 +1230,11 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             Ok(Some(sidecar)) => {
                                                 let OwnedAgentSidecarEnsureResult {
                                                     sidecar_id,
+                                                    backing_scope_circle_id,
                                                     private_strand_id,
                                                     private_relation_id,
                                                     view: sidecar_view,
                                                 } = sidecar;
-                                                let backing_scope_circle_id =
-                                                    sidecar_view.sidecar.backing_circle_id.clone();
                                                 let addressed_agent_ids = owned_agent_ids_from_mentions(
                                                     &resolved_mentions,
                                                     &actor,
@@ -1650,12 +1649,11 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             Ok(Some(sidecar)) => {
                                                 let OwnedAgentSidecarEnsureResult {
                                                     sidecar_id,
+                                                    backing_scope_circle_id,
                                                     private_strand_id,
                                                     private_relation_id,
                                                     view: sidecar_view,
                                                 } = sidecar;
-                                                let backing_scope_circle_id =
-                                                    sidecar_view.sidecar.backing_circle_id.clone();
                                                 let addressed_agent_ids = owned_agent_ids_from_mentions(
                                                     &resolved_mentions,
                                                     &actor_for_sidecar,

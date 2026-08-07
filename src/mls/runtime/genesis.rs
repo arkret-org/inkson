@@ -101,9 +101,10 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
         crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
             .map_err(MlsRuntimeError::Genesis)?;
     let governance_binding = match sidecar_binding {
-        Some(binding) => governance_binding
-            .with_sidecar_binding(binding)
-            .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?,
+        Some(binding) => {
+            crate::mls::governance_proof::bind_sidecar_scope(&governance_binding, binding.clone())
+                .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?
+        }
         None => governance_binding,
     };
     let group = identity
@@ -220,9 +221,10 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope_with_bindi
         crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
             .map_err(MlsRuntimeError::Genesis)?;
     let expected_binding = match sidecar_binding {
-        Some(binding) => expected_binding
-            .with_sidecar_binding(binding)
-            .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?,
+        Some(binding) => {
+            crate::mls::governance_proof::bind_sidecar_scope(&expected_binding, binding.clone())
+                .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?
+        }
         None => expected_binding,
     };
     let current_binding = group.current_governance_binding().map_err(|err| {

@@ -65,7 +65,7 @@ fn chat_message_matches_protocol_id_after_server_rekeys_render_id() {
 fn delivered_exchange_projection_fixture(
     realm_id: &str,
     source_strand_id: &str,
-    private_strand_id: &str,
+    _private_strand_id: &str,
     source_frontier_anchor: Option<&str>,
     request_event_id: &str,
 ) -> arkret_sdk::AgentSidecarExchangeProjection {
@@ -76,7 +76,6 @@ fn delivered_exchange_projection_fixture(
         controller_id: arkret_sdk::Did::new("did:web:example.test:alice").unwrap(),
         sidecar_id: arkret_sdk::SidecarId::new("ak:sidecar:01964137-0000-7000-8000-000000000007")
             .unwrap(),
-        private_strand_id: arkret_sdk::StrandId::new(private_strand_id).unwrap(),
         exchange_id: arkret_sdk::AgentSidecarExchangeId::new("exchange-01964137000000000008")
             .unwrap(),
         origin: arkret_sdk::AgentSidecarExchangeOrigin::SourceTrackRouted,
