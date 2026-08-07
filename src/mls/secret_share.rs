@@ -45,9 +45,6 @@ use crate::secure_key_store::SecureKeyStore;
 /// [`crate::mls::account_recovery::MLS_ACCOUNT_SECRET_SECRET_ID`].
 pub const SECRET_SHARE_SECRET_ID: &str = "inkson_mls_account_secret";
 
-/// HPKE `info` (domain separation). Distinct from the key-backup `info` so a
-/// secret-share envelope can never be confused with a recovery backup envelope.
-
 /// Per-strand state held by the requesting (new) device between sending
 /// `ak.secret.request` and opening the matching `ak.secret.send`. The private
 /// key never leaves the device.

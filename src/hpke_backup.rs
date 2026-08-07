@@ -35,11 +35,6 @@ use sha2::Sha256;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 use zeroize::{Zeroize, Zeroizing};
 
-/// Canonical wire scheme / `hpke_suite` selector for this surface: the v1
-/// default-MUST application-layer HPKE suite. Emitted into the envelope so the
-/// AEAD `name` (`chacha20_poly1305`) is unambiguously consistent with the
-/// selected suite per `hpke-suite-registry.json` registry rules.
-
 /// HKDF info domain separator for deriving the recovery X25519 keypair from
 /// BIP-39 entropy (see [`derive_recovery_keypair_from_entropy`]). This is an
 /// opaque, stable domain tag — its byte value MUST NOT change or existing

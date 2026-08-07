@@ -26,7 +26,6 @@ use inkson::operation::{Event, EventExt};
 use regex::Regex;
 use sha2::{Digest, Sha256};
 
-const TEST_REALM_ID: &str = "ak:realm:0196419b-0000-8000-8000-000000000001";
 const TEST_ACTOR_ID: &str = "did:web:alice.example";
 const TEST_SERVICE_ID: &str = "did:web:server.example";
 

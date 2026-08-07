@@ -110,7 +110,7 @@ pub fn capability_grant_actions_with_resources(
             .is_some_and(|descriptor| descriptor.event_mapping_kind == "aggregate_admin")
     });
     let registry_digest = carries_aggregate_admin
-        .then(|| arkret_sdk::current_capability_action_registry_digest())
+        .then(arkret_sdk::current_capability_action_registry_digest)
         .transpose()?;
     let expires_at = expires_at
         .map(str::parse)

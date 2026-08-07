@@ -2195,8 +2195,10 @@ fn AppBootstrap() -> Element {
                                                                                     ).await
                                                                                 },
                                                                             ).await {
-                                                                                Ok(response) if crate::transport::account::direct_conversation_coordinates(&response).is_some() => {
-                                                                                    let coordinates = crate::transport::account::direct_conversation_coordinates(&response).expect("guarded coordinates");
+                                                                                Ok(ref response)
+                                                                                    if let Some(coordinates) =
+                                                                                        crate::transport::account::direct_conversation_coordinates(response) =>
+                                                                                {
                                                                                     Some(Route::DirectConversation {
                                                                                         realm_id: coordinates.realm_id.to_string(),
                                                                                         strand_id: coordinates.main_strand_id.to_string(),
@@ -2262,7 +2264,7 @@ fn AppBootstrap() -> Element {
                         } else {
                             for contact in filtered_direct_contact_rows.iter() {
                                 {
-                                    let peer = crate::models::contact_peer_id(&contact).to_string();
+                                    let peer = crate::models::contact_peer_id(contact).to_string();
                                     let state_label =
                                         crate::models::contact_state_wire(contact.state).to_owned();
                                     let scopes_label = contact
@@ -2657,8 +2659,10 @@ fn AppBootstrap() -> Element {
                                                                                 ).await
                                                                             },
                                                                         ).await {
-                                                                            Ok(response) if crate::transport::account::direct_conversation_coordinates(&response).is_some() => {
-                                                                                let coordinates = crate::transport::account::direct_conversation_coordinates(&response).expect("guarded coordinates");
+                                                                            Ok(ref response)
+                                                                                if let Some(coordinates) =
+                                                                                    crate::transport::account::direct_conversation_coordinates(response) =>
+                                                                            {
                                                                                 Some(Route::DirectConversation {
                                                                                     realm_id: coordinates.realm_id.to_string(),
                                                                                     strand_id: coordinates.main_strand_id.to_string(),

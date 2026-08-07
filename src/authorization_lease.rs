@@ -911,6 +911,10 @@ mod tests {
         assert_eq!(authority, expected);
     }
 
+    // `test_guard` serializes the process-wide submitter fixture. These tests
+    // run on the `current_thread` flavor, so the std guard is never moved
+    // across executor threads and cannot deadlock the runtime.
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test(flavor = "current_thread")]
     async fn managed_agent_pcr_genesis_submission_carries_controller_receipt() {
         let _guard = test_guard();

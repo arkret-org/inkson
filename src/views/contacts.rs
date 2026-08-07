@@ -282,7 +282,7 @@ fn ContactRow(
             if !contact.bidirectional_scopes.is_empty() {
                 div { class: "muted",
                     {tr("contacts.shared_scopes")}
-                    {contact.bidirectional_scopes.iter().map(|s| scope_label(s)).collect::<Vec<_>>().join("、")}
+                    {contact.bidirectional_scopes.iter().map(scope_label).collect::<Vec<_>>().join("、")}
                 }
             }
             if let Some(summary) = &contact.direct_conversation {

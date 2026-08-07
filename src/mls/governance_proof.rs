@@ -1288,7 +1288,7 @@ where
     // [`StaticProofDidResolver`] the caller pre-populated with already
     // authority-resolved documents, so the correct API is the pinned-document
     // verifier, which holds no network resolver at all and additionally
-    // compares `document.id == issuer` (the deprecated `verify_jws_ed25519`
+    // compares `document.id == issuer` (the removed resolver-driven verifier
     // accepted an `issuer` argument and never compared it).
     let document = resolver.resolve_did_document(&signer).map_err(|error| {
         arkret_sdk::Error::Protocol(format!("Seal signer document unavailable: {error}"))

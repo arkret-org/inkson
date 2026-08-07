@@ -13,6 +13,9 @@ use garth::outbound::BoxOutboundFuture;
 #[cfg(target_arch = "wasm32")]
 const BROWSER_OUTBOUND_STORAGE_PREFIX: &str = "inkson.outbound.v1::";
 
+/// Only the browser fallback store compacts in place; the host build keeps it
+/// for the unit test that pins the pruning contract.
+#[cfg(any(target_arch = "wasm32", test))]
 fn compact_snapshot_json(
     raw: &str,
     cutoff: chrono::DateTime<chrono::Utc>,

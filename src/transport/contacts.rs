@@ -96,7 +96,7 @@ impl crate::transport::TransportClient {
         if granted_to_peer_scopes.is_empty() {
             anyhow::bail!("at least one Contact scope is required");
         }
-        let addressing = self.contact_request_addressing(target, None).await?;
+        let addressing = self.contact_request_addressing(target).await?;
         let nonce = crate::operation::uuid_v7();
         let operation_id =
             ProtocolOperationId::new(format!("ak:operation:contact.request.{nonce}"))

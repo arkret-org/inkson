@@ -89,31 +89,6 @@ pub async fn restore_circle(
         .map_err(anyhow::Error::from)
 }
 
-/// Tombstone a Circle by submitting the caller-signed `ak.circle.tombstone`.
-///
-/// Terminal: the lifecycle matrix admits no transition out, so this Event is the
-/// whole record of who ended the Circle.
-pub async fn tombstone_circle(
-    http: &arkret_sdk::http_client::Client,
-    realm_id: &str,
-    actor: &str,
-    circle_id: &str,
-    reason: Option<&str>,
-) -> anyhow::Result<arkret_sdk::CircleView> {
-    let body = arkret_sdk::CircleTombstoneRequestBody {
-        lifecycle_event: circle_lifecycle_submission(
-            realm_id,
-            actor,
-            circle_id,
-            arkret_sdk::EventKind::CircleTombstone,
-            reason,
-        )?,
-    };
-    http.circle_tombstone(circle_id, &body)
-        .await
-        .map_err(anyhow::Error::from)
-}
-
 fn circle_lifecycle_submission(
     realm_id: &str,
     actor: &str,

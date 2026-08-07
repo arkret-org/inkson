@@ -680,8 +680,7 @@ fn dashboard_contacts_summary(
                 if contact.direct_conversation.is_some()
                     || contact
                         .bidirectional_scopes
-                        .iter()
-                        .any(|scope| *scope == ContactScope::DirectMessage)
+                        .contains(&ContactScope::DirectMessage)
                     || contact
                         .effective_scopes
                         .iter()

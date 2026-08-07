@@ -2007,7 +2007,7 @@ mod notary_derivation_tests {
         let typed: arkret_sdk::RealmPolicyBundlePayload =
             serde_json::from_value(serde_json::to_value(&bundle.payload).unwrap()).unwrap();
         assert_eq!(typed.policy_revision, 1);
-        assert!(bundle.payload.get("value").is_none());
+        assert!(!bundle.payload.contains_key("value"));
         let writes = crate::operation::project_registered_cell_writes(bundle).unwrap();
         assert_eq!(writes.len(), 1);
         assert_eq!(

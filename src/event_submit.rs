@@ -3611,7 +3611,7 @@ mod tests {
                 "sha256",
                 "ak:trust_domain:local.host",
                 &[],
-                &[notary_did.clone()],
+                std::slice::from_ref(&notary_did),
                 None,
                 None,
             )

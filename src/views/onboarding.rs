@@ -86,8 +86,7 @@ fn onboarding_surface(
 
     let binding_registered =
         checkpoint.stage != crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed;
-    let holds_this_identity_session =
-        session_token_present && active_account_did == checkpoint.did;
+    let holds_this_identity_session = session_token_present && active_account_did == checkpoint.did;
     if binding_registered && holds_this_identity_session {
         OnboardingSurface::ResumeBootstrap
     } else {
@@ -1192,12 +1191,13 @@ mod tests {
         recovery_key: &str,
         stage: crate::state::PendingPrincipalRegistrationStage,
     ) -> crate::state::PendingPrincipalRegistration {
-        let mut checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
-            handoff,
-            &handoff.device_id,
-            recovery_key,
-        )
-        .unwrap();
+        let mut checkpoint =
+            crate::identity::principal_registration::prepare_registration_checkpoint(
+                handoff,
+                &handoff.device_id,
+                recovery_key,
+            )
+            .unwrap();
         checkpoint.stage = stage;
         checkpoint
     }

@@ -17,7 +17,6 @@ pub struct InviteeResolution {
 
 pub(crate) struct ContactRequestAddressing {
     pub(crate) target: arkret_sdk::Did,
-    pub(crate) recipient_service_id: Option<arkret_sdk::Did>,
     pub(crate) introduction_evidence: arkret_sdk::ContactIntroductionEvidence,
 }
 
@@ -350,7 +349,6 @@ impl crate::transport::TransportClient {
     pub(crate) async fn contact_request_addressing(
         &self,
         target: &str,
-        recipient_service_id: Option<&str>,
     ) -> anyhow::Result<ContactRequestAddressing> {
         let target = target.trim();
         if target.is_empty() {
@@ -377,18 +375,6 @@ impl crate::transport::TransportClient {
             let target_did = arkret_sdk::Did::new(subject.to_owned()).map_err(|err| {
                 anyhow::anyhow!("directory resolved invalid DID `{subject}`: {err}")
             })?;
-            let resolved_service = resolved_member_delivery_binding(&resolved)?
-                .map(|binding| binding.recipient_service_id);
-            let explicit_service = recipient_service_id
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(|value| {
-                    arkret_sdk::Did::new(value.to_owned()).map_err(|err| {
-                        anyhow::anyhow!("invalid recipient_service_id `{value}`: {err}")
-                    })
-                })
-                .transpose()?;
-            let recipient_service_id = explicit_service.or(resolved_service);
             let handle = arkret_models_identity::Handle::parse(&resolved.handle)
                 .map_err(|err| anyhow::anyhow!("directory returned invalid handle: {err}"))?;
             let fallback_resolved_by = self
@@ -408,23 +394,13 @@ impl crate::transport::TransportClient {
             };
             return Ok(ContactRequestAddressing {
                 target: target_did,
-                recipient_service_id,
                 introduction_evidence,
             });
         }
         let target_did = arkret_sdk::Did::new(target.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid contact target DID `{target}`: {err}"))?;
-        let recipient_service_id = recipient_service_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(|value| {
-                arkret_sdk::Did::new(value.to_owned())
-                    .map_err(|err| anyhow::anyhow!("invalid recipient_service_id `{value}`: {err}"))
-            })
-            .transpose()?;
         Ok(ContactRequestAddressing {
             target: target_did,
-            recipient_service_id,
             introduction_evidence: arkret_sdk::ContactIntroductionEvidence::ExplicitAddress,
         })
     }

@@ -50,26 +50,6 @@ use crate::ui::slider::Slider;
 use crate::views::helpers::{actor_display_label, short_protocol_id};
 use crate::workflows::blocked_release_workflows;
 
-/// `ak.account_data` key used by the read-receipt preferences entry. Spec:
-/// `discovery/client-preferences.md` §3.6.
-
-/// `ak.account_data` key used by the cross-device UI preferences entry
-/// (theme, sidebar collapsed, per-Realm view). Spec:
-/// `discovery/client-preferences.md` §2.
-
-/// `ak.account_data` key used by the actor-private personal blocklist.
-/// Spec: `discovery/client-preferences.md` §2 / §3 privacy preferences.
-
-/// `ak.account_data` key used by notification push-rule preferences.
-
-/// `ak.account_data` key used by do-not-disturb preferences.
-
-/// `ak.account_data` key used by the principal-private presence policy.
-
-/// `ak.account_data` key used by the manual presence preference
-/// (profiles-presence.md §3.6). Send-side enforced; pushed encrypted —
-/// servers MUST NOT require a projection of this key.
-
 /// Resolve the relative expiry picker choice into a typed UTC `clears_at`
 /// (profiles-presence.md §3.6). `never` (and anything unrecognized) means no
 /// expiry; canonical wire formatting remains owned by the SDK serializer.

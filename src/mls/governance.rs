@@ -21,9 +21,6 @@ use arkret_sdk::mls_cells::{key_schedule_cell_id, mls_epoch_cell_id};
 use arkret_sdk::{Precondition, Predicate, PredicateOp};
 use serde_json::Value;
 
-/// The `ak.profile.mls_governance_binding.full.v1` profile id. Mirrors the
-/// hardening profile registered in `spec/v1/artifacts/profiles/conformance-profiles.json`.
-
 /// The exact predecessor preconditions an `ak.mls.commit` Event MUST carry.
 ///
 /// Both are addressed by the MLS group id, matching the registered

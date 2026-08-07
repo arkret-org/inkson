@@ -561,31 +561,6 @@ fn signal_evidence_query(
     }
 }
 
-#[cfg(test)]
-mod signal_query_tests {
-    use super::*;
-
-    #[test]
-    fn live_signal_selector_is_structurally_current_only() {
-        let selector: AgentSignerEvidenceQuerySelector =
-            serde_json::from_value(serde_json::json!({
-                "verification_mode": "current_admission",
-                "agent_id": "did:webvh:z6mkfixture:agent.example",
-                "verification_method": "did:webvh:z6mkfixture:agent.example#agent-runtime",
-                "operation_id": "ak:operation:signal-evidence-test",
-                "request_digest": format!("sha256:{}", "1".repeat(64)),
-                "verifier_id": "did:webvh:z6mkfixture:receiver.example",
-                "audience": "did:webvh:z6mkfixture:receiver.example",
-                "challenge": "0123456789abcdef"
-            }))
-            .unwrap();
-        assert!(matches!(
-            selector,
-            AgentSignerEvidenceQuerySelector::CurrentAdmission { .. }
-        ));
-    }
-}
-
 /// Resolve a live Signal signer through the same verified Native Agent
 /// evidence used for durable Events. Signals have no server-stamped Event
 /// admission object, so the evidence's current accepted authorization basis is
@@ -1165,3 +1140,28 @@ impl PartialEq for EventAgentSelector {
 }
 
 impl Eq for EventAgentSelector {}
+
+#[cfg(test)]
+mod signal_query_tests {
+    use super::*;
+
+    #[test]
+    fn live_signal_selector_is_structurally_current_only() {
+        let selector: AgentSignerEvidenceQuerySelector =
+            serde_json::from_value(serde_json::json!({
+                "verification_mode": "current_admission",
+                "agent_id": "did:webvh:z6mkfixture:agent.example",
+                "verification_method": "did:webvh:z6mkfixture:agent.example#agent-runtime",
+                "operation_id": "ak:operation:signal-evidence-test",
+                "request_digest": format!("sha256:{}", "1".repeat(64)),
+                "verifier_id": "did:webvh:z6mkfixture:receiver.example",
+                "audience": "did:webvh:z6mkfixture:receiver.example",
+                "challenge": "0123456789abcdef"
+            }))
+            .unwrap();
+        assert!(matches!(
+            selector,
+            AgentSignerEvidenceQuerySelector::CurrentAdmission { .. }
+        ));
+    }
+}
