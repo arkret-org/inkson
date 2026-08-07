@@ -157,7 +157,7 @@ pub fn RealmAdminPanel(
         RealmTreeNodeKind::Space => "Space",
     };
     let metadata_event_kind = match metadata_subject.kind {
-        RealmTreeNodeKind::Realm => "ak.realm.update",
+        RealmTreeNodeKind::Realm => "ak.realm.profile",
         RealmTreeNodeKind::Space => "ak.space.update",
     };
     let alert_count = usize::from(realm_paused)
@@ -627,12 +627,6 @@ pub fn RealmAdminPanel(
                                                 json!(avatar_blob_ref)
                                             },
                                         );
-                                        // Realm alias rename (object-addressing.md §3.3): only patch
-                                        // when the admin entered a value, so leaving it blank keeps
-                                        // the current alias. soland re-normalizes + uniques it.
-                                        if !alias.is_empty() {
-                                            patch.insert("alias".to_owned(), json!(alias));
-                                        }
                                         let patch = Value::Object(patch);
                                         spawn(async move {
                                             match crate::transport::auth::with_event_submitter(

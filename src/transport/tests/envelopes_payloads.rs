@@ -12,6 +12,10 @@ use crate::operation::{EventKind, OperationBuilder};
 use crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR;
 use crate::realm_helpers::{patch_touches_create_locked_encryption_profile, validate_join_rule_v1};
 
+fn test_genesis_salt() -> arkret_sdk::GenesisSalt {
+    arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap()
+}
+
 #[test]
 fn realm_metadata_patch_rejects_create_locked_encryption_profile() {
     assert!(patch_touches_create_locked_encryption_profile(&json!({
@@ -52,6 +56,7 @@ fn canonical_space_join_rule_keeps_v1_invite_value() {
 #[test]
 fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     let (_realm_id, events) = build_realm_bootstrap_events(
+        test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
         "Engineering",
@@ -75,14 +80,13 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         .iter()
         .map(|event| event.kind.as_str())
         .collect::<Vec<_>>();
-    // Spec realm-and-space.md §2.6: the creator-join cell is
-    // populated atomically by the reducer when it accepts
-    // `ak.realm.create`. The bootstrap chain MUST NOT include an
-    // explicit `ak.member.state{join}` for the creator.
+    // The creator join is the final explicit slot; create only establishes the
+    // identity/security root.
     assert_eq!(
         kinds,
         vec![
             "ak.realm.create",
+            "ak.realm.profile",
             "ak.realm.policy_bundle",
             "ak.realm.join_rule",
             "ak.realm.history_visibility",
@@ -103,22 +107,30 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     );
 
     let create = &events[0];
-    assert_eq!(create.payload["object"]["schema"], "ak.schema.realm.v1");
-    // Spec rename (head 37ce729 / SDK 4d5a1af): realm.schema.json
-    // `created_by_principal` → `created_by`.
     assert_eq!(
-        create.payload["object"]["created_by"],
-        create.actor_id.as_str()
+        create.payload["object"]["schema"],
+        "ak.schema.realm_genesis.v1"
     );
+    assert_eq!(create.payload["object"]["purpose"], "collaboration");
     assert_eq!(
-        create.payload["object"]["created_at"].as_str().unwrap(),
-        arkret_sdk::canonical::format_timestamp_canonical(create.created_at),
-        "Realm create cross-field semantic validation requires matching timestamps",
+        create.payload["object"]["genesis_salt"],
+        test_genesis_salt().as_str()
     );
-    assert_eq!(create.payload["object"]["default_join_rule"], "invite");
-    assert_eq!(create.payload["object"]["history_visibility"], "shared");
-    assert!(create.payload["object"]["content_encryption_floor"].is_null());
-    assert!(create.payload["object"]["metadata_encryption_floor"].is_null());
+    for forbidden in [
+        "title",
+        "summary",
+        "created_by",
+        "created_at",
+        "default_join_rule",
+        "history_visibility",
+        "content_encryption_floor",
+        "metadata_encryption_floor",
+    ] {
+        assert!(create.payload["object"].get(forbidden).is_none());
+    }
+    assert_eq!(events[1].payload["schema"], "ak.schema.realm_profile.v1");
+    assert_eq!(events[1].payload["title"], "Engineering");
+    assert_eq!(events[1].payload["summary"], "Roadmap work");
     assert_eq!(create.payload["object"]["notary"]["kind"], "single_did");
     assert_eq!(
         create.payload["object"]["notary"]["did"],
@@ -139,12 +151,12 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     // v1 has no producer `effects[]`: the genesis leaf set is what the
     // registered `ak.realm.create` contract projects.
     let create_writes = crate::operation::direct_registered_cell_writes(create).unwrap();
-    // realm-and-space.md §2.5: Realm metadata, creator membership, the create
-    // audit append, the founding notary and the founding authority-root cell.
+    // realm-and-space.md §2.5: genesis intent, create audit append, founding
+    // notary, reducer profile and authority root.
     assert_eq!(create_writes.len(), 5);
     assert_eq!(
         create_writes[0].cell.as_str(),
-        arkret_bootstrap::REALM_METADATA_CELL
+        arkret_bootstrap::REALM_GENESIS_CELL
     );
     assert_eq!(create_writes[0].op.op_type, arkret_sdk::LatticeOpType::Set);
     assert!(
@@ -176,7 +188,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             )
         });
     }
-    for facet in &events[1..8] {
+    for facet in &events[1..9] {
         assert!(
             crate::operation::project_registered_cell_writes(facet)
                 .unwrap()
@@ -194,51 +206,51 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     // signer attaches the detached JWS proof at submit time.
     assert!(create.proofs.is_empty());
 
-    // Bootstrap order: create, encryption floor policy, join_rule,
+    // Bootstrap order: create, profile, encryption floor policy, join_rule,
     // history_visibility, history_sharing_policy, discovery,
     // plaintext_visible, delivery binding policy, creator member join.
     assert_eq!(
-        events[1].payload["content_encryption_floor"],
+        events[2].payload["content_encryption_floor"],
         RECOMMENDED_REALM_ENCRYPTION_FLOOR
     );
     assert_eq!(
-        events[1].payload["metadata_encryption_floor"],
+        events[2].payload["metadata_encryption_floor"],
         RECOMMENDED_REALM_ENCRYPTION_FLOOR
     );
-    assert_eq!(events[1].payload["policy_revision"], 1);
-    assert_eq!(events[1].payload["content_scheme"], "mls_exporter_aead_v1");
-    assert_eq!(events[2].payload["value"], "invite");
-    assert_eq!(events[3].payload["value"], "shared");
+    assert_eq!(events[2].payload["policy_revision"], 1);
+    assert_eq!(events[2].payload["content_scheme"], "mls_exporter_aead_v1");
+    assert_eq!(events[3].payload["value"], "invite");
+    assert_eq!(events[4].payload["value"], "shared");
     assert_eq!(
-        events[4].payload["value"]["default_key_share"],
+        events[5].payload["value"]["default_key_share"],
         "event_time_visibility"
     );
     assert_eq!(
-        events[4].payload["value"]["pre_join_history"],
+        events[5].payload["value"]["pre_join_history"],
         "visibility_condition_allowed"
     );
     assert_eq!(
-        events[4].payload["value"]["allowed_key_sources"],
+        events[5].payload["value"]["allowed_key_sources"],
         json!(["verified_member_device"])
     );
     assert_eq!(
-        events[4].payload["value"]["allowed_receiver_states"],
+        events[5].payload["value"]["allowed_receiver_states"],
         json!(["active_member"])
     );
     assert_eq!(
-        events[4].payload["value"]["audit"],
+        events[5].payload["value"]["audit"],
         json!({
             "share_audit_event_required": false,
             "access_audit_required": false
         })
     );
-    assert_eq!(events[5].payload["value"], "listed");
+    assert_eq!(events[6].payload["value"], "listed");
     assert_eq!(
-        events[6].payload["services"][0]["service_id"],
+        events[7].payload["services"][0]["service_id"],
         "did:web:server.example"
     );
     assert_eq!(
-        events[6].payload["services"][0]["data_classes"],
+        events[7].payload["services"][0]["data_classes"],
         json!([
             "message_content",
             "full_text_index",
@@ -247,10 +259,10 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         ])
     );
     assert_eq!(
-        events[7].payload["allowed_binding_sources"],
+        events[8].payload["allowed_binding_sources"],
         json!(["realm_policy"])
     );
-    assert_eq!(events[8].payload["membership"], "join");
+    assert_eq!(events[9].payload["membership"], "join");
     assert!(events.iter().all(|event| {
         event
             .payload
@@ -263,6 +275,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
 #[test]
 fn plaintext_realm_create_does_not_claim_e2ee_floors() {
     let envelope = build_realm_create_event(
+        test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
         "Public updates",
@@ -281,17 +294,23 @@ fn plaintext_realm_create_does_not_claim_e2ee_floors() {
     .unwrap();
 
     assert_eq!(envelope.payload["object"]["encryption_profile"], "none");
-    assert!(envelope.payload["object"]["content_encryption_floor"].is_null());
-    assert!(envelope.payload["object"]["metadata_encryption_floor"].is_null());
-    assert_eq!(
-        envelope.payload["object"]["created_at"],
-        serde_json::to_value(&envelope).unwrap()["created_at"]
+    assert!(
+        envelope.payload["object"]
+            .get("content_encryption_floor")
+            .is_none()
     );
+    assert!(
+        envelope.payload["object"]
+            .get("metadata_encryption_floor")
+            .is_none()
+    );
+    assert!(envelope.payload["object"].get("created_at").is_none());
 }
 
 #[test]
 fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
     let err = build_realm_bootstrap_events(
+        test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
         "Strict history",
@@ -320,6 +339,7 @@ fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
 #[test]
 fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
     let (_realm_id, events) = build_realm_bootstrap_events(
+        test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
         "Strict history",
@@ -340,10 +360,10 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
     )
     .expect("joined history is valid with the strict MLS content scheme");
 
-    // Index 1 is the Realm policy bundle, the only bootstrap Event that carries
-    // `content_scheme`. Index 2 is the join rule, whose payload value is a bare
+    // Index 2 is the Realm policy bundle, the only bootstrap Event that carries
+    // `content_scheme`. Index 3 is the join rule, whose payload value is a bare
     // string — reading `content_scheme` off it silently yields Null.
-    assert_eq!(events[1].payload["content_scheme"], "mls_rfc9420");
+    assert_eq!(events[2].payload["content_scheme"], "mls_rfc9420");
 }
 
 #[test]
@@ -382,6 +402,7 @@ fn default_history_sharing_policy_matches_prejoin_visibility() {
 #[test]
 fn bootstrap_envelopes_have_no_sdk_digest_drift() {
     let (_realm_id, events) = build_realm_bootstrap_events(
+        test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
         "Engineering",
@@ -433,6 +454,7 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
 #[test]
 fn realm_bootstrap_rejects_handle_seed_without_directory_evidence() {
     let err = build_realm_bootstrap_events(
+        test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
         "Engineering",
@@ -573,6 +595,7 @@ fn realm_bootstrap_payloads_match_spec_schema() {
             crate::event_signer::build_ed25519_signer([42_u8; 32], "did:web:alice.example"),
         )));
     let (_realm_id, mut events) = build_realm_bootstrap_events(
+        test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
         "Engineering",

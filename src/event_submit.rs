@@ -178,6 +178,126 @@ pub(crate) struct AuthoredEventAttempt {
     pub(crate) canonical_body_bytes: Vec<u8>,
 }
 
+/// Durable, all-or-nothing Realm bootstrap authoring record.
+///
+/// The first form is persisted before any HLC/frontier allocation or signing.
+/// Its create payload already contains the one CSPRNG `genesis_salt` owned by
+/// this intent. The prepared form freezes the complete signed unit and its
+/// canonical bytes before the first HTTP request, so recovery never rebuilds
+/// a bootstrap or generates another salt.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+enum QueuedRealmBootstrap {
+    Intent {
+        local_operation_id: String,
+        transport_idempotency_key: String,
+        intent_digest: arkret_sdk::Hash,
+        events: Vec<arkret_sdk::Event>,
+    },
+    Prepared {
+        local_operation_id: String,
+        transport_idempotency_key: String,
+        intent_digest: arkret_sdk::Hash,
+        events: Vec<arkret_sdk::Event>,
+        canonical_signed_unit_bytes: Vec<u8>,
+    },
+}
+
+impl QueuedRealmBootstrap {
+    fn intent(
+        local_operation_id: String,
+        transport_idempotency_key: String,
+        events: Vec<arkret_sdk::Event>,
+    ) -> arkret_sdk::Result<Self> {
+        validate_realm_bootstrap_intent(&events)?;
+        let intent_digest =
+            arkret_sdk::Hash::new(arkret_sdk::canonical::canonical_sha256(&events)?)?;
+        Ok(Self::Intent {
+            local_operation_id,
+            transport_idempotency_key,
+            intent_digest,
+            events,
+        })
+    }
+
+    fn authority_context_event(&self) -> &arkret_sdk::Event {
+        match self {
+            Self::Intent { events, .. } | Self::Prepared { events, .. } => &events[0],
+        }
+    }
+}
+
+fn validate_realm_bootstrap_intent(events: &[arkret_sdk::Event]) -> arkret_sdk::Result<()> {
+    let create = events.first().ok_or_else(|| {
+        arkret_sdk::Error::Protocol("queued Realm bootstrap unit is empty".to_owned())
+    })?;
+    if create.kind.as_str() != arkret_sdk::EventKind::REALM_CREATE {
+        return Err(arkret_sdk::Error::Protocol(
+            "queued Realm bootstrap must begin with ak.realm.create".to_owned(),
+        ));
+    }
+    let payload: arkret_sdk::RealmCreatePayload = serde_json::from_value(
+        serde_json::to_value(&create.payload)
+            .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?,
+    )
+    .map_err(|error| arkret_sdk::Error::Protocol(format!("decode Realm genesis: {error}")))?;
+    payload.object.validate()?;
+    if payload.object.genesis_salt.is_none() {
+        return Err(arkret_sdk::Error::Protocol(
+            "event-derived Realm bootstrap intent must persist genesis_salt".to_owned(),
+        ));
+    }
+    arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(events)
+        .map_err(|error| arkret_sdk::Error::Protocol(error.reason_code().to_owned()))?;
+    Ok(())
+}
+
+fn decode_queued_realm_bootstrap(content: Value) -> arkret_sdk::Result<QueuedRealmBootstrap> {
+    let queued: QueuedRealmBootstrap = serde_json::from_value(content).map_err(|error| {
+        arkret_sdk::Error::Protocol(format!("decode queued Realm bootstrap: {error}"))
+    })?;
+    let (intent_digest, events) = match &queued {
+        QueuedRealmBootstrap::Intent {
+            intent_digest,
+            events,
+            ..
+        }
+        | QueuedRealmBootstrap::Prepared {
+            intent_digest,
+            events,
+            ..
+        } => (intent_digest, events),
+    };
+    validate_realm_bootstrap_intent(events)?;
+    match &queued {
+        QueuedRealmBootstrap::Intent { .. } => {
+            let computed = arkret_sdk::Hash::new(arkret_sdk::canonical::canonical_sha256(events)?)?;
+            if &computed != intent_digest {
+                return Err(arkret_sdk::Error::Protocol(
+                    "queued Realm bootstrap intent digest mismatch".to_owned(),
+                ));
+            }
+        }
+        QueuedRealmBootstrap::Prepared {
+            canonical_signed_unit_bytes,
+            ..
+        } => {
+            if events.iter().any(|event| event.proofs.is_empty()) {
+                return Err(arkret_sdk::Error::Protocol(
+                    "prepared Realm bootstrap contains an unsigned Event".to_owned(),
+                ));
+            }
+            let canonical = arkret_sdk::canonical::canonical_json_bytes(events)?;
+            if &canonical != canonical_signed_unit_bytes {
+                return Err(arkret_sdk::Error::Protocol(
+                    "prepared Realm bootstrap canonical bytes mismatch".to_owned(),
+                ));
+            }
+        }
+    }
+    Ok(queued)
+}
+
 /// Frozen scheduler-to-transport handoff persisted inside the durable outbound
 /// queue. Once this record exists, retries are driven exclusively from these
 /// bytes; the editable account-data plan is no longer an authoring source.
@@ -376,13 +496,17 @@ where
 /// generation fence quarantines the record in preflight, and the same-
 /// transaction retry path compacts terminal history before re-enqueueing.
 enum QueuedRecordState {
-    Valid(Box<QueuedSdkEvent>),
+    Event(Box<QueuedSdkEvent>),
+    RealmBootstrap(Box<QueuedRealmBootstrap>),
     Poisoned { reason: String },
 }
 
 fn classify_queued_record(transaction_id: &str, content: Value) -> QueuedRecordState {
-    match decode_queued_sdk_event(content) {
-        Ok(queued) => QueuedRecordState::Valid(Box::new(queued)),
+    if let Ok(queued) = decode_queued_sdk_event(content.clone()) {
+        return QueuedRecordState::Event(Box::new(queued));
+    }
+    match decode_queued_realm_bootstrap(content) {
+        Ok(queued) => QueuedRecordState::RealmBootstrap(Box::new(queued)),
         Err(error) => {
             tracing::warn!(
                 event_id = %transaction_id,
@@ -571,18 +695,100 @@ struct EventOutboundSubmitter<'a> {
     state_store: Option<crate::runtime::input::StateStoreHandle>,
 }
 
+impl EventOutboundSubmitter<'_> {
+    async fn submit_realm_bootstrap(
+        &self,
+        item: garth::SendQueueItem,
+        queued: QueuedRealmBootstrap,
+    ) -> garth::Result<OutboundSubmitOutcome> {
+        match queued {
+            QueuedRealmBootstrap::Intent {
+                local_operation_id,
+                transport_idempotency_key,
+                intent_digest,
+                events,
+            } => {
+                let events = self
+                    .owner
+                    .prepare_sdk_events_batch(events)
+                    .await
+                    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+                let canonical_signed_unit_bytes =
+                    arkret_sdk::canonical::canonical_json_bytes(&events)
+                        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+                let prepared = QueuedRealmBootstrap::Prepared {
+                    local_operation_id,
+                    transport_idempotency_key,
+                    intent_digest,
+                    events,
+                    canonical_signed_unit_bytes,
+                };
+                Ok(OutboundSubmitOutcome::Prepared {
+                    content: serde_json::to_value(prepared)
+                        .map_err(|error| garth::Error::Protocol(error.to_string()))?,
+                })
+            }
+            QueuedRealmBootstrap::Prepared {
+                transport_idempotency_key,
+                events,
+                ..
+            } => {
+                let event_id = events[0].event_id.clone();
+                match self
+                    .owner
+                    .submit_signed_sdk_events_batch(&events, Some(&transport_idempotency_key))
+                    .await
+                {
+                    Ok(outcome) => {
+                        let duplicate = outcome.duplicate.iter().any(|id| id == &event_id)
+                            && !outcome.accepted.iter().any(|id| id == &event_id);
+                        if duplicate {
+                            Ok(OutboundSubmitOutcome::Duplicate {
+                                event_id,
+                                ingress_receipts: outcome.ingress_receipts,
+                            })
+                        } else {
+                            Ok(OutboundSubmitOutcome::Accepted {
+                                event_id,
+                                ingress_receipts: outcome.ingress_receipts,
+                            })
+                        }
+                    }
+                    Err(error) => {
+                        let reason = format!("{error:#}");
+                        if let Some(delay) = outbound_retry_delay(&error) {
+                            Ok(OutboundSubmitOutcome::RetryAfter { delay, reason })
+                        } else {
+                            self.results
+                                .rejected
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                .insert(item.transaction_id, error);
+                            Ok(OutboundSubmitOutcome::Rejected { reason })
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl OutboundSubmitter for EventOutboundSubmitter<'_> {
     fn submit<'a>(
         &'a self,
         item: garth::SendQueueItem,
     ) -> BoxOutboundFuture<'a, OutboundSubmitOutcome> {
         Box::pin(async move {
-            let mut queued = match classify_queued_record(&item.transaction_id, item.content) {
-                QueuedRecordState::Valid(queued) => *queued,
-                QueuedRecordState::Poisoned { reason } => {
-                    return Ok(OutboundSubmitOutcome::Terminal { reason });
-                }
-            };
+            let mut queued =
+                match classify_queued_record(&item.transaction_id, item.content.clone()) {
+                    QueuedRecordState::Event(queued) => *queued,
+                    QueuedRecordState::RealmBootstrap(queued) => {
+                        return self.submit_realm_bootstrap(item, *queued).await;
+                    }
+                    QueuedRecordState::Poisoned { reason } => {
+                        return Ok(OutboundSubmitOutcome::Terminal { reason });
+                    }
+                };
             if queued.mark_scheduled_submission_uncertain() {
                 // Persist the uncertainty boundary before the first HTTP write.
                 // A crash after this point can only resume the exact signed
@@ -1007,6 +1213,86 @@ impl EventSubmitter {
         &self.http
     }
 
+    /// Persist a Realm creation intent before authoring, then freeze and
+    /// submit its complete signed bootstrap unit through Garth's durable
+    /// queue. A retry or process restart consumes the same queue record.
+    pub(crate) async fn submit_realm_bootstrap_durable(
+        &self,
+        events: Vec<arkret_sdk::Event>,
+        local_operation_id: String,
+    ) -> anyhow::Result<arkret_sdk::RealmId> {
+        let _single_writer = outbound_submit_lock().lock().await;
+        let first = events
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("Realm bootstrap unit is empty"))?;
+        let actor_id = first.actor_id.clone();
+        let draft_realm_id = first.realm_id.clone();
+        let transport_idempotency_key = local_operation_id.clone();
+        let queued = QueuedRealmBootstrap::intent(
+            local_operation_id.clone(),
+            transport_idempotency_key,
+            events,
+        )?;
+        let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
+            actor_id.as_str(),
+        )?);
+        outbound
+            .enqueue_scoped(
+                Some(local_operation_id.clone()),
+                draft_realm_id,
+                actor_id,
+                garth::SendQueueItemKind::Custom {
+                    kind: "ak.realm.bootstrap".to_owned(),
+                },
+                serde_json::to_value(queued)?,
+                Vec::new(),
+            )
+            .await?;
+
+        let results = OutboundAttemptResults::default();
+        let submitter = EventOutboundSubmitter {
+            owner: self,
+            results: &results,
+            state_store: None,
+        };
+        loop {
+            let fence = self.resolve_queue_generation_fence(&outbound).await?;
+            match outbound
+                .submit_next_with_fence(&submitter, &fence, chrono::Utc::now())
+                .await?
+            {
+                OutboundEngineOutcome::Prepared(_) | OutboundEngineOutcome::Superseded { .. } => {
+                    continue;
+                }
+                OutboundEngineOutcome::Accepted(item) | OutboundEngineOutcome::Duplicate(item)
+                    if item.transaction_id == local_operation_id =>
+                {
+                    let queued = decode_queued_realm_bootstrap(item.content)?;
+                    return Ok(queued.authority_context_event().realm_id.clone());
+                }
+                OutboundEngineOutcome::Rejected { item, reason }
+                | OutboundEngineOutcome::Terminal { item, reason }
+                | OutboundEngineOutcome::Quarantined { item, reason }
+                    if item.transaction_id == local_operation_id =>
+                {
+                    anyhow::bail!("Realm bootstrap rejected: {reason}");
+                }
+                OutboundEngineOutcome::RetryAt { item, .. }
+                    if item.transaction_id == local_operation_id =>
+                {
+                    return Err(DurablyQueuedError {
+                        event_id: local_operation_id,
+                    }
+                    .into());
+                }
+                OutboundEngineOutcome::Idle => {
+                    anyhow::bail!("durable Realm bootstrap disappeared from the outbound queue");
+                }
+                _ => continue,
+            }
+        }
+    }
+
     async fn resolve_queue_generation_fence(
         &self,
         outbound: &OutboundEngine<crate::outbound_store::InksonOutboundStore>,
@@ -1024,7 +1310,18 @@ impl EventSubmitter {
                 continue;
             }
             let queued = match classify_queued_record(&item.transaction_id, item.content.clone()) {
-                QueuedRecordState::Valid(queued) => *queued,
+                QueuedRecordState::Event(queued) => *queued,
+                QueuedRecordState::RealmBootstrap(_) => {
+                    // A Realm bootstrap is an immutable anchor unit. Once its
+                    // intent is durable it must either be prepared once or
+                    // replay the frozen signed unit; signer-generation changes
+                    // must never cause it to be reauthored with a new salt/HLC.
+                    decisions.insert(
+                        item.transaction_id,
+                        OutboundGenerationFenceDecision::Current,
+                    );
+                    continue;
+                }
                 QueuedRecordState::Poisoned { reason } => {
                     decisions.insert(
                         item.transaction_id,
@@ -1848,24 +2145,31 @@ impl EventSubmitter {
             if matches!(existing.status, garth::SendQueueStatus::Sent) {
                 return Ok(completed_outbound_result(&existing));
             }
-            let previous =
-                match classify_queued_record(&existing.transaction_id, existing.content.clone()) {
-                    QueuedRecordState::Valid(previous) => Some(*previous),
-                    QueuedRecordState::Poisoned { reason } => {
-                        if !matches!(
-                            existing.status,
-                            garth::SendQueueStatus::Cancelled | garth::SendQueueStatus::Superseded
-                        ) {
-                            // The generation fence quarantine-cancels it on the
-                            // next queue drive; the retry after that lands in
-                            // the terminal repair branch below.
-                            anyhow::bail!(
-                                "outbound transaction {transaction_id} is blocked by a {reason}"
-                            );
-                        }
-                        None
+            let previous = match classify_queued_record(
+                &existing.transaction_id,
+                existing.content.clone(),
+            ) {
+                QueuedRecordState::Event(previous) => Some(*previous),
+                QueuedRecordState::RealmBootstrap(_) => {
+                    anyhow::bail!(
+                        "outbound transaction {transaction_id} is already bound to a Realm bootstrap unit"
+                    );
+                }
+                QueuedRecordState::Poisoned { reason } => {
+                    if !matches!(
+                        existing.status,
+                        garth::SendQueueStatus::Cancelled | garth::SendQueueStatus::Superseded
+                    ) {
+                        // The generation fence quarantine-cancels it on the
+                        // next queue drive; the retry after that lands in
+                        // the terminal repair branch below.
+                        anyhow::bail!(
+                            "outbound transaction {transaction_id} is blocked by a {reason}"
+                        );
                     }
-                };
+                    None
+                }
+            };
             if let Some(previous) = &previous {
                 let same_event_identity = previous.local_operation_id == queued.local_operation_id
                     && previous.intent.event_id == queued.intent.event_id
@@ -3955,6 +4259,8 @@ mod tests {
                 .await
                 .map_err(|error| format!("service describe failed: {error:#}"))?;
             let (_draft_realm_id, bootstrap) = crate::event_builders::build_realm_bootstrap_events(
+                arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+                    .unwrap(),
                 &actor,
                 &notary_did,
                 "root-claim live probe",
@@ -4355,6 +4661,7 @@ mod tests {
     #[test]
     fn actor_frontier_stamp_does_not_move_cell_local_ordered_log_sequence() {
         let mut event = crate::event_builders::build_realm_create_event(
+            arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
             "did:web:alice.example",
             "did:web:alice.example",
             "Frontier",
@@ -4362,7 +4669,7 @@ mod tests {
             "invite_only",
             "invite",
             "shared",
-            // `encryption_profile` is the closed realm.schema.json enum
+            // `encryption_profile` is the closed realm-genesis schema enum
             // {none, mls_rfc9420, external}; "plaintext" was never a member and
             // only survived here because the object used to be hand-built JSON.
             "none",
@@ -4429,6 +4736,7 @@ mod tests {
             )),
         ));
         let (draft_realm_id, events) = crate::event_builders::build_realm_bootstrap_events(
+            arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
             "did:web:alice.example",
             "did:web:server.example",
             "Engineering",

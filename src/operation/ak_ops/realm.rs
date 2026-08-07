@@ -5,10 +5,7 @@ use arkret_models_collaboration::events_payloads::{
     RealmOrganizationRelationship, RealmOrganizationStatus,
 };
 
-use super::{
-    OperationBuilder, did_id, object_patch_payload_value, patch_from_value, realm_id_value,
-    space_state_transition_payload_value,
-};
+use super::{OperationBuilder, did_id, realm_id_value, space_state_transition_payload_value};
 
 /// Build a `ak.space.archive` operation against a container Space. The
 /// Space transitions from `Active` to `Archived`; reversible via
@@ -63,24 +60,6 @@ pub fn message_revise_content(
         OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MessageRevise)
             .target_ref(target_ref)
             .body(body),
-    )
-}
-
-/// Build a `ak.realm.update` patch operation. The reducer accepts
-/// both flat fields (action/owner/title/security_class) and
-/// `payload.patch`; the patch shape is preferred for non-lifecycle
-/// edits (title / description).
-pub fn realm_update_patch(
-    envelope_realm_id: &str,
-    actor: &str,
-    realm_id: &str,
-    patch: serde_json::Value,
-) -> anyhow::Result<OperationBuilder> {
-    let patch = patch_from_value(patch)?;
-    Ok(
-        OperationBuilder::new(envelope_realm_id, actor, arkret_sdk::EventKind::RealmUpdate)
-            .target_ref(realm_id)
-            .body(object_patch_payload_value(realm_id, patch)?),
     )
 }
 

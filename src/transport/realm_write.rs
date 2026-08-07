@@ -24,28 +24,23 @@ use crate::event_builders::{
 use crate::event_submit::EventSubmitter;
 use crate::models::{RealmCreateResult, RealmPolicyResult, SpaceCreateResult, SubmitEventResult};
 use crate::operation::{EventKind, ak_ops};
-use crate::realm_helpers::{patch_touches_create_locked_encryption_profile, validate_join_rule_v1};
+use crate::realm_helpers::validate_join_rule_v1;
 
 /// Build + submit the spec-canonical `ak.realm.create` event bundle
 /// (and its facet follow-ups) via `ak.self.events.command.submit`
 /// (`POST /_arkret/self/events`).
 ///
-/// Per spec realm-and-space.md §2.5 the create event itself is the
-/// genesis-member declaration for `created_by`. The
-/// server reducer bootstraps the member set atomically with the
-/// metadata, so the same actor's per-facet follow-ups
-/// (`ak.realm.join_rule` / `ak.realm.history_visibility` /
-/// `ak.realm.discovery` / `ak.realm.plaintext_visible_services` /
-/// creator delivery binding) all pass the regular
-/// `realm_has_member` authz check naturally.
+/// Per spec realm-and-space.md §2.5, create carries only identity/security
+/// genesis state. Profile and policy are signed facets, and creator membership
+/// is the final explicit slot; the complete ordered unit is admitted through
+/// the staged authority root before any normal member-based authorization.
 /// Seed invitees are submitted afterwards as ordinary directed
 /// `ak.invite.create` Control Moves because membership may only enter
 /// `invite` through that lifecycle.
 ///
-/// All five create-locked fields per spec §2.3 (`encryption_profile`,
-/// `security_class`, `federation_policy`, `notary_profile`,
-/// `digest_algorithm`) are sent inline on the create event payload —
-/// no field is dropped at the wire, unlike a REST wrapper that
+/// Create-locked identity/security fields are sent in the closed genesis
+/// payload; mutable policy such as federation policy is carried by its
+/// registered bootstrap facet — no field is dropped at the wire, unlike a REST wrapper that
 /// might only accept a subset.
 #[allow(clippy::too_many_arguments)]
 pub async fn create_realm(
@@ -75,15 +70,20 @@ pub async fn create_realm(
     }
     let title = title.trim();
     if title.is_empty() {
-        return Err(anyhow::anyhow!("title is required for ak.realm.create"));
+        return Err(anyhow::anyhow!("title is required for ak.realm.profile"));
     }
 
     let join_rule = validate_join_rule_v1(join_rule)?;
     let notary_did = submitter.service_id().await?;
     let resolved_invitees = parse_realm_bootstrap_members(&invitees)?;
+    // One CSPRNG salt belongs to this creation intent. The complete unsigned
+    // unit is durably queued before prepare/sign; Garth then persists the
+    // exact signed unit before the first HTTP write.
+    let genesis_salt = arkret_sdk::GenesisSalt::generate()?;
     // The Realm id is not minted here: it is derived from the genesis Event
     // the builder produces (spec realm-and-space.md section 2.5.0).
     let (_draft_realm_id, events) = build_realm_bootstrap_events(
+        genesis_salt,
         actor_id,
         &notary_did,
         title,
@@ -102,20 +102,15 @@ pub async fn create_realm(
         alias,
         content_scheme,
     )?;
-    // Genesis Realm bootstrap has no prior snapshot head. The
-    // `ak.realm.create` precondition asserts `head_eq null`; follow-up
-    // facet events in the same batch are admitted after soland
-    // materialises the creator membership from the create event.
+    // Genesis Realm bootstrap has no prior snapshot head. All follow-up
+    // facets use the staged authority root, and creator membership is the
+    // final explicit slot in the same atomic unit.
     let idempotency_key =
         arkret_sdk::OperationId::new_v7_at(crate::clock::now_unix_ms()).into_string();
-    let events = submitter.prepare_sdk_events_batch(events).await?;
-    let realm_id = events
-        .first()
-        .map(|event| event.realm_id.to_string())
-        .ok_or_else(|| anyhow::anyhow!("Realm bootstrap produced no create Event"))?;
-    submitter
-        .submit_signed_sdk_events_batch(&events, Some(&idempotency_key))
-        .await?;
+    let realm_id = submitter
+        .submit_realm_bootstrap_durable(events, idempotency_key)
+        .await?
+        .to_string();
 
     let introduction_evidence_digest =
         crate::canonical::canonical_sha256(&json!({"kind": "explicit_address"}))?;
@@ -265,29 +260,75 @@ pub async fn transition_member_state(
 
 // ── Space / Realm Management (all writes go through ak.self.events.command.submit) ─
 
-/// Update a Realm's metadata via `ak.realm.update` event (spec-canonical).
-/// `patch` carries the merge-shape body the server reducer applies to the
-/// realm row.
+/// Replace the Realm display profile through its dedicated singleton facet.
+/// Generic Realm patches are intentionally unsupported: title, summary and
+/// avatar have exactly one wire carrier, `ak.realm.profile`.
 pub async fn update_realm_metadata(
     submitter: &EventSubmitter,
     realm_id: &str,
     actor_id: &str,
     patch: Value,
 ) -> anyhow::Result<SubmitEventResult> {
-    if patch_touches_create_locked_encryption_profile(&patch) {
-        anyhow::bail!(
-            "Realm encryption_profile is locked at creation; create a new Realm to change E2EE mode."
-        );
+    let fields = patch
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("Realm profile update must be an object"))?;
+    if let Some(field) = fields
+        .keys()
+        .find(|field| !matches!(field.as_str(), "title" | "summary" | "avatar_blob_ref"))
+    {
+        anyhow::bail!("{field} is not carried by ak.realm.profile");
     }
-    let event = ak_ops::realm_update_patch(realm_id, actor_id, realm_id, patch)?
-        .build_sdk_event("inkson")?;
+    let title = fields
+        .get("title")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("Realm profile title is required"))?;
+    let mut profile = arkret_sdk::RealmProfile::new(title)?;
+    profile.summary = optional_profile_string(fields.get("summary"), "summary")?;
+    profile.avatar_blob_ref =
+        optional_profile_string(fields.get("avatar_blob_ref"), "avatar_blob_ref")?
+            .map(arkret_sdk::BlobRef::new)
+            .transpose()?;
+    let mut event = build_realm_state_event(
+        realm_id,
+        actor_id,
+        EventKind::RealmProfile,
+        profile.to_value()?,
+    )?;
+    // The bootstrap builder uses a null-head guard. A later replacement is
+    // authorized against the current Realm Seal frontier instead.
+    event.preconditions.clear();
+    let seal_view = submitter.events_frontier_realm_seal_view(realm_id).await?;
+    event.seal_basis = Some(seal_view.seal_basis());
+    event.seal_ref = None;
+    event.auth_context = None;
     submitter.submit_sdk_event(&event).await
+}
+
+fn optional_profile_string(value: Option<&Value>, field: &str) -> anyhow::Result<Option<String>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value
+        .as_object()
+        .and_then(|object| object.get("$op"))
+        .and_then(Value::as_str)
+        == Some("unset")
+    {
+        return Ok(None);
+    }
+    let value = value
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Realm profile {field} must be a string or unset"))?
+        .trim();
+    Ok((!value.is_empty()).then(|| value.to_owned()))
 }
 
 /// Update the Realm plaintext-visible service facet through the
 /// dedicated `ak.realm.plaintext_visible_services` event. This is not a
-/// `ak.realm.update` metadata patch: servers enforce plaintext access from
-/// the typed facet projection.
+/// The profile Event cannot change this policy: servers enforce plaintext
+/// access from the typed facet projection.
 pub async fn update_realm_plaintext_visible_services(
     submitter: &EventSubmitter,
     realm_id: &str,

@@ -335,7 +335,7 @@ pub(super) struct SidebarRowRealmPerms {
 }
 
 /// Lazily probe whether `actor` may add members (`ak.invite.create`) or edit
-/// settings (`ak.realm.update`) on `realm_id`, caching the verdict in
+/// settings (`ak.realm.profile`) on `realm_id`, caching the verdict in
 /// `perms_cache`.
 ///
 /// Triggered when a sidebar row's kebab menu opens, so at most two authz
@@ -374,7 +374,7 @@ pub(super) fn ensure_sidebar_row_perms(
                     crate::transport::realm_read::authz_check(
                         &api.sdk_http_client()?,
                         &actor,
-                        "ak.realm.update",
+                        "ak.realm.profile",
                         &realm_id,
                     )
                     .await
