@@ -413,6 +413,9 @@ impl OperationBuilder {
             .transpose()
             .map_err(|err| anyhow::anyhow!("invalid authorization_ref: {err}"))?;
         event.unsigned = unsigned;
+        event
+            .refresh_content_bound_identity()
+            .map_err(|err| anyhow::anyhow!("derive final event_id: {err}"))?;
         // A create whose object id is `event_derived` has exactly one legal
         // local handle: the id the receiver will derive. Stamp it here so no
         // caller has to invent one — inventing was the whole class of bug the
@@ -460,8 +463,15 @@ impl OperationBuilder {
 /// payload after [`OperationBuilder::build_sdk_event`] therefore invalidates
 /// both; this restores them in the one order that has a fixed point.
 pub(crate) fn rederive_event_identity(event: &mut Event) -> anyhow::Result<()> {
-    event.event_id = event
-        .derive_event_id()
+    rederive_event_identity_with_digest_suite(event, arkret_sdk::canonical::DigestSuite::Sha256)
+}
+
+pub(crate) fn rederive_event_identity_with_digest_suite(
+    event: &mut Event,
+    digest_suite: arkret_sdk::canonical::DigestSuite,
+) -> anyhow::Result<()> {
+    event
+        .refresh_content_bound_identity_with_digest_suite(digest_suite)
         .map_err(|err| anyhow::anyhow!("re-derive event_id after payload edit: {err}"))?;
     if let Some(object_id) = arkret_sdk::schema::derived_object_id(event) {
         event

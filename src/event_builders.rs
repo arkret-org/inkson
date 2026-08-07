@@ -1128,6 +1128,7 @@ pub fn build_realm_state_event(
         );
     }
     event.preconditions = vec![head_eq_precondition(write.cell.as_str(), Value::Null)?];
+    crate::operation::rederive_event_identity(&mut event)?;
     Ok(event)
 }
 

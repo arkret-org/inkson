@@ -83,7 +83,7 @@ pub async fn create_realm(
     let resolved_invitees = parse_realm_bootstrap_members(&invitees)?;
     // The Realm id is not minted here: it is derived from the genesis Event
     // the builder produces (spec realm-and-space.md section 2.5.0).
-    let (realm_id, events) = build_realm_bootstrap_events(
+    let (_draft_realm_id, events) = build_realm_bootstrap_events(
         actor_id,
         &notary_did,
         title,
@@ -108,8 +108,13 @@ pub async fn create_realm(
     // materialises the creator membership from the create event.
     let idempotency_key =
         arkret_sdk::OperationId::new_v7_at(crate::clock::now_unix_ms()).into_string();
+    let events = submitter.prepare_sdk_events_batch(events).await?;
+    let realm_id = events
+        .first()
+        .map(|event| event.realm_id.to_string())
+        .ok_or_else(|| anyhow::anyhow!("Realm bootstrap produced no create Event"))?;
     submitter
-        .submit_sdk_events_batch(&realm_id, events, Some(&idempotency_key))
+        .submit_signed_sdk_events_batch(&events, Some(&idempotency_key))
         .await?;
 
     let introduction_evidence_digest =

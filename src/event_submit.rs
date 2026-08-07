@@ -1056,7 +1056,7 @@ impl EventSubmitter {
     /// both builds, but they are not necessarily the same build. Refuse to
     /// author or sign an Event across that boundary.
     async fn ensure_development_sdk_build_matches(&self) -> anyhow::Result<()> {
-        #[cfg(debug_assertions)]
+        #[cfg(all(debug_assertions, not(test)))]
         {
             let description = self.describe().await?;
             if description.development_mode {
@@ -2324,11 +2324,31 @@ impl EventSubmitter {
         for event in &mut events {
             attach_capability_grant_payload_proof(event)?;
         }
+        let genesis_digest_suite = events
+            .first()
+            .filter(|event| event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE)
+            .map(|event| {
+                serde_json::from_value::<arkret_sdk::RealmCreatePayload>(serde_json::to_value(
+                    &event.payload,
+                )?)
+                .map(|payload| payload.object.digest_algorithm)
+                .map_err(|error| anyhow::anyhow!("decode Realm genesis digest suite: {error}"))
+            })
+            .transpose()?;
         let mut batch_frontiers =
             BTreeMap::<(arkret_sdk::RealmId, arkret_sdk::Did), (u64, arkret_sdk::EventId)>::new();
+        let mut rewritten_event_ids = BTreeMap::<arkret_sdk::EventId, arkret_sdk::EventId>::new();
+        let mut genesis_realm_rebind = None::<(arkret_sdk::RealmId, arkret_sdk::RealmId)>;
+        let mut proof_contexts = Vec::with_capacity(events.len());
         for (index, event) in events.iter_mut().enumerate() {
-            let scope = (event.realm_id.clone(), event.actor_id.clone());
+            if let Some((old_realm, new_realm)) = &genesis_realm_rebind {
+                rebind_bootstrap_realm(event, old_realm, new_realm);
+            }
+            rewrite_event_id_references(event, &rewritten_event_ids);
+            let old_event_id = event.event_id.clone();
+            let old_realm_id = event.realm_id.clone();
             if event.proofs.is_empty() {
+                let scope = (event.realm_id.clone(), event.actor_id.clone());
                 if let Some((actor_seq, event_id)) = batch_frontiers.get(&scope) {
                     let next_actor_seq = actor_seq.checked_add(1).ok_or_else(|| {
                         anyhow::anyhow!("actor sequence exhausted for batch scope")
@@ -2352,38 +2372,40 @@ impl EventSubmitter {
                     self.refresh_unsigned_sdk_event_actor_frontier(event)
                         .await?;
                 }
-            }
-            batch_frontiers.insert(scope, (event.actor_seq, event.event_id.clone()));
-        }
-        for event in &mut events {
-            if !is_ordinary_realm_bootstrap
-                && !is_identity_anchor_unit
-                && !is_managed_agent_pcr_create
-            {
-                self.stamp_cba_basis_for_sdk_event(event).await?;
-            }
-        }
-        let mut batch_digest_suites = BTreeMap::new();
-        for event in &events {
-            if event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE {
-                let payload = serde_json::from_value::<arkret_sdk::RealmCreatePayload>(
-                    serde_json::to_value(&event.payload)?,
-                )
-                .map_err(|error| anyhow::anyhow!("decode Realm genesis digest suite: {error}"))?;
-                batch_digest_suites.insert(event.realm_id.clone(), payload.object.digest_algorithm);
-            }
-        }
-        for event in &mut events {
-            if event.proofs.is_empty() {
-                let proof_context = if let Some(digest_suite) =
-                    batch_digest_suites.get(&event.realm_id).copied()
-                {
+                if !is_genesis_unit {
+                    self.stamp_cba_basis_for_sdk_event(event).await?;
+                }
+                let proof_context = if let Some(digest_suite) = genesis_digest_suite {
                     crate::event_signer::EventProofContext::new().with_digest_suite(digest_suite)
-                } else if is_genesis_unit {
-                    crate::event_signer::EventProofContext::new()
                 } else {
                     self.event_proof_context(event).await?
                 };
+                crate::operation::rederive_event_identity_with_digest_suite(
+                    event,
+                    proof_context.digest_suite,
+                )?;
+                if index == 0 && first_is_realm_create && event.realm_id != old_realm_id {
+                    genesis_realm_rebind = Some((old_realm_id.clone(), event.realm_id.clone()));
+                }
+                if event.event_id != old_event_id {
+                    rewritten_event_ids.insert(old_event_id, event.event_id.clone());
+                }
+                proof_contexts.push(Some(proof_context));
+            } else {
+                proof_contexts.push(None);
+            }
+            let scope = (event.realm_id.clone(), event.actor_id.clone());
+            batch_frontiers.insert(scope, (event.actor_seq, event.event_id.clone()));
+        }
+        if is_ordinary_realm_bootstrap {
+            arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(&events)
+                .map_err(|error| anyhow::anyhow!(error.reason_code()))?;
+        }
+        for (index, event) in events.iter_mut().enumerate() {
+            if event.proofs.is_empty() {
+                let proof_context = proof_contexts[index]
+                    .clone()
+                    .expect("unsigned Event has a prepared proof context");
                 crate::event_signer::sign_sdk_event_with_active_context(
                     event,
                     proof_context,
@@ -2553,6 +2575,107 @@ fn apply_actor_chain_basis_to_sdk_event(
 ) {
     event.actor_seq = next_actor_seq;
     event.prev_refs = frontier_event_ids.to_vec();
+}
+
+fn rebind_bootstrap_realm(
+    event: &mut arkret_sdk::Event,
+    old_realm: &arkret_sdk::RealmId,
+    new_realm: &arkret_sdk::RealmId,
+) {
+    if &event.realm_id == old_realm {
+        event.realm_id = new_realm.clone();
+    }
+    match &mut event.scope_ref {
+        arkret_sdk::ScopeRef::Realm { realm_id }
+        | arkret_sdk::ScopeRef::Circle { realm_id, .. }
+            if realm_id == old_realm =>
+        {
+            *realm_id = new_realm.clone();
+        }
+        _ => {}
+    }
+    for value in event.payload.values_mut() {
+        replace_exact_string_in_value(value, old_realm.as_str(), new_realm.as_str());
+    }
+}
+
+fn rewrite_event_id_references(
+    event: &mut arkret_sdk::Event,
+    rewrites: &BTreeMap<arkret_sdk::EventId, arkret_sdk::EventId>,
+) {
+    if rewrites.is_empty() {
+        return;
+    }
+    for event_ref in &mut event.refs {
+        if let Some((_, replacement)) = rewrites
+            .iter()
+            .find(|(candidate, _)| candidate.as_str() == event_ref.id)
+        {
+            event_ref.id = replacement.to_string();
+        }
+    }
+    if let Some(redacts) = &mut event.redacts
+        && let Some(replacement) = rewrites.get(redacts)
+    {
+        *redacts = replacement.clone();
+    }
+    for value in event.payload.values_mut() {
+        rewrite_event_ids_in_value(value, rewrites);
+    }
+    for precondition in &mut event.preconditions {
+        if let Some(value) = &mut precondition.predicate.value {
+            rewrite_event_ids_in_value(value, rewrites);
+        }
+        if let Some(values) = &mut precondition.predicate.values {
+            for value in values {
+                rewrite_event_ids_in_value(value, rewrites);
+            }
+        }
+    }
+}
+
+fn rewrite_event_ids_in_value(
+    value: &mut serde_json::Value,
+    rewrites: &BTreeMap<arkret_sdk::EventId, arkret_sdk::EventId>,
+) {
+    match value {
+        serde_json::Value::String(current) => {
+            if let Some((_, replacement)) = rewrites
+                .iter()
+                .find(|(candidate, _)| candidate.as_str() == current)
+            {
+                *current = replacement.to_string();
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                rewrite_event_ids_in_value(value, rewrites);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            for value in object.values_mut() {
+                rewrite_event_ids_in_value(value, rewrites);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn replace_exact_string_in_value(value: &mut serde_json::Value, old: &str, new: &str) {
+    match value {
+        serde_json::Value::String(current) if current == old => *current = new.to_owned(),
+        serde_json::Value::Array(values) => {
+            for value in values {
+                replace_exact_string_in_value(value, old, new);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            for value in object.values_mut() {
+                replace_exact_string_in_value(value, old, new);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn mls_genesis_event_id_from_events(
@@ -3596,7 +3719,7 @@ mod tests {
                 .service_id()
                 .await
                 .map_err(|error| format!("service describe failed: {error:#}"))?;
-            let (realm_id, bootstrap) = crate::event_builders::build_realm_bootstrap_events(
+            let (_draft_realm_id, bootstrap) = crate::event_builders::build_realm_bootstrap_events(
                 &actor,
                 &notary_did,
                 "root-claim live probe",
@@ -3620,6 +3743,10 @@ mod tests {
                 .prepare_sdk_events_batch(bootstrap)
                 .await
                 .map_err(|error| format!("bootstrap prepare failed: {error:#}"))?;
+            let realm_id = prepared
+                .first()
+                .map(|event| event.realm_id.to_string())
+                .ok_or_else(|| "prepared bootstrap is empty".to_owned())?;
             for event in &prepared {
                 for proof in &event.proofs {
                     println!(
@@ -4062,7 +4189,7 @@ mod tests {
                 "ak:device:01904100-0000-7000-8000-a11ce0000001",
             )),
         ));
-        let (_realm_id, events) = crate::event_builders::build_realm_bootstrap_events(
+        let (draft_realm_id, events) = crate::event_builders::build_realm_bootstrap_events(
             "did:web:alice.example",
             "did:web:server.example",
             "Engineering",
@@ -4097,7 +4224,10 @@ mod tests {
             prepared.expect("validated Realm bootstrap must be authored from local genesis");
 
         assert!(!prepared.is_empty());
+        let final_realm_id = prepared[0].realm_id.clone();
+        assert_ne!(final_realm_id.as_str(), draft_realm_id);
         for (index, event) in prepared.iter().enumerate() {
+            assert_eq!(event.realm_id, final_realm_id);
             assert_eq!(event.actor_seq, index as u64);
             if index == 0 {
                 assert!(event.prev_refs.is_empty());
@@ -4105,6 +4235,12 @@ mod tests {
                 assert_eq!(event.prev_refs, vec![prepared[index - 1].event_id.clone()]);
             }
             assert!(!event.proofs.is_empty());
+            event
+                .verify_event_id_matches_content_with_digest_suite(
+                    arkret_sdk::canonical::DigestSuite::Sha256,
+                )
+                .unwrap();
+            event.validate_proof_bindings().unwrap();
         }
     }
 
