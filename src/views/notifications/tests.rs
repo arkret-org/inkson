@@ -315,6 +315,7 @@ fn fresh_invite_to_same_realm_survives_stale_archive_and_realm_mute() {
 
     // A brand-new invitation (distinct invite id) to the same realm.
     let invite = test_invite(0xbb, realm_id, None, None);
+    let expected_notification_id = format!("invite:{}", invite.id);
     let mut raw = Vec::new();
     append_invite_notifications(&mut raw, vec![invite], &JoinedRealmIds::default());
 
@@ -326,7 +327,7 @@ fn fresh_invite_to_same_realm_survives_stale_archive_and_realm_mute() {
         "fresh invite must not inherit archive"
     );
     assert_eq!(
-        notification.id, "invite:ak:invite:AfRC97FTnyCEsuiktfOeqyhvtwC2_dzzc3GT2Q9TdrAV",
+        notification.id, expected_notification_id,
         "invite notification id is keyed on the unique invite id"
     );
     // Realm mute must not hide an invite to a realm we are not in.

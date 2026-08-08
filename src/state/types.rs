@@ -673,6 +673,19 @@ pub struct PendingPrincipalRegistration {
     /// immutable even when a later client embeds a newer registry snapshot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bootstrap_create_event: Option<Value>,
+    /// Complete proof-free `ak.device.authorize` Event fixed by this client.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap_authorize_event_preimage: Option<Value>,
+    /// Ordered `[realm.create, device.authorize]` Event identities.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub founding_event_ids: Vec<String>,
+    /// Domain-separated digest of `founding_event_ids` in that exact order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub founding_batch_digest: Option<String>,
+    /// Strictly validated public enrollment-authority response. Keeping the
+    /// complete public outcome lets a resumed client submit the same Event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_enroll_outcome: Option<Value>,
     pub bootstrap_created_at: String,
     pub bootstrap_hlc: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -684,8 +697,35 @@ pub struct PendingPrincipalRegistration {
 #[serde(rename_all = "snake_case")]
 pub enum PendingPrincipalRegistrationStage {
     CustodyConfirmed,
-    BindingRegistered,
-    BootstrapAccepted,
+    BootstrapPrepared,
+    BootstrapGrantIssued,
+    DeviceEnrolled,
+    BatchAccepted,
+    StandardPromoted,
+}
+
+impl PendingPrincipalRegistration {
+    /// Advance exactly one durable onboarding phase. Skips and regressions are
+    /// rejected so a resumed client cannot infer work it did not persist.
+    pub fn advance_bootstrap_stage(
+        &mut self,
+        next: PendingPrincipalRegistrationStage,
+    ) -> Result<(), &'static str> {
+        use PendingPrincipalRegistrationStage as Stage;
+        let allowed = matches!(
+            (self.stage, next),
+            (Stage::CustodyConfirmed, Stage::BootstrapPrepared)
+                | (Stage::BootstrapPrepared, Stage::BootstrapGrantIssued)
+                | (Stage::BootstrapGrantIssued, Stage::DeviceEnrolled)
+                | (Stage::DeviceEnrolled, Stage::BatchAccepted)
+                | (Stage::BatchAccepted, Stage::StandardPromoted)
+        );
+        if !allowed {
+            return Err("invalid principal bootstrap checkpoint transition");
+        }
+        self.stage = next;
+        Ok(())
+    }
 }
 
 /// Canonical accepted Event that defines one locally persisted MLS epoch.

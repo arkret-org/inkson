@@ -394,9 +394,13 @@ pub(crate) fn test_invite(
     if let Some(token) = invite_token {
         join_rule_snapshot.insert("invite_token".to_owned(), Value::String(token.to_owned()));
     }
+    let mut event_token = [0_u8; 33];
+    event_token[0] = 0x01;
+    event_token[25..].copy_from_slice(&ordinal.to_be_bytes());
+    let invite_event_id =
+        arkret_sdk::EventId::from_token_bytes(event_token).expect("valid test Event token");
     Invite {
-        id: arkret_sdk::InviteId::new(format!("ak:invite:0196419b-0000-7000-8000-{ordinal:012x}"))
-            .expect("valid test invite id"),
+        id: arkret_sdk::InviteId::from_event_id(&invite_event_id),
         schema: "ak.schema.invite.v1".to_owned(),
         realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).expect("valid test Realm id"),
         inviter: arkret_sdk::Did::new("did:web:alice.example".to_owned())

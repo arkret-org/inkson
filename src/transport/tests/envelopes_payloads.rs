@@ -69,7 +69,6 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             "ak.realm.policy_bundle",
             "ak.realm.join_rule",
             "ak.realm.history_visibility",
-            "ak.realm.history_sharing_policy",
             "ak.realm.discovery",
             "ak.realm.plaintext_visible_services",
             "ak.realm.delivery_binding_policy",
@@ -167,7 +166,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             )
         });
     }
-    for facet in &events[1..9] {
+    for facet in &events[1..8] {
         assert!(
             crate::operation::project_registered_cell_writes(facet)
                 .unwrap()
@@ -186,7 +185,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     assert!(create.proofs.is_empty());
 
     // Bootstrap order: create, profile, encryption floor policy, join_rule,
-    // history_visibility, history_sharing_policy, discovery,
+    // history_visibility, discovery,
     // plaintext_visible, delivery binding policy, creator member join.
     assert_eq!(
         events[2].payload["content_encryption_floor"],
@@ -200,36 +199,13 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     assert_eq!(events[2].payload["content_scheme"], "mls_exporter_aead_v1");
     assert_eq!(events[3].payload["value"], "invite");
     assert_eq!(events[4].payload["value"], "shared");
+    assert_eq!(events[5].payload["value"], "listed");
     assert_eq!(
-        events[5].payload["value"]["default_key_share"],
-        "event_time_visibility"
-    );
-    assert_eq!(
-        events[5].payload["value"]["pre_join_history"],
-        "visibility_condition_allowed"
-    );
-    assert_eq!(
-        events[5].payload["value"]["allowed_key_sources"],
-        json!(["verified_member_device"])
-    );
-    assert_eq!(
-        events[5].payload["value"]["allowed_receiver_states"],
-        json!(["active_member"])
-    );
-    assert_eq!(
-        events[5].payload["value"]["audit"],
-        json!({
-            "share_audit_event_required": false,
-            "access_audit_required": false
-        })
-    );
-    assert_eq!(events[6].payload["value"], "listed");
-    assert_eq!(
-        events[7].payload["services"][0]["service_id"],
+        events[6].payload["services"][0]["service_id"],
         "did:web:server.example"
     );
     assert_eq!(
-        events[7].payload["services"][0]["data_classes"],
+        events[6].payload["services"][0]["data_classes"],
         json!([
             "message_content",
             "full_text_index",
@@ -238,10 +214,10 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         ])
     );
     assert_eq!(
-        events[8].payload["allowed_binding_sources"],
+        events[7].payload["allowed_binding_sources"],
         json!(["realm_policy"])
     );
-    assert_eq!(events[9].payload["membership"], "join");
+    assert_eq!(events[8].payload["membership"], "join");
     assert!(events.iter().all(|event| {
         event
             .payload

@@ -3950,18 +3950,14 @@ mod tests {
         store.save_notification_projection(vec![existing]);
         let response = empty_response("sx:invite");
 
-        apply_notification_projection(
-            &mut store,
-            &response,
-            "",
-            false,
-            Some(vec![crate::state::projection::notifications::test_invite(
-                0x10,
-                "ak:realm:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg",
-                None,
-                None,
-            )]),
+        let invite = crate::state::projection::notifications::test_invite(
+            0x10,
+            "ak:realm:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg",
+            None,
+            None,
         );
+        let expected_invite_notification_id = format!("invite:{}", invite.id);
+        apply_notification_projection(&mut store, &response, "", false, Some(vec![invite]));
 
         let projection = store.notification_projection();
         assert!(
@@ -3972,10 +3968,11 @@ mod tests {
         // The invite notification is keyed on the unique invite id, not the
         // realm id, so a re-invite to the same realm cannot inherit stale
         // archive/read client-state from an earlier invite.
-        assert!(projection.iter().any(|entry| {
-            entry.notification_id()
-                == "invite:ak:invite:AfPFfc9dgGuhIK7wwJDJRJlT4aw6EP_t5Kh71YrQRR80"
-        }));
+        assert!(
+            projection
+                .iter()
+                .any(|entry| { entry.notification_id() == expected_invite_notification_id })
+        );
     }
 
     #[test]

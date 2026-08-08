@@ -79,6 +79,10 @@ pub fn prepare_registration_checkpoint(
         recovery_key_fingerprint: crate::recovery_crypto::fingerprint_recovery_key(recovery_key),
         did_operation: serde_json::to_value(draft.submit_body)?,
         bootstrap_create_event: None,
+        bootstrap_authorize_event_preimage: None,
+        founding_event_ids: Vec::new(),
+        founding_batch_digest: None,
+        device_enroll_outcome: None,
         bootstrap_created_at: arkret_sdk::canonical::format_timestamp_canonical(created_at),
         bootstrap_hlc,
         binding_receipt: None,
@@ -175,6 +179,47 @@ pub struct IdentityBindingCompletion {
     pub dpop_device_key: crate::state::DpopDeviceKeyRecord,
 }
 
+async fn prepare_exact_bootstrap_session_request(
+    handoff: &PendingAccountHandoff,
+    checkpoint: &PendingPrincipalRegistration,
+    account_handoff_grant: &str,
+    dpop: &crate::identity::account_auth::grant_dpop::DpopHandle,
+) -> anyhow::Result<arkret_sdk::SessionGrantRequestBody> {
+    let principal_id = arkret_sdk::Did::new(checkpoint.did.clone())?;
+    let device_id = arkret_sdk::DeviceId::new(checkpoint.device_id.clone())?;
+    let audience = arkret_sdk::Did::new(handoff.audience.clone())?;
+    let bootstrap = device_bootstrap_request_from_checkpoint(checkpoint)?;
+    if let Some(prepared) =
+        crate::identity::account_auth::load_prepared_bootstrap_session_request()?
+    {
+        prepared.validate()?;
+        if prepared.principal_id != principal_id
+            || prepared.device_id.as_ref() != Some(&device_id)
+            || prepared.proof.audience != audience
+            || prepared.proof.challenge != account_handoff_grant
+            || prepared.device_bootstrap_request.as_ref() != Some(&bootstrap)
+        {
+            anyhow::bail!("secure prepared bootstrap request does not match public checkpoint");
+        }
+        return Ok(prepared);
+    }
+    let request = garth::pre_registration_session_grant_request(
+        principal_id,
+        device_id,
+        Vec::new(),
+        bootstrap,
+        account_handoff_grant,
+        audience,
+        Utc::now() + chrono::Duration::minutes(5),
+        |bytes| {
+            dpop.sign_protocol_bytes(bytes)
+                .map_err(|error| garth::Error::Protocol(error.to_string()))
+        },
+    )?;
+    crate::identity::account_auth::persist_prepared_bootstrap_session_request(&request).await?;
+    Ok(request)
+}
+
 pub async fn complete_account_handoff_binding(
     handoff: &PendingAccountHandoff,
     checkpoint: &PendingPrincipalRegistration,
@@ -189,6 +234,9 @@ pub async fn complete_account_handoff_binding(
     }
     let account_handoff_grant = crate::identity::account_auth::load_account_handoff_grant()?
         .ok_or_else(|| anyhow!("account handoff credential is unavailable; authenticate again"))?;
+    let session_request =
+        prepare_exact_bootstrap_session_request(handoff, checkpoint, &account_handoff_grant, dpop)
+            .await?;
     let key_material = validate_checkpoint_recovery_key(checkpoint, recovery_key)?;
     let did_operation: arkret_sdk::DidOperationSubmitRequestBody =
         serde_json::from_value(checkpoint.did_operation.clone())
@@ -234,18 +282,9 @@ pub async fn complete_account_handoff_binding(
         .binding_receipt
         .ok_or_else(|| anyhow!("Account Authority omitted identity-creation binding receipt"))?;
     garth::validate_binding_receipt(&binding_receipt, &challenge)?;
-    let session_request = garth::pre_registration_session_grant_request(
-        register_outcome.principal_id,
-        Some(arkret_sdk::DeviceId::new(checkpoint.device_id.clone())?),
-        Vec::new(),
-        &account_handoff_grant,
-        arkret_sdk::Did::new(handoff.audience.clone())?,
-        Utc::now() + chrono::Duration::minutes(5),
-        |bytes| {
-            dpop.sign_protocol_bytes(bytes)
-                .map_err(|error| garth::Error::Protocol(error.to_string()))
-        },
-    )?;
+    if register_outcome.principal_id != session_request.principal_id {
+        anyhow::bail!("identity registration outcome changed the prepared principal identity");
+    }
     let session_engine = garth::SessionEngine::new(account_client);
     session_engine
         .login(
@@ -370,34 +409,151 @@ fn load_bootstrap_create_event(
     Ok(create)
 }
 
-pub async fn bootstrap_principal(
+/// Fix the founding device Event identity before any bootstrap credential is
+/// requested. Re-entry returns the already-persisted material after verifying
+/// that it still names the same public device keys.
+pub fn prepare_device_bootstrap_checkpoint(
     checkpoint: &PendingPrincipalRegistration,
     recovery_key: &str,
     device_public_key: String,
     hpke_key: String,
-    device_signer: &crate::event_signer::InksonEventSigner,
+) -> anyhow::Result<PendingPrincipalRegistration> {
+    let key_material = validate_checkpoint_recovery_key(checkpoint, recovery_key)?;
+    let create = load_bootstrap_create_event(checkpoint, &key_material)?;
+    if checkpoint.bootstrap_authorize_event_preimage.is_some() {
+        let request = device_bootstrap_request_from_checkpoint(checkpoint)?;
+        let payload = &request.authorize_event_preimage.payload;
+        if payload
+            .get("device_public_key")
+            .and_then(serde_json::Value::as_str)
+            != Some(device_public_key.trim())
+            || payload.get("hpke_key").and_then(serde_json::Value::as_str) != Some(hpke_key.trim())
+        {
+            anyhow::bail!("persisted bootstrap Event belongs to different device key material");
+        }
+        return Ok(checkpoint.clone());
+    }
+
+    let principal_id = arkret_sdk::Did::new(checkpoint.did.clone())?;
+    let realm_id = arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&principal_id))?;
+    let created_at = chrono::DateTime::parse_from_rfc3339(&checkpoint.bootstrap_created_at)
+        .context("persisted bootstrap_created_at is invalid")?
+        .with_timezone(&Utc);
+    let authorize_hlc = crate::signing_stamp::issue_protocol_hlc_with_secret(
+        principal_id.as_str(),
+        &checkpoint.device_id,
+        realm_id.as_str(),
+        &key_material.root_seed,
+    )?;
+    let enroll_request = crate::identity::device_enrollment::prepare_device_enrollment_request(
+        principal_id,
+        arkret_sdk::DeviceId::new(checkpoint.device_id.clone())?,
+        device_public_key,
+        hpke_key,
+        create.event_id.clone(),
+        realm_id,
+        arkret_sdk::Did::new(checkpoint.enrollment_authority_did.clone())?,
+        created_at,
+        authorize_hlc,
+    )?;
+    let founding_event_ids = vec![
+        create.event_id,
+        enroll_request.authorize_event_preimage.event_id.clone(),
+    ];
+    let founding_batch_digest = arkret_sdk::founding_batch_digest(&founding_event_ids)?;
+    let mut prepared = checkpoint.clone();
+    prepared.bootstrap_authorize_event_preimage = Some(serde_json::to_value(
+        &enroll_request.authorize_event_preimage,
+    )?);
+    prepared.founding_event_ids = founding_event_ids.iter().map(ToString::to_string).collect();
+    prepared.founding_batch_digest = Some(founding_batch_digest.to_string());
+    prepared
+        .advance_bootstrap_stage(PendingPrincipalRegistrationStage::BootstrapPrepared)
+        .map_err(anyhow::Error::msg)?;
+    device_bootstrap_request_from_checkpoint(&prepared)?;
+    Ok(prepared)
+}
+
+pub fn device_bootstrap_request_from_checkpoint(
+    checkpoint: &PendingPrincipalRegistration,
+) -> anyhow::Result<arkret_sdk::SessionGrantDeviceBootstrapRequest> {
+    let authorize_event_preimage = serde_json::from_value(
+        checkpoint
+            .bootstrap_authorize_event_preimage
+            .clone()
+            .context("checkpoint is missing device authorize Event preimage")?,
+    )
+    .context("persisted device authorize Event preimage is invalid")?;
+    let founding_event_ids = checkpoint
+        .founding_event_ids
+        .iter()
+        .map(|value| arkret_sdk::EventId::new(value.clone()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let request = arkret_sdk::SessionGrantDeviceBootstrapRequest {
+        mode: arkret_sdk::SessionGrantDeviceBootstrapMode::Founding,
+        authorize_event_preimage,
+        founding_event_ids,
+        founding_batch_digest: arkret_sdk::Hash::new(
+            checkpoint
+                .founding_batch_digest
+                .clone()
+                .context("checkpoint is missing founding batch digest")?,
+        )?,
+    };
+    request.validate()?;
+    Ok(request)
+}
+
+/// Execute only the enrollment-authority step and persist its strictly
+/// validated public response before attempting the founding batch.
+pub async fn enroll_prepared_device(
+    checkpoint: &PendingPrincipalRegistration,
     account_client: &arkret_sdk::http_client::Client,
+) -> anyhow::Result<PendingPrincipalRegistration> {
+    let request = arkret_sdk::AccountDeviceEnrollRequestBody {
+        device_id: arkret_sdk::DeviceId::new(checkpoint.device_id.clone())?,
+        authorize_event_preimage: device_bootstrap_request_from_checkpoint(checkpoint)?
+            .authorize_event_preimage,
+    };
+    let outcome = crate::identity::device_enrollment::request_signed_device_authorize(
+        account_client,
+        &request,
+    )
+    .await?;
+    let mut enrolled = checkpoint.clone();
+    enrolled.device_enroll_outcome = Some(serde_json::to_value(outcome)?);
+    enrolled
+        .advance_bootstrap_stage(PendingPrincipalRegistrationStage::DeviceEnrolled)
+        .map_err(anyhow::Error::msg)?;
+    Ok(enrolled)
+}
+
+/// Submit the exact create/authorize pair and its bootstrap seal. The authority
+/// response is revalidated against the persisted preimage before every retry.
+pub async fn submit_prepared_founding_batch(
+    checkpoint: &PendingPrincipalRegistration,
+    recovery_key: &str,
+    device_signer: &crate::event_signer::InksonEventSigner,
     principal_client: &arkret_sdk::http_client::Client,
 ) -> anyhow::Result<()> {
     let key_material = validate_checkpoint_recovery_key(checkpoint, recovery_key)?;
     let principal_id = arkret_sdk::Did::new(checkpoint.did.clone())?;
     let realm_id = arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&principal_id))?;
     let create = load_bootstrap_create_event(checkpoint, &key_material)?;
-
-    let request = crate::identity::device_enrollment::DeviceEnrollmentRequest {
-        device_id: checkpoint.device_id.clone(),
-        device_public_key,
-        bootstrap_create_event_id: create.event_id.to_string(),
-        not_before: None,
-        hpke_key,
-        algorithms: crate::identity::device_enrollment::inkson_device_algorithms(),
+    let request = arkret_sdk::AccountDeviceEnrollRequestBody {
+        device_id: arkret_sdk::DeviceId::new(checkpoint.device_id.clone())?,
+        authorize_event_preimage: device_bootstrap_request_from_checkpoint(checkpoint)?
+            .authorize_event_preimage,
     };
-    let authorize = crate::identity::device_enrollment::request_signed_device_authorize(
-        account_client,
-        &request,
-        &checkpoint.device_id,
+    let outcome: arkret_sdk::AccountDeviceEnrollOutcome = serde_json::from_value(
+        checkpoint
+            .device_enroll_outcome
+            .clone()
+            .context("checkpoint is missing validated device enrollment outcome")?,
     )
-    .await?;
+    .context("persisted device enrollment outcome is invalid")?;
+    outcome.validate_against(&request)?;
+    let authorize = outcome.authorized_event;
     let seal_hlc = crate::signing_stamp::issue_protocol_hlc_with_secret(
         principal_id.as_str(),
         &checkpoint.device_id,
@@ -620,5 +776,73 @@ mod tests {
 
         let another_key = crate::recovery_crypto::generate_recovery_key().unwrap();
         assert!(validate_checkpoint_recovery_key(&checkpoint, &another_key).is_err());
+    }
+
+    #[test]
+    fn bootstrap_checkpoint_fixes_ordered_event_identity_before_handoff_issue() {
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let handoff =
+            continuity_handoff("ak:request:019f0000-0000-7000-8000-000000000020", "alice");
+        let checkpoint =
+            prepare_registration_checkpoint(&handoff, &handoff.device_id, &recovery_key).unwrap();
+        let prepared = prepare_device_bootstrap_checkpoint(
+            &checkpoint,
+            &recovery_key,
+            "z6MktwupdmLXVVqTzCw4i46r4uGyosGXRnR3XjN4Zq7oMMsw".to_owned(),
+            "z6LSfixtureHpkeKey11111111111111111111111111111111".to_owned(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            prepared.stage,
+            PendingPrincipalRegistrationStage::BootstrapPrepared
+        );
+        let bootstrap = device_bootstrap_request_from_checkpoint(&prepared).unwrap();
+        assert_eq!(bootstrap.founding_event_ids.len(), 2);
+        assert_eq!(
+            bootstrap.authorize_event_preimage.prev_refs,
+            vec![bootstrap.founding_event_ids[0].clone()]
+        );
+        assert_eq!(
+            bootstrap.authorize_event_preimage.event_id,
+            bootstrap.founding_event_ids[1]
+        );
+
+        let replayed = prepare_device_bootstrap_checkpoint(
+            &prepared,
+            &recovery_key,
+            "z6MktwupdmLXVVqTzCw4i46r4uGyosGXRnR3XjN4Zq7oMMsw".to_owned(),
+            "z6LSfixtureHpkeKey11111111111111111111111111111111".to_owned(),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(replayed).unwrap(),
+            serde_json::to_value(&prepared).unwrap()
+        );
+
+        let mut reordered = bootstrap;
+        reordered.founding_event_ids.swap(0, 1);
+        assert!(reordered.validate().is_err());
+
+        let mut stages = checkpoint;
+        assert!(
+            stages
+                .advance_bootstrap_stage(PendingPrincipalRegistrationStage::BatchAccepted)
+                .is_err()
+        );
+        for next in [
+            PendingPrincipalRegistrationStage::BootstrapPrepared,
+            PendingPrincipalRegistrationStage::BootstrapGrantIssued,
+            PendingPrincipalRegistrationStage::DeviceEnrolled,
+            PendingPrincipalRegistrationStage::BatchAccepted,
+            PendingPrincipalRegistrationStage::StandardPromoted,
+        ] {
+            stages.advance_bootstrap_stage(next).unwrap();
+        }
+        assert!(
+            stages
+                .advance_bootstrap_stage(PendingPrincipalRegistrationStage::BatchAccepted)
+                .is_err()
+        );
     }
 }

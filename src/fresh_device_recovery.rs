@@ -942,13 +942,21 @@ pub async fn execute_joint_principal_bootstrap(
     account_client: &arkret_sdk::http_client::Client,
     principal_client: &arkret_sdk::http_client::Client,
 ) -> anyhow::Result<()> {
-    crate::identity::principal_registration::bootstrap_principal(
+    let checkpoint = crate::identity::principal_registration::prepare_device_bootstrap_checkpoint(
         &prepared.checkpoint,
         recovery_words,
         device_public_key,
         hpke_key,
-        device_signer,
+    )?;
+    let checkpoint = crate::identity::principal_registration::enroll_prepared_device(
+        &checkpoint,
         account_client,
+    )
+    .await?;
+    crate::identity::principal_registration::submit_prepared_founding_batch(
+        &checkpoint,
+        recovery_words,
+        device_signer,
         principal_client,
     )
     .await

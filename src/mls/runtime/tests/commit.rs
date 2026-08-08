@@ -26,8 +26,8 @@ fn mls_remove_membership_frontier_is_canonicalized_without_seal_fallback() {
     assert_eq!(
         frontier,
         vec![
-            a,
-            event_id("ak:event:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL")
+            event_id("ak:event:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL"),
+            a
         ]
     );
 }

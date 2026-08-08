@@ -433,6 +433,26 @@ pub(crate) async fn refresh_authenticated_session_after_unauthorized(
     })
 }
 
+/// Force the one allowed `device_bootstrap` -> `standard` rotation after the
+/// founding transaction has been accepted. Garth prepares the refresh body
+/// once and the SDK retries those exact body bytes.
+pub(crate) async fn promote_accepted_bootstrap_session(
+    grant: &PersistedSessionGrant,
+    device_handle: &DpopHandle,
+) -> anyhow::Result<PersistedSessionGrant> {
+    let runtime = session_grant_runtime();
+    let provider = session_transport_provider(runtime.as_ref(), grant, device_handle).await?;
+    provider
+        .refresh_after_unauthorized()
+        .await
+        .map_err(|error| anyhow::anyhow!("promote accepted bootstrap session: {error}"))?;
+    let state = provider
+        .session()
+        .current_state()
+        .context("bootstrap promotion returned no successor grant")?;
+    persisted_session_grant_from_state(&state, &grant.principal_server_url, device_handle)
+}
+
 pub(crate) fn cached_authenticated_sdk_client(
     principal_server_url: &str,
 ) -> Option<arkret_sdk::http_client::Client> {
@@ -557,14 +577,8 @@ pub(crate) fn persist_promoted_recovery_grant(
         .device_id
         .as_ref()
         .context("promoted recovery grant omitted device_id")?;
-    let grant_id = promoted
-        .grant_id
-        .as_ref()
-        .context("promoted recovery grant omitted grant_id")?;
-    let audience = promoted
-        .audience
-        .as_ref()
-        .context("promoted recovery grant omitted audience")?;
+    let grant_id = &promoted.grant_id;
+    let audience = &promoted.audience;
     let session_private_key_pem = device_handle
         .session_signing_key_pkcs8_pem()
         .map_err(|error| anyhow::anyhow!("export promoted grant holder key: {error}"))?;
@@ -694,13 +708,13 @@ fn mint_session_grant_refresh_proof(
         .detached_jws_over_payload_with_kid(&verification_method, &payload)
         .map_err(|error| anyhow::anyhow!("sign soft logout restore proof: {error}"))?;
     Ok(arkret_sdk::SessionGrantRefreshProof {
-        proof_kind: Some(arkret_sdk::SessionGrantProofKind::DidBoundSignature),
-        challenge: Some(challenge),
-        request_canonical_digest: Some(request_canonical_digest_hash),
-        audience: Some(session_audience(audience)?),
-        issued_at: Some(issued_at),
-        expires_at: Some(expires_at),
-        signature: Some(signature),
+        proof_kind: arkret_sdk::SessionGrantProofKind::DidBoundSignature,
+        challenge,
+        request_canonical_digest: request_canonical_digest_hash,
+        audience: session_audience(audience)?,
+        issued_at,
+        expires_at,
+        signature,
         verification_method: Some(verification_method),
     })
 }
@@ -821,16 +835,18 @@ mod tests {
             ),
             session_grant: "standard.grant.jwt".to_owned(),
             expires_at: Utc::now() + chrono::Duration::hours(1),
-            grant_id: Some(
-                arkret_wire::SessionGrantId::new(
-                    "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi8".to_owned(),
-                )
-                .unwrap(),
-            ),
-            session_public_key: Some("holder-public-key".to_owned()),
-            audience: Some(
-                arkret_sdk::Did::new("did:webvh:z6mkfixture:soland.example".to_owned()).unwrap(),
-            ),
+            grant_id: arkret_wire::SessionGrantId::new(
+                "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi8".to_owned(),
+            )
+            .unwrap(),
+            session_public_key: arkret_sdk::CanonicalSessionPublicJwk::new(
+                r#"{"crv":"Ed25519","kty":"OKP","x":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}"#,
+            )
+            .unwrap(),
+            audience: arkret_sdk::Did::new(
+                "did:webvh:z6mkfixture:soland.example".to_owned(),
+            )
+            .unwrap(),
             granted_scope: vec!["ak.self.sync".to_owned()],
             scope_details: None,
         };
@@ -858,7 +874,7 @@ mod tests {
         assert_eq!(installed.grant_jwt, "standard.grant.jwt");
         assert_eq!(
             installed.grant_id,
-            "ak:grant:AYVFZWhohYwHaEnPNmKhgMBK35WYy2igGfoeZIIOtwAy"
+            "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi8"
         );
         assert_eq!(store.session_grant(), Some(installed));
     }

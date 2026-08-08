@@ -688,8 +688,44 @@ async fn create_bind_and_bootstrap_identity(
         barrier.wait().await?;
     }
 
-    let (registration, actor, grant_jwt) = if checkpoint.stage
+    let checkpoint = if checkpoint.stage
         == crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed
+    {
+        let signer = crate::event_signer::active_signer()
+            .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
+        let signer = crate::event_signer::bind_active_signer_device_id(device)?.unwrap_or(signer);
+        let device_public_key = signer
+            .public_key_multibase()
+            .ok_or_else(|| anyhow::anyhow!("device signer has no Ed25519 public key"))?;
+        let hpke_key = {
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+            let (_, public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair(
+                secure_store.as_ref(),
+                &checkpoint.did,
+                device,
+            )?;
+            crate::identity::did_key::encode_x25519_multibase(&public_key)
+        };
+        let prepared =
+            crate::identity::principal_registration::prepare_device_bootstrap_checkpoint(
+                &checkpoint,
+                recovery_key,
+                device_public_key,
+                hpke_key,
+            )?;
+        let barrier = {
+            let mut store = state_store.write();
+            store.set_pending_principal_registration(Some(prepared.clone()))?;
+            store.begin_durable_flush()?
+        };
+        barrier.wait().await?;
+        prepared
+    } else {
+        checkpoint
+    };
+
+    let (registration, actor, grant_jwt) = if checkpoint.stage
+        == crate::state::PendingPrincipalRegistrationStage::BootstrapPrepared
     {
         let dpop = {
             let mut store = state_store.write();
@@ -719,7 +755,11 @@ async fn create_bind_and_bootstrap_identity(
         crate::secure_key_store::adopt_device_seed_scope_on_login(secure_store.as_ref(), &actor)?;
         let mut accepted = checkpoint;
         accepted.binding_receipt = Some(serde_json::to_value(completion.binding_receipt)?);
-        accepted.stage = crate::state::PendingPrincipalRegistrationStage::BindingRegistered;
+        accepted
+            .advance_bootstrap_stage(
+                crate::state::PendingPrincipalRegistrationStage::BootstrapGrantIssued,
+            )
+            .map_err(anyhow::Error::msg)?;
         {
             let mut store = state_store.write();
             store.adopt_pending_login(&actor);
@@ -890,23 +930,10 @@ async fn finish_principal_setup(
         registration,
         recovery_key,
     )?;
+    let mut registration = registration.clone();
+    let mut active_session = session.to_owned();
 
-    if registration.stage == crate::state::PendingPrincipalRegistrationStage::BindingRegistered {
-        let signer = crate::event_signer::active_signer()
-            .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
-        let signer = crate::event_signer::bind_active_signer_device_id(device)?.unwrap_or(signer);
-        let device_public_key = signer
-            .public_key_multibase()
-            .ok_or_else(|| anyhow::anyhow!("device signer has no Ed25519 public key"))?;
-        let hpke_key = {
-            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            let (_, public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair(
-                secure_store.as_ref(),
-                actor,
-                device,
-            )?;
-            crate::identity::did_key::encode_x25519_multibase(&public_key)
-        };
+    if registration.stage == crate::state::PendingPrincipalRegistrationStage::BootstrapGrantIssued {
         let dpop = {
             let mut store = state_store.write();
             crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)?
@@ -917,22 +944,37 @@ async fn finish_principal_setup(
         let account_client = arkret_sdk::http_client::ClientBuilder::new(account_base)
             .allow_insecure_localhost()
             .auth(arkret_sdk::http_client::Auth::Dpop(
-                dpop.sdk_dpop_auth_for_access_token(session.to_owned()),
+                dpop.sdk_dpop_auth_for_access_token(active_session.clone()),
             ))
             .build()?;
+        let enrolled = crate::identity::principal_registration::enroll_prepared_device(
+            &registration,
+            &account_client,
+        )
+        .await?;
+        let barrier = {
+            let mut store = state_store.write();
+            store.set_pending_principal_registration(Some(enrolled.clone()))?;
+            store.begin_durable_flush()?
+        };
+        barrier.wait().await?;
+        registration = enrolled;
+    }
+
+    if registration.stage == crate::state::PendingPrincipalRegistrationStage::DeviceEnrolled {
+        let signer = crate::event_signer::active_signer()
+            .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
+        let signer = crate::event_signer::bind_active_signer_device_id(device)?.unwrap_or(signer);
         let bootstrap_registration = registration.clone();
         let bootstrap_key = recovery_key.to_owned();
         crate::transport::auth::with_authed_sdk_client(
             base_url,
-            session.to_owned(),
+            active_session.clone(),
             |principal_client| async move {
-                crate::identity::principal_registration::bootstrap_principal(
+                crate::identity::principal_registration::submit_prepared_founding_batch(
                     &bootstrap_registration,
                     &bootstrap_key,
-                    device_public_key,
-                    hpke_key,
                     signer.as_ref(),
-                    &account_client,
                     &principal_client,
                 )
                 .await
@@ -942,20 +984,57 @@ async fn finish_principal_setup(
         .map_err(|error| anyhow::anyhow!(error.display()))?;
 
         let mut accepted = registration.clone();
-        accepted.stage = crate::state::PendingPrincipalRegistrationStage::BootstrapAccepted;
+        accepted
+            .advance_bootstrap_stage(crate::state::PendingPrincipalRegistrationStage::BatchAccepted)
+            .map_err(anyhow::Error::msg)?;
         let barrier = {
             let mut store = state_store.write();
-            store.set_pending_principal_registration(Some(accepted))?;
+            store.set_pending_principal_registration(Some(accepted.clone()))?;
             store.begin_durable_flush()?
         };
         barrier.wait().await?;
+        registration = accepted;
+    }
+
+    if registration.stage == crate::state::PendingPrincipalRegistrationStage::BatchAccepted {
+        let dpop = {
+            let mut store = state_store.write();
+            crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)?
+        };
+        let bootstrap_grant = state_store
+            .read()
+            .session_grant()
+            .filter(|grant| {
+                grant.principal_id == registration.did && grant.device_id == registration.device_id
+            })
+            .ok_or_else(|| anyhow::anyhow!("saved bootstrap session is unavailable"))?;
+        let standard = crate::identity::session_refresh::promote_accepted_bootstrap_session(
+            &bootstrap_grant,
+            &dpop,
+        )
+        .await?;
+        active_session = standard.grant_jwt.clone();
+        let mut promoted = registration.clone();
+        promoted
+            .advance_bootstrap_stage(
+                crate::state::PendingPrincipalRegistrationStage::StandardPromoted,
+            )
+            .map_err(anyhow::Error::msg)?;
+        let barrier = {
+            let mut store = state_store.write();
+            store.set_session_grant(Some(standard));
+            store.set_pending_principal_registration(Some(promoted.clone()))?;
+            store.begin_durable_flush()?
+        };
+        barrier.wait().await?;
+        crate::identity::account_auth::clear_prepared_bootstrap_session_request()?;
     }
 
     let recovery_actor = actor.to_owned();
     let recovery_device = device.to_owned();
     let recovery_key_value = recovery_key.to_owned();
     let backup_id =
-        crate::transport::auth::with_authed_api(base_url, session.to_owned(), |api| async move {
+        crate::transport::auth::with_authed_api(base_url, active_session, |api| async move {
             crate::recovery_strand::ensure_recovery_policy_and_did_recovery_backup(
                 &api,
                 &recovery_actor,
@@ -1279,7 +1358,7 @@ mod tests {
     }
 
     #[test]
-    fn a_registered_binding_resumes_from_its_own_session_after_the_handoff_is_cleared() {
+    fn every_post_issue_phase_resumes_from_its_own_session_after_handoff_clear() {
         let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
         let handoff = test_handoff(
             "ak:request:019f0000-0000-7000-8000-000000000010",
@@ -1287,8 +1366,10 @@ mod tests {
             Some(1),
         );
         for stage in [
-            crate::state::PendingPrincipalRegistrationStage::BindingRegistered,
-            crate::state::PendingPrincipalRegistrationStage::BootstrapAccepted,
+            crate::state::PendingPrincipalRegistrationStage::BootstrapGrantIssued,
+            crate::state::PendingPrincipalRegistrationStage::DeviceEnrolled,
+            crate::state::PendingPrincipalRegistrationStage::BatchAccepted,
+            crate::state::PendingPrincipalRegistrationStage::StandardPromoted,
         ] {
             let checkpoint = test_checkpoint(&handoff, &recovery_key, stage);
 

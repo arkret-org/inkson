@@ -168,12 +168,10 @@ const SIDECAR_CONTEXT_LOCATOR_PREFIX: &str = "sidecar_context_locator";
 
 fn sidecar_exchange_fold_cache_key(
     controller_id: &str,
-    private_strand_id: &str,
+    sidecar_id: &str,
     exchange_id: &str,
 ) -> String {
-    format!(
-        "{SIDECAR_EXCHANGE_FOLD_CACHE_PREFIX}:{controller_id}:{private_strand_id}:{exchange_id}"
-    )
+    format!("{SIDECAR_EXCHANGE_FOLD_CACHE_PREFIX}:{controller_id}:{sidecar_id}:{exchange_id}")
 }
 
 /// Replace the local fold cache entry for one exchange. The fold output is
@@ -191,7 +189,7 @@ pub(crate) fn cache_sidecar_exchange_projection(
     }
     let key = sidecar_exchange_fold_cache_key(
         projection.controller_id.as_str(),
-        projection.source_track_ref.strand_id.as_str(),
+        projection.sidecar_id.as_str(),
         projection.exchange_id.as_str(),
     );
     let current = store.load_private_data(account_did, &key).and_then(|raw| {
@@ -1506,8 +1504,11 @@ fn refold_sidecar_exchanges_with_decrypt_report(
             }
             // F-5 cache gate (§7.2.4): compare the persisted frontier against
             // the locally verified fact set before refolding.
-            let cache_key =
-                sidecar_exchange_fold_cache_key(controller_id, strand_id, exchange_id_raw);
+            let cache_key = sidecar_exchange_fold_cache_key(
+                controller_id,
+                sidecar_id.as_str(),
+                exchange_id_raw,
+            );
             let cached_projection = store_ref
                 .load_private_data(controller_id, &cache_key)
                 .and_then(|raw| {
@@ -2769,7 +2770,6 @@ mod tests {
         cached.folded_frontier = arkret_sdk::AgentSidecarExchangeFoldedFrontier {
             event_ids: vec![response_event_id.clone()],
             event_set_digest: arkret_sdk::agent_sidecar_exchange_event_set_digest(&[
-                arkret_sdk::EventId::new(EXCHANGE_REQUEST_EVENT).unwrap(),
                 response_event_id,
             ])
             .unwrap(),

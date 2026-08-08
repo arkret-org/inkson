@@ -2,10 +2,7 @@ use arkret_sdk::http_client::{Auth, ClientBuilder};
 use chrono::Utc;
 use dioxus::prelude::*;
 use dioxus_router::Link;
-use garth::{
-    AccountHandoffDisposition, LoginKind, OidcAccountHandoffInput, PreRegistrationHandoffLogin,
-    SessionEngine, SessionGrantState,
-};
+use garth::{AccountHandoffDisposition, OidcAccountHandoffInput, SessionGrantState};
 
 use crate::components::UiIcon;
 use crate::config::{
@@ -832,8 +829,6 @@ async fn finish_oidc_callback(
     if scaffold.issuer.trim().is_empty() {
         return Err("Sign-in state is missing the OIDC issuer.".to_owned());
     }
-    let device_id = arkret_sdk::DeviceId::new(device.clone())
-        .map_err(|error| format!("invalid device_id: {error}"))?;
     let principal_audience = arkret_sdk::Did::new(scaffold.principal_audience.trim().to_owned())
         .map_err(|error| format!("invalid Principal Server audience DID: {error}"))?;
     let http = ClientBuilder::new(sdk_base_url)
@@ -958,140 +953,10 @@ async fn finish_oidc_callback(
     let AccountHandoffDisposition::Bound { principal_id } = disposition else {
         unreachable!("active and busy handoff outcomes returned above")
     };
-    let session_request = garth::pre_registration_session_grant_request(
-        principal_id,
-        Some(device_id),
-        Vec::new(),
-        &handoff.account_handoff_grant,
-        principal_audience,
-        Utc::now() + chrono::Duration::minutes(5),
-        |bytes| {
-            dpop_handle
-                .sign_protocol_bytes(bytes)
-                .map_err(|error| garth::Error::Protocol(error.to_string()))
-        },
-    )
-    .map_err(|error| format!("Pre-registration session request failed: {error}"))?;
-    let handoff_http = ClientBuilder::new(
-        crate::identity::session_refresh::sdk_base_url_from_gate_account_base(
-            &scaffold.gate_account_base,
-        )
-        .map_err(|error| format!("Invalid Account Authority base: {error}"))?,
-    )
-    .allow_insecure_localhost()
-    .auth(Auth::Dpop(dpop_handle.sdk_account_handoff_auth(
-        handoff.account_handoff_grant.clone(),
-    )))
-    .build()
-    .map_err(|error| format!("Build handoff session client failed: {error}"))?;
-    let session_engine = SessionEngine::new(handoff_http);
-    session_engine
-        .login(
-            LoginKind::PreRegistrationHandoff(Box::new(PreRegistrationHandoffLogin {
-                request: session_request,
-            })),
-            Utc::now(),
-        )
-        .await
-        .map_err(|error| {
-            format!("Account Authority handoff session-grant issue failed: {error}")
-        })?;
-    let session_grant = session_engine
-        .current_state()
-        .ok_or_else(|| "Account Authority session-grant issue did not yield state.".to_owned())?;
-    let session_private_key_pem = dpop_handle
-        .session_signing_key_pkcs8_pem()
-        .map_err(|error| format!("export device session key: {error}"))?
-        .to_string();
-    let dpop_device_key =
-        crate::identity::account_auth::grant_dpop::dpop_device_key_record_from_seed(
-            dpop_handle.seed_b64().as_str(),
-        )
-        .map_err(|error| format!("DPoP device key record failed: {error}"))?;
-    let principal_target = principal_server_url;
-    let principal = TransportClient::unauthenticated(&principal_target)
-        .map_err(|error| format!("Invalid principal server URL: {error}"))?;
-    let actor = session_grant.principal_id.as_str().to_owned();
-    if actor.trim().is_empty() {
-        return Err("Account Authority did not return an account DID.".to_owned());
-    }
-    // ②(A+②): the held credential is the `ak.session.grant` itself; every
-    // `/_arkret/self/*` request presents it as `Authorization: Bearer <grant>` +
-    // a per-request `DPoP` proof bound to the grant's `cnf.jkt`. Verify the
-    // credential up front by reading the account viewer through a grant+DPoP
-    // client (api-conventions.md §3.3).
-    let authed_principal = principal
-        .clone()
-        .with_bearer(session_grant.grant_jwt.clone())
-        .and_then(|client| client.with_dpop_device(dpop_handle.clone()))
-        .map_err(|error| format!("Could not build the authenticated Principal client: {error}"))?;
-    let account =
-        async { crate::transport::account::account_me(&authed_principal.sdk_http_client()?).await }
-            .await
-            .map_err(|error| {
-                format!("Principal server did not accept the session grant + DPoP: {error}")
-            })?;
-    let canonical_actor = if account.did.trim().is_empty() {
-        actor
-    } else {
-        account.did
-    };
-    // The resolved principal is now known: re-home the bootstrap device seed
-    // (the one bound to the session grant just issued above) under this
-    // account's scope and clear the bootstrap entry, so a later sign-in for a
-    // *different* account on this browser cannot inherit this account's device
-    // key. Sets the active seed scope to this account for the rest of the
-    // session.
-    {
-        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        if let Err(error) = crate::secure_key_store::adopt_device_seed_scope_on_login(
-            secure_store.as_ref(),
-            &canonical_actor,
-        ) {
-            tracing::warn!(%error, "adopt account device seed scope on login failed");
-        }
-        // The grant just issued is authoritative for this browser session's
-        // protocol device id. `adopt_device_seed_scope_on_login` may have
-        // carried over an older bootstrap/pending id for a first-time account;
-        // overwrite it immediately so the next secure-store bootstrap does not
-        // bind the durable signer to a device id different from the bearer
-        // grant's `urn:arkret:client:device:*` scope.
-        if let Err(error) = crate::secure_key_store::store_device_id_scoped(
-            secure_store.as_ref(),
-            Some(&canonical_actor),
-            &device,
-        ) {
-            tracing::warn!(%error, "persist account device id from session grant failed");
-        }
-    }
-    let personal_handle = crate::app::personal_handle_from_account_handle(&account.handle);
-    let _ = clear_persisted_oidc_scaffold();
-
-    let resolved_device = device;
-    // Persist the principal session grant as the live credential. The refresh
-    // path keeps it fresh by rotating it (grant-binding DPoP proof → fresh grant) when
-    // near expiry.
-    let persisted_session_grant = persisted_session_grant_from_state(
-        &session_grant,
-        &session_private_key_pem,
-        &principal_target,
-        &canonical_actor,
-        &resolved_device,
-    );
-
-    let _ = crate::identity::account_auth::clear_account_handoff_grant();
-    let _ = state_store.write().set_pending_account_handoff(None);
-    Ok(OidcCallbackOutcome::Login(Box::new(CompletedLogin {
-        principal_server_url: principal_target,
-        actor: canonical_actor,
-        personal_handle,
-        device_id: resolved_device,
-        dpop_device_key,
-        // The grant JWT is now the live credential carried in the `token` signal.
-        session_credential: session_grant.grant_jwt.clone(),
-        preferred_locale: handoff.preferred_locale,
-        session_grant: Some(persisted_session_grant),
-    })))
+    Err(format!(
+        "account handoff for existing principal {} cannot use the founding pre-registration proof; continue with an existing device-holder sign-in",
+        principal_id.as_str()
+    ))
 }
 
 fn apply_authenticated_account_locale(
