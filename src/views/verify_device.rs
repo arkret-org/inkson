@@ -2,13 +2,10 @@ use dioxus::prelude::*;
 use qrcode::render::svg;
 use qrcode::{EcLevel, QrCode};
 
-use crate::cross_signing::{CrossSigningExecutor, CrossSigningSetupPlan};
-use crate::secure_key_store::default_secure_key_store;
 use crate::transport::auth::with_authed_api;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
-use crate::views::helpers::short_protocol_id;
 
 /// Render `payload` as an inline SVG QR code. Falls back to an empty
 /// string if encoding fails (oversize / invalid input); callers should
@@ -159,7 +156,6 @@ pub fn VerifyDevicePanel(
     selected_realm_id: String,
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
-    // B2e wires `state_store` to persist the cross-signing publish content;
     // `selected_realm_id` is kept on the prop list so the route binding in
     // `app.rs` stays uniform with other panel signatures.
     let base_url = crate::app::SessionContext::base_url_string();
@@ -168,23 +164,6 @@ pub fn VerifyDevicePanel(
     let mut verify_method = use_signal(|| VerifyMethod::QrCode);
     let mut target_device = use_signal(String::new);
     let mut verify_status = use_signal(String::new);
-    // Hydrate the latest persisted cross-signing publish (B2e) so the
-    // panel reflects the device's cross-signed state across reloads.
-    let persisted_publish_label = state_store
-        .read()
-        .load_private_data(&account_did, "cross_signing.publish.latest")
-        .and_then(|json| serde_json::from_str::<arkret_sdk::CrossSigningPublish>(&json).ok())
-        .map(|p| {
-            format!(
-                "Last cross-signing publish for {} (generation {})",
-                p.principal_id.as_str(),
-                p.generation,
-            )
-        })
-        .unwrap_or_else(|| "Not configured".to_owned());
-    let mut cross_signing_state = use_signal(move || persisted_publish_label);
-    let mut cross_signing_plan = use_signal(|| Option::<CrossSigningSetupPlan>::None);
-    let mut cross_signing_publish_id = use_signal(String::new);
     let mut sas_code = use_signal(String::new);
     let mut qr_data = use_signal(String::new);
     // SAS key-exchange state. The ephemeral keypair is generated
@@ -777,8 +756,8 @@ pub fn VerifyDevicePanel(
                                         }
                                         div { class: "metric",
                                             strong { "②" }
-                                            span { "Cross-sign" }
-                                            div { class: "muted", "Your main device signs the new device's key" }
+                                            span { "Record acceptance" }
+                                            div { class: "muted", "The root-anchored device directory records the authorization" }
                                         }
                                         div { class: "metric",
                                             strong { "③" }
@@ -806,299 +785,6 @@ pub fn VerifyDevicePanel(
             if !verify_status().is_empty() {
                 div { class: "muted", "data-testid": "verify-status", "{verify_status}" }
             }
-
-            // Cross-signing state
-            div { class: "event", "data-testid": "cross-signing",
-                div { class: "event-head",
-                    span { "Cross-Signing" }
-                    span { class: "badge",
-                        if cross_signing_plan().is_some() { "Plan ready" } else { "Not configured" }
-                    }
-                }
-                div { class: "muted", "{cross_signing_state}" }
-                div { class: "muted",
-                    "Three-tier signing chain: principal_signing_key (DID control layer) · self_signing_key (this device) · user_signing_key (cross-principal trust)."
-                    "Spec: crypto-media/device-lifecycle.md §5."
-                }
-                div { class: "actions",
-                    Button {
-                        variant: ButtonVariant::Primary,
-                        "data-testid": "setup-cross-signing",
-                        onclick: {
-                            let device_id_clone = device_id.clone();
-                            let mut plan_signal = cross_signing_plan;
-                            let mut status = verify_status;
-                            move |_| {
-                                let plan = CrossSigningSetupPlan::build_initial(
-                                    "did:webvh:current-principal",
-                                    &device_id_clone,
-                                );
-                                let preview = plan
-                                    .event_kinds()
-                                    .iter()
-                                    .map(|k| (*k).to_owned())
-                                    .collect::<Vec<_>>()
-                                    .join(", ");
-                                status.set(format!("Cross-signing plan generated · events: {preview}"));
-                                plan_signal.set(Some(plan));
-                            }
-                        },
-                        "Build setup plan"
-                    }
-                }
-                if let Some(plan) = cross_signing_plan() {
-                    div { class: "muted", "data-testid": "cross-signing-plan",
-                        "Mode: {plan.mode:?} · generation: {plan.new_generation}"
-                    }
-                    ul { class: "list", "data-testid": "cross-signing-steps",
-                        for (idx , step) in plan.steps.iter().enumerate() {
-                            li { key: "{idx}",
-                                div { strong { "{step.description()}" } }
-                                if let Some(kind) = step.canonical_event_kind() {
-                                    div { class: "muted", "event: {kind}" }
-                                }
-                            }
-                        }
-                    }
-                    div { class: "actions",
-                        Button {
-                            variant: ButtonVariant::Primary,
-                            "data-testid": "run-cross-signing-setup",
-                            disabled: account_did.trim().is_empty(),
-                            onclick: {
-                                let base = base_url.clone();
-                                let actor = account_did.clone();
-                                let device = device_id.clone();
-                                let plan = plan.clone();
-                                move |_| {
-                                    let base = base.clone();
-                                    let actor = actor.clone();
-                                    let device = device.clone();
-                                    let plan = plan.clone();
-                                    let api_token = token();
-                                    // Construct the principal DID from the
-                                    // current account DID — the plan was
-                                    // built with a placeholder ("did:webvh:
-                                    // current-principal") because the
-                                    // build_initial caller had no actor
-                                    // context; the executor uses this
-                                    // canonical DID instead.
-                                    let principal = match arkret_sdk::Did::new(actor.clone()) {
-                                        Ok(d) => d,
-                                        Err(err) => {
-                                            cross_signing_state.set(format!(
-                                                "Invalid actor DID: {err:?}"
-                                            ));
-                                            return;
-                                        }
-                                    };
-                                    spawn(async move {
-                                        // 1. Run the executor: generate
-                                        //    PSK/SSK/USK + sign bindings +
-                                        //    validate the publish content.
-                                        //
-                                        // Round 4 — `ak.cross_signing.publish`
-                                        // requires `trust_domain` in the
-                                        // canonical bind input. We thread the
-                                        // active deployment's trust domain from
-                                        // the local-state cache populated by
-                                        // /server/describe. Until the cache is
-                                        // populated we fall back to the public
-                                        // sentinel so the local executor stays
-                                        // testable without a live connect; the
-                                        // submit path will be rejected by the
-                                        // server if the value disagrees with
-                                        // the deployment.
-                                        // TODO(cross-signing-trust-domain):
-                                        // surface a clear "connect required"
-                                        // error before the run begins instead
-                                        // of relying on server-side rejection.
-                                        let trust_domain = match state_store
-                                            .read()
-                                            .load()
-                                            .server_trust_domain
-                                            .clone()
-                                            .and_then(|s| arkret_sdk::TypedTrustDomainId::new(s).ok())
-                                        {
-                                            Some(trust_domain) => trust_domain,
-                                            None => match arkret_sdk::TypedTrustDomainId::new(
-                                                "ak:trust_domain:unknown.local",
-                                            ) {
-                                                Ok(trust_domain) => trust_domain,
-                                                Err(error) => {
-                                                    cross_signing_state.set(format!(
-                                                        "Invalid fallback trust domain: {error}"
-                                                    ));
-                                                    return;
-                                                }
-                                            },
-                                        };
-                                        let executor = CrossSigningExecutor::new(
-                                            plan,
-                                            principal.clone(),
-                                            trust_domain,
-                                        );
-                                        let output = match executor.run() {
-                                            Ok(out) => out,
-                                            Err(err) => {
-                                                cross_signing_state.set(format!(
-                                                    "Setup failed during key generation: {err}"
-                                                ));
-                                                return;
-                                            }
-                                        };
-                                        // 2. Persist the private keys to
-                                        //    the OS keychain (or the in-
-                                        //    memory fallback on wasm).
-                                        let store = default_secure_key_store("inkson");
-                                        if let Err(err) = output
-                                            .persist_private_keys(
-                                                store.as_ref(),
-                                                principal.as_str(),
-                                            )
-                                        {
-                                            cross_signing_state.set(format!(
-                                                "Setup failed to persist keys: {err}"
-                                            ));
-                                            return;
-                                        }
-                                        // 3. Submit the publish event. Per
-                                        //    spec key-management.md §4.1 +
-                                        //    device-lifecycle.md §5.1,
-                                        //    cross-signing publish + device
-                                        //    authorization events MUST live
-                                        //    in the principal control
-                                        //    Realm. The SDK exposes the
-                                        //    canonical derivation; we route
-                                        //    through it so the server-side
-                                        //    pinning check accepts the write.
-                                        let control_realm =
-                            arkret_sdk::principal_control_realm_id(
-                                                &principal,
-                                            );
-                                        let envelope = match output
-                                            .build_publish_envelope(&control_realm, &actor)
-                                        {
-                                            Ok(env) => env,
-                                            Err(err) => {
-                                                cross_signing_state.set(format!(
-                                                    "Setup failed to build publish envelope: {err}"
-                                                ));
-                                                return;
-                                            }
-                                        };
-                                        match with_authed_api(
-                                            &base,
-                                            api_token.clone(),
-                                            |api| async move {
-                                                api.event_submitter()?.submit_sdk_event(&envelope).await
-                                            },
-                                        )
-                                        .await
-                                        {
-                                            Ok(resp) => {
-                                                cross_signing_publish_id
-                                                    .set(resp.event_id.clone());
-                                                let recovery_publish =
-                                                    output.publish_content.clone();
-                                                let recovery_self_signing_key =
-                                                    ed25519_dalek::SigningKey::from_bytes(
-                                                        &output.self_signing_key.to_bytes(),
-                                                    );
-                                                let recovery_actor = actor.clone();
-                                                let recovery_device = device.clone();
-                                                let recovery_backup = with_authed_api(
-                                                    &base,
-                                                    api_token,
-                                                    |api| async move {
-                                                        crate::recovery_strand::ensure_recovery_directed_ssk_backup(
-                                                            &api,
-                                                            &recovery_actor,
-                                                            &recovery_device,
-                                                            &recovery_publish,
-                                                            &recovery_self_signing_key,
-                                                        )
-                                                        .await
-                                                    },
-                                                )
-                                                .await;
-                                                cross_signing_state.set(match recovery_backup {
-                                                    Ok(backup_id) => format!(
-                                                        "Cross-signing publish accepted as {} (generation {}); recovery-directed SSK backup {} is durable",
-                                                        resp.event_id,
-                                                        output.publish_content.generation,
-                                                        backup_id,
-                                                    ),
-                                                    Err(error) => format!(
-                                                        "Cross-signing publish accepted as {} (generation {}), but its recovery-directed SSK backup failed: {}",
-                                                        resp.event_id,
-                                                        output.publish_content.generation,
-                                                        error.display(),
-                                                    ),
-                                                });
-                                                // B2e: persist the publish content into
-                                                // LocalStateStore.private_data (XOR-
-                                                // encrypted with the account DID) so a
-                                                // subsequent mount, refresh, or device-
-                                                // trust panel can re-read the cross-
-                                                // signed state without rerunning the
-                                                // executor. Failures here are non-
-                                                // fatal — the server accepted the
-                                                // publish, and the in-memory output
-                                                // is still valid for this session.
-                                                if let Ok(serialized) =
-                                                    serde_json::to_string(&output.publish_content)
-                                                {
-                                                    state_store.write().save_private_data(
-                                                        &actor,
-                                                        "cross_signing.publish.latest",
-                                                        serialized,
-                                                    );
-                                                }
-                                                // Plan consumed — clear so
-                                                // the UI does not invite a
-                                                // duplicate submit.
-                                                cross_signing_plan.set(None);
-                                            }
-                                            Err(err) => cross_signing_state.set(format!(
-                                                "Setup submitted but server rejected publish: {}",
-                                                err.display()
-                                            )),
-                                        }
-                                    });
-                                }
-                            },
-                            "Run setup"
-                        }
-                    }
-                }
-                if !cross_signing_publish_id().is_empty() {
-                    {
-                        let publish_id = cross_signing_publish_id();
-                        let publish_id_label = short_protocol_id(&publish_id);
-                        rsx! {
-                            div { class: "muted", "data-testid": "cross-signing-publish-id",
-                                title: "{publish_id}",
-                                "Last publish event id: {publish_id_label}"
-                            }
-                        }
-                    }
-                }
-            }
         }
-    }
-}
-
-#[cfg(test)]
-mod cross_signing_view_tests {
-    use crate::cross_signing::{CrossSigningSetupMode, CrossSigningSetupPlan};
-
-    #[test]
-    fn initial_plan_lists_publish_and_device_authorized_events() {
-        let plan = CrossSigningSetupPlan::build_initial("did:webvh:alice.example", "ak:device:01a");
-        let kinds = plan.event_kinds();
-        assert!(kinds.contains(&"ak.cross_signing.publish"));
-        assert!(kinds.contains(&"ak.device.authorize"));
-        assert!(matches!(plan.mode, CrossSigningSetupMode::InitialSetup));
     }
 }

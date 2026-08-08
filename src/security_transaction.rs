@@ -172,8 +172,11 @@ fn audit_public_transaction_state(state: &DurableSecurityTransaction) -> garth::
     if let Some(pending) = &state.pending_erase_request {
         audit_canonical_public_json("pending_erase_request", pending)?;
     }
-    if let Some(pending) = &state.pending_promotion_request {
-        audit_canonical_public_json("pending_promotion_request", pending)?;
+    if let Some(pending) = &state.pending_completion_grant_request {
+        audit_canonical_public_json("pending_completion_grant_request", pending)?;
+    }
+    if let Some(accepted) = &state.accepted_completion_grant_request {
+        audit_canonical_public_json("accepted_completion_grant_request", accepted)?;
     }
     if let Some(resource) = &state.last_observed_resource {
         let value = serde_json::to_value(resource).map_err(|error| {
@@ -349,7 +352,8 @@ mod tests {
             pending_continue: None,
             accepted_terminal_continue: None,
             pending_erase_request: None,
-            pending_promotion_request: None,
+            pending_completion_grant_request: None,
+            accepted_completion_grant_request: None,
             last_observed_resource: None,
         };
         store.save(&state).await.unwrap();
@@ -427,7 +431,8 @@ mod tests {
             pending_continue: None,
             accepted_terminal_continue: None,
             pending_erase_request: None,
-            pending_promotion_request: None,
+            pending_completion_grant_request: None,
+            accepted_completion_grant_request: None,
             last_observed_resource: None,
         };
 
@@ -458,7 +463,8 @@ mod tests {
             pending_continue: None,
             accepted_terminal_continue: None,
             pending_erase_request: None,
-            pending_promotion_request: None,
+            pending_completion_grant_request: None,
+            accepted_completion_grant_request: None,
             last_observed_resource: None,
         };
 
@@ -489,7 +495,8 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            pending_promotion_request: None,
+            pending_completion_grant_request: None,
+            accepted_completion_grant_request: None,
             last_observed_resource: None,
         };
 
@@ -525,7 +532,8 @@ mod tests {
             pending_continue: None,
             accepted_terminal_continue: None,
             pending_erase_request: None,
-            pending_promotion_request: None,
+            pending_completion_grant_request: None,
+            accepted_completion_grant_request: None,
             last_observed_resource: None,
         };
 

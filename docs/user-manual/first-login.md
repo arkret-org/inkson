@@ -1,68 +1,67 @@
 # inkson — First identity setup
 
-The first identity setup is custody-first. Signing in and creating a principal
-identity are separate operations: a session is always bound to an already
-verified principal DID and cannot invent one from a handle or OIDC subject.
+First setup is custody-first and account-first. OIDC authenticates one account;
+the new DID remains an identity anchor, while device authorization lives in its
+Principal Control Realm (PCR).
 
-## 1. Discover and sign in
+## 1. Authenticate the account
 
 1. Select the Principal Server and complete discovery.
-2. Sign in through coauth.
-3. Inkson verifies that the returned session grant contains the exact bound
-   `principal_id` and device binding. A missing principal binding fails closed.
-
-If the account has no identity yet, Inkson first asks whether to create a new
-identity or link an existing DID. An existing DID must be approved by a device
-or DID wallet that already controls it; entering the identifier alone is never
-enough. Inkson disables that option when the Account Authority does not
-advertise a compatible approval path.
+2. Sign in through coauth and obtain an Unbound Account Handoff constrained to
+   the current DPoP holder and an identity-creation lease.
+3. If the account is already bound, Inkson continues the existing-identity path
+   instead of creating another principal.
 
 ## 2. Confirm cold custody
 
-Before WebVH entry 0 exists, Inkson generates a 24-word Recovery Key locally.
-Write it down offline and re-enter the complete phrase. No policy, backup, DID
-entry, or ordinary local secret containing the words is written before this
-check.
+Inkson generates a 24-word Recovery Key locally. Write it down offline and
+re-enter the complete phrase before any DID or PCR side effect. The SDK derives
+separate root, recovery-proof and backup-HPKE roles; only public commitments,
+stable timestamps and idempotency keys enter the resumable draft.
 
-The SDK derives separate keys for the WebVH root, recovery proof, and backup
-HPKE recipient. Inkson persists only their public commitments and stable
-idempotency keys. If the app restarts, present the same Recovery Key to resume;
-Inkson re-derives and compares the public draft.
+## 3. Prepare DID and PCR genesis before submission
 
-## 3. Publish entry 0 and bootstrap the PCR
+The client constructs and signs all material first:
 
-After custody confirmation:
+1. WebVH entry 0 contains the identity root and no account/device business
+   authority.
+2. `ak.realm.create` creates the PCR and commits a founding device descriptor.
+3. `ak.device.authorize` uses `authorization_binding_kind=root_anchored`, names
+   the principal DID as `authorized_by`, and carries the founding device's
+   possession signature.
+4. The root creation proof also binds the initial Standard-session request and
+   DPoP thumbprint.
 
-1. Publish the root-signed principal WebVH entry 0. It delegates device
-   enrollment but contains no ownerless principal verification key.
-2. Atomically submit the two-slot PCR bootstrap unit:
-   root-signed `ak.realm.create`, followed by enrollment-authority-signed
-   `ak.device.authorize`.
-3. Managed Agent PCR creation stays on its controller-delegated path and never
-   uses the `did_inception` exception.
+The first device is trusted because the identity root explicitly binds it and
+the device proves possession of the corresponding private key. No other device
+or administrator approval is required.
 
-The root seed exists only for this explicit cold-signing ceremony and is then
-cleared from the online buffer. It is not the device signing key.
+## 4. Submit once and finish
 
-## 4. Satisfy the recovery-material gate
+Inkson submits the identity-creation registration through the Bound handoff.
+The Account Authority verifies the account/holder/lease/root proof, publishes
+the DID operation, relays the exact two-Event PCR unit and returns:
 
-Inkson publishes the signed recovery policy and the first recoverable
-`did_recovery` envelope. Ordinary durable writes remain blocked until both are
-accepted and the backup references the active policy version.
+- an account binding receipt;
+- a PCR genesis receipt binding both accepted Events and the founding device;
+- an initial sender-constrained Standard session grant.
 
-Only after acceptance does Inkson store public local metadata (fingerprint,
-accepted time, and HPKE public multikey) and clear the displayed words.
+Only after all three validate does Inkson persist the session and enable normal
+business writes.
 
-## 5. Verify the result
+## 5. Interrupted setup and destroyed device
 
-- The PCR exists with `mls_rfc9420` and both encryption floors set to
-  `e2ee_required`.
-- Exactly one first device authorization is accepted in the bootstrap batch.
-- Settings → Recovery reports accepted recovery material.
-- The Recovery Key plaintext is no longer present in device state.
-- If setup is interrupted, resuming uses the same draft and operation ids;
-  Inkson does not mint a second identity silently.
+Response loss replays the same canonical request. A restart asks for the same
+Recovery Key and re-derives the public draft. If the original device is
+physically destroyed after DID creation but before PCR acceptance, a new device
+can authenticate the same account and use the Recovery Key to resume the
+create-once path or complete a root re-anchor; the destroyed device is never
+required to approve its replacement.
 
-Direct Recovery Key replacement is disabled after setup. Rotation requires the
-durable staged handoff, complete backup-series rewrapping, pointer advance, and
-only then old-key revocation.
+## Verification checklist
+
+- DID state contains no account authority or device directory.
+- PCR genesis is exactly the ordered create/authorize pair.
+- Root, founding-device PoP, handoff holder and initial DPoP bindings all match.
+- Receipt/grant validation completes before the handoff credential is cleared.
+- Serialized local state contains no Recovery Key or derived private seed.

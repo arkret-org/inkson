@@ -1,135 +1,75 @@
-# 用户身份根与恢复流程
+# 用户身份根、设备与恢复流程
 
 > 状态：Inkson 客户端设计说明，非规范正文。协议以
-> `arkret-spec/spec/v1/zh/identity/key-management.md`、
-> `crypto-media/device-lifecycle.md` 和决策 0010 为准。
+> `arkret-spec/spec/v1/zh/identity/key-management.md` 和
+> `crypto-media/device-lifecycle.md` 为准。
 
-## 1. 不变量
+## 1. 边界与不变量
 
-- 24 词 Recovery Key 是用户保管的恢复秘密。客户端通过 SDK 的固定
-  HKDF-SHA256 密钥计划，分别派生 WebVH 身份根 Ed25519 键、恢复证明
-  Ed25519 键和备份 HPKE X25519 键。三个角色不得复用同一物理密钥。
-- 身份根私钥从出生即冷：不持久化到普通设备状态，不上传，不成为
-  device key，只能签合规 WebVH entry、self PCR genesis、re-anchor 和
-  first-backup gate 的离线 receipt。
-- 设备签名键是热密钥；入册权威键是只签 `ak.device.authorize` 的温密钥；
-  session/DPoP 键不参与身份控制。
-- principal entry 0 没有幽灵 `did_public_key`。自主权模型用
-  `capabilityDelegation` 指派专用入册键；托管模型用
-  `ArkretDeviceEnrollmentAuthority` 指派外部权威 DID。
-- A（cross-signing）与 B（外部 enrollment authority）按权威归属互斥。
-  自主权模型的 `authority_did == principal DID` 仍归 A，不得误建 B 的
-  device-generation 状态机。
+- DID 只承载身份根和版本连续性，不承载账号关系、设备目录或业务授权。
+- 24 词 Recovery Key 派生身份根、恢复证明与备份 HPKE 三个相互隔离的密钥角色。
+- 身份根私钥保持冷存储：不上传、不写入普通设备状态，也不作为日常 Event 签名键。
+- 设备签名键是热密钥；session/DPoP 键只绑定会话，不参与身份控制。
+- Principal Control Realm（PCR）中的 accepted Event 是设备授权与撤销的唯一业务事实源。
 
-## 2. 首次建立身份
+## 2. 首次注册
 
 ```mermaid
 flowchart TD
-    A["客户端生成 24 词恢复秘密"] --> B["用户离线抄写并精确回填"]
-    B --> C["SDK 派生 root_0 / root_1 commitment / recovery proof / backup HPKE"]
-    C --> D["仅持久化 public inception draft 与幂等键"]
-    D --> E["发布 root_0 签名的 WebVH entry 0"]
-    E --> F["原子提交 self PCR bootstrap unit"]
-    F --> G["root_0 仅签 PCR ak.realm.create"]
-    F --> H["entry 0 指派的入册权威签首条 ak.device.authorize"]
-    G --> I["发布 recovery policy 与 did_recovery 首备份"]
-    H --> I
-    I --> J["开放普通持久写入"]
+    A["账号认证并取得未绑定的 Account Handoff"] --> B["生成 Recovery Key 和设备密钥"]
+    B --> C["用户离线保存并精确回填"]
+    C --> D["客户端一次性构造 DID entry 0 与双 Event PCR genesis"]
+    D --> E["身份根签 ak.realm.create；当前设备对 ak.device.authorize 做持有证明"]
+    E --> F["Account Authority 校验同一注册意图并原子转发 PCR genesis"]
+    F --> G["返回 binding receipt、PCR genesis receipt 和 Standard session grant"]
+    G --> H["开放普通业务写入"]
 ```
 
-关键 gate：
+PCR genesis 固定为两个有序 Event：
 
-1. 保管确认必须先于 entry 0。待确认期间明文仅在当前 UI 内存中。
-2. entry 0 接受后，PCR bootstrap 必须是同一批次的两个 Event；拆批拒绝。
-3. `recovery_material_pending` 期间，除上述 bootstrap 例外，普通持久写入
-   全部阻断。
-4. gate 只有在 accepted recovery policy 和引用该 policy 的可恢复
-   `did_recovery` 首 envelope 同时存在时才解除。
+1. `ak.realm.create`：由身份根签名，payload 内的 founding device descriptor
+   绑定首设备签名键、HPKE 键、算法集合和第二个 Event 的 payload digest；
+2. `ak.device.authorize`：`authorization_binding_kind=root_anchored`，
+   `authorized_by=principal DID`，并由首设备自身签署持有证明。
 
-崩溃恢复只保存公共 draft、固定 HLC、操作 id 和 accepted evidence。
-恢复时要求用户重新提供同一 Recovery Key，重新派生并逐项比对公共承诺；
-不保存助记词、root seed、recovery proof seed 或 HPKE 私钥。
+首设备无需另一个设备或管理员批准。安全性来自恢复根对创建意图的签名、设备对
+私钥的持有证明、双 Event 摘要绑定、Account Handoff 的账号/holder 绑定，以及
+服务端原子 acceptance receipt，而不是额外审批。
 
-## 3. PCR bootstrap 与 managed Agent
+客户端只持久化公开 draft、幂等键、固定 HLC 和 accepted receipt。崩溃恢复时要求
+用户重新输入相同 Recovery Key 并重新派生校验；助记词和派生私钥不得进入普通状态。
 
-self principal 的 bootstrap unit 固定为：
+## 3. 新设备与设备丢失
 
-1. `ak.realm.create`：PCR id 从 principal DID 确定性派生，带唯一 critical
-   `did_inception` ref，由 entry 0 当前 root 签名；
-2. `ak.device.authorize`：`actor_seq=1`，使用 `service_attested` 与
-   `enrollment_authority_binding`，由 entry 0 指派的入册权威签名。
+- 已有可用设备添加新设备时，当前 accepted 设备签署授权；目标设备只证明持有
+  自己的私钥。PCR 写入 `authorization_binding_kind=accepted_device` 的
+  `ak.device.authorize`。
+- 所有旧设备都不可用时，用户以 Recovery Key 完成 DID root rotation，并在同一
+  security transaction 中提交 `ak.device.reanchor` 与 replacement
+  `ak.device.authorize`。终态 receipt 必须同时绑定 DID 版本、PCR 当前投影和新设备。
+- 如果首次账号注册/DID 创建后、PCR genesis 接受前设备物理损毁，换机后重新认证
+  同一账号并提供 Recovery Key；客户端恢复或重建公开 draft，走 root-anchored
+  create-once/re-anchor 路径。不得要求已经损毁的设备批准。
+- root recovery completion 后，仍然有效且绑定同一 DPoP holder 的 Account Handoff
+  可凭终态 receipt 直接换取 Standard grant；不创建临时受限 grant，也不再次 OIDC。
 
-managed Agent 不是 self principal。其 PCR 只能走 controller delegation，
-必须携带 `executed_by` 与 `authorization_ref`，不得携带 `did_inception`，
-不得由 Agent root 走 self-bootstrap 特例。
+## 4. 恢复材料与代际围栏
 
-## 4. 恢复会话矩阵
+Recovery policy 和加密备份属于 PCR/业务状态，不写入 DID 文档。恢复秘密轮换采用
+checkpoint 化事务：先确认新秘密冷保管，再写入新的 policy 与备份 recipient，全部
+replacement accepted 后推进 active-series pointer，最后撤销旧 policy key。
 
-恢复会话的 identity model 由服务端从 accepted policy snapshot 推导，客户端
-请求不携带 `ssk_generation`、model 或 generation 自报字段。proof transcript
-绑定 `identity_model` 与 `model_generation_ref`。
+每个 durable outbound item 记录当前 accepted device authorization generation。
+实际发送前重新查询权威 projection；generation 已替代、设备 revoked/fenced、状态
+conflicted 或证据不完整时，在同一次 durable mutation 中 quarantine 当前项及依赖项。
+历史上已经被旧设备读取的明文无法通过撤销追回。
 
-| 模型 | 会话快照 | 完成时必须引用 | 禁止 |
-| --- | --- | --- | --- |
-| A cross-signing | `ssk_generation` | accepted `ak.device.authorize` + `ak.device.list_update` | re-anchor 字段 |
-| B enrollment authority | current DID/device generation、registry head、完整 accepted Seal frontier | accepted `ak.device.authorize` + `ak.device.reanchor` + re-anchor batch receipt | list-update 字段、旧代普通写入 |
+## 5. 验收重点
 
-两种 completion shape 在客户端和 SDK 均为互斥强类型；缺字段、混搭或同时出现
-两种状态机时 fail closed。
-
-## 5. B 模型 durable re-anchor / handoff
-
-B 模型恢复或恢复秘密轮换不能包装成一次“更换助记词”。客户端按 checkpoint
-依次保存 accepted evidence：
-
-1. 确认新恢复秘密已进入冷保管；
-2. 独立入册权威仍可用时，先接受 bridge entry，再接受激活下一代 root 的
-   new-root entry；没有独立权威时拒绝原地 handoff，改为重铸 DID；
-3. 原子接受 `ak.device.reanchor` 与 replacement `ak.device.authorize`，保存
-   accepted-at batch receipt；
-4. 接受引用新恢复键角色的 recovery policy；
-5. 枚举 `did_recovery`、`secret_storage`、`mls_history` 的每个 active series，
-   全部重封装到新 HPKE recipient；
-6. 只有全部 replacement 已 accepted，才推进 active-series pointers；
-7. 最后撤销旧 policy key，再把 handoff 标记 complete。
-
-任一阶段崩溃都从同一 checkpoint 和幂等键续跑。旧 key 在 pointer 推进前不得
-撤销；历史上已被泄露的明文无法通过轮换追回，UI 必须明确这一边界。
-
-## 6. 本地队列的代际围栏
-
-每个 durable outbound item 记录 authoring generation：
-
-- A：SSK generation；
-- B：当前 device generation ref，且设备行的 `authorized_generation_ref`
-  必须精确等于当前 generation；
-- managed Agent：controller generation 与 accepted `authorization_ref` 的
-  规范摘要。
-
-每次实际发送前重新查询权威 projection。generation 已被替代、状态 conflicted、
-设备不再 active、A/B 状态混杂或 generation 未知时，队列在同一次 durable
-mutation 中 quarantine 当前项及依赖项，网络请求不得发出。quarantine 不是
-“稍后自动重试”：用户必须重新构造由当前代签名的操作。
-
-已经被旧设备读取或已经到达接收方的历史材料不能被撤销。撤销/恢复只阻止
-fence 后的新接纳；被盗设备缓存的密文、密钥或明文应视为已暴露。
-
-## 7. 设置页行为
-
-- 新 Recovery Key 必须先显示、离线保存并精确回填，再发布任何 policy/backup。
-- 本地只保存 fingerprint、accepted time 与 HPKE public multikey。
-- 已有 active policy 时，输入的 Recovery Key 必须同时匹配 policy 中关联的
-  recovery proof key 与 backup HPKE recipient。只匹配其中一个也拒绝。
-- 已建立恢复材料后，设置页禁用直接“生成替代 key”；轮换必须进入第 5 节的
-  staged handoff。
-- passkey 只用于登录，不包装或缓存 Recovery Key，不提供绕过冷保管的快捷解锁。
-
-## 8. 验收重点
-
-- 序列化本地状态中不存在助记词和任何派生私钥；
-- entry 0 发布前没有 custody confirmation 就失败；
-- self PCR 两槽原子 batch 的错 key、错 ref、拆批和 Agent 混入均失败；
-- A/B transcript 与 completion 互斥；
-- B handoff 在任一 backup series 未重封装时不能推进 pointer；
-- queued old-generation Event 在 submitter 被调用前已 quarantine；
-- 已有 policy 与新助记词不匹配时，不会产生错误 recipient 的备份。
+- DID 文档中没有账号权威、设备目录或业务授权条目；
+- 首次注册只需账号认证、Recovery Key custody confirmation 和首设备私钥持有证明；
+- PCR genesis 的两个 Event 不可拆分、替换键或修改任一摘要；
+- 新设备授权严格区分 `root_anchored` 与 `accepted_device` 两种证据；
+- root recovery receipt、completion attestation、设备/generation 和 session DPoP
+  任一不匹配都 fail closed；
+- 本地序列化状态中不存在助记词或任何派生私钥。

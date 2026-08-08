@@ -154,19 +154,6 @@ fn recognizes_device_not_authorized_errors() {
     .into();
     assert!(is_device_not_authorized_error(&recovery_policy_denial));
 
-    // The `service_attested` enrollment path's "no authority designated"
-    // rejection is likewise a device-authorization problem from the user's
-    // point of view.
-    let authority_denial: anyhow::Error = TransportClientError {
-        status: StatusCode::FORBIDDEN,
-        error: decode_arkret_error(
-            StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"device_enrollment_authority_not_designated","message":"no enrollment authority designated"},"request_id":"ak:request:test"}"#,
-        ),
-    }
-    .into();
-    assert!(is_device_not_authorized_error(&authority_denial));
-
     // A different denial (transient / unrelated capability) must NOT be
     // read as "device not authorized" — otherwise a flaky deny would wrongly
     // route the user away from generating their first Recovery Key.

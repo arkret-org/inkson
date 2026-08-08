@@ -1,9 +1,7 @@
 pub(crate) mod account_auth;
 pub(crate) mod agent_signer_evidence;
 pub(crate) mod authoring_generation;
-pub(crate) mod device_bootstrap_cancel;
 pub(crate) mod device_directory;
-pub(crate) mod device_enrollment;
 pub(crate) mod device_name;
 pub(crate) mod device_pairing;
 #[cfg(test)]
@@ -13,5 +11,6 @@ pub(crate) mod did_key;
 pub(crate) mod did_resolver;
 pub(crate) mod handle;
 pub(crate) mod member_identity_store;
+pub(crate) mod principal_genesis;
 pub(crate) mod principal_registration;
 pub(crate) mod session_refresh;

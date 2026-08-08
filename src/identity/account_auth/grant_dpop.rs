@@ -15,9 +15,9 @@
 //! Ed25519 (`alg=Ed25519`, `kty=OKP`, `crv=Ed25519`) over ES256. Three
 //! reasons, in order of weight:
 //!
-//! * Every other signing surface in inkson — `event_signer`, `cross_signing`, `move_builder`,
-//!   `session_grant` proofs — is already ed25519. Adding a second curve doubles the WASM bundle
-//!   surface for no protocol benefit.
+//! * Every other signing surface in inkson — `event_signer`, `move_builder`, `session_grant` proofs
+//!   — is already ed25519. Adding a second curve doubles the WASM bundle surface for no protocol
+//!   benefit.
 //! * coauth's `DpopVerifier` (`coauth/crates/backend/src/services/dpop.rs`) accepts `Ed25519` as a
 //!   first-class algorithm; the JWA registry lists it as an approved JWS alg.
 //! * `ed25519-dalek` is pure-Rust and known to build cleanly under `wasm32-unknown-unknown`. ES256
@@ -89,6 +89,21 @@ impl DpopHandle {
         &self.jkt
     }
 
+    /// Canonical public JWK committed by the atomic identity-creation request.
+    pub fn canonical_session_public_jwk(
+        &self,
+    ) -> Result<arkret_sdk::CanonicalSessionPublicJwk, AuthDpopError> {
+        let jwk = arkret_sdk::signatures::JsonWebKey::from_ed25519_verifying_key(
+            &self.signing_key.verifying_key(),
+        );
+        let bytes = arkret_sdk::canonical::canonical_json_bytes(&jwk)
+            .map_err(|error| AuthDpopError::SessionGrantProof(error.to_string()))?;
+        let json = String::from_utf8(bytes)
+            .map_err(|error| AuthDpopError::SessionGrantProof(error.to_string()))?;
+        arkret_sdk::CanonicalSessionPublicJwk::new(json)
+            .map_err(|error| AuthDpopError::SessionGrantProof(error.to_string()))
+    }
+
     /// Export the raw 32-byte ed25519 seed as base64url-no-pad.
     ///
     /// Used only by the durable hard-logout journal
@@ -133,20 +148,6 @@ impl DpopHandle {
         if let Some(ath) = ath {
             request = request.access_token(ath);
         }
-        arkret_sdk::dpop::build_dpop_proof(&request, &self.signing_key)
-            .map(|proof| proof.header_value)
-            .map_err(|error| AuthDpopError::Mint(error.to_string()))
-    }
-
-    pub fn mint_recovery_authority_proof(
-        &self,
-        htu: &str,
-        canonical_request_digest: &str,
-        jti: &str,
-    ) -> Result<String, AuthDpopError> {
-        let request = arkret_sdk::dpop::DpopProofRequest::new("POST", htu)
-            .nonce(canonical_request_digest)
-            .jti(jti);
         arkret_sdk::dpop::build_dpop_proof(&request, &self.signing_key)
             .map(|proof| proof.header_value)
             .map_err(|error| AuthDpopError::Mint(error.to_string()))
@@ -579,30 +580,6 @@ mod tests {
         for p in &parts {
             assert!(!p.is_empty());
         }
-    }
-
-    #[test]
-    fn recovery_authority_proof_binds_request_digest_and_single_use_jti() {
-        let mut store = isolated_store("recovery-authority-proof");
-        let handle = ensure_device_key(&mut store).unwrap();
-        let nonce = format!("sha256:{}", "a".repeat(64));
-        let jti = "urn:uuid:01970000-0000-7000-8000-000000000001";
-        let proof = handle
-            .mint_recovery_authority_proof(
-                "https://account.example/_arkret/gate/account/recovery-session-grants/promote",
-                &nonce,
-                jti,
-            )
-            .unwrap();
-        let payload = proof_payload(&proof);
-        assert_eq!(payload["htm"], "POST");
-        assert_eq!(
-            payload["htu"],
-            "https://account.example/_arkret/gate/account/recovery-session-grants/promote"
-        );
-        assert_eq!(payload["nonce"], nonce);
-        assert_eq!(payload["jti"], jti);
-        assert!(payload.get("ath").is_none());
     }
 
     #[test]

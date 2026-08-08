@@ -6,8 +6,8 @@
 //! arkret-spec `recovery-session.schema.json` `$defs/principal_signing_transcript`).
 //! Mismatch ⇒ the server rejects the proof, so this MUST stay in lockstep.
 //!
-//! The transcript binds every session-defining field, including the mutually
-//! exclusive A/B authority model and its authoritative generation reference.
+//! The transcript binds every session-defining field, including the
+//! root-anchored did:webvh generation reference.
 //! Construction delegates to the SDK truth type rather than mirroring the wire
 //! object locally.
 
@@ -20,25 +20,8 @@ use serde_json::{Value, json};
 /// session JSON (the `ak.schema.recovery_session.v1` create/get response).
 pub fn principal_signing_proof_transcript(session: &Value) -> anyhow::Result<Value> {
     let state: arkret_sdk::RecoverySessionState = serde_json::from_value(session.clone())?;
-    let model_generation_ref = match state.identity_model {
-        arkret_sdk::RecoveryIdentityModel::CrossSigning => {
-            let generation = state
-                .ssk_generation
-                .and_then(std::num::NonZeroU64::new)
-                .ok_or_else(|| {
-                    anyhow::anyhow!("cross-signing recovery session omits ssk_generation")
-                })?;
-            arkret_sdk::RecoveryModelGenerationRef::CrossSigning(generation)
-        }
-        arkret_sdk::RecoveryIdentityModel::EnrollmentAuthority => {
-            let generation = state.current_device_generation_ref.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "enrollment-authority recovery session omits current_device_generation_ref"
-                )
-            })?;
-            arkret_sdk::RecoveryModelGenerationRef::EnrollmentAuthority(generation)
-        }
-    };
+    let model_generation_ref =
+        arkret_sdk::RecoveryModelGenerationRef::new(state.current_device_generation_ref.clone())?;
     let transcript = arkret_sdk::PrincipalSigningTranscript {
         schema: "ak.identity.recovery_proof.v1".to_owned(),
         kind: arkret_sdk::RecoveryProofKind::PrincipalSigning,
@@ -113,143 +96,4 @@ pub fn build_principal_signing_proof_active(session: &Value) -> anyhow::Result<O
         "signature_algorithm": signer.algorithm(),
         "signature": B64.encode(signature),
     })))
-}
-
-#[cfg(test)]
-mod tests {
-    use ed25519_dalek::{Verifier, VerifyingKey};
-
-    use super::*;
-
-    fn sample_session() -> Value {
-        let authority_set_policy = json!({
-            "schema": "ak.schema.authority_set_policy.v1",
-            "authority_set_id": "ak.authority_set.recovery_cross_signing.v1",
-            "policy_kind": "principal_control",
-            "scope_ref": {
-                "kind": "realm",
-                "realm_id": "ak:realm:Actxv1InR9cqYIUYo_GiEh_PAjJ2SeoY1mR9j8qEB6Re"
-            },
-            "source": {
-                "source_kind": "cross_signing_publish",
-                "source_ref": "ak:event:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "source_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                "generation_ref": "1"
-            },
-            "authorization_rules": [{
-                "rule_id": "self_signing",
-                "issuer_role": "cross_signing_self_signing",
-                "allowed_actions": [
-                    "ak.device.authorize",
-                    "ak.device.list_update"
-                ],
-                "issuers": [{
-                    "verification_method": "did:key:z6MkPrincipalFixture#self-signing-1"
-                }],
-                "threshold": 1
-            }]
-        });
-        let authority_set_digest =
-            crate::canonical::canonical_sha256(&authority_set_policy).unwrap();
-        let publication_authority_context = json!({
-            "identity_model": "cross_signing",
-            "basis_ref": "ak:seal:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "scope_ref": {
-                "kind": "realm",
-                "realm_id": "ak:realm:Actxv1InR9cqYIUYo_GiEh_PAjJ2SeoY1mR9j8qEB6Re"
-            },
-            "authority_set_ref": {
-                "authority_set_id": "ak.authority_set.recovery_cross_signing.v1",
-                "authority_set_digest": authority_set_digest
-            },
-            "authority_set_policy": authority_set_policy,
-            "allowed_actions": [
-                "ak.device.authorize",
-                "ak.device.list_update"
-            ]
-        });
-        let publication_authority_context_digest =
-            crate::canonical::canonical_sha256(&publication_authority_context).unwrap();
-        json!({
-            "schema": "ak.schema.recovery_session.v1",
-            "recovery_session_id": "ak:recovery_session:01964137-0000-7000-8000-0000000000aa",
-            "principal_id": "did:key:z6MkPrincipalFixture",
-            "requesting_device_id": "ak:device:01964137-0000-7000-8000-000000000099",
-            "trust_domain": "ak:trust_domain:soland.local",
-            "policy_id": "ak:policy:01964137-0000-7000-8000-0000000000bb",
-            "policy_version": 1,
-            "identity_model": "cross_signing",
-            "ssk_generation": 1,
-            "publication_authority_context": publication_authority_context,
-            "publication_authority_context_digest": publication_authority_context_digest,
-            "challenge": "Zm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm8",
-            "state": "pending",
-            "created_at": "2026-05-30T00:00:00.000Z",
-            "updated_at": "2026-05-30T00:00:00.000Z",
-            "expires_at": "2026-05-30T00:15:00.000Z",
-        })
-    }
-
-    #[test]
-    fn transcript_binds_every_session_field() {
-        let t = principal_signing_proof_transcript(&sample_session()).unwrap();
-        assert_eq!(t["schema"], "ak.identity.recovery_proof.v1");
-        assert!(t.get("type").is_none());
-        assert_eq!(t["kind"], "principal_signing");
-        for f in [
-            "principal_id",
-            "requesting_device_id",
-            "trust_domain",
-            "policy_id",
-            "policy_version",
-            "recovery_session_id",
-            "identity_model",
-            "model_generation_ref",
-            "publication_authority_context_digest",
-            "challenge",
-            "created_at",
-            "expires_at",
-        ] {
-            assert!(t.get(f).is_some(), "transcript missing {f}");
-        }
-        // created_at is the session value (not regenerated).
-        assert_eq!(t["created_at"], "2026-05-30T00:00:00.000Z");
-        assert_eq!(t["model_generation_ref"], 1);
-        assert!(t.get("ssk_generation").is_none());
-    }
-
-    #[test]
-    fn proof_signature_verifies_against_transcript() {
-        let session = sample_session();
-        let signing_key = SigningKey::from_bytes(&[51u8; 32]);
-        let proof = serde_json::to_value(
-            build_principal_signing_proof(
-                &session,
-                "did:key:z6MkPrincipalFixture#key",
-                &signing_key,
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(proof["kind"], "principal_signing");
-        assert_eq!(proof["signature_algorithm"], "Ed25519");
-        assert_eq!(proof["challenge"], session["challenge"]);
-
-        // Re-derive the transcript bytes and verify the embedded signature —
-        // exactly what soland does server-side.
-        let transcript = principal_signing_proof_transcript(&session).unwrap();
-        let bytes = crate::canonical::canonical_json_bytes(&transcript).unwrap();
-        let sig_raw = B64.decode(proof["signature"].as_str().unwrap()).unwrap();
-        let signature = ed25519_dalek::Signature::from_slice(&sig_raw).unwrap();
-        let vk: VerifyingKey = signing_key.verifying_key();
-        vk.verify(&bytes, &signature)
-            .expect("proof signature must verify against the canonical transcript");
-    }
-
-    #[test]
-    fn missing_session_field_errors() {
-        let mut session = sample_session();
-        session.as_object_mut().unwrap().remove("identity_model");
-        assert!(principal_signing_proof_transcript(&session).is_err());
-    }
 }

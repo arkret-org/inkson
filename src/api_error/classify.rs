@@ -68,7 +68,7 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
 
 /// True when the server rejected the request because the authenticated
 /// session device is not authorized for the operation. Matches three wire
-/// codes that all reduce to "this device cannot establish a new account
+/// codes that reduce to "this device cannot establish a new account
 /// Recovery Key root":
 ///
 /// - `device_not_authorized` — soland's `ensure_key_backup_writer_device_authorized` gate
@@ -76,10 +76,7 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
 /// - `recovery_policy_device_not_authorized` — the recovery-policy genesis path falls back to the
 ///   projected device row's `device_public_key`; a session device that was never enrolled (no
 ///   `ak.device.authorize`) has no key there.
-/// - `device_enrollment_authority_not_designated` — the `service_attested` enrollment path could
-///   not anchor an authority for this device (device-lifecycle.md §5.4).
-///
-/// Recovery setup MUST treat all three as fail-closed: a device that cannot pass
+/// Recovery setup MUST treat both as fail-closed: a device that cannot pass
 /// the server's verified-device gate must never establish (or locally persist)
 /// a brand-new account Recovery Key root — it has to be authorized from an
 /// existing device, or the user must restore with their existing Recovery Key.
@@ -87,10 +84,33 @@ pub fn is_device_not_authorized_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
         matches!(
             envelope.code(),
-            "device_not_authorized"
-                | "recovery_policy_device_not_authorized"
-                | "device_enrollment_authority_not_designated"
+            "device_not_authorized" | "recovery_policy_device_not_authorized"
         )
+    })
+}
+
+/// The create-once PCR race has already been won. The client must never
+/// author a second genesis; it switches the same Recovery Key and replacement
+/// device into the root-anchored re-anchor continuation.
+pub fn is_pcr_genesis_already_accepted_error(error: &anyhow::Error) -> bool {
+    api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
+        let reason = envelope
+            .details()
+            .get("reason_code")
+            .or_else(|| envelope.details().get("reason"))
+            .and_then(serde_json::Value::as_str);
+        matches!(
+            reason,
+            Some(
+                arkret_sdk::error::ReasonCode::PCR_GENESIS_CONFLICT
+                    | arkret_sdk::error::ReasonCode::PCR_GENESIS_NOT_FIRST
+            )
+        ) || envelope
+            .message()
+            .contains(arkret_sdk::error::ReasonCode::PCR_GENESIS_CONFLICT)
+            || envelope
+                .message()
+                .contains(arkret_sdk::error::ReasonCode::PCR_GENESIS_NOT_FIRST)
     })
 }
 

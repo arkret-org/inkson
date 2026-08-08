@@ -57,10 +57,6 @@ pub(crate) fn upload_recovery_key_account_backup(
     } else {
         Some(state_store.read().private_plaintext_snapshot_json())
     };
-    let cross_signing_publish = state_store
-        .read()
-        .load_private_data(&actor, "cross_signing.publish.latest")
-        .and_then(|value| serde_json::from_str::<arkret_sdk::CrossSigningPublish>(&value).ok());
     let needs_mls_backup_signal = crate::components::try_needs_mls_backup_signal();
     status.set(
         "Cold custody confirmed — publishing recovery policy and DID recovery backup…".to_owned(),
@@ -81,28 +77,6 @@ pub(crate) fn upload_recovery_key_account_backup(
                 )
                 .await?;
             let secure = crate::secure_key_store::default_secure_key_store("inkson");
-            if let Some(publish) = cross_signing_publish {
-                let generation = publish.generation.get();
-                let self_signing_key = crate::cross_signing::load_signing_key(
-                    secure.as_ref(),
-                    &actor,
-                    generation,
-                    crate::cross_signing::CrossSigningKeyRole::SelfSigning,
-                )?
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "accepted cross-signing generation {generation} has no local self-signing key"
-                    )
-                })?;
-                crate::recovery_strand::ensure_recovery_directed_ssk_backup(
-                    &api,
-                    &actor,
-                    &device,
-                    &publish,
-                    &self_signing_key,
-                )
-                .await?;
-            }
             crate::mls::runtime::load_or_create_account_mls_secret(
                 secure.as_ref(),
                 &actor,

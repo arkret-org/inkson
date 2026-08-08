@@ -51,8 +51,8 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
             id: "identity.device_verification",
             name: "Device verification",
             stage: WorkflowStage::ClientReady,
-            client_surface: "Devices panel + SDK device primitives + cross-signing plan",
-            server_dependency: "Needs persisted device trust + SAS/QR verification + revocation + cross_signing publish/reset endpoints (SDK three-tier model and trust-chain verifier are now in place)",
+            client_surface: "Devices panel + root-anchored device directory",
+            server_dependency: "Needs persisted accepted-device state + SAS/QR verification + revocation endpoints",
         },
         ClientWorkflow {
             id: "recovery.key_backup_upload",
@@ -67,13 +67,6 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
             stage: WorkflowStage::ClientReady,
             client_surface: "Recovery panel: backup history timestamp summary and latest-backup status",
             server_dependency: "GET /_arkret/self/keys/backups",
-        },
-        ClientWorkflow {
-            id: "identity.cross_signing_setup",
-            name: "Cross-signing bootstrap and reset",
-            stage: WorkflowStage::ClientReady,
-            client_surface: "Verify Device panel: renders CrossSigningSetupPlan steps + canonical events",
-            server_dependency: "Needs ak.cross_signing.publish / ak.cross_signing.reset / ak.device.authorize acceptance endpoints",
         },
         ClientWorkflow {
             id: "space.discovery",
@@ -189,11 +182,7 @@ mod tests {
     #[test]
     fn key_backup_strands_are_client_ready() {
         let workflows = production_release_workflows();
-        for id in [
-            "recovery.key_backup_upload",
-            "recovery.key_backup_restore",
-            "identity.cross_signing_setup",
-        ] {
+        for id in ["recovery.key_backup_upload", "recovery.key_backup_restore"] {
             assert!(
                 workflows
                     .iter()

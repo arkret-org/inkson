@@ -639,8 +639,11 @@ pub struct PendingAccountHandoff {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_after_ms: Option<u64>,
     pub device_id: String,
-    pub enrollment_authority_did: String,
     pub trust_domain: String,
+    /// Existing principal returned by a bound account handoff. Presence
+    /// selects Recovery-Key re-anchor instead of identity creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bound_principal_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -656,7 +659,6 @@ pub struct PendingPrincipalRegistration {
     pub lease_id: String,
     pub lease_fence: u64,
     pub device_id: String,
-    pub enrollment_authority_did: String,
     pub trust_domain: String,
     pub did: String,
     pub version_id: String,
@@ -669,75 +671,47 @@ pub struct PendingPrincipalRegistration {
     pub recovery_key_fingerprint: String,
     /// Typed `DidOperationSubmitRequestBody` serialized as public wire JSON.
     pub did_operation: Value,
-    /// The first signed `ak.realm.create` wire Event. Its registry basis is
-    /// immutable even when a later client embeds a newer registry snapshot.
+    /// Complete client-authored, root/device-signed PCR genesis unit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bootstrap_create_event: Option<Value>,
-    /// Complete proof-free `ak.device.authorize` Event fixed by this client.
+    pub pcr_genesis_unit: Option<Value>,
+    /// First Standard grant request, bound to the durable DPoP key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bootstrap_authorize_event_preimage: Option<Value>,
-    /// Ordered `[realm.create, device.authorize]` Event identities.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub founding_event_ids: Vec<String>,
-    /// Domain-separated digest of `founding_event_ids` in that exact order.
+    pub initial_session: Option<Value>,
+    /// Verified terminal PCR genesis receipt returned with the Standard grant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub founding_batch_digest: Option<String>,
-    /// Strictly validated public enrollment-authority response. Keeping the
-    /// complete public outcome lets a resumed client submit the same Event.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub device_enroll_outcome: Option<Value>,
-    pub bootstrap_created_at: String,
-    pub bootstrap_hlc: String,
+    pub pcr_genesis_receipt: Option<Value>,
+    pub genesis_created_at: String,
+    pub genesis_hlc: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binding_receipt: Option<Value>,
-    /// A server-confirmed terminal bootstrap transaction. This is a local
-    /// recovery-routing marker, not a fifth transaction state: Coauth remains
-    /// authoritative for the four-state transaction and returned either its
-    /// `cancelled` or `expired` terminal outcome.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bootstrap_terminal_outcome: Option<PendingPrincipalBootstrapTerminal>,
     pub stage: PendingPrincipalRegistrationStage,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PendingPrincipalBootstrapTerminal {
-    Cancelled,
-    Expired,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PendingPrincipalRegistrationStage {
     CustodyConfirmed,
-    BootstrapPrepared,
-    BootstrapGrantIssued,
-    DeviceEnrolled,
-    BatchAccepted,
-    StandardPromoted,
+    GenesisDraftPrepared,
+    RegisterRequestPrepared,
+    Accepted,
+    RecoveryMaterialComplete,
 }
 
 impl PendingPrincipalRegistration {
-    /// Advance exactly one durable onboarding phase. Skips and regressions are
-    /// rejected so a resumed client cannot infer work it did not persist.
-    pub fn advance_bootstrap_stage(
+    pub fn advance_registration_stage(
         &mut self,
         next: PendingPrincipalRegistrationStage,
     ) -> Result<(), &'static str> {
-        if self.bootstrap_terminal_outcome.is_some() {
-            return Err("a terminal principal bootstrap checkpoint cannot advance");
-        }
         use PendingPrincipalRegistrationStage as Stage;
         let allowed = matches!(
             (self.stage, next),
-            (Stage::CustodyConfirmed, Stage::BootstrapPrepared)
-                | (Stage::BootstrapPrepared, Stage::BootstrapGrantIssued)
-                | (Stage::BootstrapGrantIssued, Stage::DeviceEnrolled)
-                | (Stage::DeviceEnrolled, Stage::BatchAccepted)
-                | (Stage::BatchAccepted, Stage::StandardPromoted)
+            (Stage::CustodyConfirmed, Stage::GenesisDraftPrepared)
+                | (Stage::GenesisDraftPrepared, Stage::RegisterRequestPrepared)
+                | (Stage::RegisterRequestPrepared, Stage::Accepted)
+                | (Stage::Accepted, Stage::RecoveryMaterialComplete)
         );
         if !allowed {
-            return Err("invalid principal bootstrap checkpoint transition");
+            return Err("invalid principal registration checkpoint transition");
         }
         self.stage = next;
         Ok(())
@@ -1138,7 +1112,7 @@ pub struct ClientLocalState {
     /// Round 4 (spec a77b995) — last `trust_domain` advertised by the
     /// connected principal server's Round 4 `ServiceDescribe` response.
     /// Threaded through to strands that need to canonicalise into
-    /// transport / signing transcripts (e.g. `ak.cross_signing.publish`).
+    /// transport / signing transcripts.
     /// `None` until the first successful `/server/describe` lands.
     #[serde(default)]
     pub server_trust_domain: Option<String>,

@@ -937,15 +937,12 @@ fn verify_active_series_record_signature(
         .device_keys
         .get(&record.actor_id)
         .ok_or_else(|| anyhow!("active-series key query omitted its actor"))?;
-    let a_generation = keys.cross_signing.get(&record.actor_id);
-    let b_generation = keys.device_generations.get(&record.actor_id);
-    if a_generation.is_some() == b_generation.is_some() {
-        return Err(anyhow!(
-            "active-series authority model is absent or conflicted"
-        ));
-    }
+    let generation = keys.device_generations.get(&record.actor_id);
+    let Some(generation) = generation else {
+        return Err(anyhow!("active-series device generation is absent"));
+    };
     for (device_id, device) in devices {
-        if !device.is_usable_in_generation(b_generation) {
+        if !device.is_usable_in_generation(Some(generation)) {
             continue;
         }
         let Some(device_signing_key) = device.device_signing_key.as_ref() else {
@@ -964,36 +961,13 @@ fn verify_active_series_record_signature(
         ) {
             continue;
         }
-        let anchored = match (
-            &record.auth_data.trust_binding,
-            &record.frontier_ref.generation,
-        ) {
-            (
-                arkret_sdk::KeyBackupActiveSeriesTrustBinding::SskGeneration(generation),
-                arkret_sdk::KeyBackupActiveSeriesFrontierGeneration::SskGeneration(frontier),
-            ) => {
-                generation == frontier
-                    && a_generation.is_some_and(|publish| {
-                        publish.generation == *generation
-                            && device
-                                .cross_signing_binding
-                                .as_ref()
-                                .is_some_and(|binding| binding.ssk_generation == generation.get())
-                    })
-            }
-            (
-                arkret_sdk::KeyBackupActiveSeriesTrustBinding::DeviceAuthorizeEventId(event_id),
-                arkret_sdk::KeyBackupActiveSeriesFrontierGeneration::DeviceGenerationRef(frontier),
-            ) => {
-                b_generation.is_some_and(|generation| {
-                    generation.device_generation_status
-                        == arkret_sdk::DeviceGenerationStatus::Active
-                        && generation.current_device_generation_ref == *frontier
-                }) && device.device_authorize_event_id.as_ref() == Some(event_id)
-                    && device.authorized_generation_ref.as_ref() == Some(frontier)
-            }
-            _ => false,
-        };
+        let event_id = &record.auth_data.device_authorize_event_id;
+        let frontier = &record.frontier_ref.device_generation_ref;
+        let anchored = generation.device_generation_status
+            == arkret_sdk::DeviceGenerationStatus::Active
+            && generation.current_device_generation_ref == *frontier
+            && device.device_authorize_event_id.as_ref() == Some(event_id)
+            && device.authorized_generation_ref.as_ref() == Some(frontier);
         if !anchored {
             continue;
         }

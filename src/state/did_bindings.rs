@@ -244,7 +244,6 @@ impl LocalStateStore {
 ///
 /// | event class | wire kinds | selector |
 /// | --- | --- | --- |
-/// | key rotation | `ak.cross_signing.reset`, `ak.cross_signing.publish` | DID (+ `verification_method` when the event names one) |
 /// | deactivation | `ak.account.status` | DID |
 /// | device epoch / list | `ak.device.revoke`, `ak.device.authorize`, `ak.device.reanchor`, `ak.device.list_update` | DID + `device_signer` purpose |
 /// | agent signer epoch | `ak.agent.key.authorize`, `ak.agent.key.revoke` | DID + `agent_signer` purpose |
@@ -261,20 +260,12 @@ impl LocalStateStore {
 pub(crate) fn binding_invalidations_for_event(
     kind: &str,
     did: &Did,
-    verification_method: Option<&arkret_sdk::DidUrl>,
+    _verification_method: Option<&arkret_sdk::DidUrl>,
 ) -> Vec<BindingInvalidation> {
     use arkret_sdk::identity::DidBindingPurpose as Purpose;
 
     let base = BindingInvalidation::for_did(did.clone());
     match kind {
-        // --- key rotation -------------------------------------------------
-        // A rotation invalidates every acceptance of this DID: the document
-        // digest the bindings pin is now superseded. When the event names the
-        // rotated key, narrow to it so unrelated keys of the same DID survive.
-        "ak.cross_signing.reset" | "ak.cross_signing.publish" => match verification_method {
-            Some(method) => vec![base.with_verification_method(method.clone())],
-            None => vec![base],
-        },
         // --- deactivation -------------------------------------------------
         // `deactivated` is terminal and cascades to every device, KeyPackage and
         // session of the account (`account-lifecycle.md` §7.1), so no acceptance
@@ -306,9 +297,7 @@ pub(crate) fn binding_invalidations_for_event(
 pub(crate) fn is_binding_invalidating_kind(kind: &str) -> bool {
     matches!(
         kind,
-        "ak.cross_signing.reset"
-            | "ak.cross_signing.publish"
-            | "ak.account.status"
+        "ak.account.status"
             | "ak.device.revoke"
             | "ak.device.authorize"
             | "ak.device.reanchor"

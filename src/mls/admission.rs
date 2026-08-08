@@ -1,15 +1,13 @@
+use std::collections::BTreeMap;
+
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use ed25519_dalek::Signer;
 use serde_json::Value;
 
-use crate::cross_signing::{CrossSigningKeyRole, load_signing_key};
 use crate::mls::persistence::MlsSnapshotEnvelope;
 use crate::operation::trim_realm_id;
 use crate::secure_key_store::SecureKeyStore;
 use crate::state::LocalStateStore;
-
-pub(crate) const CROSS_SIGNING_PUBLISH_LATEST_KEY: &str = "cross_signing.publish.latest";
 
 pub(crate) struct RealmMlsAdmissionEvents {
     pub(crate) commit: arkret_sdk::Event,
@@ -500,18 +498,14 @@ pub(crate) fn build_mls_welcome_payload(
         &mut envelope,
     )?;
     let claim_trust_binding = match (
-        claim.ssk_generation.and_then(std::num::NonZeroU64::new),
         claim.device_authorize_event_id.as_deref(),
         claim.agent_key_authorize_event_id.as_deref(),
     ) {
-        (Some(generation), None, None) => {
-            arkret_sdk::MlsClaimTrustBinding::SskGeneration(generation)
-        }
-        (None, Some(event_id), None) => arkret_sdk::MlsClaimTrustBinding::DeviceAuthorizeEventId(
+        (Some(event_id), None) => arkret_sdk::MlsClaimTrustBinding::DeviceAuthorizeEventId(
             arkret_sdk::NonEmptyString::new(event_id)
                 .map_err(|err| format!("invalid device authorization event id: {err}"))?,
         ),
-        (None, None, Some(event_id)) => arkret_sdk::MlsClaimTrustBinding::AgentKeyAuthorizeEventId(
+        (None, Some(event_id)) => arkret_sdk::MlsClaimTrustBinding::AgentKeyAuthorizeEventId(
             arkret_sdk::NonEmptyString::new(event_id)
                 .map_err(|err| format!("invalid Agent key authorization event id: {err}"))?,
         ),
@@ -560,40 +554,12 @@ pub(crate) fn build_mls_welcome_payload(
 }
 
 fn sign_welcome_claim_envelope(
-    state_store: &LocalStateStore,
-    secure_store: &dyn SecureKeyStore,
+    _state_store: &LocalStateStore,
+    _secure_store: &dyn SecureKeyStore,
     actor_id: &str,
     sender_device_id: &str,
     envelope: &mut arkret_sdk::MlsWelcomeClaimEnvelope,
 ) -> Result<(), String> {
-    let active_device_signer = crate::event_signer::active_signer();
-    if active_device_signer.is_none()
-        && let Some(publish) = latest_cross_signing_publish(state_store, actor_id)?
-    {
-        envelope.trust_binding =
-            arkret_sdk::MlsRequesterTrustBinding::SskGeneration(publish.generation);
-        // The SSK `kid` is a DID URL now; the MLS envelope's signature selector
-        // is still the generic non-empty string, so project it explicitly.
-        envelope.signature.kid =
-            arkret_sdk::NonEmptyString::new(publish.self_signing_key.kid.as_str().to_owned())
-                .map_err(|err| format!("MLS Welcome claim signing kid: {err}"))?;
-        let signing_bytes = envelope
-            .canonical_signing_bytes()
-            .map_err(|err| format!("MLS Welcome claim canonical bytes: {err}"))?;
-        let signing_key = load_signing_key(
-            secure_store,
-            actor_id,
-            publish.generation.get(),
-            CrossSigningKeyRole::SelfSigning,
-        )
-        .map_err(|err| format!("load self-signing key: {err}"))?
-        .ok_or_else(|| "self-signing key is not available on this device".to_owned())?;
-        let signature = signing_key.sign(&signing_bytes);
-        envelope.signature.sig =
-            arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(signature.to_bytes()))
-                .map_err(|err| format!("MLS Welcome self-signing signature: {err}"))?;
-        return Ok(());
-    }
     let sender_device_id = sender_device_id.trim();
     if sender_device_id.is_empty() {
         return Err("MLS Welcome device signature requires sender_device_id".to_owned());
@@ -602,7 +568,7 @@ fn sign_welcome_claim_envelope(
         arkret_sdk::DeviceId::new(sender_device_id.to_owned())
             .map_err(|err| format!("invalid MLS Welcome requester device id: {err:?}"))?,
     );
-    let signer = match active_device_signer {
+    let signer = match crate::event_signer::active_signer() {
         Some(signer) => signer,
         None => crate::event_signer::bootstrap_default_signer("inkson")
             .map_err(|err| format!("MLS Welcome device signer bootstrap: {err}"))?,
@@ -625,32 +591,11 @@ fn sign_welcome_claim_envelope(
         .map_err(|err| format!("MLS Welcome device signature encoding: {err}"))?;
     Ok(())
 }
-
-/// The latest accepted cross-signing publish for `actor_id`.
-///
-/// Exposed beyond this module because the key-backup delete path needs the same
-/// `(generation, principal_signing_key.kid)` pair this reads, and a second
-/// reader of the same state key is how the two drift apart.
-pub(crate) fn latest_cross_signing_publish(
-    state_store: &LocalStateStore,
-    actor_id: &str,
-) -> Result<Option<arkret_sdk::CrossSigningPublish>, String> {
-    let Some(raw) = state_store.load_private_data(actor_id, CROSS_SIGNING_PUBLISH_LATEST_KEY)
-    else {
-        return Ok(None);
-    };
-    serde_json::from_str(&raw)
-        .map(Some)
-        .map_err(|err| format!("cross-signing publish state decode: {err}"))
-}
-use std::collections::BTreeMap;
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::cross_signing::{CrossSigningExecutor, CrossSigningSetupPlan};
     use crate::mls::runtime::{
         apply_welcome_messages_with_device_snapshot, ensure_creator_mls_snapshot,
         store_mls_key_package_identity_state,
@@ -672,31 +617,9 @@ mod tests {
         }
     }
 
-    fn install_cross_signing(
-        state: &mut LocalStateStore,
-        secure: &MemorySecureKeyStore,
-        actor: &str,
-        device: &str,
-    ) -> arkret_sdk::CrossSigningPublish {
-        let plan = CrossSigningSetupPlan::build_initial(actor, device);
-        let principal = arkret_sdk::Did::new(actor.to_owned()).unwrap();
-        let trust_domain =
-            arkret_sdk::TypedTrustDomainId::new("ak:trust_domain:example.test").unwrap();
-        let output = CrossSigningExecutor::new(plan, principal, trust_domain)
-            .run()
-            .unwrap();
-        output.persist_private_keys(secure, actor).unwrap();
-        state.save_private_data(
-            actor,
-            CROSS_SIGNING_PUBLISH_LATEST_KEY,
-            serde_json::to_string(&output.publish_content).unwrap(),
-        );
-        output.publish_content
-    }
-
     fn claim_from_key_package(
         record: &arkret_sdk::MlsKeyPackageRecord,
-        ssk_generation: u64,
+        device_authorize_event_id: &str,
     ) -> arkret_sdk::KeyPackageClaimRecord {
         arkret_sdk::KeyPackageClaimRecord {
             claim_id: "ak:mls_keypackage:test:Y2xhaW0tbm9uY2U".to_owned(),
@@ -707,8 +630,7 @@ mod tests {
             key_package: record.key_package.clone(),
             capabilities: record.capabilities.clone(),
             capabilities_digest: record.keypackage_ref.clone(),
-            ssk_generation: Some(ssk_generation),
-            device_authorize_event_id: None,
+            device_authorize_event_id: Some(device_authorize_event_id.to_owned()),
             agent_key_authorize_event_id: None,
             expires_at: crate::clock::now_utc() + chrono::Duration::hours(1),
             device_signature: arkret_sdk::KeyOperationSignature {
@@ -870,7 +792,6 @@ mod tests {
             },
         );
 
-        let publish = install_cross_signing(&mut alice_state, &secure, alice, alice_device);
         crate::mls::governance_proof::seed_test_governance_proof(
             &mut alice_state,
             realm,
@@ -931,7 +852,10 @@ mod tests {
             &bob_private_state,
         )
         .unwrap();
-        let claim = claim_from_key_package(&bob_key_package, publish.generation.get());
+        let claim = claim_from_key_package(
+            &bob_key_package,
+            "ak:event:Abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        );
 
         let admission = build_realm_mls_admission_events_from_claim(
             &alice_state,

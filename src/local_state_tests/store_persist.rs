@@ -1090,9 +1090,8 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
         reserved_identity: None,
         retry_after_ms: None,
         device_id: "ak:device:019f0000-0000-7000-8000-000000000099".to_owned(),
-        enrollment_authority_did: "did:key:z6MkrJVnaZkeFzdQyKjzgRHjhBfE6ZscXDFHq8T7TYNy9v1t"
-            .to_owned(),
         trust_domain: "ak:trust_domain:auth.example".to_owned(),
+        bound_principal_id: None,
     };
     store
         .set_pending_account_handoff(Some(handoff.clone()))
@@ -1155,9 +1154,8 @@ fn adopt_pending_login_moves_the_unfinished_handoff_with_its_registration() {
         reserved_identity: None,
         retry_after_ms: None,
         device_id: device.to_owned(),
-        enrollment_authority_did: "did:key:z6MkrJVnaZkeFzdQyKjzgRHjhBfE6ZscXDFHq8T7TYNy9v1t"
-            .to_owned(),
         trust_domain: "ak:trust_domain:auth.example".to_owned(),
+        bound_principal_id: None,
     };
     let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
     let checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(

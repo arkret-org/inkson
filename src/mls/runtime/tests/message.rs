@@ -1050,7 +1050,7 @@ fn durable_welcome_payload_without_claim_envelope_fails_closed() {
                         "keypackage_ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
                         "keypackage_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                         "capabilities_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                        "ssk_generation": 1
+                        "device_authorize_event_id": "ak:event:Abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
                     },
                     "ciphertext": "AQID",
                     "expires_at": "2100-01-01T00:00:00.000Z"

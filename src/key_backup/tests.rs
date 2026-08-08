@@ -157,13 +157,18 @@ fn key_backup_auth_data_sign_verify_round_trip() {
         &signing_key,
         DEVICE,
         &vm,
-        Some(KeyBackupDeviceTrustAnchor::SskGeneration(7)),
+        Some(KeyBackupDeviceTrustAnchor::DeviceAuthorizeEventId(
+            DEVICE_AUTHORIZE_EVENT.to_owned(),
+        )),
     )
     .unwrap();
 
     assert_eq!(body["auth_data"]["verification_method"], vm);
     assert_eq!(body["auth_data"]["signature_algorithm"], "Ed25519");
-    assert_eq!(body["auth_data"]["ssk_generation"], 7);
+    assert_eq!(
+        body["auth_data"]["device_authorize_event_id"],
+        DEVICE_AUTHORIZE_EVENT
+    );
     // signed_fields must cover the mandatory set (+ series fields present).
     let signed: Vec<String> = body["auth_data"]["signed_fields"]
         .as_array()
@@ -204,15 +209,9 @@ fn key_backup_auth_data_sign_verify_service_attested_round_trip() {
         body["auth_data"]["device_authorize_event_id"],
         DEVICE_AUTHORIZE_EVENT
     );
-    assert!(body["auth_data"].get("ssk_generation").is_none());
     let parsed: arkret_sdk::KeyBackup = serde_json::from_value(body.clone()).unwrap();
     assert_eq!(
-        parsed
-            .auth_data
-            .unwrap()
-            .device_authorize_event_id
-            .unwrap()
-            .as_str(),
+        parsed.auth_data.unwrap().device_authorize_event_id.as_str(),
         DEVICE_AUTHORIZE_EVENT
     );
     verify_key_backup_auth_data(&body, &signing_key.verifying_key())
@@ -236,7 +235,9 @@ fn recovery_policy_ref_is_covered_by_signed_fields_when_present() {
         &signing_key,
         DEVICE,
         "did:web:a#device",
-        Some(KeyBackupDeviceTrustAnchor::SskGeneration(7)),
+        Some(KeyBackupDeviceTrustAnchor::DeviceAuthorizeEventId(
+            DEVICE_AUTHORIZE_EVENT.to_owned(),
+        )),
     )
     .unwrap();
     let signed: Vec<String> = body["auth_data"]["signed_fields"]
@@ -268,7 +269,9 @@ fn direct_key_backup_signing_is_self_verifying() {
         &signing_key,
         DEVICE,
         "did:web:alice.example#device",
-        Some(KeyBackupDeviceTrustAnchor::SskGeneration(1)),
+        Some(KeyBackupDeviceTrustAnchor::DeviceAuthorizeEventId(
+            DEVICE_AUTHORIZE_EVENT.to_owned(),
+        )),
     )
     .unwrap();
     verify_key_backup_auth_data(&body, &signing_key.verifying_key())
@@ -286,7 +289,9 @@ fn key_backup_auth_data_rejects_tamper_and_wrong_key() {
         &signing_key,
         DEVICE,
         "did:web:a#device",
-        Some(KeyBackupDeviceTrustAnchor::SskGeneration(1)),
+        Some(KeyBackupDeviceTrustAnchor::DeviceAuthorizeEventId(
+            DEVICE_AUTHORIZE_EVENT.to_owned(),
+        )),
     )
     .unwrap();
 

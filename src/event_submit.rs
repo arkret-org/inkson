@@ -2752,7 +2752,7 @@ impl EventSubmitter {
             && events.get(1).is_some_and(|event| {
                 event.kind.as_str() == arkret_sdk::EventKind::DEVICE_AUTHORIZE
             })
-            && arkret_bootstrap::validate_self_principal_bootstrap_unit(
+            && arkret_bootstrap::validate_self_principal_pcr_genesis_unit(
                 &events[0],
                 &events[1],
                 &crate::operation::cell_write_projector,
@@ -3356,7 +3356,7 @@ mod tests {
     fn test_authoring_generation() -> crate::identity::authoring_generation::AuthoringGeneration {
         crate::identity::authoring_generation::AuthoringGeneration {
             authority_model:
-                crate::identity::authoring_generation::AuthoringAuthorityModel::EnrollmentAuthority,
+                crate::identity::authoring_generation::AuthoringAuthorityModel::AcceptedDevice,
             authority_principal_id: "did:web:alice.example".to_owned(),
             generation_ref: "1-QmCurrent".to_owned(),
         }

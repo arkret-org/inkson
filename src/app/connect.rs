@@ -257,10 +257,8 @@ pub(super) struct ConnectContext {
     /// first full account-subscribe snapshot on the same render.
     pub(super) sync_bootstrap_complete: Signal<bool>,
     pub(super) session_boot_state: Signal<SessionBootState>,
-    /// Session DID-resolution cache handle. The boot sync's Tier-2 device-key
-    /// chain verification (`device-lifecycle.md` §8.3) anchors the published
-    /// PSK against the actor's DID document through a resolver backed by a
-    /// snapshot of this cache; back-fills are written back. Shared with the
+    /// Session DID-resolution cache handle. Root identity verification uses a
+    /// resolver backed by a snapshot of this cache; back-fills are written back. Shared with the
     /// SyncEngine's `did_cache` so both receive paths reuse resolved documents.
     pub(super) did_cache: Signal<arkret_sdk::identity::DidResolutionCache>,
     /// App-shell DID resolution health banner state. The root identity
@@ -514,8 +512,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             description.service_kind, description.protocol_version
                         ));
                         // Round 4 — cache the advertised trust_domain so
-                        // downstream signing strands (cross_signing.publish,
-                        // S2S transcripts) can pull a canonical
+                        // downstream signing strands and S2S transcripts can pull a canonical
                         // value off local state without an extra round
                         // trip. Cleared when describe fails so a stale
                         // domain can't leak into the next strand.

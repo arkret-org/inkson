@@ -267,7 +267,7 @@ fn device_status_authorization(status: &str) -> Option<bool> {
         return None;
     }
     match normalized.as_str() {
-        "verified" | "authorized" | "active" | "cross_signed" | "trusted" => Some(true),
+        "verified" | "authorized" | "active" | "trusted" => Some(true),
         "unverified"
         | "pending"
         | "pending_authorization"

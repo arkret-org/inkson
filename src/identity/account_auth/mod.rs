@@ -77,9 +77,6 @@ pub struct PersistedOidcScaffold {
     /// T1.Y4 — the resolved `gate_account_base` to POST `session-grants` to.
     #[serde(default)]
     pub gate_account_base: String,
-    /// Enrollment authority DID pinned by the Principal Server deployment.
-    #[serde(default)]
-    pub enrollment_authority_did: String,
     /// Principal Server trust domain, distinct from the Account Authority's
     /// own challenge transcript trust domain.
     #[serde(default)]

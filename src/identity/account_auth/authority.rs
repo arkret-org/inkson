@@ -73,9 +73,6 @@ pub struct AuthorityResolver {
     pub gate_account_base: String,
     /// Audience the issued session grant authenticates against.
     pub principal_audience: String,
-    /// B-model first-device enrollment authority pinned by the Principal
-    /// Server deployment description.
-    pub enrollment_authority_did: arkret_sdk::Did,
     /// Principal Server trust domain used by the principal-control bootstrap.
     pub principal_trust_domain: arkret_sdk::TypedTrustDomainId,
     /// Authentication methods the Account Authority accepts.
@@ -115,15 +112,6 @@ impl AuthorityResolver {
     ) -> anyhow::Result<Self> {
         let metadata = &description.auth_metadata;
         let gate_account_base = resolve_gate_account_base(principal_server_url, metadata)?;
-        let enrollment_authority_did = metadata
-            .account_authority
-            .as_ref()
-            .and_then(|authority| authority.enrollment_authority_did.clone())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "principal server describe is missing the account-first enrollment authority pin"
-                )
-            })?;
         let principal_audience = {
             let service_id = description.service_id.as_str().trim();
             if service_id.is_empty() {
@@ -135,7 +123,6 @@ impl AuthorityResolver {
         Ok(Self {
             gate_account_base,
             principal_audience,
-            enrollment_authority_did,
             principal_trust_domain: description.trust_domain.clone(),
             methods: metadata.methods.clone(),
         })

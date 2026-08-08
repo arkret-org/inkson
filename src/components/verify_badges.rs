@@ -4,7 +4,7 @@
 //!
 //! - [`NeedsVerificationBadge`] — rendered next to a message when its crypto state is
 //!   `NeedsVerification`. Red dot + tooltip warning the reader the sender's device hasn't been
-//!   cross-signed yet.
+//!   authorized yet.
 //!
 //! The badges are intentionally pure — they take a single typed prop
 //! and render an `<span>` with a stable `data-testid` for the e2e

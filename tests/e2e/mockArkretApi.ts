@@ -36,10 +36,6 @@ const DEMO_BLOB_REF =
   "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460";
 const DEMO_AVATAR_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
-const ENROLLMENT_AUTHORITY_DID =
-  "did:key:z6MknBuwKMPAzbhp6EwCnaxsEDk4G2KFeWRu273gYVuTY5jw";
-const ENROLLMENT_AUTHORITY_VM = `${ENROLLMENT_AUTHORITY_DID}#z6MknBuwKMPAzbhp6EwCnaxsEDk4G2KFeWRu273gYVuTY5jw`;
-
 type SpaceContainerProjection = {
   container_space_id: string;
   realm_id: string;
@@ -70,7 +66,6 @@ type MockArkretApiOptions = {
   directoryPrimaryHandle?: string | null;
   currentDeviceId?: string;
   accountDevices?: MockAccountDevice[];
-  enableDeviceEnrollment?: boolean;
   includeDemoRealms?: boolean;
   includeLowFloorRealm?: boolean;
   personalAgentPairingExpiresAt?: string;
@@ -256,6 +251,8 @@ function signedEventDigest(event: Record<string, unknown>) {
   const digestPayload = { ...event };
   delete digestPayload.proofs;
   delete digestPayload.unsigned;
+  delete digestPayload.actor_kind;
+  delete digestPayload.event_id;
   return canonicalSha256(digestPayload);
 }
 
@@ -1035,64 +1032,6 @@ export async function mockArkretApi(
       return route.continue();
     }
     if (
-      options.enableDeviceEnrollment &&
-      url.hostname === "auth.local.host" &&
-      url.pathname === "/_arkret/gate/account/device-enroll" &&
-      route.request().method() === "POST"
-    ) {
-      const body = await route.request().postDataJSON();
-      const deviceId =
-        typeof body.device_id === "string" ? body.device_id : currentDeviceId;
-      const authorizedEvent: Record<string, unknown> = {
-        event_id: "ak:event:AUEB_ptfZUY6YeC12kXscy3wKXPZW3nKY6gxd4MDL1dQ",
-        kind: "ak.device.authorize",
-        realm_id: "ak:realm:AfemzjcBM8EHTIcl-OklLPTtpG9FdBAR0esckgToqzon",
-        actor_id: accountPrincipalId,
-        executed_by: ENROLLMENT_AUTHORITY_DID,
-        authorization_ref: `${accountPrincipalId}#enrollment-authority`,
-        actor_seq: typeof body.actor_seq === "number" ? body.actor_seq : 1,
-        created_at: "2026-06-22T00:00:00.000Z",
-        hlc: "019641370000-0000-12345678",
-        prev_refs: [],
-        refs: [],
-        payload: {
-          principal_id: accountPrincipalId,
-          device_id: deviceId,
-          device_public_key:
-            typeof body.device_public_key === "string"
-              ? body.device_public_key
-              : "z6MkExamplePublicKey",
-          authorized_by: ENROLLMENT_AUTHORITY_DID,
-          not_before: "2026-06-22T00:00:00.000Z",
-          enrollment_authority_binding: {
-            kind: "service_attested",
-            authority_did: ENROLLMENT_AUTHORITY_DID,
-            authorization_ref: `${accountPrincipalId}#enrollment-authority`,
-          },
-        },
-      };
-      const eventDigest = signedEventDigest(authorizedEvent);
-      authorizedEvent.proofs = [
-        {
-          kind: "detached_jws",
-          alg: "Ed25519",
-          verification_method: ENROLLMENT_AUTHORITY_VM,
-          event_digest: eventDigest,
-          created_at: "2026-06-22T00:00:00.000Z",
-          domain: ENROLLMENT_AUTHORITY_DID,
-          audience: "did:web:server.local",
-          jws: "ey.ey.sig",
-        },
-      ];
-      return json(route, {
-        principal_id: accountPrincipalId,
-        device_id: deviceId,
-        authority_did: ENROLLMENT_AUTHORITY_DID,
-        authorized_event: authorizedEvent,
-      });
-    }
-
-    if (
       url.pathname === "/_arkret/describe" &&
       route.request().method() === "GET"
     ) {
@@ -1107,7 +1046,6 @@ export async function mockArkretApi(
             account_authority: {
               origin: "https://auth.local.host",
               gate_account_base: "https://auth.local.host/_arkret/gate/account",
-              enrollment_authority_did: ENROLLMENT_AUTHORITY_DID,
             },
             methods: [
               {
@@ -1250,7 +1188,6 @@ export async function mockArkretApi(
           account_authority: {
             origin: "https://auth.local.host",
             gate_account_base: "https://auth.local.host/_arkret/gate/account",
-            enrollment_authority_did: ENROLLMENT_AUTHORITY_DID,
           },
           methods: [
             {
@@ -1702,7 +1639,7 @@ export async function mockArkretApi(
           authorization_rules: [
             {
               rule_id: "principal_control",
-              issuer_role: "cross_signing_self_signing",
+              issuer_role: "accepted_device",
               allowed_actions: [event.kind],
               issuers: [{ verification_method: verificationMethod }],
               threshold: 1,
@@ -1768,7 +1705,6 @@ export async function mockArkretApi(
           account_authority: {
             origin: "https://auth.local.host",
             gate_account_base: "https://auth.local.host/_arkret/gate/account",
-            enrollment_authority_did: ENROLLMENT_AUTHORITY_DID,
           },
           methods: [
             {
@@ -1858,17 +1794,17 @@ export async function mockArkretApi(
         }
         if (event.kind === "ak.device.authorize") {
           const payload = event.payload ?? event.content ?? {};
-          const binding = payload.enrollment_authority_binding ?? {};
           if (
             !isDid(payload.principal_id) ||
             !isDeviceId(payload.device_id) ||
             typeof payload.device_public_key !== "string" ||
             payload.device_public_key.trim() === "" ||
             !isDeviceOrDid(payload.authorized_by) ||
-            binding.kind !== "service_attested" ||
-            !isDid(binding.authority_did) ||
-            typeof binding.authorization_ref !== "string" ||
-            binding.authorization_ref.trim() === ""
+            !["root_anchored", "accepted_device"].includes(
+              payload.authorization_binding_kind,
+            ) ||
+            typeof payload.device_signature !== "string" ||
+            payload.device_signature.trim() === ""
           ) {
             return json(
               route,
@@ -2189,14 +2125,131 @@ export async function mockArkretApi(
       route.request().method() === "POST"
     ) {
       const body = await route.request().postDataJSON();
-      if (body.device_id && !accountDevices.has(body.device_id)) {
-        accountDevices.set(body.device_id, {
-          device_id: body.device_id,
-          status: "unknown",
+      const identityCreation = body.identity_creation as
+        | Record<string, any>
+        | undefined;
+      const genesisEvents = identityCreation?.pcr_genesis_unit?.events;
+      const createEvent = Array.isArray(genesisEvents) ? genesisEvents[0] : undefined;
+      const authorizeEvent = Array.isArray(genesisEvents)
+        ? genesisEvents[1]
+        : undefined;
+      const authorizePayload = authorizeEvent?.payload ?? {};
+      const descriptor = createEvent?.payload?.object?.founding_device_descriptor;
+      const registrationDeviceId =
+        identityCreation?.initial_session?.device_id ?? body.device_id;
+      if (identityCreation) {
+        const rootAnchored =
+          createEvent?.kind === "ak.realm.create" &&
+          authorizeEvent?.kind === "ak.device.authorize" &&
+          authorizePayload.authorization_binding_kind === "root_anchored" &&
+          authorizePayload.authorized_by === body.principal_id &&
+          descriptor?.device_id === registrationDeviceId &&
+          descriptor?.device_id === authorizePayload.device_id &&
+          typeof authorizePayload.device_signature === "string" &&
+          authorizePayload.device_signature.length > 0;
+        if (!rootAnchored) {
+          return json(
+            route,
+            {
+              ok: false,
+              error: {
+                code: "schema_violation",
+                message:
+                  "identity creation requires a root_anchored founding device PCR genesis unit",
+              },
+            },
+            400,
+          );
+        }
+      }
+      if (registrationDeviceId && !accountDevices.has(registrationDeviceId)) {
+        accountDevices.set(registrationDeviceId, {
+          device_id: registrationDeviceId,
+          status: identityCreation ? "active" : "unknown",
           display_name: "Current device",
-          verification_state: "unverified",
+          verification_state: identityCreation ? "verified" : "unverified",
         });
       }
+      const creationOutcome = (() => {
+        if (!identityCreation || !createEvent || !authorizeEvent || !descriptor) {
+          return {};
+        }
+        const createDigest = signedEventDigest(createEvent);
+        const authorizeDigest = signedEventDigest(authorizeEvent);
+        const receiptEvents = [
+          {
+            event_id: createEvent.event_id,
+            event_digest: createDigest,
+            kind: "ak.realm.create",
+          },
+          {
+            event_id: authorizeEvent.event_id,
+            event_digest: authorizeDigest,
+            kind: "ak.device.authorize",
+          },
+        ].sort((left, right) =>
+          canonicalJson(left).localeCompare(canonicalJson(right)),
+        );
+        const receiptIssuer = "did:web:server.local";
+        const createdAt = "2026-08-09T00:00:00.000Z";
+        return {
+          binding_receipt: {
+            binding_state: "bound",
+            identity_creation_lease_id:
+              identityCreation.identity_creation_lease_id,
+            lease_fence: identityCreation.lease_fence,
+            operation_status: "accepted",
+            operation_digest: identityCreation.control_proof.operation_digest,
+            head_event_digest: identityCreation.control_proof.operation_digest,
+          },
+          pcr_genesis_receipt: {
+            schema: "ak.schema.event_batch_receipt.v1",
+            receipt_id: "ak:receipt:019a6413-7000-7000-8000-000000000001",
+            issuer: receiptIssuer,
+            scope: {
+              kind: "pcr_genesis_unit",
+              principal_id: body.principal_id,
+              realm_id: createEvent.realm_id,
+              create_digest: createDigest,
+              founding_authorize_digest: authorizeDigest,
+              accepted_device_id: registrationDeviceId,
+              device_key_digest: descriptor.device_key_digest,
+              hpke_key_digest: descriptor.hpke_key_digest,
+              accepted_at: createdAt,
+              audience: identityCreation.control_proof.audience,
+            },
+            frontier: {
+              actor_seq: authorizeEvent.actor_seq,
+              event_id: authorizeEvent.event_id,
+              event_digest: authorizeDigest,
+              hlc: authorizeEvent.hlc,
+            },
+            events: receiptEvents,
+            created_at: createdAt,
+            proofs: [
+              {
+                kind: "detached_jws",
+                verification_method: `${receiptIssuer}#receipt`,
+                event_digest: authorizeDigest,
+                created_at: createdAt,
+                jws: "e2e..pcr-genesis-receipt",
+              },
+            ],
+          },
+          session_grant_outcome: {
+            principal_id: body.principal_id,
+            device_id: registrationDeviceId,
+            session_grant: "e2e-standard-session-grant",
+            expires_at: "2027-08-09T00:00:00.000Z",
+            grant_id:
+              "ak:session_grant:ATLC-gY-xpE0kN3QXVYxo0Kh32EoNCTBQTSFuu_P57e6",
+            session_public_key:
+              identityCreation.initial_session.session_public_key,
+            audience: identityCreation.initial_session.audience,
+            granted_scope: identityCreation.initial_session.requested_scope,
+          },
+        };
+      })();
       return json(
         route,
         {
@@ -2213,6 +2266,7 @@ export async function mockArkretApi(
             accountable_principal_ids: [],
             created_at: "2026-04-28T12:00:00.000Z",
           },
+          ...creationOutcome,
         },
         201,
       );
@@ -3114,11 +3168,6 @@ export async function mockArkretApi(
               device_status: "active",
               device_signing_key:
                 "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
-              enrollment_authority_binding: {
-                kind: "service_attested",
-                authority_did: ENROLLMENT_AUTHORITY_DID,
-                authorization_ref: `${requestedPrincipalId}#enrollment-authority`,
-              },
               device_authorize_event_id:
                 "ak:event:Ad-rGYKVGY9i32DG2R9ZwMezGzT5g2rmdYjrifmGO6Fe",
               authorized_generation_ref: generationRef,

@@ -42,7 +42,6 @@ pub mod components;
 pub mod config;
 pub mod conformance;
 pub mod content;
-pub mod cross_signing;
 pub mod crypto;
 pub mod crypto_boundary;
 pub(crate) mod directory_helpers;

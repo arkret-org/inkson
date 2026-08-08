@@ -503,7 +503,6 @@ async fn drive_security_rotation(
                 prepared_plan_digest: transaction.prepared_plan_digest.clone(),
                 expected_next_step: SecurityTransactionStep::LocalCommit,
                 client_attestation: Some(attestation),
-                participant_request: None,
             },
         )
         .await

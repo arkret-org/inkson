@@ -10,8 +10,10 @@ pub use domain_sep::*;
 pub use signing::*;
 pub use validate::*;
 
+#[cfg(test)]
+mod tests;
+
 const KEY_BACKUP_RAW_SIGNATURE_ALGORITHM: &str = "Ed25519";
-pub const DEFAULT_SSK_GENERATION: u64 = 1;
 
 pub use arkret_sdk::BackupKind;
 
@@ -56,47 +58,6 @@ const KEY_BACKUP_SIGNED_FIELDS_MANDATORY: &[&str] = &[
 
 pub fn key_backup_hkdf_info(class: BackupKind, subdomain: &str) -> String {
     class.hkdf_info(subdomain)
-}
-
-/// The current principal control key and the DID URL it is published under.
-///
-/// Both halves come from the same accepted cross-signing publish, so the `kid`
-/// handed to the receiver and the private key that signs can never be one
-/// generation apart. Returns an error rather than falling back to the device
-/// signer: §7.8.1's `principal_signing` branch is defined by resolving the
-/// method through the principal's DID document, and a device key does not
-/// appear there.
-///
-/// # Errors
-///
-/// Returns an error when no cross-signing publish has been accepted for
-/// `actor_id` yet, or when the secure store holds no principal signing key for
-/// that publish's generation.
-pub fn principal_signing_key(
-    state_store: &crate::state::LocalStateStore,
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    actor_id: &str,
-) -> anyhow::Result<(String, ed25519_dalek::SigningKey)> {
-    let publish = crate::mls::admission::latest_cross_signing_publish(state_store, actor_id)
-        .map_err(|error| anyhow::anyhow!("cross-signing publish unavailable: {error}"))?
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "no accepted cross-signing publish for {actor_id}: the principal control key a                  high-risk delete proof needs has never been published"
-            )
-        })?;
-    let generation = publish.generation.get();
-    let key = crate::cross_signing::load_signing_key(
-        secure_store,
-        actor_id,
-        generation,
-        crate::cross_signing::CrossSigningKeyRole::PrincipalSigning,
-    )?
-    .ok_or_else(|| {
-        anyhow::anyhow!(
-            "principal signing key for generation {generation} is not in the secure key store"
-        )
-    })?;
-    Ok((publish.principal_signing_key.kid.as_str().to_owned(), key))
 }
 
 /// Build the `principal_signing` branch of a §7.8.1 high-risk delete proof.
@@ -248,6 +209,3 @@ pub(crate) fn is_base64url_token(value: &str) -> bool {
 pub(crate) fn is_sha_digest(value: &str) -> bool {
     arkret_sdk::Hash::new(value).is_ok()
 }
-
-#[cfg(test)]
-mod tests;

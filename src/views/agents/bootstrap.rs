@@ -58,7 +58,6 @@ enum MlsHistoryRecoveryPlan {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ControllerBackupTrustAnchor {
-    SskGeneration(u64),
     DeviceGeneration {
         authorize_event_id: String,
         generation_ref: String,
@@ -83,23 +82,11 @@ async fn current_controller_backup_trust_anchor(
         anyhow::bail!("active controller device is not usable in the current trust generation");
     }
     match (
-        record.cross_signing_binding.as_ref(),
         generation,
         record.authorized_generation_ref.as_ref(),
         record.device_authorize_event_id.as_ref(),
     ) {
-        (Some(binding), None, None, _) => {
-            let publish = outcome.cross_signing.get(&controller).ok_or_else(|| {
-                anyhow::anyhow!("keys/query omitted the current cross-signing publish")
-            })?;
-            if publish.generation.get() != binding.ssk_generation {
-                anyhow::bail!("device binding generation differs from the current SSK generation");
-            }
-            Ok(ControllerBackupTrustAnchor::SskGeneration(
-                binding.ssk_generation,
-            ))
-        }
-        (None, Some(generation), Some(device_generation), Some(authorize_event_id))
+        (Some(generation), Some(device_generation), Some(authorize_event_id))
             if generation.device_generation_status
                 == arkret_sdk::DeviceGenerationStatus::Active
                 && device_generation.as_str()
@@ -110,7 +97,7 @@ async fn current_controller_backup_trust_anchor(
                 generation_ref: generation.current_device_generation_ref.to_string(),
             })
         }
-        _ => anyhow::bail!("active controller device trust model is mixed or incomplete"),
+        _ => anyhow::bail!("active controller device generation is incomplete"),
     }
 }
 
@@ -550,10 +537,6 @@ fn build_managed_pcr_backup_body(
         "seal_ref": envelope_frontier.seal_ref
     });
     let auth_anchor = match trust_anchor {
-        ControllerBackupTrustAnchor::SskGeneration(generation) => {
-            body["frontier_ref"]["ssk_generation"] = json!(generation);
-            crate::key_backup::KeyBackupDeviceTrustAnchor::SskGeneration(*generation)
-        }
         ControllerBackupTrustAnchor::DeviceGeneration {
             authorize_event_id,
             generation_ref,
@@ -658,10 +641,6 @@ fn build_active_mls_history_series_event(
         }
     });
     match trust_anchor {
-        ControllerBackupTrustAnchor::SskGeneration(generation) => {
-            payload["frontier_ref"]["ssk_generation"] = json!(generation);
-            payload["auth_data"]["ssk_generation"] = json!(generation);
-        }
         ControllerBackupTrustAnchor::DeviceGeneration {
             authorize_event_id,
             generation_ref,
@@ -1917,7 +1896,11 @@ mod tests {
             series_id,
             0,
             None,
-            &ControllerBackupTrustAnchor::SskGeneration(1),
+            &ControllerBackupTrustAnchor::DeviceGeneration {
+                authorize_event_id: "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e"
+                    .to_owned(),
+                generation_ref: "did-version-1".to_owned(),
+            },
             None,
         )
         .unwrap();
@@ -1972,7 +1955,11 @@ mod tests {
             series_id,
             1,
             Some(&body),
-            &ControllerBackupTrustAnchor::SskGeneration(1),
+            &ControllerBackupTrustAnchor::DeviceGeneration {
+                authorize_event_id: "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e"
+                    .to_owned(),
+                generation_ref: "did-version-1".to_owned(),
+            },
             None,
         )
         .unwrap();
@@ -2079,7 +2066,11 @@ mod tests {
             history_series_id,
             0,
             None,
-            &ControllerBackupTrustAnchor::SskGeneration(1),
+            &ControllerBackupTrustAnchor::DeviceGeneration {
+                authorize_event_id: "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e"
+                    .to_owned(),
+                generation_ref: "did-version-1".to_owned(),
+            },
             None,
         )
         .unwrap();

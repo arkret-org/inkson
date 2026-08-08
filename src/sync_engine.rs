@@ -123,7 +123,7 @@ pub struct SyncEngineContext {
     /// Y1/Y2 - session-scoped DID resolution cache handle, provided by
     /// `app.rs` via `use_context_provider` as documented there. While ingesting
     /// projections, the Y2 invalidation hook uses it to call `invalidate` for
-    /// related actor DIDs when `ak.cross_signing.reset` / `ak.device.revoke`
+    /// related actor DIDs when device authorization frontier events arrive
     /// arrive, and `clear` on logout / trust-bundle reset.
     pub did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
     pub session: crate::runtime::session::SessionCoordinator,
@@ -1885,7 +1885,7 @@ pub fn apply_response(
     let mut realm_projection_changed = false;
 
     // Y2 invalidation hook: scan identity events in this response before writing
-    // projections. On `ak.cross_signing.reset` / `ak.device.revoke`, invalidate
+    // projections. On device authorization frontier changes, invalidate
     // the related actor DID so the next authority resolution (`resolve_with_cache`)
     // walks the resolver chain instead of trusting a stale cache entry (old key
     // set). Keep this separate from the state-store write callback.
@@ -2677,7 +2677,7 @@ fn ingest_member_identity_events_from_projection(
 
 /// Core scanner for the Y2 invalidation hook.
 ///
-/// Finds `ak.cross_signing.reset` / `ak.device.revoke` events in one Realm
+/// Finds device-frontier events in one Realm
 /// projection `body`, then calls
 /// [`arkret_sdk::identity::DidResolutionCache::invalidate`] for the related actor
 /// DID. Events may appear in:
@@ -4095,24 +4095,6 @@ mod tests {
     }
 
     #[test]
-    fn cross_signing_reset_event_invalidates_actor_in_inline_member_events() {
-        let (mut cache, did) = seed_cache("did:web:alice.example");
-        let body = json!({
-            "members": [{
-                "actor_id": "did:web:alice.example",
-                "identity_events": [
-                    { "event_id": "e1", "kind": "ak.cross_signing.reset" }
-                ]
-            }]
-        });
-        invalidate_cache_for_revocation_events(&mut cache, &body);
-        assert!(
-            cache.get(&did, chrono::Utc::now()).is_none(),
-            "reset event must drop the cached actor entry"
-        );
-    }
-
-    #[test]
     fn device_revoke_event_in_state_events_invalidates_actor() {
         // state.events[] use canonical `actor_id`; forbidden
         // `actor` / `sender` fields are ignored by the scanner.
@@ -4142,11 +4124,7 @@ mod tests {
                 },
                 { "event_id": "e2", "kind": "ak.device.list_update", "actor_id": "did:web:bob.example" },
                 { "event_id": "e3", "kind": "ak.message.create", "actor_id": "did:web:carol.example" }
-            ] },
-            "members": [{
-                "actor_id": "did:web:dave.example",
-                "identity_events": [{ "event_id": "e4", "kind": "ak.cross_signing.publish" }]
-            }]
+            ] }
         });
 
         let actors = collect_device_frontier_actors(&body);
@@ -4154,7 +4132,6 @@ mod tests {
             actors.into_iter().collect::<Vec<_>>(),
             vec![
                 "did:web:bob.example".to_owned(),
-                "did:web:dave.example".to_owned(),
                 "did:web:subject.example".to_owned(),
             ]
         );

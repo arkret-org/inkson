@@ -8,7 +8,7 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde_json::{Value, json};
 
 use super::{
-    DEFAULT_SSK_GENERATION, KEY_BACKUP_RAW_SIGNATURE_ALGORITHM, KEY_BACKUP_SIGNED_FIELDS,
+    KEY_BACKUP_RAW_SIGNATURE_ALGORITHM, KEY_BACKUP_SIGNED_FIELDS,
     KEY_BACKUP_SIGNED_FIELDS_MANDATORY, required_str_anyhow,
 };
 
@@ -50,7 +50,6 @@ impl std::error::Error for KeyBackupUnlockBackoff {}
 
 #[derive(Clone, Debug)]
 pub enum KeyBackupDeviceTrustAnchor {
-    SskGeneration(u64),
     DeviceAuthorizeEventId(String),
 }
 
@@ -58,8 +57,7 @@ pub enum KeyBackupDeviceTrustAnchor {
 /// the device Ed25519 key. The signature covers
 /// `canonical_json(envelope without auth_data.signature)` — i.e. the rest of
 /// `auth_data` is bound too, so it cannot be tampered. The trust anchor seals
-/// the envelope to either the published cross-signing generation or the
-/// accepted service-attested device authorization event.
+/// the envelope to the accepted device authorization event when supplied.
 pub fn sign_key_backup_auth_data(
     body: &mut Value,
     signing_key: &SigningKey,
@@ -112,14 +110,7 @@ pub fn sign_key_backup_with_device(
     device_id: &str,
     signer: KeyBackupSigner<'_>,
 ) -> anyhow::Result<bool> {
-    sign_key_backup_with_device_and_trust_anchor(
-        body,
-        device_id,
-        signer,
-        Some(KeyBackupDeviceTrustAnchor::SskGeneration(
-            DEFAULT_SSK_GENERATION,
-        )),
-    )
+    sign_key_backup_with_device_and_trust_anchor(body, device_id, signer, None)
 }
 
 pub fn sign_key_backup_with_device_and_trust_anchor(
@@ -182,30 +173,12 @@ pub fn verify_key_backup_auth_data(
     {
         return Err("auth_data.signature_algorithm must be Ed25519".to_owned());
     }
-    let ssk_generation = auth.get("ssk_generation").and_then(Value::as_u64);
-    if auth.get("ssk_generation").is_some()
-        && ssk_generation.is_none_or(|generation| generation < 1)
-    {
-        return Err("auth_data.ssk_generation must be >= 1".to_owned());
-    }
     let device_authorize_event_id = auth
         .get("device_authorize_event_id")
         .and_then(Value::as_str)
         .filter(|event_id| !event_id.trim().is_empty());
     if auth.get("device_authorize_event_id").is_some() && device_authorize_event_id.is_none() {
         return Err("auth_data.device_authorize_event_id must be a non-empty string".to_owned());
-    }
-    match (ssk_generation, device_authorize_event_id) {
-        (Some(_), None) | (None, Some(_)) => {}
-        (None, None) => {
-            return Err("auth_data must include exactly one device trust anchor".to_owned());
-        }
-        (Some(_), Some(_)) => {
-            return Err(
-                "auth_data.ssk_generation and auth_data.device_authorize_event_id are mutually exclusive"
-                    .to_owned(),
-            );
-        }
     }
     let sig_b64 = auth
         .get("signature")
@@ -253,12 +226,6 @@ fn apply_key_backup_trust_anchor(
     trust_anchor: Option<KeyBackupDeviceTrustAnchor>,
 ) -> anyhow::Result<()> {
     match trust_anchor {
-        Some(KeyBackupDeviceTrustAnchor::SskGeneration(generation)) if generation >= 1 => {
-            auth["ssk_generation"] = Value::Number(serde_json::Number::from(generation));
-        }
-        Some(KeyBackupDeviceTrustAnchor::SskGeneration(_)) => {
-            anyhow::bail!("auth_data.ssk_generation must be >= 1");
-        }
         Some(KeyBackupDeviceTrustAnchor::DeviceAuthorizeEventId(event_id)) => {
             if event_id.trim().is_empty() {
                 anyhow::bail!("auth_data.device_authorize_event_id must be a non-empty string");

@@ -1,7 +1,7 @@
 //! Account-first identity setup.
 //!
 //! The user-facing flow intentionally hides the handoff lease, DID inception,
-//! PCR bootstrap, and recovery-material gate. Those protocol stages remain
+//! PCR genesis, and recovery-material gate. Those protocol stages remain
 //! durable and resumable, but the page presents only three user decisions:
 //! choose an identity, save its Recovery Key, and finish.
 
@@ -27,17 +27,16 @@ enum IdentityChoice {
 enum OnboardingSurface {
     /// Choose an identity, then generate, save and confirm a new Recovery Key.
     IdentityCreation,
+    /// The authenticated account is already bound, but this device is not.
+    /// The Recovery Key proves root control and authorizes this device.
+    RootRecovery,
     /// Finish a durable identity draft that is still completable from here.
-    ResumeBootstrap,
+    ResumeSetup,
     /// A durable identity draft that nothing on this device can finish. It is
     /// shown as a dead end with an explicit way out, never as a Recovery Key
     /// prompt: asking for 24 words that cannot be used is indistinguishable
     /// from a bug, and it locks a *new* account out of its own setup.
     StaleCheckpoint,
-    /// Coauth durably cancelled or expired the founding transaction. The
-    /// current contract has no Bound-account path that can mint a replacement
-    /// founding transaction, so normal login/resume remains fail-closed.
-    TerminatedBootstrap,
     /// No onboarding work is pending on this device.
     AccountSummary,
 }
@@ -54,7 +53,7 @@ enum OnboardingSurface {
 ///
 /// Without a handoff, a draft is only completable when its account binding has
 /// already been registered AND this device holds a live session for that exact
-/// DID, which is what the remaining bootstrap calls authenticate with. A
+/// DID, which is what the remaining setup calls authenticate with. A
 /// `CustodyConfirmed` draft always needs the handoff (its lease and handoff
 /// credential are what bind the account), so it can never be resumed alone.
 ///
@@ -71,22 +70,23 @@ fn onboarding_surface(
     active_account_did: &str,
 ) -> OnboardingSurface {
     let Some(checkpoint) = checkpoint else {
-        return if handoff.is_some() {
-            OnboardingSurface::IdentityCreation
-        } else {
-            OnboardingSurface::AccountSummary
+        return match handoff {
+            Some(handoff) if handoff.bound_principal_id.is_some() => {
+                OnboardingSurface::RootRecovery
+            }
+            Some(_) => OnboardingSurface::IdentityCreation,
+            None => OnboardingSurface::AccountSummary,
         };
     };
 
-    if checkpoint.bootstrap_terminal_outcome.is_some() {
-        return OnboardingSurface::TerminatedBootstrap;
-    }
-
     if let Some(handoff) = handoff {
+        if handoff.bound_principal_id.is_some() {
+            return OnboardingSurface::RootRecovery;
+        }
         return if crate::identity::principal_registration::checkpoint_belongs_to_handoff(
             checkpoint, handoff,
         ) {
-            OnboardingSurface::ResumeBootstrap
+            OnboardingSurface::ResumeSetup
         } else {
             OnboardingSurface::IdentityCreation
         };
@@ -96,7 +96,7 @@ fn onboarding_surface(
         checkpoint.stage != crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed;
     let holds_this_identity_session = session_token_present && active_account_did == checkpoint.did;
     if binding_registered && holds_this_identity_session {
-        OnboardingSurface::ResumeBootstrap
+        OnboardingSurface::ResumeSetup
     } else {
         OnboardingSurface::StaleCheckpoint
     }
@@ -132,7 +132,7 @@ pub fn OnboardingPanel(
     // additionally survives a parent re-render (changed props re-run this body
     // with the store already advanced). Both used to swap the in-flight
     // creation panel for the generic resume panel the moment
-    // `create_bind_and_bootstrap_identity` persisted its first checkpoint —
+    // `create_and_bind_identity` persisted its first checkpoint —
     // unmounting the only holder of the in-memory Recovery Key, cancelling its
     // scoped task, and asking an uninterrupted setup for the same 24 words
     // twice. A real remount (reload/restart) re-reads the stages and
@@ -171,9 +171,21 @@ pub fn OnboardingPanel(
     };
 
     match surface {
-        OnboardingSurface::ResumeBootstrap => rsx! {
+        OnboardingSurface::RootRecovery => rsx! {
             div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
-                PendingPrincipalBootstrap {
+                RootAnchoredDeviceRecovery {
+                    state_store,
+                    token,
+                    account_did,
+                    device_id,
+                    needs_device_authorization,
+                    device_authorization_check_complete,
+                }
+            }
+        },
+        OnboardingSurface::ResumeSetup => rsx! {
+            div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
+                PendingPrincipalSetup {
                     token,
                     account_did,
                     device_id,
@@ -202,11 +214,6 @@ pub fn OnboardingPanel(
                 StalePrincipalSetup { on_discard }
             }
         },
-        OnboardingSurface::TerminatedBootstrap => rsx! {
-            div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
-                TerminatedPrincipalBootstrap {}
-            }
-        },
         OnboardingSurface::AccountSummary => {
             let did = account_did();
             rsx! {
@@ -228,6 +235,260 @@ pub fn OnboardingPanel(
             }
         }
     }
+}
+
+#[component]
+fn RootAnchoredDeviceRecovery(
+    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    mut token: Signal<String>,
+    mut account_did: Signal<String>,
+    device_id: Signal<String>,
+    mut needs_device_authorization: Signal<bool>,
+    mut device_authorization_check_complete: Signal<bool>,
+) -> Element {
+    let mut words = use_signal(String::new);
+    let mut status = use_signal(String::new);
+    let mut busy = use_signal(|| false);
+    rsx! {
+        div { class: "event onboarding-card", "data-testid": "root-anchored-device-recovery",
+            div { class: "onboarding-step-mark", "aria-hidden": "true", "1" }
+            h2 { "Recover this identity" }
+            p { class: "muted",
+                "This account already has an identity. Enter its 24-word Recovery Key to prove root control and authorize this device. No approval from another device or administrator is required."
+            }
+            Label { html_for: "root-recovery-words", "Recovery Key (24 words)" }
+            Textarea {
+                id: "root-recovery-words",
+                value: words(),
+                rows: 4,
+                autocomplete: "off",
+                oninput: move |event: FormEvent| words.set(event.value()),
+            }
+            Button {
+                variant: ButtonVariant::Primary,
+                disabled: busy() || words().split_whitespace().count() != 24,
+                onclick: move |_| {
+                    let Some(handoff) = state_store.read().pending_account_handoff() else {
+                        status.set("The authenticated account recovery checkpoint is missing. Sign in again.".to_owned());
+                        return;
+                    };
+                    let Some(principal_id) = handoff.bound_principal_id.clone() else {
+                        status.set("This account does not require existing-identity recovery.".to_owned());
+                        return;
+                    };
+                    let recovery_words = words();
+                    let replacement_device_id = device_id();
+                    busy.set(true);
+                    status.set("Verifying Recovery Key and preparing a root-anchored device authorization…".to_owned());
+                    spawn(async move {
+                        let result = recover_bound_principal_device(
+                            &handoff,
+                            &principal_id,
+                            &replacement_device_id,
+                            &recovery_words,
+                            state_store,
+                        )
+                        .await;
+                        words.set(String::new());
+                        busy.set(false);
+                        match result {
+                            Ok(completed) => {
+                                if let Some(grant) = state_store.read().session_grant() {
+                                    account_did.set(grant.principal_id.clone());
+                                    token.set(grant.grant_jwt);
+                                }
+                                needs_device_authorization.set(false);
+                                device_authorization_check_complete.set(true);
+                                status.set(format!(
+                                    "Identity recovered. Device receipt {} and the Standard session grant are durable.",
+                                    completed.readiness.terminal_receipt_id
+                                ));
+                            }
+                            Err(error) => status.set(format!("Recovery could not finish: {error}")),
+                        }
+                    });
+                },
+                if busy() { "Recovering…" } else { "Authorize this device" }
+            }
+            if !status().is_empty() {
+                p { class: "muted", role: "status", "{status}" }
+            }
+        }
+    }
+}
+
+async fn recover_bound_principal_device(
+    handoff: &crate::state::PendingAccountHandoff,
+    principal_id: &str,
+    replacement_device_id: &str,
+    recovery_words: &str,
+    state_store: SyncSignal<crate::state::LocalStateStore>,
+) -> anyhow::Result<crate::mls::account_recovery::CompletedFreshDeviceRecovery> {
+    if replacement_device_id != handoff.device_id {
+        anyhow::bail!("replacement device does not match the authenticated account handoff");
+    }
+    crate::event_signer::bind_active_signer_device_id(replacement_device_id)?;
+    let api = crate::transport::TransportClient::unauthenticated(&handoff.principal_server_url)?;
+    if let Some(mut completed) =
+        crate::mls::account_recovery::resume_pending_root_anchored_recovery(
+            &api,
+            state_store,
+            recovery_words,
+        )
+        .await?
+    {
+        completed.standard_grant_installed =
+            issue_recovery_completion_grant(handoff, &completed.transaction_id, state_store)
+                .await?;
+        return Ok(completed);
+    }
+    let policy = crate::recovery_strand::fetch_active_recovery_policy(&api)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("the identity has no active Recovery Key policy"))?;
+    let session = api
+        .create_recovery_session(&arkret_models_crypto::RecoverySessionCreateRequestBody {
+            principal_id: arkret_sdk::Did::new(principal_id.to_owned())?,
+            requesting_device_id: arkret_sdk::DeviceId::new(replacement_device_id.to_owned())?,
+            trust_domain: arkret_sdk::TypedTrustDomainId::new(handoff.trust_domain.clone())?,
+            expected_recovery_policy_ref: Some(arkret_models_crypto::RecoveryPolicyRef {
+                policy_id: policy.policy_id.clone(),
+                policy_version: policy.version,
+            }),
+        })
+        .await?;
+    let proof = crate::recovery_strand::build_recovery_unlock_proof_from_words(
+        &session,
+        &policy,
+        recovery_words,
+    )?;
+    let proof_outcome = api
+        .submit_recovery_proof(
+            session.recovery_session_id.as_str(),
+            &arkret_models_crypto::RecoverySessionProofSubmitRequestBody { proof },
+        )
+        .await?;
+    let mut completed = crate::mls::account_recovery::execute_root_anchored_recovery(
+        &api,
+        state_store,
+        &session,
+        &proof_outcome,
+        recovery_words,
+    )
+    .await?;
+    completed.standard_grant_installed =
+        issue_recovery_completion_grant(handoff, &completed.transaction_id, state_store).await?;
+    Ok(completed)
+}
+
+async fn issue_recovery_completion_grant(
+    handoff: &crate::state::PendingAccountHandoff,
+    transaction_id: &arkret_sdk::TransactionId,
+    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+) -> anyhow::Result<bool> {
+    let holder = {
+        let mut store = state_store.write();
+        crate::identity::account_auth::grant_dpop::load_or_recover_device_key(&mut store)?
+            .ok_or_else(|| anyhow::anyhow!("recovery grant holder key is unavailable"))?
+    };
+    if handoff.holder_jkt != holder.jkt() {
+        anyhow::bail!("account handoff holder key changed during recovery");
+    }
+    let account_handoff_grant = crate::identity::account_auth::load_account_handoff_grant()?
+        .ok_or_else(|| anyhow::anyhow!("account handoff credential is unavailable"))?;
+    let authority =
+        crate::identity::account_auth::AuthorityResolver::discover(&handoff.principal_server_url)
+            .await?;
+    let account_base = crate::identity::session_refresh::sdk_base_url_from_gate_account_base(
+        &authority.gate_account_base,
+    )?;
+    let account_http = arkret_sdk::http_client::ClientBuilder::new(account_base)
+        .allow_insecure_localhost()
+        .auth(arkret_sdk::http_client::Auth::Dpop(
+            holder.sdk_account_handoff_auth(account_handoff_grant),
+        ))
+        .build()?;
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let workflow = crate::fresh_device_recovery::FreshDeviceRecovery::new(
+        crate::security_transaction::security_transaction_engine(account_http, secure_store),
+    );
+    let (outcome, initial_session) = match workflow
+        .retry_byte_identical_completion_grant(transaction_id)
+        .await?
+    {
+        Some(outcome) => {
+            let local = workflow
+                .local_state(transaction_id)?
+                .ok_or_else(|| anyhow::anyhow!("recovery grant request is not durable"))?;
+            let canonical = local
+                .accepted_completion_grant_request
+                .as_ref()
+                .ok_or_else(|| {
+                    anyhow::anyhow!("retry outcome omitted its durable initial-session request")
+                })?;
+            let request: arkret_wire::IssueRecoveryCompletionGrantRequest =
+                serde_json::from_slice(canonical)?;
+            let initial_session = serde_json::from_value(request.initial_session)?;
+            (outcome, initial_session)
+        }
+        None => {
+            let initial_session = arkret_sdk::InitialSessionGrantRequest {
+                device_id: arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
+                session_public_key: holder.canonical_session_public_jwk()?,
+                audience: arkret_sdk::Did::new(handoff.audience.clone())?,
+                requested_scope: vec!["ak.self.account.read.viewer".to_owned()],
+            };
+            initial_session.validate()?;
+            let request = workflow
+                .build_completion_grant_issuance(transaction_id, initial_session.clone())?;
+            let outcome = workflow
+                .issue_completion_grant(transaction_id, &request)
+                .await?;
+            (outcome, initial_session)
+        }
+    };
+    let session_grant_outcome = serde_json::from_value(outcome.session_grant_outcome)?;
+    let session = garth::SessionGrantState::from_initial_registration_outcome(
+        &initial_session,
+        session_grant_outcome,
+        chrono::Utc::now(),
+    )?;
+    let actor = session.principal_id.to_string();
+    let persisted = crate::state::PersistedSessionGrant {
+        grant_jwt: session.grant_jwt.clone(),
+        session_private_key_pem: holder.session_signing_key_pkcs8_pem()?.to_string(),
+        grant_id: session.grant_id.to_string(),
+        audience: session.audience.to_string(),
+        principal_id: actor.clone(),
+        device_id: handoff.device_id.clone(),
+        principal_server_url: handoff.principal_server_url.clone(),
+        grant_expires_at: Some(session.expires_at),
+        stored_at: chrono::Utc::now(),
+    };
+    let dpop_record = crate::identity::account_auth::grant_dpop::dpop_device_key_record_from_seed(
+        holder.seed_b64().as_str(),
+    )?;
+    {
+        let mut store = state_store.write();
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        crate::secure_key_store::adopt_device_seed_scope_on_login(secure_store.as_ref(), &actor)?;
+        store.adopt_pending_login(&actor);
+        crate::views::login::persist_completed_login_dpop_key(
+            &mut store,
+            secure_store.as_ref(),
+            &actor,
+            &handoff.device_id,
+            &dpop_record,
+        )
+        .map_err(anyhow::Error::msg)?;
+        store.set_session_grant(Some(persisted));
+        store.register_known_account(&actor);
+        store.set_pending_account_handoff(None)?;
+        let barrier = store.begin_durable_flush()?;
+        drop(store);
+        barrier.wait().await?;
+    }
+    crate::identity::account_auth::clear_account_handoff_grant()?;
+    Ok(true)
 }
 
 #[component]
@@ -336,15 +597,14 @@ fn PendingAccountIdentityCreation(
             if choice() == IdentityChoice::Choose {
                 div { class: "onboarding-heading",
                     span { class: "eyebrow", "Step 1" }
-                    h2 { "Choose your identity" }
-                    p { class: "muted", "Link this account to a new identity or one you already control." }
+                    h2 { "Set up your identity" }
+                    p { class: "muted", "Inkson creates one identity for this account and authorizes this device as its first device." }
                 }
 
-                div { class: "identity-choice-grid", role: "group", "aria-label": "Identity choice",
+                div { class: "identity-choice-grid", role: "group", "aria-label": "Identity setup",
                     section { class: "identity-choice-card is-recommended",
-                        span { class: "badge accent", "Recommended" }
-                        h3 { "Create a new identity" }
-                        p { "Inkson creates it on this device and hosts it with {hosting_name}." }
+                        h3 { "Create your identity" }
+                        p { "It will be anchored by a Recovery Key and hosted with {hosting_name}. No device approval step is needed." }
                         Button {
                             variant: ButtonVariant::Primary,
                             "data-testid": "choose-new-identity",
@@ -364,19 +624,7 @@ fn PendingAccountIdentityCreation(
                                     }
                                 }
                             },
-                            "Create new identity"
-                        }
-                    }
-
-                    section { class: "identity-choice-card",
-                        h3 { "Use an existing DID" }
-                        p { "Approve the link from a device or DID wallet that already controls it." }
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            disabled: true,
-                            title: "This Account Authority does not advertise existing-DID approval yet.",
-                            "data-testid": "choose-existing-identity",
-                            "Not available on this server"
+                            "Continue"
                         }
                     }
                 }
@@ -495,7 +743,7 @@ fn PendingAccountIdentityCreation(
                             busy.set(true);
                             status.set("Finishing setup…".to_owned());
                             spawn(async move {
-                                let result = create_bind_and_bootstrap_identity(
+                                let result = create_and_bind_identity(
                                     &handoff,
                                     &supplied_key,
                                     &device,
@@ -643,50 +891,6 @@ fn StalePrincipalSetup(on_discard: EventHandler<()>) -> Element {
 }
 
 #[component]
-fn TerminatedPrincipalBootstrap() -> Element {
-    let state_store = crate::app::SessionContext::get().state_store;
-    let (did_label, terminal_label) = use_hook(move || {
-        state_store
-            .peek()
-            .pending_principal_registration()
-            .map(|checkpoint| {
-                let terminal_label = match checkpoint.bootstrap_terminal_outcome {
-                    Some(crate::state::PendingPrincipalBootstrapTerminal::Expired) => "expired",
-                    Some(crate::state::PendingPrincipalBootstrapTerminal::Cancelled) | None => {
-                        "cancelled"
-                    }
-                };
-                (short_protocol_id(&checkpoint.did), terminal_label)
-            })
-            .unwrap_or_else(|| ("this identity".to_owned(), "cancelled"))
-    });
-
-    rsx! {
-        div {
-            class: "event onboarding-card",
-            "data-testid": "terminated-principal-bootstrap",
-            SetupProgress { current: 2 }
-            div { class: "onboarding-heading",
-                span { class: "eyebrow", "Setup stopped" }
-                h2 { "This identity bootstrap has ended" }
-                p { class: "muted",
-                    "The founding transaction for {did_label} was {terminal_label}. Its old credential cannot be reused."
-                }
-            }
-            div { class: "callout warn",
-                div { class: "body",
-                    strong { "Normal sign-in cannot restart this setup yet." }
-                    " Keep the Recovery Key and this device's saved identity evidence. Use the recovery flow or contact the service administrator; do not discard the checkpoint."
-                }
-            }
-            div { class: "onboarding-footer-actions",
-                Link { class: "primary", to: Route::Recovery, "Open recovery" }
-            }
-        }
-    }
-}
-
-#[component]
 fn RecoveryKeyWords(recovery_key: String) -> Element {
     let words: Vec<String> = recovery_key
         .split_whitespace()
@@ -703,7 +907,7 @@ fn RecoveryKeyWords(recovery_key: String) -> Element {
     }
 }
 
-async fn create_bind_and_bootstrap_identity(
+async fn create_and_bind_identity(
     handoff: &crate::state::PendingAccountHandoff,
     recovery_key: &str,
     device: &str,
@@ -727,14 +931,21 @@ async fn create_bind_and_bootstrap_identity(
             let changed = stored_checkpoint.as_ref() != Some(&checkpoint);
             (checkpoint, changed)
         }
-        Some(_) | None => (
-            crate::identity::principal_registration::prepare_registration_checkpoint(
-                handoff,
-                device,
-                recovery_key,
-            )?,
-            true,
-        ),
+        Some(_) | None => {
+            let checkpoint = if handoff.reserved_identity.is_some() {
+                crate::identity::principal_registration::recover_registration_checkpoint_from_reservation(
+                    handoff,
+                    recovery_key,
+                )?
+            } else {
+                crate::identity::principal_registration::prepare_registration_checkpoint(
+                    handoff,
+                    device,
+                    recovery_key,
+                )?
+            };
+            (checkpoint, true)
+        }
     };
     if checkpoint_changed {
         let barrier = {
@@ -745,15 +956,9 @@ async fn create_bind_and_bootstrap_identity(
         barrier.wait().await?;
     }
 
-    let checkpoint = if matches!(
-        checkpoint.stage,
-        crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed
-            | crate::state::PendingPrincipalRegistrationStage::BootstrapPrepared
-    ) {
-        // Re-run preparation for BootstrapPrepared as well. It is idempotent
-        // for current checkpoints and repairs older checkpoints that guessed a
-        // different enrollment-authority service fragment before any grant was
-        // issued.
+    let checkpoint = if checkpoint.stage
+        == crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed
+    {
         let signer = crate::event_signer::active_signer()
             .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
         let signer = crate::event_signer::bind_active_signer_device_id(device)?.unwrap_or(signer);
@@ -769,13 +974,19 @@ async fn create_bind_and_bootstrap_identity(
             )?;
             crate::identity::did_key::encode_x25519_multibase(&public_key)
         };
-        let prepared =
-            crate::identity::principal_registration::prepare_device_bootstrap_checkpoint(
-                &checkpoint,
-                recovery_key,
-                device_public_key,
-                hpke_key,
-            )?;
+        let dpop = {
+            let mut store = state_store.write();
+            crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)?
+        };
+        let prepared = crate::identity::principal_registration::prepare_genesis_draft(
+            &checkpoint,
+            recovery_key,
+            device_public_key,
+            hpke_key,
+            signer.as_ref(),
+            &dpop,
+            arkret_sdk::Did::new(handoff.audience.clone())?,
+        )?;
         let barrier = {
             let mut store = state_store.write();
             store.set_pending_principal_registration(Some(prepared.clone()))?;
@@ -787,20 +998,55 @@ async fn create_bind_and_bootstrap_identity(
         checkpoint
     };
 
-    let (registration, actor, grant_jwt) = if checkpoint.stage
-        == crate::state::PendingPrincipalRegistrationStage::BootstrapPrepared
-    {
+    let (registration, actor, grant_jwt) = if matches!(
+        checkpoint.stage,
+        crate::state::PendingPrincipalRegistrationStage::GenesisDraftPrepared
+            | crate::state::PendingPrincipalRegistrationStage::RegisterRequestPrepared
+    ) {
         let dpop = {
             let mut store = state_store.write();
             crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)?
         };
-        let completion = crate::identity::principal_registration::complete_account_handoff_binding(
-            handoff,
-            &checkpoint,
-            recovery_key,
-            &dpop,
-        )
-        .await?;
+        let completion =
+            match crate::identity::principal_registration::complete_account_handoff_binding(
+                handoff,
+                &checkpoint,
+                recovery_key,
+                &dpop,
+            )
+            .await
+            {
+                Ok(completion) => completion,
+                Err(error) if crate::api_error::is_pcr_genesis_already_accepted_error(&error) => {
+                    // Create-once lost the race. Persist the model switch before
+                    // any network continuation, discard the losing genesis draft,
+                    // and recover the replacement device against the accepted PCR.
+                    let mut recovery_handoff = handoff.clone();
+                    recovery_handoff.bound_principal_id = Some(checkpoint.did.clone());
+                    {
+                        let mut store = state_store.write();
+                        store.set_pending_account_handoff(Some(recovery_handoff.clone()))?;
+                        store.set_pending_principal_registration(None)?;
+                        let barrier = store.begin_durable_flush()?;
+                        drop(store);
+                        barrier.wait().await?;
+                    }
+                    crate::identity::account_auth::clear_prepared_identity_creation_request()?;
+                    let recovered = recover_bound_principal_device(
+                        &recovery_handoff,
+                        &checkpoint.did,
+                        device,
+                        recovery_key,
+                        state_store,
+                    )
+                    .await?;
+                    anyhow::bail!(
+                        "the earlier PCR genesis was already accepted; this device was recovered with receipt {}. Continue sign-in for the Standard session grant",
+                        recovered.readiness.terminal_receipt_id
+                    );
+                }
+                Err(error) => return Err(error),
+            };
         let actor = completion.session_grant.principal_id.to_string();
         let grant_jwt = completion.session_grant.grant_jwt.clone();
         let persisted_grant = crate::state::PersistedSessionGrant {
@@ -818,10 +1064,16 @@ async fn create_bind_and_bootstrap_identity(
         crate::secure_key_store::adopt_device_seed_scope_on_login(secure_store.as_ref(), &actor)?;
         let mut accepted = checkpoint;
         accepted.binding_receipt = Some(serde_json::to_value(completion.binding_receipt)?);
+        accepted.pcr_genesis_receipt = Some(serde_json::to_value(completion.pcr_genesis_receipt)?);
+        if accepted.stage == crate::state::PendingPrincipalRegistrationStage::GenesisDraftPrepared {
+            accepted
+                .advance_registration_stage(
+                    crate::state::PendingPrincipalRegistrationStage::RegisterRequestPrepared,
+                )
+                .map_err(anyhow::Error::msg)?;
+        }
         accepted
-            .advance_bootstrap_stage(
-                crate::state::PendingPrincipalRegistrationStage::BootstrapGrantIssued,
-            )
+            .advance_registration_stage(crate::state::PendingPrincipalRegistrationStage::Accepted)
             .map_err(anyhow::Error::msg)?;
         {
             let mut store = state_store.write();
@@ -843,9 +1095,8 @@ async fn create_bind_and_bootstrap_identity(
         }
         (accepted, actor, grant_jwt)
     } else {
-        // A previous attempt completed the one-shot account binding but
-        // failed later. Retry only the resumable bootstrap; re-registering
-        // the already-bound DID would consume the handoff twice.
+        // Registration already returned a verified PCR receipt and Standard
+        // grant. Resume only the recovery-material gate.
         let persisted_grant = state_store
             .read()
             .session_grant()
@@ -902,36 +1153,7 @@ async fn clear_pending_principal_setup(
     };
     barrier.wait().await?;
     crate::identity::account_auth::clear_account_handoff_grant()?;
-    crate::identity::account_auth::clear_prepared_bootstrap_session_request()?;
-    crate::identity::account_auth::clear_prepared_bootstrap_cancel_request()?;
-    Ok(())
-}
-
-/// Apply local cleanup only after Coauth returned a validated terminal cancel
-/// outcome. The public identity checkpoint and its Recovery material remain:
-/// they are the only durable evidence needed to explain/recover the registered
-/// but unfinished identity. The old grant, handoff bearer, and prepared
-/// transaction requests must not cross the next authentication boundary.
-async fn clear_terminal_bootstrap_session(
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
-    terminal: crate::state::PendingPrincipalBootstrapTerminal,
-) -> anyhow::Result<()> {
-    let barrier = {
-        let mut store = state_store.write();
-        let mut checkpoint = store
-            .pending_principal_registration()
-            .ok_or_else(|| anyhow::anyhow!("the saved setup checkpoint is unavailable"))?;
-        checkpoint.bootstrap_terminal_outcome = Some(terminal);
-        store.set_pending_principal_registration(Some(checkpoint))?;
-        store.set_session_grant(None);
-        store.set_pending_account_handoff(None)?;
-        store.begin_durable_flush()?
-    };
-    barrier.wait().await?;
-    crate::identity::session_refresh::reset_session_grant_runtime();
-    crate::identity::account_auth::clear_account_handoff_grant()?;
-    crate::identity::account_auth::clear_prepared_bootstrap_session_request()?;
-    crate::identity::account_auth::clear_prepared_bootstrap_cancel_request()?;
+    crate::identity::account_auth::clear_prepared_identity_creation_request()?;
     Ok(())
 }
 
@@ -1026,102 +1248,10 @@ async fn finish_principal_setup(
     let mut registration = registration.clone();
     let mut active_session = session.to_owned();
 
-    if registration.stage == crate::state::PendingPrincipalRegistrationStage::BootstrapGrantIssued {
-        let dpop = {
-            let mut store = state_store.write();
-            crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)?
-        };
-        let account_base = crate::identity::session_refresh::sdk_base_url_from_gate_account_base(
-            &registration.gate_account_base,
-        )?;
-        let account_client = arkret_sdk::http_client::ClientBuilder::new(account_base)
-            .allow_insecure_localhost()
-            .auth(arkret_sdk::http_client::Auth::Dpop(
-                dpop.sdk_dpop_auth_for_access_token(active_session.clone()),
-            ))
-            .build()?;
-        let enrolled = crate::identity::principal_registration::enroll_prepared_device(
-            &registration,
-            &account_client,
-        )
-        .await?;
-        let barrier = {
-            let mut store = state_store.write();
-            store.set_pending_principal_registration(Some(enrolled.clone()))?;
-            store.begin_durable_flush()?
-        };
-        barrier.wait().await?;
-        registration = enrolled;
-    }
-
-    if registration.stage == crate::state::PendingPrincipalRegistrationStage::DeviceEnrolled {
-        let signer = crate::event_signer::active_signer()
-            .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
-        let signer = crate::event_signer::bind_active_signer_device_id(device)?.unwrap_or(signer);
-        let bootstrap_registration = registration.clone();
-        let bootstrap_key = recovery_key.to_owned();
-        crate::transport::auth::with_authed_sdk_client(
-            base_url,
-            active_session.clone(),
-            |principal_client| async move {
-                crate::identity::principal_registration::submit_prepared_founding_batch(
-                    &bootstrap_registration,
-                    &bootstrap_key,
-                    signer.as_ref(),
-                    &principal_client,
-                )
-                .await
-            },
-        )
-        .await
-        .map_err(|error| anyhow::anyhow!(error.display()))?;
-
-        let mut accepted = registration.clone();
-        accepted
-            .advance_bootstrap_stage(crate::state::PendingPrincipalRegistrationStage::BatchAccepted)
-            .map_err(anyhow::Error::msg)?;
-        let barrier = {
-            let mut store = state_store.write();
-            store.set_pending_principal_registration(Some(accepted.clone()))?;
-            store.begin_durable_flush()?
-        };
-        barrier.wait().await?;
-        registration = accepted;
-    }
-
-    if registration.stage == crate::state::PendingPrincipalRegistrationStage::BatchAccepted {
-        let dpop = {
-            let mut store = state_store.write();
-            crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)?
-        };
-        let bootstrap_grant = state_store
-            .read()
-            .session_grant()
-            .filter(|grant| {
-                grant.principal_id == registration.did && grant.device_id == registration.device_id
-            })
-            .ok_or_else(|| anyhow::anyhow!("saved bootstrap session is unavailable"))?;
-        let standard = crate::identity::session_refresh::promote_accepted_bootstrap_session(
-            &bootstrap_grant,
-            &dpop,
-        )
-        .await?;
-        active_session = standard.grant_jwt.clone();
-        let mut promoted = registration.clone();
-        promoted
-            .advance_bootstrap_stage(
-                crate::state::PendingPrincipalRegistrationStage::StandardPromoted,
-            )
-            .map_err(anyhow::Error::msg)?;
-        let barrier = {
-            let mut store = state_store.write();
-            store.set_session_grant(Some(standard));
-            store.set_pending_principal_registration(Some(promoted.clone()))?;
-            store.begin_durable_flush()?
-        };
-        barrier.wait().await?;
-        crate::identity::account_auth::clear_prepared_bootstrap_session_request()?;
-        crate::identity::account_auth::clear_prepared_bootstrap_cancel_request()?;
+    if registration.stage != crate::state::PendingPrincipalRegistrationStage::Accepted {
+        anyhow::bail!(
+            "identity registration has not returned a verified PCR receipt and Standard grant"
+        );
     }
 
     let recovery_actor = actor.to_owned();
@@ -1150,129 +1280,12 @@ async fn finish_principal_setup(
         .map_err(|error| anyhow::anyhow!("verify public recovery metadata: {error}"))?;
     let recovery_metadata_barrier = state_store.read().begin_durable_flush()?;
     recovery_metadata_barrier.wait().await?;
+    crate::identity::account_auth::clear_prepared_identity_creation_request()?;
     Ok(backup_id)
 }
 
 #[component]
-fn CancelPendingBootstrap(
-    disabled: bool,
-    mut token: Signal<String>,
-    config_store: Signal<crate::config::LocalConfigStore>,
-    on_terminal: EventHandler<()>,
-) -> Element {
-    let mut state_store = crate::app::SessionContext::get().state_store;
-    let mut busy = use_signal(|| false);
-    let mut status = use_signal(String::new);
-
-    rsx! {
-        div { class: "onboarding-discard",
-            Button {
-                variant: ButtonVariant::Secondary,
-                "data-testid": "onboarding-cancel-device-bootstrap",
-                disabled: disabled || busy(),
-                onclick: move |_| {
-                    busy.set(true);
-                    status.set("Cancelling this bootstrap transaction…".to_owned());
-                    spawn(async move {
-                        let material = (|| -> anyhow::Result<_> {
-                            let registration = state_store
-                                .read()
-                                .pending_principal_registration()
-                                .ok_or_else(|| anyhow::anyhow!("the saved setup is unavailable"))?;
-                            let grant = state_store
-                                .read()
-                                .session_grant()
-                                .filter(|grant| {
-                                    grant.principal_id == registration.did
-                                        && grant.device_id == registration.device_id
-                                })
-                                .ok_or_else(|| anyhow::anyhow!("the bootstrap session is unavailable"))?;
-                            let dpop = {
-                                let mut store = state_store.write();
-                                crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)?
-                            };
-                            Ok((registration, grant, dpop))
-                        })();
-                        let result = match material {
-                            Ok((registration, grant, dpop)) => {
-                                crate::identity::device_bootstrap_cancel::cancel_pending_device_bootstrap(
-                                    &registration,
-                                    &grant,
-                                    &dpop,
-                                )
-                                .await
-                                .map(|outcome| (registration, outcome))
-                            }
-                            Err(error) => Err(error),
-                        };
-
-                        match result {
-                            Ok((registration, outcome))
-                                if crate::identity::device_bootstrap_cancel::cancel_outcome_is_terminal(
-                                    &outcome,
-                                ) =>
-                            {
-                                let terminal = crate::identity::device_bootstrap_cancel::cancel_terminal_outcome(
-                                    &outcome,
-                                )
-                                .expect("terminal outcome was classified above");
-                                match clear_terminal_bootstrap_session(state_store, terminal).await {
-                                    Ok(()) => {
-                                        crate::views::helpers::persist_config(
-                                            config_store,
-                                            registration.principal_server_url,
-                                            registration.did,
-                                            registration.device_id,
-                                            String::new(),
-                                        );
-                                        token.set(String::new());
-                                        on_terminal.call(());
-                                        return;
-                                    }
-                                    Err(error) => {
-                                        status.set(format!(
-                                            "The server cancelled setup, but secure local cleanup failed: {error}"
-                                        ));
-                                    }
-                                }
-                            }
-                            Ok((_registration, _pending)) => {
-                                status.set(
-                                    "Cancellation is still pending. No local setup data was changed; retry this same request."
-                                        .to_owned(),
-                                );
-                            }
-                            Err(error) => {
-                                // A transport failure includes the accepted-vs-cancel 409 that
-                                // the generic SDK transport cannot yet decode as a typed accepted
-                                // receipt. Keeping every checkpoint and secret is the only safe
-                                // client behavior: the user can continue setup or retry the exact
-                                // prepared request after the server decision becomes observable.
-                                status.set(format!(
-                                    "Cancellation was not confirmed, so no local setup data was changed. Retry or continue setup: {error}"
-                                ));
-                            }
-                        }
-                        busy.set(false);
-                    });
-                },
-                if busy() { "Cancelling…" } else { "Cancel setup safely" }
-            }
-            if !status().is_empty() {
-                div {
-                    class: "form-hint-warn",
-                    role: "status",
-                    "aria-live": "polite",
-                    "data-testid": "onboarding-cancel-device-bootstrap-status",
-                    "{status}"
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn PendingPrincipalBootstrap(
+fn PendingPrincipalSetup(
     mut token: Signal<String>,
     mut account_did: Signal<String>,
     mut device_id: Signal<String>,
@@ -1290,7 +1303,7 @@ fn PendingPrincipalBootstrap(
 
     if complete() {
         return rsx! {
-            div { class: "event onboarding-card", "data-testid": "pending-principal-bootstrap",
+            div { class: "event onboarding-card", "data-testid": "pending-principal-setup",
                 SetupProgress { current: 3 }
                 div { class: "onboarding-finished", "data-testid": "onboarding-complete",
                     div { class: "onboarding-finish-mark", "aria-hidden": "true", "✓" }
@@ -1315,7 +1328,7 @@ fn PendingPrincipalBootstrap(
         registration.stage != crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed;
 
     rsx! {
-        div { class: "event onboarding-card", "data-testid": "pending-principal-bootstrap",
+        div { class: "event onboarding-card", "data-testid": "pending-principal-setup",
             SetupProgress { current: 2 }
             div { class: "onboarding-heading",
                 span { class: "eyebrow", "Continue setup" }
@@ -1327,10 +1340,10 @@ fn PendingPrincipalBootstrap(
                 }
             }
             div { class: "workflow-form onboarding-confirmation",
-                Label { html_for: "bootstrap-recovery-key", "Recovery Key" }
+                Label { html_for: "setup-recovery-key", "Recovery Key" }
                 Textarea {
-                    id: "bootstrap-recovery-key",
-                    "data-testid": "bootstrap-recovery-key",
+                    id: "setup-recovery-key",
+                    "data-testid": "setup-recovery-key",
                     rows: "4",
                     autocomplete: "off",
                     value: "{recovery_key}",
@@ -1344,26 +1357,15 @@ fn PendingPrincipalBootstrap(
                     class: if busy() { "muted" } else { "form-hint-warn" },
                     role: "status",
                     "aria-live": "polite",
-                    "data-testid": "bootstrap-status",
+                    "data-testid": "setup-status",
                     "{status}"
                 }
             }
             div { class: "onboarding-footer-actions",
-                if crate::identity::device_bootstrap_cancel::stage_can_cancel_device_bootstrap(
-                    registration.stage,
-                ) {
-                    CancelPendingBootstrap {
-                        disabled: busy(),
-                        token,
-                        config_store,
-                        on_terminal: on_discard,
-                    }
-                } else {
-                    DiscardSavedSetup { disabled: busy(), on_discard }
-                }
+                DiscardSavedSetup { disabled: busy(), on_discard }
                 Button {
                         variant: ButtonVariant::Primary,
-                        "data-testid": "bootstrap-submit",
+                        "data-testid": "setup-submit",
                         disabled: busy() || recovery_key().trim().is_empty(),
                         onclick: move |_| {
                             let registration = registration.clone();
@@ -1386,7 +1388,7 @@ fn PendingPrincipalBootstrap(
                                 let result = if resumes_before_binding {
                                     let handoff = state_store.read().pending_account_handoff();
                                     match handoff {
-                                        Some(handoff) => create_bind_and_bootstrap_identity(
+                                        Some(handoff) => create_and_bind_identity(
                                             &handoff,
                                             &supplied_key,
                                             &registration.device_id,
@@ -1417,11 +1419,11 @@ fn PendingPrincipalBootstrap(
                                         account_did.set(completed_actor);
                                         device_id.set(completed_device);
                                         token.set(completed_session);
-                                        // The atomic bootstrap call returned only after the
+                                        // The atomic registration call returned only after the
                                         // PCR create, founding-device authorize, and Seal were
                                         // durably accepted for this exact active signer. Publish
                                         // that state directly so KeyPackage creation cannot race
-                                        // a stale pre-bootstrap connect probe.
+                                        // a stale pre-registration connect probe.
                                         needs_device_authorization.set(false);
                                         device_authorization_check_complete.set(true);
                                         recovery_key.set(String::new());
@@ -1554,43 +1556,7 @@ mod tests {
 
         assert_eq!(
             onboarding_surface(Some(&handoff), Some(&checkpoint), false, ""),
-            OnboardingSurface::ResumeBootstrap
-        );
-    }
-
-    #[test]
-    fn terminal_cancel_never_routes_back_into_undefined_bound_founding_login() {
-        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
-        let handoff = test_handoff(
-            "ak:request:019f0000-0000-7000-8000-000000000010",
-            Some("lease-1"),
-            Some(1),
-        );
-        let mut checkpoint = test_checkpoint(
-            &handoff,
-            &recovery_key,
-            crate::state::PendingPrincipalRegistrationStage::BootstrapGrantIssued,
-        );
-        checkpoint.bootstrap_terminal_outcome =
-            Some(crate::state::PendingPrincipalBootstrapTerminal::Cancelled);
-
-        // Even a matching handoff or live session cannot resurrect the old
-        // transaction. The frozen contract has no Bound -> new founding
-        // handoff, so recovery/admin guidance is the only honest surface.
-        assert_eq!(
-            onboarding_surface(Some(&handoff), Some(&checkpoint), true, &checkpoint.did),
-            OnboardingSurface::TerminatedBootstrap
-        );
-        assert_eq!(
-            onboarding_surface(None, Some(&checkpoint), false, ""),
-            OnboardingSurface::TerminatedBootstrap
-        );
-        assert!(
-            checkpoint
-                .advance_bootstrap_stage(
-                    crate::state::PendingPrincipalRegistrationStage::DeviceEnrolled
-                )
-                .is_err()
+            OnboardingSurface::ResumeSetup
         );
     }
 
@@ -1617,7 +1583,7 @@ mod tests {
     }
 
     #[test]
-    fn every_post_issue_phase_resumes_from_its_own_session_after_handoff_clear() {
+    fn every_post_registration_phase_resumes_from_its_own_session_after_handoff_clear() {
         let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
         let handoff = test_handoff(
             "ak:request:019f0000-0000-7000-8000-000000000010",
@@ -1625,24 +1591,23 @@ mod tests {
             Some(1),
         );
         for stage in [
-            crate::state::PendingPrincipalRegistrationStage::BootstrapGrantIssued,
-            crate::state::PendingPrincipalRegistrationStage::DeviceEnrolled,
-            crate::state::PendingPrincipalRegistrationStage::BatchAccepted,
-            crate::state::PendingPrincipalRegistrationStage::StandardPromoted,
+            crate::state::PendingPrincipalRegistrationStage::RegisterRequestPrepared,
+            crate::state::PendingPrincipalRegistrationStage::Accepted,
+            crate::state::PendingPrincipalRegistrationStage::RecoveryMaterialComplete,
         ] {
             let checkpoint = test_checkpoint(&handoff, &recovery_key, stage);
 
             // Signing back in to an already-bound account clears the handoff
-            // (`OidcCallbackOutcome::Login`) but leaves the bootstrap
+            // (`OidcCallbackOutcome::Login`) but leaves setup
             // unfinished. This is also the shape of the joint-e2e flow that
             // injects only a checkpoint and then performs a real OIDC login:
             // routing it to the dead end stranded a live, resumable setup.
             assert_eq!(
                 onboarding_surface(None, Some(&checkpoint), true, &checkpoint.did),
-                OnboardingSurface::ResumeBootstrap
+                OnboardingSurface::ResumeSetup
             );
             // No session, or another account's session: nothing here can
-            // authenticate the remaining bootstrap calls.
+            // authenticate the remaining setup calls.
             assert_eq!(
                 onboarding_surface(None, Some(&checkpoint), false, ""),
                 OnboardingSurface::StaleCheckpoint
@@ -1850,12 +1815,11 @@ mod tests {
             reserved_identity: None,
             retry_after_ms: None,
             device_id: "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
-            enrollment_authority_did: "did:key:z6MkrJVnaZkeFzdQyKjzgRHjhBfE6ZscXDFHq8T7TYNy9v1t"
-                .to_owned(),
             // `ak:trust_domain:<scope>` — the hyphenated spelling stopped
             // parsing as an Arkret identifier and failed every test built on
             // this fixture inside `prepare_registration_checkpoint`.
             trust_domain: "ak:trust_domain:auth.example".to_owned(),
+            bound_principal_id: None,
         }
     }
 }

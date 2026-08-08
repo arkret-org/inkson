@@ -161,12 +161,11 @@ test.describe("feature coverage placeholders", () => {
   // ---- Identity / Device — three independent concerns ----
   // UI surface: devices and device verification
   // spec: crypto-media/devices-and-auth.md §1.2
-  test("device verification: SAS match writes ak.device.authorize + ak.device.cross_sign", async ({
+  test("device verification: SAS establishes an accepted-device authorization ceremony", async ({
     page,
   }) => {
-    // pin the SAS verification UI surface. The
-    // full SAS exchange + cross_sign + ak.device.authorize event emit
-    // happen inside the SDK + soland's identity store; this test
+    // Pin the SAS verification UI surface. The full exchange culminates in an
+    // accepted_device ak.device.authorize flow; this test
     // makes sure the data-testid handles the next layer down expects
     // (sas-verify-strand, sas-emoji-row, sas-digits, sas-match-button)
     // continue to render so the full strand can plug in without a UI
@@ -396,63 +395,6 @@ test.describe("feature coverage placeholders", () => {
         document.documentElement.clientWidth,
     );
     expect(horizontalOverflow).toBeLessThanOrEqual(1);
-  });
-
-  test("cross-signing: setup stays fail-closed without an active recovery policy", async ({
-    page,
-  }) => {
-    // The mock account intentionally has no active recovery policy. The
-    // post-bootstrap persistent-write barrier must reject publication
-    // before any request reaches the server.
-    await page.addInitScript(() => {
-      if (localStorage.getItem("inkson.config.v1")) {
-        return;
-      }
-      localStorage.setItem(
-        "inkson.config.v1",
-        JSON.stringify({
-          server_url: "https://local.host",
-          principal_servers: ["https://local.host"],
-          account_did: "did:web:alice.example",
-          device_id: "ak:device:01964137-0000-7000-8000-0000000000a1",
-          session_credential: "sx:e2e-token",
-        }),
-      );
-    });
-    await page.goto("/devices/verify", {
-      waitUntil: "domcontentloaded",
-      timeout: 120_000,
-    });
-    await expect(page.getByTestId("verify-device-panel")).toBeVisible({
-      timeout: 60_000,
-    });
-
-    // Step 1: build the plan. The panel populates the steps list and
-    // unlocks the Run setup button below.
-    await page.getByTestId("setup-cross-signing").click();
-    await expect(page.getByTestId("cross-signing-plan")).toBeVisible();
-
-    const submittedKinds: string[] = [];
-    page.on("request", (request) => {
-      if (
-        request.method() === "POST" &&
-        request.url().endsWith("/_arkret/self/events")
-      ) {
-        const body = request.postDataJSON?.() as
-          Record<string, unknown> | undefined;
-        if (typeof body?.kind === "string") {
-          submittedKinds.push(body.kind);
-        }
-      }
-    });
-
-    await page.getByTestId("run-cross-signing-setup").click();
-    await expect(page.getByTestId("cross-signing")).toContainText(
-      /recovery_material_pending.*NoActiveRecoveryPolicy/,
-      { timeout: 60_000 },
-    );
-    expect(submittedKinds).not.toContain("ak.cross_signing.publish");
-    await expect(page.getByTestId("cross-signing-publish-id")).toHaveCount(0);
   });
 
   test("an unselected board never invents decrypted E2EE history", async ({

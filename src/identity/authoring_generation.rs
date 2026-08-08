@@ -3,9 +3,8 @@
 //! A queued Event is bound to the verified device authority generation that
 //! authored it. Before every replay the current keys projection is fetched
 //! again and compared exactly. Recovery therefore cannot accidentally revive
-//! queued work signed by an old B-model DID generation, an old A-model SSK
-//! generation, or a controller generation that no longer authorizes a managed
-//! Agent write.
+//! queued work signed by an old device generation or a controller generation that no longer
+//! authorizes a managed Agent write.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock, PoisonError};
@@ -16,8 +15,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AuthoringAuthorityModel {
-    CrossSigning,
-    EnrollmentAuthority,
+    AcceptedDevice,
     ManagedAgent,
 }
 
@@ -223,13 +221,8 @@ fn resolve_principal_authoring_generation_from_keys(
         .get(&principal)
         .and_then(|devices| devices.get(&device));
 
-    let b_generation = outcome.device_generations.get(&principal);
-    let a_generation = outcome.cross_signing.get(&principal);
-    match (a_generation, b_generation) {
-        (Some(_), Some(_)) => Ok(PrincipalGenerationResolution::Quarantine(
-            "authority_model_conflict".to_owned(),
-        )),
-        (None, Some(generation)) => {
+    match outcome.device_generations.get(&principal) {
+        Some(generation) => {
             if generation.device_generation_status
                 != arkret_models_crypto::DeviceGenerationStatus::Active
             {
@@ -256,58 +249,13 @@ fn resolve_principal_authoring_generation_from_keys(
                     "authoring_generation_superseded".to_owned(),
                 ));
             }
-            let binding = record
-                .enrollment_authority_binding
-                .as_ref()
-                .ok_or_else(|| {
-                    anyhow::anyhow!("B-model device omits enrollment_authority_binding")
-                })?;
-            if binding.authority_did.as_str() == principal_id {
-                anyhow::bail!(
-                    "self authority cannot be projected as an enrollment-authority generation"
-                );
-            }
             Ok(PrincipalGenerationResolution::Active(AuthoringGeneration {
-                authority_model: AuthoringAuthorityModel::EnrollmentAuthority,
+                authority_model: AuthoringAuthorityModel::AcceptedDevice,
                 authority_principal_id: principal_id.to_owned(),
                 generation_ref: generation.current_device_generation_ref.as_str().to_owned(),
             }))
         }
-        (Some(publish), None) => {
-            let Some(record) = record else {
-                return Ok(PrincipalGenerationResolution::Quarantine(
-                    "authoring_device_not_active".to_owned(),
-                ));
-            };
-            if record.device_status != Some(arkret_models_crypto::DeviceStatus::Active) {
-                return Ok(PrincipalGenerationResolution::Quarantine(
-                    "authoring_device_not_active".to_owned(),
-                ));
-            }
-            if record.authorized_generation_ref.is_some()
-                || record
-                    .enrollment_authority_binding
-                    .as_ref()
-                    .is_some_and(|binding| binding.authority_did.as_str() != principal_id)
-            {
-                anyhow::bail!("cross-signing projection contains B-model authority state");
-            }
-            let binding = record
-                .cross_signing_binding
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("A-model device omits cross_signing_binding"))?;
-            if binding.ssk_generation != publish.generation.get() {
-                return Ok(PrincipalGenerationResolution::Quarantine(
-                    "authoring_generation_superseded".to_owned(),
-                ));
-            }
-            Ok(PrincipalGenerationResolution::Active(AuthoringGeneration {
-                authority_model: AuthoringAuthorityModel::CrossSigning,
-                authority_principal_id: principal_id.to_owned(),
-                generation_ref: format!("cross-signing:{}", publish.generation),
-            }))
-        }
-        (None, None) => Ok(PrincipalGenerationResolution::Quarantine(
+        None => Ok(PrincipalGenerationResolution::Quarantine(
             "authority_generation_unknown".to_owned(),
         )),
     }
@@ -361,7 +309,7 @@ mod tests {
     #[test]
     fn managed_generation_binds_controller_generation_and_delegation() {
         let controller = AuthoringGeneration {
-            authority_model: AuthoringAuthorityModel::EnrollmentAuthority,
+            authority_model: AuthoringAuthorityModel::AcceptedDevice,
             authority_principal_id: "did:webvh:example:alice".to_owned(),
             generation_ref: "2-QmCurrent".to_owned(),
         };

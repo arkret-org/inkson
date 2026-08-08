@@ -466,9 +466,7 @@ fn item_kind_allowed_for_class(class: BackupKind, item_kind: &str) -> bool {
         BackupKind::DidRecovery => matches!(item_kind, "recovery_key_share"),
         BackupKind::SecretStorage => matches!(
             item_kind,
-            "self_signing_key"
-                | "user_signing_key"
-                | "recovery_secret"
+            "recovery_secret"
                 | "mls_account_secret"
                 | "mls_private_plaintext"
                 | "mls_group_secrets_backup_key"

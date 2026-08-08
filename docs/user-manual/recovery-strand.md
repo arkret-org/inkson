@@ -1,75 +1,58 @@
 # inkson — Recovery strand
 
-Recovery uses the offline 24-word Recovery Key (or a policy-approved guardian
-path deriving the same role-separated material). A login factor proves account
-authentication; it does not authorize a fresh device or unlock encrypted
-history by itself.
+Recovery uses the offline 24-word Recovery Key. Account authentication proves
+which account is continuing the flow; the Recovery Key proves control of the
+identity root, and the replacement device separately proves possession of its
+own signing key.
 
 ## 1. Start on a fresh device
 
-1. Sign in to the already-bound principal.
-2. Inkson requests a recovery session with the principal, fresh device and
-   trust domain. It does not self-report the authority model or generation.
-3. The server snapshots the accepted policy and derives either Model A
-   (cross-signing) or Model B (external enrollment authority).
-4. Enter the Recovery Key locally. Inkson derives independent recovery-proof
-   and backup-HPKE keys and verifies them against the accepted policy.
+1. Sign in to the already-bound account and retain the Bound Account Handoff.
+2. Inkson requests a recovery session for the principal, replacement device and
+   trust domain. The server snapshots the current DID/PCR generation, accepted
+   Seal frontier and recovery policy.
+3. Enter the Recovery Key locally. Inkson derives independent identity-root,
+   recovery-proof and backup-HPKE keys and verifies their public commitments.
 
-The phrase is never uploaded. Losing it removes this recovery lane unless an
-approved guardian alternative exists.
+The words are never uploaded or persisted in normal client state.
 
-## 2. Prove recovery and authorize the device
+## 2. Re-anchor and authorize the replacement device
 
-The signed proof transcript binds the session id, principal, requesting device,
-policy, challenge, expiry, `identity_model`, and authoritative
-`model_generation_ref`.
+Inkson prepares the next WebVH root entry and an atomic PCR unit containing
+`ak.device.reanchor` plus replacement `ak.device.authorize`. The root signs the
+re-anchor; the replacement device signs its own possession transcript and Event.
 
-Completion is model-specific:
-
-- Model A references the accepted device authorization and device-list update.
-- Model B references the accepted device authorization, `ak.device.reanchor`,
-  and the re-anchor batch receipt.
-
-Inkson rejects mixed or incomplete shapes. Model B also fails while the device
-generation is conflicted or the registry/frontier snapshot no longer matches.
+The coordinator accepts the unit only if the DID head, PCR registry head,
+accepted Seal frontier, previous generation and all payload digests still match
+the recovery snapshot. Its terminal receipt binds the resulting DID version,
+new active generation and accepted device.
 
 ## 3. Restore encrypted material
 
-After device authorization is accepted, Inkson resolves each active backup
-series, validates its chain and active pointer, and opens envelopes locally with
-the dedicated HPKE key. A broken chain, stale frontier, wrong principal,
-wrong policy reference, or wrong recipient fails closed.
+Inkson resolves every active backup series, validates its chain and current
+generation binding, and opens envelopes locally with the dedicated HPKE key. A
+broken chain, stale frontier, wrong principal/policy/recipient or incomplete
+active-series pointer fails closed.
 
-Recovery is not complete until required secret-storage and MLS material is
-available on the new device. The server stores ciphertext, not the Recovery Key
-or derived private keys.
+## 4. Finish the account session
 
-## 4. Clean up immediately
+The still-live Bound Account Handoff, its DPoP holder key, the terminal recovery
+receipt and the coordinator completion attestation are submitted together to
+the Account Authority. When every binding matches, it directly issues a
+Standard grant and atomically consumes the handoff. There is no temporary
+recovery grant, second OIDC exchange, device approval or administrator approval.
 
-Revoke devices that are lost or no longer trusted, then advance affected MLS
-epochs and create replacement backups. There is no legacy 24-hour inception or
-successor window: the generation fence applies as soon as the new generation is
-accepted.
+## 5. Security boundary
 
-Revocation is not remote wipe. Assume a stolen device retains every key,
-ciphertext, or plaintext it had already obtained.
-
-## 5. Recovery Key compromise or rotation
-
-Do not generate a new phrase and attach it to the old policy. Inkson requires a
-durable staged handoff: custody confirmation, WebVH bridge/new-root entries when
-an independent authority exists, re-anchor, new policy, rewrapping every active
-`did_recovery`/`secret_storage`/`mls_history` series, active-pointer advance, and
-finally old-key revocation.
-
-If no independent authority can bridge a compromised recovery secret safely,
-the correct outcome is a new DID, not an unsafe in-place reset.
+Revoke lost devices, advance affected MLS epochs and publish replacement
+backups immediately. Revocation is not remote wipe: assume a stolen device keeps
+every key or plaintext it had already obtained. Recovery Key rotation is a
+checkpointed policy/backup migration and cannot erase historical exposure.
 
 ## Recovery test checklist
 
-- Run a complete recovery on a spare device.
-- Confirm the proof transcript and completion shape match exactly one model.
-- Confirm an old-generation queued write is quarantined before network send.
-- Verify encrypted history can be opened from every active backup class.
-- Verify lost devices are revoked and future MLS epochs exclude them.
-- Record the historical exposure boundary; rotation cannot erase prior access.
+- Complete root recovery on a fresh device with no surviving old device.
+- Tamper each DID/PCR/frontier/generation/device/DPoP binding and verify failure.
+- Verify encrypted history opens from every required active backup class.
+- Verify completion returns one Standard grant and consumes the Bound handoff.
+- Verify response-loss replay is byte-identical and creates no second grant.

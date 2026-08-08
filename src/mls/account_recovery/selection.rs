@@ -180,7 +180,7 @@ pub fn select_mls_history_backups(list_payload: &Value) -> Vec<Value> {
 
 /// Collect every envelope in the active `secret_storage` series.
 ///
-/// A series may interleave account-secret, private-sidecar, and recovery SSK
+/// A series may interleave account-secret and private-sidecar
 /// items. Chain verification must retain those intermediate links even when
 /// the selected decrypt target is an account-secret envelope.
 pub(super) fn all_mls_account_secret_backups(list_payload: &Value) -> Vec<Value> {

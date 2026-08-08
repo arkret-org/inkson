@@ -43,15 +43,9 @@ pub use backup_body::{
     is_recovery_public_key_account_secret_backup,
     open_mls_account_secret_recovery_public_key_backup,
 };
-#[cfg(feature = "joint-test-api")]
-pub use recovery_transaction::unlock_joint_recovery_backups;
-#[cfg(feature = "joint-test-api")]
 pub(crate) use recovery_transaction::{
-    authorize_recovery_device_request, prepare_enrollment_authority_recovery,
-};
-pub(crate) use recovery_transaction::{
-    execute_cross_signing_recovery, execute_enrollment_authority_recovery,
-    resume_pending_fresh_device_recovery,
+    CompletedFreshDeviceRecovery, execute_root_anchored_recovery, prepare_root_anchored_recovery,
+    resume_pending_root_anchored_recovery,
 };
 pub use restore::{
     RestoreReport, auto_restore_mls_history_with_passphrase, fetch_mls_account_secret_backup,

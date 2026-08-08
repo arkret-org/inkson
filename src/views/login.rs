@@ -707,7 +707,6 @@ pub(crate) async fn start_oidc_strand(
         principal_actor_id,
         device_id,
         &discovery.issuer,
-        &resolver.enrollment_authority_did,
         &resolver.principal_trust_domain,
     );
     persist_oidc_scaffold(&scaffold)
@@ -836,24 +835,6 @@ async fn finish_oidc_callback(
         .auth(Auth::Dpop(dpop_handle.sdk_dpop_proof_only_auth()))
         .build()
         .map_err(|error| format!("Build Account Authority handoff client failed: {error}"))?;
-    let authority_description = http
-        .describe()
-        .await
-        .map_err(|error| format!("Account Authority describe failed: {error}"))?;
-    let advertised_enrollment_authority = authority_description
-        .auth_metadata
-        .account_authority
-        .as_ref()
-        .and_then(|authority| authority.enrollment_authority_did.as_ref())
-        .ok_or_else(|| {
-            "Account Authority describe omitted the enrollment authority DID.".to_owned()
-        })?;
-    if advertised_enrollment_authority.as_str() != scaffold.enrollment_authority_did.as_str() {
-        return Err(format!(
-            "Account Authority enrollment DID does not match the Principal Server deployment pin: expected {}, got {}.",
-            scaffold.enrollment_authority_did, advertised_enrollment_authority
-        ));
-    }
     let handoff_request = garth::oidc_account_handoff_request(
         OidcAccountHandoffInput {
             request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
@@ -904,8 +885,8 @@ async fn finish_oidc_callback(
                 .map_err(|error| format!("Persist reserved identity checkpoint failed: {error}"))?,
             retry_after_ms: None,
             device_id: device,
-            enrollment_authority_did: scaffold.enrollment_authority_did.clone(),
             trust_domain: scaffold.principal_trust_domain.clone(),
+            bound_principal_id: None,
         };
         {
             let mut store = state_store.write();
@@ -937,8 +918,8 @@ async fn finish_oidc_callback(
             reserved_identity: None,
             retry_after_ms: Some(retry_after_ms),
             device_id: device,
-            enrollment_authority_did: scaffold.enrollment_authority_did.clone(),
             trust_domain: scaffold.principal_trust_domain.clone(),
+            bound_principal_id: None,
         };
         {
             let mut store = state_store.write();
@@ -953,10 +934,35 @@ async fn finish_oidc_callback(
     let AccountHandoffDisposition::Bound { principal_id } = disposition else {
         unreachable!("active and busy handoff outcomes returned above")
     };
-    Err(format!(
-        "account handoff for existing principal {} cannot use the founding pre-registration proof; continue with an existing device-holder sign-in",
-        principal_id.as_str()
-    ))
+    crate::identity::account_auth::persist_account_handoff_grant(&handoff.account_handoff_grant)
+        .await
+        .map_err(|error| format!("Persist account recovery handoff credential failed: {error}"))?;
+    let pending_handoff = crate::state::PendingAccountHandoff {
+        principal_server_url,
+        gate_account_base,
+        request_id: handoff.request_id.to_string(),
+        account_handle: handoff.account_handle.canonical().to_owned(),
+        holder_jkt: dpop_handle.jkt().to_owned(),
+        audience: principal_audience.to_string(),
+        expires_at: handoff.expires_at,
+        lease_id: None,
+        lease_fence: None,
+        lease_expires_at: None,
+        reserved_identity: None,
+        retry_after_ms: None,
+        device_id: device,
+        trust_domain: scaffold.principal_trust_domain.clone(),
+        bound_principal_id: Some(principal_id.to_string()),
+    };
+    {
+        let mut store = state_store.write();
+        persist_pending_account_handoff(&mut store, pending_handoff)
+            .map_err(|error| format!("Persist account recovery checkpoint failed: {error}"))?;
+    }
+    let _ = clear_persisted_oidc_scaffold();
+    Ok(OidcCallbackOutcome::Onboarding {
+        preferred_locale: handoff.preferred_locale,
+    })
 }
 
 fn apply_authenticated_account_locale(
@@ -1088,9 +1094,8 @@ mod tests {
             reserved_identity: None,
             retry_after_ms: None,
             device_id: "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
-            enrollment_authority_did: "did:key:z6MkrJVnaZkeFzdQyKjzgRHjhBfE6ZscXDFHq8T7TYNy9v1t"
-                .to_owned(),
             trust_domain: "ak:trust_domain:auth.example".to_owned(),
+            bound_principal_id: None,
         }
     }
 

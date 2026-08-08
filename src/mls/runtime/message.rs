@@ -1208,8 +1208,6 @@ fn decode_welcome_envelope(
 /// - The verification key is resolved through `device_directory` (the sync cache warmed by
 ///   `prefetch_device_keys` during bootstrap), never from the envelope's self-declared `kid` or
 ///   `requester_did`.
-/// - The `ssk_generation` branch is also rejected fail-closed because this synchronous receive path
-///   cannot reliably resolve a remote actor's cross-signing SSK public key.
 ///
 /// Returns `Ok(())` only when either the Welcome contains no `claim_envelope`
 /// (a reduced routing+ciphertext Welcome with no material to verify, covered by
@@ -1232,19 +1230,9 @@ fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Re
         .validate_signature_shape()
         .map_err(|reason| format!("claim_envelope signature shape: {reason}"))?;
 
-    // ssk_generation branch: this sync receive path cannot reliably resolve the
-    // SSK public key, so reject fail-closed.
-    let requester_device_id = match &envelope.trust_binding {
-        arkret_sdk::MlsRequesterTrustBinding::SskGeneration(_) => {
-            return Err(
-                "claim_envelope is self-signing-key signed (ssk_generation present); the \
-                 cross-signing SSK public key cannot be resolved on the synchronous receive \
-                 path, so this Welcome is rejected fail-closed (YGN-SEC-01)"
-                    .to_owned(),
-            );
-        }
-        arkret_sdk::MlsRequesterTrustBinding::RequesterDeviceId(device_id) => device_id.as_str(),
-    };
+    let arkret_sdk::MlsRequesterTrustBinding::RequesterDeviceId(requester_device_id) =
+        &envelope.trust_binding;
+    let requester_device_id = requester_device_id.as_str();
     let requester_did = envelope.requester_did.as_str();
     let verifying_key = match crate::identity::device_directory::cached_device_signing_key(
         requester_did,
