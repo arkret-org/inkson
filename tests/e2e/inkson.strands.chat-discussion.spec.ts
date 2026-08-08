@@ -199,13 +199,17 @@ test("chat retries plaintext sends after granting current service visibility", a
     (request) =>
       request.url().endsWith("/_arkret/self/events") &&
       request.method() === "POST" &&
-      request.postDataJSON().kind === "ak.realm.update",
+      request.postDataJSON().kind === "ak.realm.plaintext_visible_services",
   );
   await page.getByTestId("chat-input").fill("policy retry message");
   await page.getByTestId("send-chat-button").click();
 
   const policyBody = await policyUpdate.then((request) => request.postDataJSON());
-  expect(policyBody.payload.patch.plaintext_visible_services).toContain("did:web:server.local");
+  expect(policyBody.payload.services).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ service_id: "did:web:server.local" }),
+    ]),
+  );
   await expect(page.getByTestId("chat-status")).toContainText("Message sent");
   await expect(page.getByTestId("chat-message").last()).not.toHaveClass(/is-failed/);
   expect(attempts).toBe(2);
