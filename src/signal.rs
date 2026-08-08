@@ -1010,7 +1010,7 @@ mod tests {
     #[test]
     fn call_signal_kind_is_checked_and_drives_the_class_ceiling() {
         let call_id =
-            arkret_sdk::CallId::new("ak:call:01964200-0000-7000-8000-000000000003").unwrap();
+            arkret_sdk::CallId::new("ak:call:AV2POYJXMfLYPg5u4jsNfpIyQjrEWx4_pWcsA9U7yXJQ").unwrap();
         let rejected = SignalPayload::CallSignal {
             call_id: call_id.clone(),
             signal_kind: "not_a_kind".to_owned(),

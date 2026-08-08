@@ -871,7 +871,7 @@ mod personal_agent_tests {
             "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "did:web:alice.example",
             "did:web:agents.example:summary",
-            "ak:grant:01904100-0000-7000-8000-000000000002",
+            "ak:grant:Ae5vV8Lwlft2Dp8x2y6Dv4NysvsHJwrADG-6PXdUz1Sl",
             "ak:agent-action-request:01904100-0000-7000-8000-000000000003",
             "nonce-01904100",
             "ak:strand:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM",
@@ -887,7 +887,7 @@ mod personal_agent_tests {
         );
         assert_eq!(
             operation.authorization_ref.as_deref(),
-            Some("ak:grant:01904100-0000-7000-8000-000000000002")
+            Some("ak:grant:Ae5vV8Lwlft2Dp8x2y6Dv4NysvsHJwrADG-6PXdUz1Sl")
         );
         assert_eq!(
             operation.payload["approval_request_id"],

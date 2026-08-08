@@ -3624,7 +3624,7 @@ mod tests {
                     "actor_id": "did:web:carol.example",
                     "created_at": "2026-06-29T00:00:01.000Z",
                     "payload": {
-                        "invite_ref": "ak:invite:0196419b-0000-7000-8000-000000000301"
+                        "invite_ref": "ak:invite:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610"
                     }
                 }),
                 json!({
@@ -3657,7 +3657,7 @@ mod tests {
         assert_eq!(state.raw_operations[1].payload["kind"], "ak.invite.accept");
         assert_eq!(
             state.raw_operations[1].payload["body"]["invite_ref"],
-            "ak:invite:0196419b-0000-7000-8000-000000000301"
+            "ak:invite:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610"
         );
     }
 
@@ -3973,7 +3973,7 @@ mod tests {
         // realm id, so a re-invite to the same realm cannot inherit stale
         // archive/read client-state from an earlier invite.
         assert!(projection.iter().any(|entry| {
-            entry.notification_id() == "invite:ak:invite:0196419b-0000-7000-8000-000000000010"
+            entry.notification_id() == "invite:ak:invite:AfPFfc9dgGuhIK7wwJDJRJlT4aw6EP_t5Kh71YrQRR80"
         }));
     }
 

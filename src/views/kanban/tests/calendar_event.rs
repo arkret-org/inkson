@@ -274,7 +274,7 @@ fn calendar_editor_round_trips_the_complete_v1_schedule() {
             "geo_uri": "geo:31.2304,121.4737",
             "url": "https://meet.example/room"
         },
-        "call_id": "ak:call:0196419b-0000-7000-8000-000000000902",
+        "call_id": "ak:call:AWXbZ-mBelWXBOM1haN1Q6WcwR_RscrylSZph2icMZ6y",
         "attendees": [
             {
                 "actor_id": "did:web:alice.example",
@@ -298,7 +298,7 @@ fn calendar_editor_round_trips_the_complete_v1_schedule() {
     assert_eq!(editor.recurrence_first_day_of_week, "SU");
     assert_eq!(
         editor.call_id,
-        "ak:call:0196419b-0000-7000-8000-000000000902"
+        "ak:call:AWXbZ-mBelWXBOM1haN1Q6WcwR_RscrylSZph2icMZ6y"
     );
     assert!(editor.attendees_json.contains("display_name_snapshot"));
 

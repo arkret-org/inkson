@@ -191,7 +191,7 @@ mod tests {
         let verifying = signing_key.verifying_key();
         let body = arkret_sdk::InviteSubjectProofBody::from_wire_parts(
             "did:web:alice.example",
-            "ak:invite:0196419b-0000-7000-8000-000000000001",
+            "ak:invite:AfUeGRE3CFApB-5spxARHjovex9S5j5RWL8mAUSkpOMS",
             "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "nonce-claim-proof-1",
@@ -218,7 +218,7 @@ mod tests {
             "signature": "binding-signature"
         });
         let body = build_invite_claim_body(
-            "ak:invite:0196419b-0000-7000-8000-000000000001",
+            "ak:invite:AfUeGRE3CFApB-5spxARHjovex9S5j5RWL8mAUSkpOMS",
             "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
             "did:web:alice.example",
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -233,7 +233,7 @@ mod tests {
             arkret_sdk::canonical::canonical_sha256(&binding_proof).unwrap();
         let expected_transcript_digest = arkret_sdk::invite_subject_proof_transcript_digest(
             "did:web:alice.example",
-            "ak:invite:0196419b-0000-7000-8000-000000000001",
+            "ak:invite:AfUeGRE3CFApB-5spxARHjovex9S5j5RWL8mAUSkpOMS",
             "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "nonce-claim-proof-1",

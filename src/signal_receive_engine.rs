@@ -645,7 +645,7 @@ mod tests {
                 // §7.8's closed shape carries the shared plaintext minimum, so
                 // the route has to pass `payload_sequence` through untouched.
                 "payload_sequence": 7,
-                "call_id": "ak:call:01904100-0000-7000-8000-000000000003",
+                "call_id": "ak:call:ASJkvorx6tEzdxoAC5naL70uFcivCk9bMINhB1IWdS80",
                 "signal_kind": "invite",
                 "seq": 7,
                 "data": {"media": {"video": true}}

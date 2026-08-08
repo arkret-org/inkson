@@ -1197,7 +1197,7 @@ fn realm_key_share_envelope(
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
         sealed,
         "ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc",
-        "ak:grant:01904100-0000-7000-8000-0000000000e8",
+        "ak:grant:AYhEOew9OY47Elo3DUdM-vG441-UQbeQzZosnACQC6QU",
     )
     .unwrap();
     json!({
@@ -1630,7 +1630,7 @@ fn realm_key_share_sender_signature_round_trips() {
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
         "c2VhbGVk".to_owned(),
         "ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc",
-        "ak:grant:01904100-0000-7000-8000-0000000000e8",
+        "ak:grant:AYhEOew9OY47Elo3DUdM-vG441-UQbeQzZosnACQC6QU",
     )
     .unwrap();
     let payload: arkret_sdk::RealmKeySharePayload =

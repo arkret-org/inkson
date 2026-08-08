@@ -255,7 +255,7 @@ function sessionInjectionRecord(
 ) {
   return {
     grant_jwt: DEFAULT_SESSION_CREDENTIAL,
-    grant_id: "ak:grant:0196419b-0000-7000-8000-00000000e2e1",
+    grant_id: "ak:grant:Aa1lsSUPO6wXCITbk8eNFN84GlTcykTUKRcvz1PQJsau",
     audience: DEFAULT_SERVER_AUDIENCE,
     principal_id: DEFAULT_ACCOUNT_DID,
     dpop_seed_b64url: DEFAULT_DPOP_SEED_B64URL,

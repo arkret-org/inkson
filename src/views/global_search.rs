@@ -613,7 +613,7 @@ mod tests {
         let pending = crate::sidecar::PendingSidecarSubmission {
             controller_id: actor_id.to_owned(),
             sidecar_id: arkret_sdk::SidecarId::new(
-                "ak:sidecar:01904100-0000-7000-8000-000000000934",
+                "ak:sidecar:AW550jUB3z2wKhAvnsOXRVZTrs8UAJgTHWF5sxYI7TyI",
             )
             .unwrap(),
             private_strand_id: private_strand_id.clone(),

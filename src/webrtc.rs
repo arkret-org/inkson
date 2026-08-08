@@ -308,7 +308,7 @@ mod tests {
 
     const TEST_ACTOR: &str = "did:web:alice.example";
     const TEST_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000002";
-    const TEST_CALL: &str = "ak:call:01904100-0000-7000-8000-000000000003";
+    const TEST_CALL: &str = "ak:call:ASJkvorx6tEzdxoAC5naL70uFcivCk9bMINhB1IWdS80";
 
     /// Produce a decrypted `ak.call.signal` body the way the sender does.
     ///

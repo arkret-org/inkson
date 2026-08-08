@@ -66,7 +66,7 @@ test("notifications are derived from index projections and respect per-realm mut
   );
   expect(acceptBody.kind).toBe("ak.member.state");
   expect(acceptBody.payload.invite_ref).toBe(
-    "ak:invite:01904100-0000-7000-8000-000000000099",
+    "ak:invite:AUG1Kl2NbYdRAAzJBfSrn_CbrHrnLV9R_axxiJTGm8yG",
   );
   expect(acceptBody.payload).not.toHaveProperty("invite_id");
   await expect(page.getByTestId("notifications-status")).toContainText(

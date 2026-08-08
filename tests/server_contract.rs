@@ -355,7 +355,7 @@ fn inkson_accepts_server_contract_payloads() {
     // free-form objects.
     let grants: inkson::models::GrantList = serde_json::from_value(json!({
         "grants": [{
-            "id": "ak:grant:0196419b-0000-7000-8000-000000000000",
+            "id": "ak:grant:AfpU2UOijpNUdGOoAgQdaqV0xwreLXwLE3yXXHvB6n7X",
             "schema": arkret_wire::SchemaId::CAPABILITY_V1,
             "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
             "issuer": "did:web:server.local",

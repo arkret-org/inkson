@@ -858,7 +858,7 @@ mod tests {
         assert_eq!(installed.grant_jwt, "standard.grant.jwt");
         assert_eq!(
             installed.grant_id,
-            "ak:grant:01964137-0000-7000-8000-000000000002"
+            "ak:grant:AYVFZWhohYwHaEnPNmKhgMBK35WYy2igGfoeZIIOtwAy"
         );
         assert_eq!(store.session_grant(), Some(installed));
     }

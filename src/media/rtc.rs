@@ -867,7 +867,7 @@ mod tests {
     fn empty_anchor_set_fails_closed() {
         let request = MediaJoinRequest {
             realm_id: "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs".to_owned(),
-            call_id: "ak:call:0196441c-0000-7000-8000-000000000000".to_owned(),
+            call_id: "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz".to_owned(),
             actor_id: "did:web:alice.example".to_owned(),
             device_id: "ak:device:01904100-0000-7000-8000-000000000005".to_owned(),
             focus_id: "fra-1".to_owned(),
@@ -933,7 +933,7 @@ mod tests {
     ) -> MediaJoinRequest {
         MediaJoinRequest {
             realm_id: "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs".to_owned(),
-            call_id: "ak:call:0196441c-0000-7000-8000-000000000000".to_owned(),
+            call_id: "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz".to_owned(),
             actor_id: "did:web:alice.example".to_owned(),
             device_id: "ak:device:01904100-0000-7000-8000-000000000005".to_owned(),
             focus_id: "fra-1".to_owned(),
@@ -1077,7 +1077,7 @@ mod tests {
         // a real RFC 9420 §8 MLS-Exporter output, not a placeholder.
         let ctx = FrameKeyContext {
             realm_id: RealmId::new(EXPORTER_REALM.to_owned()).unwrap(),
-            call_id: CallId::new("ak:call:0196441c-0000-7000-8000-000000000000".to_owned())
+            call_id: CallId::new("ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz".to_owned())
                 .unwrap(),
             focus_id: "fra-1".to_owned(),
             epoch_id: exporter.epoch(),
@@ -1158,7 +1158,7 @@ mod tests {
     const BOB_DEVICE: &str = "ak:device:01904100-0000-7000-8000-00000000000b";
     const BOB_IDENTITY: &str = "ak:rtc_participant:0198c2f4-0000-7000-8000-00000000000b";
     const INTEROP_REALM: &str = "ak:realm:AQdmOQIzsGDs6LjeW5Icy92GXh1n9_6SGgVCJJ_2a3FV";
-    const INTEROP_CALL: &str = "ak:call:0196441c-0000-7000-8000-000000000000";
+    const INTEROP_CALL: &str = "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz";
 
     /// Snapshot a live MLS `group` under `(actor, device)`'s account secret in
     /// `store` and restore it through the exact production `RealmMlsExporter`

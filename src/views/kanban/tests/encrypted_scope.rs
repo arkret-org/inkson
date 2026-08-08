@@ -862,7 +862,7 @@ fn sidecar_track_patch_encrypts_with_only_the_circle_snapshot() {
     state.save_mls_snapshot(realm.to_owned(), realm_snapshot.clone());
     let binding = arkret_sdk::SidecarMlsBinding {
         sidecar_id: arkret_sdk::SidecarId::new(
-            "ak:sidecar:0196419b-0000-7000-8000-000000000025".to_owned(),
+            "ak:sidecar:ATob4lPqhrmzS4tLm6aZjJ77NIrYnI5OGb4qpgykXoRa".to_owned(),
         )
         .unwrap(),
         participant_authority_digest: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64)))

@@ -4890,7 +4890,7 @@ mod tests {
             json!({
                 "kind": "ak.capability.grant",
                 "payload": {
-                    "grant_id": "ak:grant:01904100-0000-7000-8000-000000000201",
+                    "grant_id": "ak:grant:AZ3oaG9qvE1XNJZo42Z6DiIeXMpE1ZULLGSV6lyWjR3N",
                     "grant": {
                         "subject": actor,
                         "actions": ["ak.realm_key.share"]
@@ -4901,7 +4901,7 @@ mod tests {
 
         assert_eq!(
             realm_key_share_capability_ref_from_events(&events, actor).as_deref(),
-            Some("ak:grant:01904100-0000-7000-8000-000000000201")
+            Some("ak:grant:AZ3oaG9qvE1XNJZo42Z6DiIeXMpE1ZULLGSV6lyWjR3N")
         );
     }
 
@@ -5286,7 +5286,7 @@ mod tests {
     #[test]
     fn token_invite_profile_is_classified_for_high_risk_revoke() {
         let realm_id = "ak:realm:test";
-        let invite_id = "ak:invite:01904100-0000-7000-8000-000000000002";
+        let invite_id = "ak:invite:Ae5vV8Lwlft2Dp8x2y6Dv4NysvsHJwrADG-6PXdUz1Sl";
         let mut store = temp_store("raw-token-invite");
         store.append_raw_operation(
             "ak:event:invite-token".to_owned(),
@@ -5309,7 +5309,7 @@ mod tests {
     #[test]
     fn projected_member_profiles_promote_invite_accept_to_join_from_raw_operations() {
         let realm_id = "ak:realm:test";
-        let invite_id = "ak:invite:01904100-0000-7000-8000-000000000001";
+        let invite_id = "ak:invite:AbrgMKK4KXMpRsGsFrsEQEsjo207metUd4zt8yjzB-UH";
         let mut store = temp_store("raw-invite-accept-join");
         store.append_raw_operation(
             "ak:event:invite-local".to_owned(),
@@ -5346,7 +5346,7 @@ mod tests {
     #[test]
     fn queued_invite_accept_does_not_promote_join_or_trigger_admission() {
         let realm_id = "ak:realm:test";
-        let invite_id = "ak:invite:01904100-0000-7000-8000-000000000001";
+        let invite_id = "ak:invite:AbrgMKK4KXMpRsGsFrsEQEsjo207metUd4zt8yjzB-UH";
         let mut store = temp_store("queued-invite-accept-no-admission");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
@@ -5402,7 +5402,7 @@ mod tests {
     #[test]
     fn projected_member_profiles_drop_locally_cancelled_pending_invites() {
         let realm_id = "ak:realm:test";
-        let invite_id = "ak:invite:01904100-0000-7000-8000-000000000001";
+        let invite_id = "ak:invite:AbrgMKK4KXMpRsGsFrsEQEsjo207metUd4zt8yjzB-UH";
         let mut store = temp_store("raw-cancelled-pending-invite");
         store.append_raw_operation(
             "ak:event:invite-local".to_owned(),

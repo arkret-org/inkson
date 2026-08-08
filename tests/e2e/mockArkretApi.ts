@@ -2311,7 +2311,7 @@ export async function mockArkretApi(
               payload: {
                 schema: "ak.schema.notification.v1",
                 notification_id: "notif-invite-1",
-                invite_id: "ak:invite:01904100-0000-7000-8000-000000000099",
+                invite_id: "ak:invite:AUG1Kl2NbYdRAAzJBfSrn_CbrHrnLV9R_axxiJTGm8yG",
                 title: "New invite",
                 body: "You were invited to review Demo Realm",
                 realm_id: DEMO_REALM,
@@ -2825,7 +2825,7 @@ export async function mockArkretApi(
       return json(route, {
         allowed: true,
         reason_code: "frontier_current",
-        grants: ["ak:grant:0196419b-0000-7000-8000-00000000e2e1"],
+        grants: ["ak:grant:Aa1lsSUPO6wXCITbk8eNFN84GlTcykTUKRcvz1PQJsau"],
         obligations: [{ type: "audit", reason_required: false }],
       });
     }
@@ -2837,7 +2837,7 @@ export async function mockArkretApi(
       return json(route, {
         grants: [
           {
-            grant_id: "ak:grant:0196419b-0000-7000-8000-00000000e2e1",
+            grant_id: "ak:grant:Aa1lsSUPO6wXCITbk8eNFN84GlTcykTUKRcvz1PQJsau",
             issuer: "did:web:admin.example",
             subject: url.searchParams.get("subject"),
             actions: ["space.read", "message.create"],
@@ -2853,8 +2853,8 @@ export async function mockArkretApi(
               },
             ],
             delegation_chain: [
-              "ak:grant:0196419b-0000-7000-8000-00000000e2e0",
-              "ak:grant:0196419b-0000-7000-8000-00000000e2e1",
+              "ak:grant:Ab1Y2gdaHKIySvl3lY954bFCuMV-rh6sV2f8wmRJLaIF",
+              "ak:grant:Aa1lsSUPO6wXCITbk8eNFN84GlTcykTUKRcvz1PQJsau",
             ],
           },
         ],
@@ -3232,7 +3232,7 @@ export async function mockArkretApi(
       }
       return json(route, {
         ok: true,
-        sidecar_id: "ak:sidecar:01964137-0000-7000-8000-0000000000a0",
+        sidecar_id: "ak:sidecar:ARtoYyyaAqwT8z7xX2YLO-x_zdkPXEy8ygoDx-tu-5fm",
         private_strand_id: "ak:strand:ASy992JMe_xzh5pluAqo5YuyCnAfDdFni4lmeHQldlUM",
         private_relation_id: "ak:relation:Adfmbl2dMLTHsS64Yqhc6HgCYJkB-HAVr2AGwL-KZC1d",
         access_readiness:
@@ -3252,7 +3252,7 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/agent-sidecars" &&
       route.request().method() === "GET"
     ) {
-      const sidecarId = "ak:sidecar:01964137-0000-7000-8000-0000000000a0";
+      const sidecarId = "ak:sidecar:ARtoYyyaAqwT8z7xX2YLO-x_zdkPXEy8ygoDx-tu-5fm";
       const backingCircleId = "ak:circle:AbhO_nhWEZ7jojF3JULUGyzIUTiHNshUWblbkJCr7NbP";
       const desiredAgentIds = [...sidecarAgentIds].sort();
       const principalIds = [accountPrincipalId, ...desiredAgentIds].sort();
@@ -3309,7 +3309,7 @@ export async function mockArkretApi(
       url.pathname.startsWith("/_arkret/self/agent-sidecars/") &&
       route.request().method() === "GET"
     ) {
-      const sidecarId = "ak:sidecar:01964137-0000-7000-8000-0000000000a0";
+      const sidecarId = "ak:sidecar:ARtoYyyaAqwT8z7xX2YLO-x_zdkPXEy8ygoDx-tu-5fm";
       const backingCircleId = "ak:circle:AbhO_nhWEZ7jojF3JULUGyzIUTiHNshUWblbkJCr7NbP";
       const desiredAgentIds = [...sidecarAgentIds].sort();
       const principalIds = [accountPrincipalId, ...desiredAgentIds].sort();
@@ -3945,7 +3945,7 @@ export async function mockArkretApi(
       const body = await route.request().postDataJSON();
       return json(route, {
         realm_id: body.realm_id ?? DEMO_REALM,
-        call_id: body.call_id ?? "ak:call:01964137-0000-7000-8000-000000000001",
+        call_id: body.call_id ?? "ak:call:AbhvODyrIRCskAIoS9IXLjMfD-Zsr8lwDpiCU_zLR4it",
         actor_id: body.actor_id ?? "did:web:alice.example",
         device_id:
           body.device_id ?? "ak:device:01904100-0000-7000-8000-a11ce0000001",

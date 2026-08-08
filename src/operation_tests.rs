@@ -156,7 +156,7 @@ fn operation_builder_can_emit_signed_authorization_binding() {
         "content": {"kind": "ak.content.text", "body": "hello world"}
     }))
     .executed_by("did:web:agent.example")
-    .authorization_ref("ak:grant:0196419b-0000-7000-8000-000000000001")
+    .authorization_ref("ak:grant:AfUeGRE3CFApB-5spxARHjovex9S5j5RWL8mAUSkpOMS")
     .build("node");
 
     assert_eq!(
@@ -165,7 +165,7 @@ fn operation_builder_can_emit_signed_authorization_binding() {
     );
     assert_eq!(
         op.authorization_ref.as_deref(),
-        Some("ak:grant:0196419b-0000-7000-8000-000000000001")
+        Some("ak:grant:AfUeGRE3CFApB-5spxARHjovex9S5j5RWL8mAUSkpOMS")
     );
     assert!(!op.unsigned.contains_key("local_authz_ref"));
 
@@ -177,7 +177,7 @@ fn operation_builder_can_emit_signed_authorization_binding() {
     assert_eq!(canonical["executed_by"], "did:web:agent.example");
     assert_eq!(
         canonical["authorization_ref"],
-        "ak:grant:0196419b-0000-7000-8000-000000000001"
+        "ak:grant:AfUeGRE3CFApB-5spxARHjovex9S5j5RWL8mAUSkpOMS"
     );
 }
 
@@ -207,7 +207,7 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
     object.insert("executed_by".to_owned(), json!("did:web:agent.example"));
     object.insert(
         "authorization_ref".to_owned(),
-        json!("ak:grant:0196419b-0000-7000-8000-000000000001"),
+        json!("ak:grant:AfUeGRE3CFApB-5spxARHjovex9S5j5RWL8mAUSkpOMS"),
     );
     object.insert("actor_kind".to_owned(), json!("agent"));
 
@@ -230,7 +230,7 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
     );
     assert_eq!(
         parsed.authorization_ref.as_deref(),
-        Some("ak:grant:0196419b-0000-7000-8000-000000000001")
+        Some("ak:grant:AfUeGRE3CFApB-5spxARHjovex9S5j5RWL8mAUSkpOMS")
     );
     assert_eq!(
         parsed.actor_kind,
@@ -1152,7 +1152,7 @@ mod realm_organization_builder_tests {
             issuer: arkret_sdk::Did::new("did:web:gov.example").unwrap(),
             issuer_role: RealmOrganizationIssuerRole::GovernanceService,
             verification_method: arkret_sdk::DidUrl::new("did:web:gov.example#k1").unwrap(),
-            delegation_ref: Some("ak:grant:01904100-0000-7000-8000-000000000001".to_owned()),
+            delegation_ref: Some("ak:grant:AbrgMKK4KXMpRsGsFrsEQEsjo207metUd4zt8yjzB-UH".to_owned()),
             executed_by: None,
             signed_at: signed_at(),
             proof: SignatureMaterial::NonEmptyString(
@@ -1223,7 +1223,7 @@ mod realm_organization_builder_tests {
         );
         assert_eq!(
             event.payload["authorization"]["delegation_ref"],
-            "ak:grant:01904100-0000-7000-8000-000000000001"
+            "ak:grant:AbrgMKK4KXMpRsGsFrsEQEsjo207metUd4zt8yjzB-UH"
         );
         assert_registered_payload_valid(&event);
     }
@@ -1315,7 +1315,7 @@ mod realm_organization_builder_tests {
     #[test]
     fn non_delegated_role_with_delegation_ref_is_rejected() {
         let mut auth = direct_org_auth();
-        auth.delegation_ref = Some("ak:grant:01904100-0000-7000-8000-000000000001".to_owned());
+        auth.delegation_ref = Some("ak:grant:AbrgMKK4KXMpRsGsFrsEQEsjo207metUd4zt8yjzB-UH".to_owned());
         let error = ak_ops::realm_organization_statement(
             REALM_ID,
             ACTOR,

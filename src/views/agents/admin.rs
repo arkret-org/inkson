@@ -205,7 +205,7 @@ mod directory_refresh_tests {
                 AgentRuntimeState::PendingRuntimeKey,
             ),
             grants: vec![arkret_sdk::GrantSnapshot {
-                grant_id: arkret_sdk::GrantId::new("ak:grant:01964137-0000-7000-8000-000000000010")
+                grant_id: arkret_sdk::GrantId::new("ak:grant:AdIokNbDGo5OV8uIK_7oyEOrSIU423PwmxNVThDeiPwQ")
                     .unwrap(),
                 realm_id: arkret_sdk::RealmId::new(
                     "ak:realm:AYzH43fmsgS6dn7noiHeYxAKUUdkhaJBnOGaWvu3MlBC",
@@ -232,7 +232,7 @@ mod directory_refresh_tests {
         );
         assert_eq!(
             rows[0].grants[0].grant_id.as_str(),
-            "ak:grant:01964137-0000-7000-8000-000000000010"
+            "ak:grant:AdIokNbDGo5OV8uIK_7oyEOrSIU423PwmxNVThDeiPwQ"
         );
     }
 

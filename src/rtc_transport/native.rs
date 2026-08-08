@@ -436,7 +436,7 @@ mod tests {
                     "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs",
                 )
                 .unwrap(),
-                call_id: arkret_sdk::CallId::new("ak:call:0196441c-0000-7000-8000-000000000000")
+                call_id: arkret_sdk::CallId::new("ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz")
                     .unwrap(),
                 focus_id: "fra-1".to_owned(),
                 actor_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
@@ -457,7 +457,7 @@ mod tests {
             desired_media: DesiredMedia::audio_video(),
             device_id: "ak:device:01904100-0000-7000-8000-000000000005".to_owned(),
             realm_id: "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs".to_owned(),
-            call_id: "ak:call:0196441c-0000-7000-8000-000000000000".to_owned(),
+            call_id: "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz".to_owned(),
             epoch_id: 0,
         }
     }
@@ -468,7 +468,7 @@ mod tests {
                 "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs",
             )
             .unwrap(),
-            call_id: "ak:call:0196441c-0000-7000-8000-000000000000".to_owned(),
+            call_id: "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz".to_owned(),
             actor_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
             ice_servers: Vec::new(),
             ttl_seconds: 300,

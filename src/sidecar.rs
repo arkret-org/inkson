@@ -1924,7 +1924,7 @@ mod tests {
             source_realm_id: "ak:realm:AUqzNZlfuL-7z087TbZhKOdYyKUNPAa2o_neyoFRh3o2".to_owned(),
             source_strand_id: "ak:strand:AUvEs_-d1tc81yDszBZAVWapgIr3Gs6ofbmtZSLQNejL".to_owned(),
             sidecar_id: arkret_sdk::SidecarId::new(
-                "ak:sidecar:019f0000-0000-7000-8000-000000000004".to_owned(),
+                "ak:sidecar:Abbk-ALq9nZszIh8qJC26XasNIx9TYjU5-BzXWyqwDVx".to_owned(),
             )
             .unwrap(),
             backing_scope_circle_id: arkret_sdk::CircleId::new(
@@ -2074,7 +2074,7 @@ mod tests {
                 schema: arkret_sdk::AgentSidecarExchangeProjectionSchema::V1,
                 controller_id: arkret_sdk::Did::new(account).unwrap(),
                 sidecar_id: arkret_sdk::SidecarId::new(
-                    "ak:sidecar:01964137-0000-7000-8000-000000000007",
+                    "ak:sidecar:AWea2MtI5dOI1LSRyI266_gQVrWUd0po0dxZiJNsH8kN",
                 )
                 .unwrap(),
                 private_strand_id: arkret_sdk::StrandId::new(

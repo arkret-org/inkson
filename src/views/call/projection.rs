@@ -534,7 +534,7 @@ mod tests {
                 "kind": "ak.call.state",
                 "event_id": "ak:event:ASm7jqNYNKkkSZtwu8PWbZHjEuA0e0fwxgveLiRW88t5",
                 "body": {
-                    "call_id": "ak:call:0196441c-0000-7000-8000-000000000000",
+                    "call_id": "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz",
                     "roster_delta": {
                         "op": "join",
                         "participant": {
@@ -548,7 +548,7 @@ mod tests {
         let identities = call_state_participant_identities(
             &state,
             "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs",
-            "ak:call:0196441c-0000-7000-8000-000000000000",
+            "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz",
         );
         assert!(identities.contains("ak:rtc_participant:alice"));
         assert!(!identities.contains("did:web:alice.example"));
@@ -565,7 +565,7 @@ mod tests {
                 "kind": "ak.call.state",
                 "event_id": "ak:event:Af_bFBCAZvUH8R-cwurL2MobOvPPrqNmLsods7_Ww5RL",
                 "body": {
-                    "call_id": "ak:call:0196441c-0000-7000-8000-000000000000",
+                    "call_id": "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz",
                     "roster_delta": {
                         "op": "join",
                         "participant": {
@@ -580,7 +580,7 @@ mod tests {
         let map = call_state_participant_device_map(
             &state,
             "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs",
-            "ak:call:0196441c-0000-7000-8000-000000000000",
+            "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz",
         );
         assert_eq!(
             map.get("ak:rtc_participant:alice").map(String::as_str),
@@ -599,7 +599,7 @@ mod tests {
                 "kind": "ak.call.state",
                 "event_id": "ak:event:AdOGA9FXdJkglUZwIc7veJCh_CdvCt3PkUOC-1psvRhF",
                 "body": {
-                    "call_id": "ak:call:0196441c-0000-7000-8000-000000000000",
+                    "call_id": "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz",
                     "roster_delta": {
                         "op": "join",
                         "participant": {
@@ -614,7 +614,7 @@ mod tests {
         let map = call_state_participant_actor_device_map(
             &state,
             "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs",
-            "ak:call:0196441c-0000-7000-8000-000000000000",
+            "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz",
         );
         assert_eq!(
             map.get("did:web:alice.example").map(String::as_str),
@@ -625,7 +625,7 @@ mod tests {
     #[test]
     fn recording_artifact_boundary_rejects_backend_url() {
         let body = json!({
-            "call_id": "ak:call:019a7360-0000-7000-8000-000000000001",
+            "call_id": "ak:call:AWRz9zKjOlGmvDeLp4ws-Eb6jsg4I5jJdj5J8o3cGYz0",
             "recording_transition": {
                 "recording_id": "rtc-recording-019a7360-0000-7000-8000-000000000002",
                 "from": "stopped",
@@ -650,7 +650,7 @@ mod tests {
     #[test]
     fn transcript_artifact_boundary_rejects_backend_url() {
         let body = json!({
-            "call_id": "ak:call:019a7360-0000-7000-8000-000000000001",
+            "call_id": "ak:call:AWRz9zKjOlGmvDeLp4ws-Eb6jsg4I5jJdj5J8o3cGYz0",
             "transcript_transition": {
                 "recording_id": "rtc-transcript-019a7360-0000-7000-8000-000000000002",
                 "from": "stopped",
@@ -678,7 +678,7 @@ mod tests {
                 "kind": "ak.call.state",
                 "event_id": "ak:event:AfJbDJqGER5UOnt8W9wrLdj9CgXQ2nZr-dcA7zvYA_Wo",
                 "body": {
-                    "call_id": "ak:call:019a7360-0000-7000-8000-000000000001",
+                    "call_id": "ak:call:AWRz9zKjOlGmvDeLp4ws-Eb6jsg4I5jJdj5J8o3cGYz0",
                     "recording_transition": {
                         "recording_id": "rtc-recording-019a7360-0000-7000-8000-000000000002",
                         "from": "stopped",
@@ -702,7 +702,7 @@ mod tests {
         let identities = call_state_participant_identities(
             &state,
             "ak:realm:AafktYXx8-v8PgfMovcpfbkFAJzUiT8l2GHJJ9UmF3fP",
-            "ak:call:019a7360-0000-7000-8000-000000000001",
+            "ak:call:AWRz9zKjOlGmvDeLp4ws-Eb6jsg4I5jJdj5J8o3cGYz0",
         );
         assert!(identities.is_empty());
     }
@@ -718,7 +718,7 @@ mod tests {
                 "kind": "ak.call.state",
                 "event_id": "ak:event:ATD6cb_3TgprxaV53cyR2YNads-FjjMmsIfwddWP23Z6",
                 "body": {
-                    "call_id": "ak:call:019a7360-0000-7000-8000-000000000001",
+                    "call_id": "ak:call:AWRz9zKjOlGmvDeLp4ws-Eb6jsg4I5jJdj5J8o3cGYz0",
                     "transcript_transition": {
                         "recording_id": "rtc-transcript-019a7360-0000-7000-8000-000000000002",
                         "from": "stopped",
@@ -742,14 +742,14 @@ mod tests {
         let identities = call_state_participant_identities(
             &state,
             "ak:realm:AafktYXx8-v8PgfMovcpfbkFAJzUiT8l2GHJJ9UmF3fP",
-            "ak:call:019a7360-0000-7000-8000-000000000001",
+            "ak:call:AWRz9zKjOlGmvDeLp4ws-Eb6jsg4I5jJdj5J8o3cGYz0",
         );
         assert!(identities.is_empty());
     }
 
     fn valid_recording_call_state() -> serde_json::Value {
         let realm_id = "ak:realm:AafktYXx8-v8PgfMovcpfbkFAJzUiT8l2GHJJ9UmF3fP";
-        let call_id = "ak:call:019a7360-0000-7000-8000-000000000001";
+        let call_id = "ak:call:AWRz9zKjOlGmvDeLp4ws-Eb6jsg4I5jJdj5J8o3cGYz0";
         let recording_id = "rtc-recording-019a7360-0000-7000-8000-000000000002";
         let start_event_id = "ak:event:AQ_TuICTz2cVFhqtuEZTue46AK_LsqKsKlTPixxkuedX";
         let content_digest =
@@ -804,7 +804,7 @@ mod tests {
                     "retention_policy_id": "ak:policy:019a7360-0000-7000-8000-000000000005",
                     "retention": retention,
                     "produced_by": "did:web:recorder.example",
-                    "recording_initiator_capability_ref": "ak:grant:019a7360-0000-7000-8000-000000000006",
+                    "recording_initiator_capability_ref": "ak:grant:AY8a0-KhSVbHOk2IStjbvFlEdGofW0ZyqMsOoZu6_Cqv",
                     "created_at": "2026-06-19T00:00:00.000Z",
                     "deletion_audit": {
                         "trigger": "retention_expiry",

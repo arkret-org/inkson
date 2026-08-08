@@ -3666,7 +3666,7 @@ mod tests {
             AUTHORITY_CONTROLLER,
         );
         with_grant.authorization_ref = Some(
-            arkret_sdk::AuthorizationRef::new("ak:grant:01904100-0000-7000-8000-000000000001")
+            arkret_sdk::AuthorizationRef::new("ak:grant:AbrgMKK4KXMpRsGsFrsEQEsjo207metUd4zt8yjzB-UH")
                 .unwrap(),
         );
         assert_eq!(realm_authority_root_claim(&with_grant, Some(&root)), None);

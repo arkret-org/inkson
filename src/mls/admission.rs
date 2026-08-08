@@ -804,7 +804,7 @@ mod tests {
             policy_digest.clone(),
             "c2VhbGVk".to_owned(),
             "ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc",
-            "ak:grant:01904100-0000-7000-8000-0000000000e8",
+            "ak:grant:AYhEOew9OY47Elo3DUdM-vG441-UQbeQzZosnACQC6QU",
         )
         .unwrap();
 
@@ -827,7 +827,7 @@ mod tests {
         assert_eq!(event.payload["key_scope"]["policy_digest"], policy_digest);
         assert_eq!(
             event.authorization_ref.as_deref(),
-            Some("ak:grant:01904100-0000-7000-8000-0000000000e8")
+            Some("ak:grant:AYhEOew9OY47Elo3DUdM-vG441-UQbeQzZosnACQC6QU")
         );
         // v1 derives the delivery-log write from the registry instead of
         // shipping it: assert the projection, which is what the receiver runs.

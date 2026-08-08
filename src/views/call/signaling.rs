@@ -518,7 +518,7 @@ mod tests {
     fn inbox_item(data: serde_json::Value) -> CallSignalInboxItem {
         CallSignalInboxItem {
             realm_id: "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
-            call_id: "ak:call:01904100-0000-7000-8000-000000000002".to_owned(),
+            call_id: "ak:call:Ae5vV8Lwlft2Dp8x2y6Dv4NysvsHJwrADG-6PXdUz1Sl".to_owned(),
             signal_kind: "mute_state".to_owned(),
             seq: 1,
             sender_actor: "did:web:moderator.example".to_owned(),

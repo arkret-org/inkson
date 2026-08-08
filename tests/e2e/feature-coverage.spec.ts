@@ -52,7 +52,7 @@ test.describe("feature coverage placeholders", () => {
         "inkson.test.session_injection.v1",
         JSON.stringify({
           grant_jwt: "sx:e2e-token",
-          grant_id: "ak:grant:0196419b-0000-7000-8000-00000000e2e1",
+          grant_id: "ak:grant:Aa1lsSUPO6wXCITbk8eNFN84GlTcykTUKRcvz1PQJsau",
           audience: "did:web:server.local",
           principal_id: "did:web:alice.example",
           dpop_seed_b64url: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",

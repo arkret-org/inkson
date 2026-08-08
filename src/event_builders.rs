@@ -2053,7 +2053,7 @@ mod notary_derivation_tests {
             arkret_sdk::RealmId::new(realm).unwrap(),
             "did:web:bob.example",
             arkret_sdk::CapabilityRelinquishPayload {
-                grant_id: arkret_sdk::GrantId::new("ak:grant:01964137-0000-7000-8000-000000000088")
+                grant_id: arkret_sdk::GrantId::new("ak:grant:Abgeuy84qDvMqHgAWAilTc0qrZ-TjiR81uM8oQbSyu9o")
                     .unwrap(),
                 reason: None,
             },

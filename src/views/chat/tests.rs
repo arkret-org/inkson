@@ -74,7 +74,7 @@ fn delivered_exchange_projection_fixture(
     arkret_sdk::AgentSidecarExchangeProjection {
         schema: arkret_sdk::AgentSidecarExchangeProjectionSchema::V1,
         controller_id: arkret_sdk::Did::new("did:web:example.test:alice").unwrap(),
-        sidecar_id: arkret_sdk::SidecarId::new("ak:sidecar:01964137-0000-7000-8000-000000000007")
+        sidecar_id: arkret_sdk::SidecarId::new("ak:sidecar:AWea2MtI5dOI1LSRyI266_gQVrWUd0po0dxZiJNsH8kN")
             .unwrap(),
         exchange_id: arkret_sdk::AgentSidecarExchangeId::new("exchange-01964137000000000008")
             .unwrap(),
