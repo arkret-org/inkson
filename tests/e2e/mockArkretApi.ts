@@ -3041,7 +3041,7 @@ export async function mockArkretApi(
         state: "found",
         coordinates: {
           pair_key:
-            "sha256:a97a411daac39d8fe9c29755109c5785e86b83e9f966c65363bafcf02654790b",
+            "sha256:e8c24c1badc48eefa472a1700e87a6597a95aedfab8cbe3173f1622b9ad427b5",
           realm_id: ownedAgent ? DIRECT_OWN_AGENT_REALM : DIRECT_BOB_REALM,
           main_strand_id: ownedAgent
             ? DIRECT_OWN_AGENT_STRAND

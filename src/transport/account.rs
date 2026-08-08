@@ -213,6 +213,28 @@ pub async fn direct_conversation_resolve(
     Ok(outcome)
 }
 
+/// Submit the exact caller-authored founding unit selected by Garth's runtime-neutral gate.
+/// Ambiguous network failures are retried by passing the same `prepared` value again; this helper
+/// never authors or substitutes coordinates.
+pub async fn direct_conversation_found(
+    http: &arkret_sdk::http_client::Client,
+    resolve: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
+    prepared: arkret_sdk::direct_conversation_ops::DirectConversationFoundingUnitSubmission,
+) -> anyhow::Result<arkret_sdk::direct_conversation_ops::DirectConversationFoundingAcceptanceOutcome>
+{
+    match garth::direct_conversation_founding_action(resolve, Some(prepared))
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?
+    {
+        garth::DirectConversationFoundingAction::Submit(unit) => http
+            .direct_conversation_founding_submit(&unit)
+            .await
+            .map_err(|error| anyhow::anyhow!("Direct Conversation founding submit: {error}")),
+        _ => Err(anyhow::anyhow!(
+            "Direct Conversation resolve state does not permit founding submission"
+        )),
+    }
+}
+
 fn direct_conversation_peer_descriptor(
     peer: &str,
     peer_controller: Option<&str>,
