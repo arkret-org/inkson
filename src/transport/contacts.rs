@@ -129,6 +129,7 @@ impl crate::transport::TransportClient {
             idempotency_key,
             reservation_handle,
             signed_event,
+            control_proposal_ack: None,
         });
         self.sdk_http_client()?
             .contacts_request(&commit)
