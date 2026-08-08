@@ -2221,9 +2221,9 @@ fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
         }),
         json!({
             "kind": "ak.moderation.appeal.submit",
+            "event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "realm_id": realm_id,
             "payload": {
-                "appeal_id": "ak:appeal:01904100-0000-7000-8000-000000000301",
                 "decision_ref": "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z",
                 "target_ref": "ak:message:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
                 "appellant": appellant
@@ -2233,7 +2233,7 @@ fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
             "kind": "ak.moderation.appeal.decision",
             "realm_id": realm_id,
             "payload": {
-                "appeal_id": "ak:appeal:01904100-0000-7000-8000-000000000301",
+                "appeal_id": "ak:appeal:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
                 "verdict": "uphold"
             }
         }),

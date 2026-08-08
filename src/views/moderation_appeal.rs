@@ -89,19 +89,12 @@ impl AppealState {
 pub fn build_appeal_submit_op(
     realm_id: &str,
     appellant: &str,
-    appeal_id: &str,
     decision_event_id: &str,
     target_ref: &str,
     reason_text_ref: &str,
 ) -> anyhow::Result<OperationBuilder> {
-    // Round R2/R3: typed appeal id binding. Validate the input rather than
-    // forwarding free-form strings to the wire — the SDK's TypedAppealId
-    // enforces the `ak:appeal:<uuidv7>` shape.
-    let typed_appeal_id = arkret_sdk::TypedAppealId::new(appeal_id)
-        .map_err(|err| anyhow::anyhow!("invalid appeal_id: {err}"))?;
     let realm_id = trim_realm_id(realm_id);
     let payload = arkret_sdk::AppealSubmitPayload {
-        appeal_id: typed_appeal_id.clone(),
         realm_id: arkret_sdk::RealmId::new(realm_id.clone())
             .map_err(|err| anyhow::anyhow!("invalid realm_id: {err}"))?,
         decision_ref: arkret_sdk::EventId::new(decision_event_id)
@@ -127,13 +120,6 @@ pub fn build_appeal_submit_op(
     )
     .target_ref(decision_event_id)
     .body(body))
-}
-
-/// Build a fresh `ak:appeal:<uuidv7>` id for a new appeal. UUIDv7 inherits
-/// process clock entropy so two devices appealing the same decision
-/// don't collide.
-pub fn new_appeal_id() -> String {
-    format!("ak:appeal:{}", crate::operation::uuid_v7())
 }
 
 /// Component: "Appeal this moderation decision" entrypoint. Renders near
@@ -208,7 +194,6 @@ pub fn AppealEntrypoint(
                         submitting.set(true);
                         status.set(String::new());
                         spawn(async move {
-                            let appeal_id = new_appeal_id();
                             // TODO(moderation-appeal-blob-upload): once the blob upload path
                             // settles for appeal narratives in E2EE Realms,
                             // POST the reason as a `ak:blob:…` ref instead
@@ -219,7 +204,6 @@ pub fn AppealEntrypoint(
                             let op = match build_appeal_submit_op(
                                 &realm,
                                 &appellant,
-                                &appeal_id,
                                 &decision,
                                 &target,
                                 &reason_ref,
@@ -239,6 +223,9 @@ pub fn AppealEntrypoint(
                                     return;
                                 }
                             };
+                            let appeal_id =
+                                arkret_sdk::TypedAppealId::from_event_id(&envelope.event_id)
+                                    .to_string();
                             let result = with_authed_api(&base, token, |api| async move {
                                 api.event_submitter()?.submit_sdk_event(&envelope).await
                             })
@@ -304,7 +291,6 @@ mod tests {
         let op = build_appeal_submit_op(
             "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "did:web:alice.example",
-            "ak:appeal:01904100-0000-7000-8000-000000000002",
             "ak:event:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
             "ak:event:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
             "inline:I was misidentified.",
@@ -316,7 +302,7 @@ mod tests {
             op.payload["realm_id"],
             "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
         );
-        assert!(op.payload["appeal_id"].is_string());
+        assert!(!op.payload.contains_key("appeal_id"));
         assert!(!op.payload.contains_key("schema"));
         let registry = arkret_sdk::schema::schema_registry_from_default_spec_artifacts()
             .unwrap()
@@ -330,12 +316,11 @@ mod tests {
     }
 
     #[test]
-    fn build_appeal_submit_op_rejects_bad_appeal_id() {
+    fn build_appeal_submit_op_rejects_bad_decision_event_id() {
         let err = build_appeal_submit_op(
             "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "did:web:alice.example",
-            "appeal-1",
-            "ak:event:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
+            "decision-1",
             "ak:event:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
             "blob:reason",
         );

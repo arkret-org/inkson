@@ -1854,7 +1854,12 @@ pub(crate) fn moderation_appeal_prompts_from_events(
                 if first_string_in_candidates(&candidates, &["appellant"]) != Some(appellant) {
                     continue;
                 }
-                let Some(appeal_id) = first_string_in_candidates(&candidates, &["appeal_id"])
+                let Some(appeal_id) =
+                    first_string_in_candidates(&candidates, &["event_id", "id", "operation_id"])
+                        .and_then(|value| arkret_sdk::EventId::new(value.to_owned()).ok())
+                        .map(|event_id| {
+                            arkret_sdk::TypedAppealId::from_event_id(&event_id).to_string()
+                        })
                 else {
                     continue;
                 };
@@ -1862,7 +1867,7 @@ pub(crate) fn moderation_appeal_prompts_from_events(
                 else {
                     continue;
                 };
-                appeal_decisions.insert(appeal_id.to_owned(), decision_ref.to_owned());
+                appeal_decisions.insert(appeal_id, decision_ref.to_owned());
                 if let Some(prompt) = decisions.get_mut(decision_ref) {
                     prompt.state = "submitted".to_owned();
                     prompt.verdict = None;
