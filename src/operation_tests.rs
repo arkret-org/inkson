@@ -1144,7 +1144,9 @@ mod realm_organization_builder_tests {
             issuer: arkret_sdk::Did::new("did:web:gov.example").unwrap(),
             issuer_role: RealmOrganizationIssuerRole::GovernanceService,
             verification_method: arkret_sdk::DidUrl::new("did:web:gov.example#k1").unwrap(),
-            delegation_ref: Some("ak:grant:AbrgMKK4KXMpRsGsFrsEQEsjo207metUd4zt8yjzB-UH".to_owned()),
+            delegation_ref: Some(
+                "ak:grant:AbrgMKK4KXMpRsGsFrsEQEsjo207metUd4zt8yjzB-UH".to_owned(),
+            ),
             executed_by: None,
             signed_at: signed_at(),
             proof: SignatureMaterial::NonEmptyString(
@@ -1307,7 +1309,8 @@ mod realm_organization_builder_tests {
     #[test]
     fn non_delegated_role_with_delegation_ref_is_rejected() {
         let mut auth = direct_org_auth();
-        auth.delegation_ref = Some("ak:grant:AbrgMKK4KXMpRsGsFrsEQEsjo207metUd4zt8yjzB-UH".to_owned());
+        auth.delegation_ref =
+            Some("ak:grant:AbrgMKK4KXMpRsGsFrsEQEsjo207metUd4zt8yjzB-UH".to_owned());
         let error = ak_ops::realm_organization_statement(
             REALM_ID,
             ACTOR,

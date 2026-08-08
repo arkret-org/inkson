@@ -3973,7 +3973,8 @@ mod tests {
         // realm id, so a re-invite to the same realm cannot inherit stale
         // archive/read client-state from an earlier invite.
         assert!(projection.iter().any(|entry| {
-            entry.notification_id() == "invite:ak:invite:AfPFfc9dgGuhIK7wwJDJRJlT4aw6EP_t5Kh71YrQRR80"
+            entry.notification_id()
+                == "invite:ak:invite:AfPFfc9dgGuhIK7wwJDJRJlT4aw6EP_t5Kh71YrQRR80"
         }));
     }
 

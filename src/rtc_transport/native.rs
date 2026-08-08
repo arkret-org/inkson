@@ -436,8 +436,10 @@ mod tests {
                     "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs",
                 )
                 .unwrap(),
-                call_id: arkret_sdk::CallId::new("ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz")
-                    .unwrap(),
+                call_id: arkret_sdk::CallId::new(
+                    "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz",
+                )
+                .unwrap(),
                 focus_id: "fra-1".to_owned(),
                 actor_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
                 device_id: arkret_sdk::DeviceId::new(

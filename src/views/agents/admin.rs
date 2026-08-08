@@ -205,8 +205,10 @@ mod directory_refresh_tests {
                 AgentRuntimeState::PendingRuntimeKey,
             ),
             grants: vec![arkret_sdk::GrantSnapshot {
-                grant_id: arkret_sdk::GrantId::new("ak:grant:AdIokNbDGo5OV8uIK_7oyEOrSIU423PwmxNVThDeiPwQ")
-                    .unwrap(),
+                grant_id: arkret_sdk::GrantId::new(
+                    "ak:grant:AdIokNbDGo5OV8uIK_7oyEOrSIU423PwmxNVThDeiPwQ",
+                )
+                .unwrap(),
                 realm_id: arkret_sdk::RealmId::new(
                     "ak:realm:AYzH43fmsgS6dn7noiHeYxAKUUdkhaJBnOGaWvu3MlBC",
                 )

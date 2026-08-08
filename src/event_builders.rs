@@ -2013,8 +2013,10 @@ mod notary_derivation_tests {
             arkret_sdk::RealmId::new(realm).unwrap(),
             "did:web:bob.example",
             arkret_sdk::CapabilityRelinquishPayload {
-                grant_id: arkret_sdk::GrantId::new("ak:grant:Abgeuy84qDvMqHgAWAilTc0qrZ-TjiR81uM8oQbSyu9o")
-                    .unwrap(),
+                grant_id: arkret_sdk::GrantId::new(
+                    "ak:grant:Abgeuy84qDvMqHgAWAilTc0qrZ-TjiR81uM8oQbSyu9o",
+                )
+                .unwrap(),
                 reason: None,
             },
         )

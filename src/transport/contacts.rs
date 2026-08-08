@@ -111,6 +111,7 @@ impl crate::transport::TransportClient {
             },
             granted_to_peer_scopes,
             introduction_evidence: addressing.introduction_evidence,
+            previous_terminal_basis_id: None,
             message: message
                 .map(str::trim)
                 .filter(|message| !message.is_empty())
