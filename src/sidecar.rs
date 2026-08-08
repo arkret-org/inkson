@@ -279,7 +279,6 @@ pub(crate) const SIDECAR_FOLD_EVIDENCE_SCHEMA: &str = "inkson.test.sidecar_fold_
 #[derive(Clone, Debug, serde::Serialize)]
 pub(crate) struct SidecarFoldEvidenceEntry {
     pub exchange_id: arkret_sdk::AgentSidecarExchangeId,
-    pub private_strand_id: arkret_sdk::StrandId,
     pub status: arkret_sdk::AgentSidecarExchangeStatus,
     pub terminal_event_id: Option<arkret_sdk::EventId>,
     pub folded_frontier: arkret_sdk::AgentSidecarExchangeFoldedFrontier,
@@ -314,7 +313,6 @@ pub(crate) fn sidecar_fold_evidence(
         .map(|projection| {
             Ok(SidecarFoldEvidenceEntry {
                 exchange_id: projection.exchange_id.clone(),
-                private_strand_id: projection.private_strand_id.clone(),
                 status: projection.status,
                 terminal_event_id: projection.terminal_event_id.clone(),
                 folded_frontier: projection.folded_frontier.clone(),
@@ -2075,10 +2073,6 @@ mod tests {
                 controller_id: arkret_sdk::Did::new(account).unwrap(),
                 sidecar_id: arkret_sdk::SidecarId::new(
                     "ak:sidecar:AWea2MtI5dOI1LSRyI266_gQVrWUd0po0dxZiJNsH8kN",
-                )
-                .unwrap(),
-                private_strand_id: arkret_sdk::StrandId::new(
-                    "ak:strand:AVeCvdcuh1hDJWwYlZJb_1yRzWQwN1-pXxgZYTyd7BGT",
                 )
                 .unwrap(),
                 exchange_id: arkret_sdk::AgentSidecarExchangeId::new(exchange).unwrap(),
