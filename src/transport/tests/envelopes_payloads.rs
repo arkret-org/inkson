@@ -10,31 +10,10 @@ use crate::event_builders::{
 };
 use crate::operation::{EventKind, OperationBuilder};
 use crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR;
-use crate::realm_helpers::{patch_touches_create_locked_encryption_profile, validate_join_rule_v1};
+use crate::realm_helpers::validate_join_rule_v1;
 
 fn test_genesis_salt() -> arkret_sdk::GenesisSalt {
     arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap()
-}
-
-#[test]
-fn realm_metadata_patch_rejects_create_locked_encryption_profile() {
-    assert!(patch_touches_create_locked_encryption_profile(&json!({
-        "encryption_profile": "none"
-    })));
-    assert!(patch_touches_create_locked_encryption_profile(&json!({
-        "/encryption_profile": { "$op": "replace", "value": "none" }
-    })));
-    assert!(patch_touches_create_locked_encryption_profile(&json!({
-        "object": {
-            "value": {
-                "encryption_profile": "none"
-            }
-        }
-    })));
-    assert!(!patch_touches_create_locked_encryption_profile(&json!({
-        "title": "Renamed Realm",
-        "summary": "Still editable"
-    })));
 }
 
 // The five plaintext `EphemeralEnvelope` builder tests that lived here

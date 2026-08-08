@@ -1,5 +1,3 @@
-use serde_json::Value;
-
 use crate::models::{RealmJoinCandidate, ResolveRealmOutcome};
 use crate::operation::trim_realm_id;
 
@@ -46,32 +44,4 @@ pub(crate) fn select_join_candidate(
 
 pub(crate) fn join_candidate_is_current(candidate: &RealmJoinCandidate) -> bool {
     candidate.expires_at > chrono::Utc::now()
-}
-
-pub(crate) fn patch_touches_create_locked_encryption_profile(patch: &Value) -> bool {
-    patch.as_object().is_some_and(|fields| {
-        fields.iter().any(|(key, value)| {
-            patch_key_touches_encryption_profile(key)
-                || (key == "object" && patch_value_has_direct_encryption_profile(value))
-        })
-    })
-}
-
-fn patch_key_touches_encryption_profile(key: &str) -> bool {
-    key == "encryption_profile"
-        || key.starts_with("encryption_profile.")
-        || key == "/encryption_profile"
-        || key.starts_with("/encryption_profile/")
-        || key == "object.encryption_profile"
-        || key.starts_with("object.encryption_profile.")
-        || key == "/object/encryption_profile"
-        || key.starts_with("/object/encryption_profile/")
-}
-
-fn patch_value_has_direct_encryption_profile(value: &Value) -> bool {
-    value
-        .get("value")
-        .unwrap_or(value)
-        .as_object()
-        .is_some_and(|fields| fields.contains_key("encryption_profile"))
 }

@@ -29,6 +29,11 @@ use sha2::{Digest, Sha256};
 const TEST_ACTOR_ID: &str = "did:web:alice.example";
 const TEST_SERVICE_ID: &str = "did:web:server.example";
 
+fn test_genesis_salt() -> arkret_sdk::GenesisSalt {
+    arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+        .expect("test Realm genesis salt is canonical")
+}
+
 /// Deterministic Ed25519 seed used in this test process. Different
 /// seed from `conformance_gates.rs::test_signing_key` so a future
 /// signature-aware verifier never confuses the two test surfaces.
@@ -68,6 +73,7 @@ fn stamp_real_proof_and_anchor(envelope: &mut Event) {
 #[test]
 fn realm_create_envelope_carries_real_proof_and_real_anchor() {
     let mut envelope = event_builders::build_realm_create_event(
+        test_genesis_salt(),
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
         "Engineering",
@@ -95,6 +101,7 @@ fn realm_create_envelope_carries_real_proof_and_real_anchor() {
 #[test]
 fn full_bootstrap_chain_carries_real_proofs_and_anchors() {
     let (_realm_id, events) = event_builders::build_realm_bootstrap_events(
+        test_genesis_salt(),
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
         "Engineering",

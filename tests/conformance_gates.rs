@@ -246,6 +246,11 @@ const TEST_ANCHOR_REF: &str =
 const TEST_ROOT_HASH: &str =
     "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
+fn test_genesis_salt() -> arkret_sdk::GenesisSalt {
+    arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+        .expect("test Realm genesis salt is canonical")
+}
+
 /// Stamp the wire fields the submit pipeline would normally attach
 /// (CBA basis + Ed25519 proof) so the envelope satisfies the reducer-input
 /// rules baked into event-envelope.schema.json.
@@ -432,6 +437,7 @@ fn assert_envelope_matches_schema(label: &str, envelope: &Event) {
 #[test]
 fn build_realm_create_event_matches_event_schema() {
     let mut envelope = event_builders::build_realm_create_event(
+        test_genesis_salt(),
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
         "Engineering",
@@ -589,6 +595,7 @@ fn build_member_state_event_matches_event_schema() {
     // wrapper path indirectly via `build_realm_bootstrap_events` (which
     // calls it for each invitee) and pick out the member-state envelope.
     let (_realm_id, events) = event_builders::build_realm_bootstrap_events(
+        test_genesis_salt(),
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
         "Engineering",
@@ -659,6 +666,7 @@ fn build_plaintext_visible_services_event_matches_event_schema() {
 #[test]
 fn realm_bootstrap_delivery_binding_policy_matches_payload_schema() {
     let (_realm_id, events) = event_builders::build_realm_bootstrap_events(
+        test_genesis_salt(),
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
         "Engineering",
@@ -707,6 +715,7 @@ fn realm_bootstrap_delivery_binding_policy_matches_payload_schema() {
 fn blank_alias_is_absence_and_emits_no_alias_event() {
     for blank in ["  ", "#", " # "] {
         let (_realm_id, events) = event_builders::build_realm_bootstrap_events(
+            test_genesis_salt(),
             TEST_ACTOR_ID,
             TEST_SERVICE_ID,
             "Engineering",
@@ -747,6 +756,7 @@ fn blank_alias_is_absence_and_emits_no_alias_event() {
 #[test]
 fn realm_bootstrap_keeps_plaintext_services_off_the_closed_realm_object() {
     let (_realm_id, events) = event_builders::build_realm_bootstrap_events(
+        test_genesis_salt(),
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
         "Engineering",
@@ -807,6 +817,7 @@ fn realm_bootstrap_keeps_plaintext_services_off_the_closed_realm_object() {
 #[test]
 fn realm_bootstrap_carries_alias_as_a_facet_event_not_on_the_closed_realm_object() {
     let (_realm_id, events) = event_builders::build_realm_bootstrap_events(
+        test_genesis_salt(),
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
         "Engineering",

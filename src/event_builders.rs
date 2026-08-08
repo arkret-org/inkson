@@ -316,16 +316,31 @@ pub fn build_realm_bootstrap_events(
             )
         })?;
     }
-    arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(&events)
-        .map_err(|error| anyhow::anyhow!("{}: {error}", error.reason_code()))?;
+    arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(&events).map_err(|error| {
+        let sequence = events
+            .iter()
+            .map(|event| {
+                format!(
+                    "{}[actor={},realm={}]",
+                    event.kind.as_str(),
+                    event.actor_id,
+                    event.realm_id
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" -> ");
+        anyhow::anyhow!(
+            "{}: {error}; authored sequence: {sequence}",
+            error.reason_code()
+        )
+    })?;
     Ok((realm_id_owned, events))
 }
 
 fn recommended_history_sharing_policy_for_profile(
-    encryption_profile: &str,
+    _encryption_profile: &str,
     history_visibility: &str,
 ) -> Option<arkret_sdk::HistorySharingPolicyPayloadValue> {
-    let encrypted = encryption_profile.trim() == RECOMMENDED_REALM_ENCRYPTION_PROFILE;
     if history_visibility.trim() == "restricted" {
         use arkret_sdk::{
             HistoryKeyShareDefault, HistoryKeySource, HistorySharingPolicyPayloadValue,
@@ -359,10 +374,7 @@ fn recommended_history_sharing_policy_for_profile(
             }]),
         });
     }
-    if !encrypted {
-        return None;
-    }
-    recommended_history_sharing_policy_for_visibility(history_visibility)
+    None
 }
 
 /// Recommended `history_sharing_policy_payload.value` for a pre-join-visible
