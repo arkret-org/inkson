@@ -5,6 +5,8 @@ use crate::secure_key_store::default_secure_key_store;
 pub(crate) const ACCOUNT_HANDOFF_GRANT_SECRET_KEY: &str = "inkson.account_handoff_grant.v1";
 pub(crate) const PREPARED_BOOTSTRAP_SESSION_REQUEST_SECRET_KEY: &str =
     "inkson.prepared_bootstrap_session_request.v1";
+pub(crate) const PREPARED_BOOTSTRAP_CANCEL_REQUEST_SECRET_KEY: &str =
+    "inkson.prepared_bootstrap_cancel_request.v1";
 
 pub async fn persist_account_handoff_grant(grant: &str) -> anyhow::Result<()> {
     let grant = grant.trim();
@@ -50,6 +52,33 @@ pub fn load_prepared_bootstrap_session_request()
 pub fn clear_prepared_bootstrap_session_request() -> anyhow::Result<()> {
     default_secure_key_store("inkson")
         .delete_secret(PREPARED_BOOTSTRAP_SESSION_REQUEST_SECRET_KEY)?;
+    Ok(())
+}
+
+pub async fn persist_prepared_bootstrap_cancel_request(
+    request: &garth::PreparedDeviceBootstrapCancel,
+) -> anyhow::Result<()> {
+    let canonical = std::str::from_utf8(request.canonical_request())?;
+    default_secure_key_store("inkson")
+        .store_secret_durable(PREPARED_BOOTSTRAP_CANCEL_REQUEST_SECRET_KEY, canonical)
+        .await?;
+    Ok(())
+}
+
+pub fn load_prepared_bootstrap_cancel_request()
+-> anyhow::Result<Option<garth::PreparedDeviceBootstrapCancel>> {
+    default_secure_key_store("inkson")
+        .get_secret(PREPARED_BOOTSTRAP_CANCEL_REQUEST_SECRET_KEY)?
+        .map(|canonical| {
+            garth::PreparedDeviceBootstrapCancel::restore(canonical.into_bytes())
+                .map_err(anyhow::Error::from)
+        })
+        .transpose()
+}
+
+pub fn clear_prepared_bootstrap_cancel_request() -> anyhow::Result<()> {
+    default_secure_key_store("inkson")
+        .delete_secret(PREPARED_BOOTSTRAP_CANCEL_REQUEST_SECRET_KEY)?;
     Ok(())
 }
 
@@ -123,6 +152,25 @@ mod tests {
         assert!(
             crate::secure_key_store::is_wasm_indexeddb_required_secret_key(
                 PREPARED_BOOTSTRAP_SESSION_REQUEST_SECRET_KEY
+            )
+        );
+    }
+
+    #[test]
+    fn cancel_intent_is_canonical_and_uses_hardened_storage() {
+        let prepared = garth::PreparedDeviceBootstrapCancel::prepare(
+            arkret_sdk::ProtocolOpaqueId::new("bootstrap-transaction-fixture").unwrap(),
+            arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
+            arkret_sdk::IdempotencyKey::new("bootstrap-cancel-fixture").unwrap(),
+        )
+        .unwrap();
+        let restored =
+            garth::PreparedDeviceBootstrapCancel::restore(prepared.canonical_request().to_vec())
+                .unwrap();
+        assert_eq!(restored, prepared);
+        assert!(
+            crate::secure_key_store::is_wasm_indexeddb_required_secret_key(
+                PREPARED_BOOTSTRAP_CANCEL_REQUEST_SECRET_KEY
             )
         );
     }

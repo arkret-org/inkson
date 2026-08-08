@@ -86,6 +86,7 @@ pub fn prepare_registration_checkpoint(
         bootstrap_created_at: arkret_sdk::canonical::format_timestamp_canonical(created_at),
         bootstrap_hlc,
         binding_receipt: None,
+        bootstrap_terminal_outcome: None,
         stage: PendingPrincipalRegistrationStage::CustodyConfirmed,
     };
     let create = build_bootstrap_create_event(&checkpoint, &key_material)?;
@@ -197,11 +198,18 @@ async fn prepare_exact_bootstrap_session_request(
             || prepared.device_id.as_ref() != Some(&device_id)
             || prepared.proof.audience != audience
             || prepared.proof.challenge != account_handoff_grant
-            || prepared.device_bootstrap_request.as_ref() != Some(&bootstrap)
         {
             anyhow::bail!("secure prepared bootstrap request does not match public checkpoint");
         }
-        return Ok(prepared);
+        if prepared.device_bootstrap_request.as_ref() == Some(&bootstrap) {
+            return Ok(prepared);
+        }
+        // A checkpoint written by an older client may have guessed the
+        // enrollment service fragment instead of reading it from the DID
+        // operation. The surrounding handoff identity and secret challenge
+        // still have to match exactly before replacing only that stale signed
+        // request.
+        crate::identity::account_auth::clear_prepared_bootstrap_session_request()?;
     }
     let request = garth::pre_registration_session_grant_request(
         principal_id,
@@ -409,6 +417,53 @@ fn load_bootstrap_create_event(
     Ok(create)
 }
 
+fn inception_enrollment_authority_ref(
+    checkpoint: &PendingPrincipalRegistration,
+) -> anyhow::Result<arkret_sdk::AuthorizationRef> {
+    let operation: arkret_sdk::DidOperationSubmitRequestBody =
+        serde_json::from_value(checkpoint.did_operation.clone())
+            .context("persisted DID operation is invalid")?;
+    let services = operation
+        .operation
+        .get("state")
+        .and_then(|state| state.get("service"))
+        .and_then(serde_json::Value::as_array)
+        .context("persisted DID operation has no service entries")?;
+    let mut designated = services.iter().filter(|service| {
+        service.get("type").and_then(serde_json::Value::as_str)
+            == Some("ArkretDeviceEnrollmentAuthority")
+            && service
+                .get("serviceEndpoint")
+                .and_then(serde_json::Value::as_str)
+                == Some(checkpoint.enrollment_authority_did.as_str())
+    });
+    let service = designated
+        .next()
+        .context("persisted DID operation has no matching enrollment authority service")?;
+    if designated.next().is_some() {
+        anyhow::bail!(
+            "persisted DID operation has multiple matching enrollment authority services"
+        );
+    }
+    let reference = service
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .context("persisted enrollment authority service has no id")?;
+    let reference = if reference.starts_with('#') {
+        format!("{}{}", checkpoint.did, reference)
+    } else {
+        reference.to_owned()
+    };
+    if !reference
+        .strip_prefix(&checkpoint.did)
+        .is_some_and(|fragment| fragment.starts_with('#') && fragment.len() > 1)
+    {
+        anyhow::bail!("persisted enrollment authority service id is outside the principal DID");
+    }
+    arkret_sdk::AuthorizationRef::new(reference)
+        .map_err(|error| anyhow!("persisted enrollment authority service id is invalid: {error}"))
+}
+
 /// Fix the founding device Event identity before any bootstrap credential is
 /// requested. Re-entry returns the already-persisted material after verifying
 /// that it still names the same public device keys.
@@ -420,9 +475,15 @@ pub fn prepare_device_bootstrap_checkpoint(
 ) -> anyhow::Result<PendingPrincipalRegistration> {
     let key_material = validate_checkpoint_recovery_key(checkpoint, recovery_key)?;
     let create = load_bootstrap_create_event(checkpoint, &key_material)?;
+    let principal_id = arkret_sdk::Did::new(checkpoint.did.clone())?;
+    let realm_id = arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&principal_id))?;
+    let enrollment_authority_did =
+        arkret_sdk::Did::new(checkpoint.enrollment_authority_did.clone())?;
+    let enrollment_authority_ref = inception_enrollment_authority_ref(checkpoint)?;
     if checkpoint.bootstrap_authorize_event_preimage.is_some() {
         let request = device_bootstrap_request_from_checkpoint(checkpoint)?;
-        let payload = &request.authorize_event_preimage.payload;
+        let preimage = &request.authorize_event_preimage;
+        let payload = &preimage.payload;
         if payload
             .get("device_public_key")
             .and_then(serde_json::Value::as_str)
@@ -431,11 +492,29 @@ pub fn prepare_device_bootstrap_checkpoint(
         {
             anyhow::bail!("persisted bootstrap Event belongs to different device key material");
         }
-        return Ok(checkpoint.clone());
+        let binding = payload.get("enrollment_authority_binding");
+        let pins_match = preimage.actor_id == principal_id
+            && preimage.realm_id == realm_id
+            && preimage.executed_by == enrollment_authority_did
+            && preimage.authorization_ref == enrollment_authority_ref
+            && binding
+                .and_then(|value| value.get("authority_did"))
+                .and_then(serde_json::Value::as_str)
+                == Some(enrollment_authority_did.as_str())
+            && binding
+                .and_then(|value| value.get("authorization_ref"))
+                .and_then(serde_json::Value::as_str)
+                == Some(enrollment_authority_ref.as_str());
+        if pins_match {
+            return Ok(checkpoint.clone());
+        }
+        if checkpoint.stage != PendingPrincipalRegistrationStage::BootstrapPrepared {
+            anyhow::bail!(
+                "persisted bootstrap Event delegation differs after bootstrap grant issuance"
+            );
+        }
     }
 
-    let principal_id = arkret_sdk::Did::new(checkpoint.did.clone())?;
-    let realm_id = arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&principal_id))?;
     let created_at = chrono::DateTime::parse_from_rfc3339(&checkpoint.bootstrap_created_at)
         .context("persisted bootstrap_created_at is invalid")?
         .with_timezone(&Utc);
@@ -452,7 +531,8 @@ pub fn prepare_device_bootstrap_checkpoint(
         hpke_key,
         create.event_id.clone(),
         realm_id,
-        arkret_sdk::Did::new(checkpoint.enrollment_authority_did.clone())?,
+        enrollment_authority_did,
+        enrollment_authority_ref,
         created_at,
         authorize_hlc,
     )?;
@@ -467,9 +547,11 @@ pub fn prepare_device_bootstrap_checkpoint(
     )?);
     prepared.founding_event_ids = founding_event_ids.iter().map(ToString::to_string).collect();
     prepared.founding_batch_digest = Some(founding_batch_digest.to_string());
-    prepared
-        .advance_bootstrap_stage(PendingPrincipalRegistrationStage::BootstrapPrepared)
-        .map_err(anyhow::Error::msg)?;
+    if prepared.stage == PendingPrincipalRegistrationStage::CustodyConfirmed {
+        prepared
+            .advance_bootstrap_stage(PendingPrincipalRegistrationStage::BootstrapPrepared)
+            .map_err(anyhow::Error::msg)?;
+    }
     device_bootstrap_request_from_checkpoint(&prepared)?;
     Ok(prepared)
 }
@@ -807,6 +889,13 @@ mod tests {
             bootstrap.authorize_event_preimage.event_id,
             bootstrap.founding_event_ids[1]
         );
+        assert_eq!(
+            bootstrap
+                .authorize_event_preimage
+                .authorization_ref
+                .as_str(),
+            format!("{}#enrollment-authority", prepared.did)
+        );
 
         let replayed = prepare_device_bootstrap_checkpoint(
             &prepared,
@@ -818,6 +907,57 @@ mod tests {
         assert_eq!(
             serde_json::to_value(replayed).unwrap(),
             serde_json::to_value(&prepared).unwrap()
+        );
+
+        let mut stale = prepared.clone();
+        let mut stale_event = bootstrap.authorize_event_preimage.clone().into_event();
+        let stale_ref = format!("{}#device-enrollment-authority", stale.did);
+        stale_event.authorization_ref =
+            Some(arkret_sdk::AuthorizationRef::new(stale_ref.clone()).unwrap());
+        stale_event
+            .payload
+            .get_mut("enrollment_authority_binding")
+            .and_then(serde_json::Value::as_object_mut)
+            .unwrap()
+            .insert(
+                "authorization_ref".to_owned(),
+                serde_json::Value::String(stale_ref),
+            );
+        stale_event.refresh_content_bound_identity().unwrap();
+        let stale_preimage =
+            arkret_sdk::DeviceAuthorizeEventPreimage::try_from(stale_event).unwrap();
+        stale.bootstrap_authorize_event_preimage =
+            Some(serde_json::to_value(&stale_preimage).unwrap());
+        stale.founding_event_ids[1] = stale_preimage.event_id.to_string();
+        stale.founding_batch_digest = Some(
+            arkret_sdk::founding_batch_digest(
+                &stale
+                    .founding_event_ids
+                    .iter()
+                    .map(|value| arkret_sdk::EventId::new(value.clone()).unwrap())
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap()
+            .to_string(),
+        );
+        let migrated = prepare_device_bootstrap_checkpoint(
+            &stale,
+            &recovery_key,
+            "z6MktwupdmLXVVqTzCw4i46r4uGyosGXRnR3XjN4Zq7oMMsw".to_owned(),
+            "z6LSfixtureHpkeKey11111111111111111111111111111111".to_owned(),
+        )
+        .unwrap();
+        let migrated_bootstrap = device_bootstrap_request_from_checkpoint(&migrated).unwrap();
+        assert_eq!(
+            migrated_bootstrap
+                .authorize_event_preimage
+                .authorization_ref
+                .as_str(),
+            format!("{}#enrollment-authority", migrated.did)
+        );
+        assert_ne!(
+            migrated_bootstrap.authorize_event_preimage.event_id,
+            stale_preimage.event_id
         );
 
         let mut reordered = bootstrap;

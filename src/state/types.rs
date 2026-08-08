@@ -690,7 +690,20 @@ pub struct PendingPrincipalRegistration {
     pub bootstrap_hlc: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binding_receipt: Option<Value>,
+    /// A server-confirmed terminal bootstrap transaction. This is a local
+    /// recovery-routing marker, not a fifth transaction state: Coauth remains
+    /// authoritative for the four-state transaction and returned either its
+    /// `cancelled` or `expired` terminal outcome.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap_terminal_outcome: Option<PendingPrincipalBootstrapTerminal>,
     pub stage: PendingPrincipalRegistrationStage,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingPrincipalBootstrapTerminal {
+    Cancelled,
+    Expired,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -711,6 +724,9 @@ impl PendingPrincipalRegistration {
         &mut self,
         next: PendingPrincipalRegistrationStage,
     ) -> Result<(), &'static str> {
+        if self.bootstrap_terminal_outcome.is_some() {
+            return Err("a terminal principal bootstrap checkpoint cannot advance");
+        }
         use PendingPrincipalRegistrationStage as Stage;
         let allowed = matches!(
             (self.stage, next),

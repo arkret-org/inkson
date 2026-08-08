@@ -30,14 +30,10 @@ pub fn prepare_device_enrollment_request(
     bootstrap_create_event_id: arkret_sdk::EventId,
     realm_id: arkret_sdk::RealmId,
     enrollment_authority_did: arkret_sdk::Did,
+    enrollment_authority_ref: arkret_sdk::AuthorizationRef,
     created_at: DateTime<Utc>,
     hlc: arkret_sdk::Hlc,
 ) -> anyhow::Result<arkret_sdk::AccountDeviceEnrollRequestBody> {
-    let authorization_ref = arkret_sdk::AuthorizationRef::new(format!(
-        "{}#device-enrollment-authority",
-        principal_id.as_str()
-    ))
-    .map_err(|error| anyhow::anyhow!("build device enrollment authority reference: {error}"))?;
     let payload: arkret_sdk::DeviceAuthorizePayload = serde_json::from_value(serde_json::json!({
         "principal_id": principal_id,
         "device_id": device_id,
@@ -49,7 +45,7 @@ pub fn prepare_device_enrollment_request(
         "enrollment_authority_binding": {
             "kind": "service_attested",
             "authority_did": enrollment_authority_did,
-            "authorization_ref": authorization_ref,
+            "authorization_ref": enrollment_authority_ref,
         }
     }))
     .context("build canonical device authorize payload")?;
@@ -65,7 +61,7 @@ pub fn prepare_device_enrollment_request(
         created_at,
     )?;
     event.executed_by = Some(enrollment_authority_did);
-    event.authorization_ref = Some(authorization_ref);
+    event.authorization_ref = Some(enrollment_authority_ref);
     event.prev_refs = vec![bootstrap_create_event_id];
     event.refresh_content_bound_identity()?;
 

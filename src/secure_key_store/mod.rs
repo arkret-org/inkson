@@ -189,6 +189,7 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         || key == PENDING_LOGOUT_SECRET_KEY
         || key == crate::identity::account_auth::ACCOUNT_HANDOFF_GRANT_SECRET_KEY
         || key == crate::identity::account_auth::PREPARED_BOOTSTRAP_SESSION_REQUEST_SECRET_KEY
+        || key == crate::identity::account_auth::PREPARED_BOOTSTRAP_CANCEL_REQUEST_SECRET_KEY
         || key.starts_with("inkson.mls_snapshot.account_secret.")
         || key.starts_with("inkson_mls_account_secret")
         || key.starts_with("inkson.mls_key_package.identity_state.")
