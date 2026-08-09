@@ -1590,7 +1590,7 @@ mod notary_derivation_tests {
         );
         assert_eq!(
             event.payload["object"]["purpose"],
-            arkret_bootstrap::PRINCIPAL_CONTROL_PURPOSE
+            arkret_sdk::MANAGED_AGENT_CONTROL_PURPOSE
         );
         assert!(event.payload["object"].get("genesis_salt").is_none());
         assert!(

@@ -46,7 +46,8 @@ pub struct PendingPairingRequest {
 /// Filters to `ak.key.verification.request` messages carrying
 /// `purpose == "same_principal_device_authorization"` and the full pairing
 /// material (`from_device`, `pairing_code`, `new_device_pubkey`,
-/// `challenge_proof`). Incomplete requests are skipped.
+/// `hpke_key`, `device_signature`, `challenge_proof`, `authorize_event`).
+/// Incomplete requests are skipped.
 pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequest> {
     inbox
         .iter()
@@ -63,7 +64,10 @@ pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequ
             let requesting_device_id = content.get("from_device").and_then(Value::as_str)?;
             let pairing_code = content.get("pairing_code").and_then(Value::as_str)?;
             let new_device_pubkey = content.get("new_device_pubkey")?.clone();
+            let hpke_key = content.get("hpke_key")?.clone();
+            let device_signature = content.get("device_signature")?.clone();
             let challenge_proof = content.get("challenge_proof")?.clone();
+            let authorize_event = content.get("authorize_event")?.clone();
             let device_metadata = content
                 .get("device_metadata")
                 .cloned()
@@ -100,7 +104,10 @@ pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequ
             let mut request_payload = json!({
                 "pairing_code": pairing_code,
                 "new_device_pubkey": new_device_pubkey,
+                "hpke_key": hpke_key,
+                "device_signature": device_signature,
                 "challenge_proof": challenge_proof,
+                "authorize_event": authorize_event,
                 "device_metadata": device_metadata,
             });
             if !display_name.is_empty()
@@ -201,7 +208,7 @@ pub fn pairing_request_body(
         .cloned()
         .map(serde_json::from_value)
         .transpose()?;
-    Ok(arkret_sdk::AccountDevicePairRequestBody {
+    let body = arkret_sdk::AccountDevicePairRequestBody {
         pairing_code,
         new_device_pubkey,
         hpke_key,
@@ -212,12 +219,75 @@ pub fn pairing_request_body(
         device_metadata,
         device_pairing_request_id,
         challenge_transcript,
-    })
+    };
+    body.validate_authorize_event_binding()
+        .map_err(anyhow::Error::from)?;
+    Ok(body)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn authorize_event_fixture() -> Value {
+        let principal = arkret_sdk::Did::new("did:web:alice").unwrap();
+        let target_device =
+            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001").unwrap();
+        let authorizing_device =
+            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000000").unwrap();
+        let hpke_key = arkret_sdk::NonEmptyString::new("hpke-abc-123").unwrap();
+        let device_signature =
+            arkret_sdk::Base64UrlString::new("Y2hhbGxlbmdlLXNpZ25hdHVyZQ").unwrap();
+        let payload = arkret_sdk::UnsignedDeviceAuthorizePayload::new(
+            principal.clone(),
+            target_device,
+            arkret_sdk::NonEmptyString::new("abc-123").unwrap(),
+            hpke_key,
+            vec![arkret_sdk::NonEmptyString::new("Ed25519").unwrap()],
+            Some(arkret_sdk::NonEmptyString::new("Ed25519").unwrap()),
+            arkret_sdk::DeviceOrPrincipalRef::DeviceId(authorizing_device.clone()),
+            None,
+            "2026-06-17T11:00:00Z".parse().unwrap(),
+            None,
+            arkret_sdk::DeviceAuthorizationBindingKind::AcceptedDevice,
+            None,
+        )
+        .unwrap()
+        .attach_signature(device_signature)
+        .unwrap();
+        let realm_id = arkret_sdk::principal_control_realm_id(&principal);
+        let mut event = crate::operation::TypedOperationBuilder::new::<
+            arkret_sdk::event_spec::DeviceAuthorize,
+        >(realm_id.as_str(), principal.as_str(), payload)
+        .seal_basis(arkret_sdk::SealBasis {
+            leaves: vec![
+                arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "a".repeat(64))).unwrap(),
+            ],
+        })
+        .build_sdk_event("device-pairing-test")
+        .unwrap();
+        let verification_method = arkret_sdk::DidUrl::new(format!(
+            "{}#{}",
+            principal.as_str(),
+            authorizing_device.as_str()
+        ))
+        .unwrap();
+        let signer = arkret_sdk::Ed25519PayloadSigner::new(
+            ed25519_dalek::SigningKey::from_bytes(&[7_u8; 32]),
+            principal,
+            verification_method.clone(),
+        );
+        arkret_sdk::signatures::sign_event_with_digest_suite(
+            &mut event,
+            &signer,
+            &verification_method,
+            arkret_sdk::canonical::DigestSuite::Sha256,
+            arkret_sdk::signatures::SignEventOptions::new()
+                .with_created_at("2026-06-17T11:00:00Z".parse().unwrap()),
+        )
+        .unwrap();
+        serde_json::to_value(arkret_wire::EventInitialSubmission::online(event)).unwrap()
+    }
 
     fn request_message() -> Value {
         json!({
@@ -236,6 +306,9 @@ mod tests {
                     "algorithm": "Ed25519",
                     "key": "abc-123"
                 },
+                "hpke_key": "hpke-abc-123",
+                "device_signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ",
+                "authorize_event": authorize_event_fixture(),
                 "challenge_proof": {
                     "transcript": "ak.device-pairing.challenge.v1",
                     "kid": "ak:device:01904100-0000-7000-8000-000000000001",
@@ -339,7 +412,10 @@ mod tests {
                 "kid": "ak:device:01904100-0000-7000-8000-000000000001",
                 "algorithm": "Ed25519",
                 "key": "abc-123"
-            }
+            },
+            "hpke_key": "hpke-abc-123",
+            "device_signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ",
+            "authorize_event": authorize_event_fixture()
         });
         let body = pairing_request_body(&payload).expect("canonical body");
         assert_eq!(body.new_device_pubkey.kty.as_str(), "OKP");
