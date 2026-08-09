@@ -619,14 +619,11 @@ pub struct PendingAccountHandoff {
     pub principal_server_url: String,
     pub gate_account_base: String,
     pub request_id: String,
-    /// Authenticated service-account handle used for local handoff continuity,
-    /// UI display, and artifact naming. It is not principal identity evidence.
+    /// Account Authority handle used only for UI display and artifact naming.
+    /// The protocol defines this as an unsigned UX hint, so it never proves
+    /// handoff continuity or principal identity.
     #[serde(default)]
     pub account_handle: String,
-    /// Stable Account Authority subject frozen from the authenticated handoff.
-    /// Empty legacy checkpoints are rejected before any cold-root signature.
-    #[serde(default)]
-    pub account_subject: String,
     pub holder_jkt: String,
     pub audience: String,
     pub expires_at: DateTime<Utc>,
@@ -655,14 +652,11 @@ pub struct PendingPrincipalRegistration {
     pub principal_server_url: String,
     pub gate_account_base: String,
     pub handoff_request_id: String,
-    /// Authenticated Account Authority handle that owns this local identity
-    /// draft. Older checkpoints omit it and must prove continuity through an
-    /// exact request id or a server reservation instead.
+    /// Account Authority handle copied only for UI display and artifact naming.
+    /// It is an unsigned UX hint; continuity is proven by an exact request id
+    /// or the server's typed reserved identity, never by this string.
     #[serde(default)]
     pub account_handle: String,
-    /// Frozen Account Authority subject echoed by the binding challenge.
-    #[serde(default)]
-    pub account_subject: String,
     pub lease_id: String,
     pub lease_fence: u64,
     pub device_id: String,

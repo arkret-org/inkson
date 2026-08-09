@@ -59,7 +59,6 @@ pub fn prepare_registration_checkpoint(
         gate_account_base: handoff.gate_account_base.clone(),
         handoff_request_id: handoff.request_id.clone(),
         account_handle: handoff.account_handle.clone(),
-        account_subject: handoff.account_subject.clone(),
         lease_id,
         lease_fence,
         device_id: device_id.trim().to_owned(),
@@ -172,7 +171,6 @@ pub fn recover_registration_checkpoint_from_reservation(
         gate_account_base: handoff.gate_account_base.clone(),
         handoff_request_id: handoff.request_id.clone(),
         account_handle: handoff.account_handle.clone(),
-        account_subject: handoff.account_subject.clone(),
         lease_id,
         lease_fence,
         device_id: handoff.device_id.trim().to_owned(),
@@ -229,9 +227,7 @@ pub fn checkpoint_belongs_to_handoff(
 ) -> bool {
     let same_context = checkpoint.principal_server_url == handoff.principal_server_url
         && checkpoint.gate_account_base == handoff.gate_account_base
-        && checkpoint.trust_domain == handoff.trust_domain
-        && !checkpoint.account_subject.is_empty()
-        && checkpoint.account_subject == handoff.account_subject;
+        && checkpoint.trust_domain == handoff.trust_domain;
     if !same_context {
         return false;
     }
@@ -241,11 +237,6 @@ pub fn checkpoint_belongs_to_handoff(
     let Some(reserved_identity) = handoff.reserved_identity.as_ref() else {
         return false;
     };
-    if !checkpoint.account_handle.trim().is_empty()
-        && checkpoint.account_handle != handoff.account_handle
-    {
-        return false;
-    }
     let Ok(reserved_identity) =
         serde_json::from_value::<arkret_sdk::ReservedIdentityCreation>(reserved_identity.clone())
     else {
@@ -364,12 +355,6 @@ pub async fn complete_account_handoff_binding(
     recovery_key: &str,
     dpop: &crate::identity::account_auth::grant_dpop::DpopHandle,
 ) -> anyhow::Result<IdentityBindingCompletion> {
-    if handoff.account_subject.is_empty()
-        || checkpoint.account_subject.is_empty()
-        || handoff.account_subject != checkpoint.account_subject
-    {
-        anyhow::bail!("account handoff subject is missing or does not match the frozen draft");
-    }
     if handoff.expires_at <= Utc::now() {
         anyhow::bail!("account handoff expired; authenticate the account again");
     }
@@ -445,10 +430,8 @@ pub async fn complete_account_handoff_binding(
         let challenge = account_client
             .auth_issue_identity_binding_challenge(&challenge_request)
             .await?;
-        let expected_account_subject = arkret_sdk::Hash::new(handoff.account_subject.clone())?;
         let request = garth::identity_creation_register_request(
             &challenge,
-            &expected_account_subject,
             did_operation,
             unit,
             initial.clone(),
@@ -464,12 +447,6 @@ pub async fn complete_account_handoff_binding(
         .binding_receipt
         .clone()
         .context("Account Authority omitted identity-creation binding receipt")?;
-    let expected_account_subject = arkret_sdk::Hash::new(handoff.account_subject.clone())?;
-    if binding_receipt.account_subject != expected_account_subject
-        || binding_receipt.principal_id.as_str() != checkpoint.did
-    {
-        anyhow::bail!("Account Authority binding receipt does not match the frozen account or DID");
-    }
     let pcr_genesis_receipt = register_outcome
         .pcr_genesis_receipt
         .clone()

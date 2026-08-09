@@ -871,7 +871,6 @@ async fn finish_oidc_callback(
             gate_account_base,
             request_id: handoff.request_id.to_string(),
             account_handle: handoff.account_handle.canonical().to_owned(),
-            account_subject: handoff.account_subject.to_string(),
             holder_jkt: dpop_handle.jkt().to_owned(),
             audience: principal_audience.to_string(),
             expires_at: handoff.expires_at,
@@ -899,11 +898,7 @@ async fn finish_oidc_callback(
             preferred_locale: handoff.preferred_locale,
         });
     }
-    if let AccountHandoffDisposition::IdentityCreationBusy {
-        retry_after_ms,
-        expires_at: busy_expires_at,
-    } = disposition
-    {
+    if let AccountHandoffDisposition::IdentityCreationBusy { retry_after_ms } = disposition {
         crate::identity::account_auth::persist_account_handoff_grant(
             &handoff.account_handoff_grant,
         )
@@ -914,13 +909,12 @@ async fn finish_oidc_callback(
             gate_account_base,
             request_id: handoff.request_id.to_string(),
             account_handle: handoff.account_handle.canonical().to_owned(),
-            account_subject: handoff.account_subject.to_string(),
             holder_jkt: dpop_handle.jkt().to_owned(),
             audience: principal_audience.to_string(),
             expires_at: handoff.expires_at,
             lease_id: None,
             lease_fence: None,
-            lease_expires_at: Some(busy_expires_at),
+            lease_expires_at: None,
             reserved_identity: None,
             retry_after_ms: Some(retry_after_ms),
             device_id: device,
@@ -948,7 +942,6 @@ async fn finish_oidc_callback(
         gate_account_base,
         request_id: handoff.request_id.to_string(),
         account_handle: handoff.account_handle.canonical().to_owned(),
-        account_subject: handoff.account_subject.to_string(),
         holder_jkt: dpop_handle.jkt().to_owned(),
         audience: principal_audience.to_string(),
         expires_at: handoff.expires_at,
@@ -1107,7 +1100,7 @@ mod tests {
     }
 
     #[test]
-    fn callback_handoff_discards_checkpoint_owned_by_another_account() {
+    fn callback_handoff_does_not_use_account_handle_as_identity_evidence() {
         let mut store = crate::state::isolated_store_for_tests("foreign-callback-checkpoint");
         let old_handoff = pending_handoff_for_test(
             "ak:request:019f0000-0000-7000-8000-000000000010",
@@ -1124,13 +1117,13 @@ mod tests {
             .set_pending_principal_registration(Some(checkpoint))
             .unwrap();
         let new_handoff = pending_handoff_for_test(
-            "ak:request:019f0000-0000-7000-8000-000000000011",
+            "ak:request:019f0000-0000-7000-8000-000000000010",
             "bob:auth.example",
         );
 
         persist_pending_account_handoff(&mut store, new_handoff.clone()).unwrap();
 
-        assert!(store.pending_principal_registration().is_none());
+        assert!(store.pending_principal_registration().is_some());
         assert_eq!(store.pending_account_handoff(), Some(new_handoff));
     }
 

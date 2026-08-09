@@ -1171,14 +1171,9 @@ fn checkpoint_for_handoff(
         return Ok(checkpoint.clone());
     }
     // Everything below is a *renewal*: a different request id reaching a draft
-    // this device already holds. Each way that can fail gets its own message,
-    // because the surface shows these to the person trying to finish setup and
-    // "wrong account" and "wrong identity" call for different actions.
-    if !checkpoint.account_handle.trim().is_empty()
-        && checkpoint.account_handle != handoff.account_handle
-    {
-        anyhow::bail!("the saved identity setup belongs to a different service account");
-    }
+    // this device already holds. The unsigned account_handle is deliberately
+    // absent from these checks; only the typed server reservation can prove
+    // continuity across distinct handoff request ids.
     if handoff.reserved_identity.is_none() {
         anyhow::bail!(
             "this account has no identity reserved here, so the setup saved on this device belongs to an earlier registration"
@@ -1200,9 +1195,8 @@ fn checkpoint_for_handoff(
     // A renewed lease carries forward any identity operation that the server
     // already reserved. Recovery must replay that exact public operation; a
     // newly-derived draft would correctly be rejected as a duplicate conflict.
-    // Older Inkson versions did not persist this field, so its absence is not
-    // evidence that the server has no reservation; in that case the account
-    // handle continuity check above still has to prove ownership.
+    // `account_handle` is not consulted: the spec defines it as an unsigned UX
+    // hint, while this typed reservation is the continuity evidence.
     if let Some(reserved_identity) = handoff.reserved_identity.as_ref() {
         let reserved_identity: arkret_sdk::ReservedIdentityCreation =
             serde_json::from_value(reserved_identity.clone()).map_err(|error| {
@@ -1770,7 +1764,7 @@ mod tests {
     }
 
     #[test]
-    fn renewed_handoff_rejects_checkpoint_from_a_different_account() {
+    fn renewed_handoff_does_not_treat_account_handle_as_identity_evidence() {
         let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
         let old_handoff = test_handoff(
             "ak:request:019f0000-0000-7000-8000-000000000010",
@@ -1789,11 +1783,21 @@ mod tests {
             Some(2),
         );
         new_account_handoff.account_handle = "bob:auth.example".to_owned();
+        let operation: arkret_sdk::DidOperationSubmitRequestBody =
+            serde_json::from_value(checkpoint.did_operation.clone()).unwrap();
+        new_account_handoff.reserved_identity = Some(
+            serde_json::to_value(
+                arkret_sdk::ReservedIdentityCreation::from_operation(operation).unwrap(),
+            )
+            .unwrap(),
+        );
 
-        let error =
-            checkpoint_for_handoff(&checkpoint, &new_account_handoff, &recovery_key).unwrap_err();
+        let resumed =
+            checkpoint_for_handoff(&checkpoint, &new_account_handoff, &recovery_key).unwrap();
 
-        assert!(error.to_string().contains("different service account"));
+        assert_eq!(resumed.did, checkpoint.did);
+        assert_eq!(resumed.did_operation, checkpoint.did_operation);
+        assert_eq!(resumed.account_handle, checkpoint.account_handle);
     }
 
     fn test_handoff(

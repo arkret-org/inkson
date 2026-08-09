@@ -64,9 +64,6 @@ pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequ
             let pairing_code = content.get("pairing_code").and_then(Value::as_str)?;
             let new_device_pubkey = content.get("new_device_pubkey")?.clone();
             let challenge_proof = content.get("challenge_proof")?.clone();
-            let hpke_key = content.get("hpke_key")?.clone();
-            let device_signature = content.get("device_signature")?.clone();
-            let authorize_event = content.get("authorize_event")?.clone();
             let device_metadata = content
                 .get("device_metadata")
                 .cloned()
@@ -103,10 +100,7 @@ pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequ
             let mut request_payload = json!({
                 "pairing_code": pairing_code,
                 "new_device_pubkey": new_device_pubkey,
-                "hpke_key": hpke_key,
-                "device_signature": device_signature,
                 "challenge_proof": challenge_proof,
-                "authorize_event": authorize_event,
                 "device_metadata": device_metadata,
             });
             if !display_name.is_empty()
@@ -161,26 +155,6 @@ pub fn pairing_request_body(
         Some(value @ Value::Object(_)) => serde_json::from_value(value.clone())?,
         _ => anyhow::bail!("pairing payload is missing new_device_pubkey"),
     };
-    let hpke_key = payload
-        .get("hpke_key")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .map(arkret_sdk::NonEmptyString::new)
-        .transpose()
-        .map_err(anyhow::Error::msg)?
-        .ok_or_else(|| anyhow::anyhow!("pairing payload is missing hpke_key"))?;
-    let device_signature = payload
-        .get("device_signature")
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("pairing payload is missing device_signature"))
-        .and_then(|value| serde_json::from_value(value).map_err(anyhow::Error::from))?;
-    let authorize_event = payload
-        .get("authorize_event")
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("pairing payload is missing authorize_event"))
-        .and_then(|value| serde_json::from_value(value).map_err(anyhow::Error::from))?;
     let challenge_proof = payload
         .get("challenge_proof")
         .cloned()
@@ -212,20 +186,15 @@ pub fn pairing_request_body(
         .cloned()
         .map(serde_json::from_value)
         .transpose()?;
-    let body = arkret_sdk::AccountDevicePairRequestBody {
+    Ok(arkret_sdk::AccountDevicePairRequestBody {
         pairing_code,
         new_device_pubkey,
-        hpke_key,
-        device_signature,
         challenge_proof,
-        authorize_event,
         display_name,
         device_metadata,
         device_pairing_request_id,
         challenge_transcript,
-    };
-    body.validate_authorize_event_binding()?;
-    Ok(body)
+    })
 }
 
 #[cfg(test)]
