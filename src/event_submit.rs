@@ -1402,7 +1402,17 @@ impl EventSubmitter {
             .events_read_all_pages(event.realm_id.as_str())
             .await
             .map_err(anyhow::Error::from)?;
-        Ok(history.events.iter().any(is_e2ee_create))
+        for (index, row) in history.events.iter().enumerate() {
+            let accepted = row.event().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "E2EE admission history requires complete Events; row {index} is redacted or reference-locked"
+                )
+            })?;
+            if is_e2ee_create(accepted) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Lazily fetch + cache the service describe for this submitter. Only the

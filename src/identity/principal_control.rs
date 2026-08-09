@@ -66,8 +66,19 @@ pub async fn resolve_accepted(
     if page.has_more || page.next_cursor.is_some() {
         anyhow::bail!("principal PCR actor history exceeds the bounded authoritative scan");
     }
-    let mut creates = page
+    let complete_events = page
         .events
+        .into_iter()
+        .enumerate()
+        .map(|(index, row)| {
+            row.into_event().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "principal PCR history requires complete Events; row {index} is redacted or reference-locked"
+                )
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let mut creates = complete_events
         .into_iter()
         .filter(|event| {
             event.kind == arkret_sdk::EventKind::RealmCreate
