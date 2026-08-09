@@ -623,6 +623,10 @@ pub struct PendingAccountHandoff {
     /// UI display, and artifact naming. It is not principal identity evidence.
     #[serde(default)]
     pub account_handle: String,
+    /// Stable Account Authority subject frozen from the authenticated handoff.
+    /// Empty legacy checkpoints are rejected before any cold-root signature.
+    #[serde(default)]
+    pub account_subject: String,
     pub holder_jkt: String,
     pub audience: String,
     pub expires_at: DateTime<Utc>,
@@ -656,6 +660,9 @@ pub struct PendingPrincipalRegistration {
     /// exact request id or a server reservation instead.
     #[serde(default)]
     pub account_handle: String,
+    /// Frozen Account Authority subject echoed by the binding challenge.
+    #[serde(default)]
+    pub account_subject: String,
     pub lease_id: String,
     pub lease_fence: u64,
     pub device_id: String,

@@ -871,6 +871,7 @@ async fn finish_oidc_callback(
             gate_account_base,
             request_id: handoff.request_id.to_string(),
             account_handle: handoff.account_handle.canonical().to_owned(),
+            account_subject: handoff.account_subject.to_string(),
             holder_jkt: dpop_handle.jkt().to_owned(),
             audience: principal_audience.to_string(),
             expires_at: handoff.expires_at,
@@ -898,7 +899,11 @@ async fn finish_oidc_callback(
             preferred_locale: handoff.preferred_locale,
         });
     }
-    if let AccountHandoffDisposition::IdentityCreationBusy { retry_after_ms } = disposition {
+    if let AccountHandoffDisposition::IdentityCreationBusy {
+        retry_after_ms,
+        expires_at: busy_expires_at,
+    } = disposition
+    {
         crate::identity::account_auth::persist_account_handoff_grant(
             &handoff.account_handoff_grant,
         )
@@ -909,12 +914,13 @@ async fn finish_oidc_callback(
             gate_account_base,
             request_id: handoff.request_id.to_string(),
             account_handle: handoff.account_handle.canonical().to_owned(),
+            account_subject: handoff.account_subject.to_string(),
             holder_jkt: dpop_handle.jkt().to_owned(),
             audience: principal_audience.to_string(),
             expires_at: handoff.expires_at,
             lease_id: None,
             lease_fence: None,
-            lease_expires_at: None,
+            lease_expires_at: Some(busy_expires_at),
             reserved_identity: None,
             retry_after_ms: Some(retry_after_ms),
             device_id: device,
@@ -942,6 +948,7 @@ async fn finish_oidc_callback(
         gate_account_base,
         request_id: handoff.request_id.to_string(),
         account_handle: handoff.account_handle.canonical().to_owned(),
+        account_subject: handoff.account_subject.to_string(),
         holder_jkt: dpop_handle.jkt().to_owned(),
         audience: principal_audience.to_string(),
         expires_at: handoff.expires_at,
