@@ -615,15 +615,25 @@ async fn fetch_authoritative_active_series(
         .events_read_all_pages_with_completeness(realm_id.as_str())
         .await
         .map_err(|error| anyhow!("read key backup active-series control stream: {error}"))?;
-    let mut active_events = events
-        .events
+    let accepted_events = crate::models::require_complete_event_rows(
+        &events.events,
+        "key-backup active-series verification",
+    )?;
+    let mut active_events = accepted_events
         .iter()
         .filter(|event| event.kind.as_str() == "ak.key_backup.active_series")
         .collect::<Vec<_>>();
     if active_events.is_empty() {
         return Ok(Vec::new());
     }
-    verify_active_series_range_completeness(api, &realm_id, &events, &active_events).await?;
+    verify_active_series_range_completeness(
+        api,
+        &realm_id,
+        &events,
+        &accepted_events,
+        &active_events,
+    )
+    .await?;
     let verification_method_prefix = format!("{actor}#");
     let mut device_ids = active_events
         .iter()
@@ -695,12 +705,12 @@ async fn verify_active_series_range_completeness(
     api: &crate::transport::TransportClient,
     realm_id: &arkret_sdk::RealmId,
     outcome: &arkret_sdk::EventsQueryOutcome,
+    accepted_events: &[arkret_sdk::Event],
     active_events: &[&arkret_sdk::Event],
 ) -> Result<()> {
     use arkret_sdk::identity::DidResolver as _;
 
-    let digest_algorithm = outcome
-        .events
+    let digest_algorithm = accepted_events
         .iter()
         .find(|event| event.kind.as_str() == "ak.realm.create")
         .and_then(|event| {
@@ -822,7 +832,7 @@ async fn verify_active_series_range_completeness(
         }
         let verified = match arkret_sdk::verify_full_realm_range_completeness_with_suite(
             attestation_event,
-            &outcome.events,
+            accepted_events,
             realm_id,
             digest_suite,
             false,

@@ -704,7 +704,7 @@ impl From<arkret_sdk::SnapshotBootstrap> for SnapshotBootstrapJson {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BackfillView {
     #[serde(default)]
-    pub events: Vec<arkret_sdk::Event>,
+    pub events: Vec<arkret_sdk::EventReadRow>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot_bootstrap: Option<SnapshotBootstrapJson>,
     pub prev_cursor: Option<String>,
@@ -715,13 +715,44 @@ pub struct BackfillView {
 }
 
 impl BackfillView {
-    /// Convert SDK-typed events to JSON for projection reducers.
-    pub fn event_values(&self) -> Vec<Value> {
-        self.events
-            .iter()
-            .filter_map(|event| serde_json::to_value(event).ok())
+    /// Require a complete accepted Event log for reducers, authority decisions,
+    /// completeness verification, and cryptographic operations.
+    pub fn complete_events(&self, purpose: &str) -> anyhow::Result<Vec<arkret_sdk::Event>> {
+        require_complete_event_rows(&self.events, purpose)
+    }
+
+    /// Require and serialize complete Events before feeding JSON projection code.
+    pub fn complete_event_values(&self, purpose: &str) -> anyhow::Result<Vec<Value>> {
+        self.complete_events(purpose)?
+            .into_iter()
+            .map(|event| serde_json::to_value(event).map_err(anyhow::Error::from))
             .collect()
     }
+}
+
+pub(crate) fn require_complete_event_rows(
+    rows: &[arkret_sdk::EventReadRow],
+    purpose: &str,
+) -> anyhow::Result<Vec<arkret_sdk::Event>> {
+    rows.iter()
+        .enumerate()
+        .map(|(index, row)| match row {
+            arkret_sdk::EventReadRow::Event(event) => Ok(event.clone()),
+            arkret_sdk::EventReadRow::Redacted(view) => anyhow::bail!(
+                "{purpose} requires complete Events; row {index} ({}) is redacted ({:?})",
+                view.event_id,
+                view.redaction_reason
+            ),
+            arkret_sdk::EventReadRow::ReferenceLocked(stub) => anyhow::bail!(
+                "{purpose} requires complete Events; row {index}{} is reference-locked ({:?})",
+                stub.event_id
+                    .as_ref()
+                    .map(|event_id| format!(" ({event_id})"))
+                    .unwrap_or_default(),
+                stub.reason_code
+            ),
+        })
+        .collect()
 }
 
 impl From<arkret_sdk::EventsQueryOutcome> for BackfillView {

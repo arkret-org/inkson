@@ -2058,7 +2058,7 @@ pub(crate) async fn share_history_to_requester(
                 api.event_submitter()?
                     .backfill(&realm_id)
                     .await?
-                    .event_values(),
+                    .complete_event_values("Realm key-share authorization resolution")?,
             )
         } else {
             None

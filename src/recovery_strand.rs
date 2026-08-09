@@ -512,16 +512,18 @@ async fn submit_first_recovery_policy_seal(
     let events = http
         .events_read_all_pages(policy_event.realm_id.as_str())
         .await?;
-    let create = events
-        .events
+    let complete_events = crate::models::require_complete_event_rows(
+        &events.events,
+        "recovery policy successor Seal construction",
+    )?;
+    let create = complete_events
         .iter()
         .find(|event| {
             event.kind == arkret_sdk::EventKind::RealmCreate
                 && event.actor_id.as_str() == principal_id
         })
         .ok_or_else(|| anyhow::anyhow!("self-PCR history omitted its bootstrap create Event"))?;
-    let authorize = events
-        .events
+    let authorize = complete_events
         .iter()
         .find(|event| {
             event.kind == arkret_sdk::EventKind::DeviceAuthorize

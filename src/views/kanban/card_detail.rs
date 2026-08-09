@@ -472,11 +472,15 @@ pub(super) fn dispatch_calendar_rsvp(
     let build_actor_id = actor_id.clone();
     spawn(async move {
         let built = with_authed_api(&build_base, api_token, |api| async move {
-            let events = api
+            let rows = api
                 .http()
                 .events_read_all_pages(&build_realm_id)
                 .await?
                 .events;
+            let events = crate::models::require_complete_event_rows(
+                &rows,
+                "calendar RSVP schedule projection",
+            )?;
             let schedule_heads = calendar_schedule_revision_heads(&events, &strand_id)?;
             let frontier = api
                 .event_submitter()?

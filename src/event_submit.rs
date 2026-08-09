@@ -1059,7 +1059,7 @@ impl EventSubmitter {
             .events_read_all_pages(realm_id)
             .await
             .map_err(anyhow::Error::from)?;
-        Ok(mls_genesis_event_id_from_events(&outcome, realm_id))
+        mls_genesis_event_id_from_events(&outcome, realm_id)
     }
 
     /// Stream the canonical `/_arkret/self/events/subscribe` NDJSON response and
@@ -2052,7 +2052,11 @@ impl EventSubmitter {
             )
             .await
             .map_err(anyhow::Error::from)?;
-        let resolved = realm_create_authority_from_events(&outcome.events, realm_id);
+        let complete_events = crate::models::require_complete_event_rows(
+            &outcome.events,
+            "Realm create authority resolution",
+        )?;
+        let resolved = realm_create_authority_from_events(&complete_events, realm_id);
         if let Some(authority) = &resolved {
             realm_create_authority_cache()
                 .lock()
@@ -2568,14 +2572,14 @@ fn replace_exact_string_in_value(value: &mut serde_json::Value, old: &str, new: 
 fn mls_genesis_event_id_from_events(
     outcome: &arkret_sdk::EventsQueryOutcome,
     realm_id: &str,
-) -> Option<arkret_sdk::EventId> {
-    outcome
-        .events
+) -> anyhow::Result<Option<arkret_sdk::EventId>> {
+    let events = crate::models::require_complete_event_rows(&outcome.events, "MLS genesis lookup")?;
+    Ok(events
         .iter()
         .find(|event| {
             event.realm_id.as_str() == realm_id && event.kind == arkret_sdk::EventKind::MlsGenesis
         })
-        .map(|event| event.event_id.clone())
+        .map(|event| event.event_id.clone()))
 }
 
 fn cba_exempt_reducer_kind(kind: &arkret_sdk::events::kinds::EventKind) -> bool {
@@ -4304,19 +4308,22 @@ mod tests {
                     realm,
                     "ak.message.create",
                     "did:web:alice.example",
-                ),
+                )
+                .into(),
                 sdk_event_with_kind(
                     "ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
                     other_realm,
                     "ak.mls.genesis",
                     "did:web:alice.example",
-                ),
+                )
+                .into(),
                 sdk_event_with_kind(
                     expected.as_str(),
                     realm,
                     "ak.mls.genesis",
                     "did:web:alice.example",
-                ),
+                )
+                .into(),
             ],
             snapshot_bootstrap: None,
             next_cursor: None,
@@ -4326,14 +4333,15 @@ mod tests {
         };
 
         assert_eq!(
-            mls_genesis_event_id_from_events(&outcome, realm),
+            mls_genesis_event_id_from_events(&outcome, realm).unwrap(),
             Some(expected)
         );
         assert_eq!(
             mls_genesis_event_id_from_events(
                 &outcome,
                 "ak:realm:AfXCJ1DUe3g7MVHuVBpMsl89749WyrXAJP7EvoU9mwBH"
-            ),
+            )
+            .unwrap(),
             None
         );
     }

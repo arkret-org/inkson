@@ -284,12 +284,22 @@ pub(super) fn KanbanEffects(
             // to another member's board ingested nothing and saw an empty board
             // switcher. `ingest_kanban_events` handles the backfill event shape
             // (`event_kind`/`kind`, `operation_id`/`event_id`) and dedups by id.
-            if let Some(resp) = events_res.as_ref() {
+            let complete_events = match events_res.as_ref() {
+                Some(response) => match response.complete_events("kanban event projection") {
+                    Ok(events) => events,
+                    Err(error) => {
+                        board_status.set(error.to_string());
+                        return;
+                    }
+                },
+                None => Vec::new(),
+            };
+            if !complete_events.is_empty() {
                 let mut guard = state_store.write();
                 crate::sync_engine::ingest_kanban_projection_events(
                     &mut guard,
                     &lifecycle_realm_id,
-                    &resp.events,
+                    &complete_events,
                 );
             }
 
@@ -301,10 +311,7 @@ pub(super) fn KanbanEffects(
                 );
                 return;
             }
-            let remote_update_operations = events_res
-                .as_ref()
-                .map(|resp| strand_update_operations_from_events(&resp.events))
-                .unwrap_or_default();
+            let remote_update_operations = strand_update_operations_from_events(&complete_events);
             match with_authed_sdk_client(&base, api_token, |http| async move {
                 crate::transport::realm_read::collection_projection(&http, &view).await
             })
@@ -512,11 +519,15 @@ pub(super) fn KanbanEffects(
                     return;
                 }
                 if let Ok(backfill) = events_res {
+                    let Ok(events) = backfill.complete_events("kanban live reconciliation") else {
+                        tracing::warn!("kanban backfill contains non-reducer event rows");
+                        return;
+                    };
                     let mut store = state_store.write();
                     crate::sync_engine::ingest_kanban_projection_events(
                         &mut store,
                         &lifecycle_local_realm_id,
-                        &backfill.events,
+                        &events,
                     );
                 }
             }
@@ -620,9 +631,8 @@ pub(super) fn KanbanEffects(
                             let events = api
                                 .event_submitter()?
                                 .backfill(&realm_for_fetch)
-                                .await
-                                .map(|response| response.events)
-                                .unwrap_or_default();
+                                .await?
+                                .complete_events("kanban MLS sidecar restore projection")?;
                             Ok((payload, events))
                         })
                         .await;
@@ -728,6 +738,10 @@ pub(super) fn KanbanEffects(
                 return;
             }
             if let Ok(backfill) = events_res {
+                let Ok(events) = backfill.complete_events("kanban cold-start projection") else {
+                    tracing::warn!("kanban backfill contains non-reducer event rows");
+                    return;
+                };
                 // Event-sourced cold start (spec
                 // `arkret-work/specs/active/2026-06-29-kanban-event-sourced-projection.md`):
                 // fold the durable event log into `raw_operations`. The `columns`
@@ -739,7 +753,7 @@ pub(super) fn KanbanEffects(
                 crate::sync_engine::ingest_kanban_projection_events(
                     &mut store,
                     &lifecycle_local_realm_id,
-                    &backfill.events,
+                    &events,
                 );
             }
         });
@@ -846,10 +860,16 @@ fn refresh_projection(
             .await
             .ok()
         };
-        let remote_update_operations = events_res
-            .as_ref()
-            .map(|resp| strand_update_operations_from_events(&resp.events))
-            .unwrap_or_default();
+        let remote_update_operations = match events_res.as_ref() {
+            Some(response) => match response.complete_events("kanban projection refresh") {
+                Ok(events) => strand_update_operations_from_events(&events),
+                Err(error) => {
+                    board_status.set(error.to_string());
+                    return;
+                }
+            },
+            None => Vec::new(),
+        };
         match with_authed_sdk_client(&base_url, api_token, |http| async move {
             crate::transport::realm_read::collection_projection(&http, &view).await
         })

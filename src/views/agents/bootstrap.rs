@@ -141,9 +141,9 @@ async fn current_mls_history_active_series(
     let controller = arkret_sdk::Did::new(controller_id.to_owned())?;
     let realm_id = arkret_sdk::principal_control_realm_id(&controller);
     let backfill = submitter.backfill(realm_id.as_str()).await?;
+    let accepted_events = backfill.complete_events("MLS history active-series resolution")?;
     let mut current = None::<arkret_sdk::KeyBackupActiveSeriesHead>;
-    for event in backfill
-        .events
+    for event in accepted_events
         .iter()
         .filter(|event| event.kind.as_str() == "ak.key_backup.active_series")
     {
@@ -877,7 +877,10 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
     {
         return Err(current.expect_err("checked managed PCR signed-head receipt error"));
     }
-    let accepted_events = submitter.backfill(realm_id).await?.events;
+    let accepted_events = submitter
+        .backfill(realm_id)
+        .await?
+        .complete_events("managed Agent PCR Seal materialization")?;
     let material = arkret_bootstrap::materialize_managed_agent_pcr_control(
         &accepted_events,
         &crate::operation::cell_write_projector,
@@ -1042,28 +1045,35 @@ pub(crate) async fn bootstrap_provisioned_agent(
         return Ok(());
     }
 
-    let mut accepted_events = submitter.backfill(realm_id).await?.events;
+    let mut accepted_events = submitter
+        .backfill(realm_id)
+        .await?
+        .complete_events("managed Agent PCR bootstrap")?;
     if !has_managed_agent_pcr_create(&accepted_events) {
         let controller_realm_id =
             arkret_models_identity::did_document::principal_control_realm_id(&controller_did);
-        let provision_event_id = http
+        let provision_rows = http
             .events_read_all_pages(controller_realm_id.as_str())
             .await?
-            .events
-            .into_iter()
-            .find_map(|event| {
-                (event.kind == arkret_sdk::EventKind::AgentProvision)
-                    .then(|| {
-                        arkret_sdk::AgentProvisionPayload::try_from(&event)
-                            .ok()
-                            .filter(|payload| payload.agent_id.as_str() == agent_id)
-                            .map(|_| event.event_id)
-                    })
-                    .flatten()
-            })
-            .ok_or_else(|| {
-                anyhow::anyhow!("accepted Agent provision Event is missing from the controller PCR")
-            })?;
+            .events;
+        let provision_event_id = crate::models::require_complete_event_rows(
+            &provision_rows,
+            "managed Agent PCR provision binding",
+        )?
+        .into_iter()
+        .find_map(|event| {
+            (event.kind == arkret_sdk::EventKind::AgentProvision)
+                .then(|| {
+                    arkret_sdk::AgentProvisionPayload::try_from(&event)
+                        .ok()
+                        .filter(|payload| payload.agent_id.as_str() == agent_id)
+                        .map(|_| event.event_id)
+                })
+                .flatten()
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!("accepted Agent provision Event is missing from the controller PCR")
+        })?;
         let describe = submitter.events_describe().await?;
         let bootstrap = crate::event_builders::build_managed_agent_pcr_bootstrap_events(
             agent_id,
@@ -1075,7 +1085,10 @@ pub(crate) async fn bootstrap_provisioned_agent(
         submitter
             .submit_sdk_events_batch(realm_id, bootstrap, None)
             .await?;
-        accepted_events = submitter.backfill(realm_id).await?.events;
+        accepted_events = submitter
+            .backfill(realm_id)
+            .await?
+            .complete_events("managed Agent PCR bootstrap verification")?;
     }
     if !has_managed_agent_pcr_create(&accepted_events) {
         anyhow::bail!("Principal Server did not expose the accepted managed Agent PCR genesis");

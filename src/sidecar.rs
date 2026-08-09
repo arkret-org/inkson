@@ -1113,8 +1113,9 @@ pub(crate) async fn sync_sidecar_exchange_background(
     for (realm_id, realm_views) in views_by_realm {
         outcome.sidecar_views += realm_views.len();
         let backfill = api.event_submitter()?.backfill(&realm_id).await?;
+        let accepted_events = backfill.complete_events("Sidecar context recovery")?;
         let locators =
-            arkret_sdk::recover_agent_sidecar_context_locators(&realm_views, &backfill.events)?;
+            arkret_sdk::recover_agent_sidecar_context_locators(&realm_views, &accepted_events)?;
         outcome.recovered_locators += locators.len();
         {
             let mut store = state_store.write();
@@ -1143,7 +1144,10 @@ pub(crate) async fn sync_sidecar_exchange_background(
                 );
             }
         }
-        let event_values = backfill.event_values();
+        let event_values = accepted_events
+            .into_iter()
+            .map(serde_json::to_value)
+            .collect::<Result<Vec<_>, _>>()?;
         outcome.ingested_events += crate::sync_engine::ingest_message_projection_events(
             &mut state_store.write(),
             &realm_id,

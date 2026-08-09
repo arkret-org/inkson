@@ -655,7 +655,31 @@ pub(super) fn ChatEffects(
                     && let Ok(sub) = api.event_submitter()
                     && let Ok(backfill) = sub.backfill(&selected_realm_for_load).await
                 {
-                    let backfill_events = backfill.event_values();
+                    let complete_events = match backfill.complete_events("chat history projection")
+                    {
+                        Ok(events) => events,
+                        Err(error) => {
+                            tracing::warn!(
+                                error = %error,
+                                "chat projection rejected incomplete event rows"
+                            );
+                            return;
+                        }
+                    };
+                    let backfill_events = match complete_events
+                        .iter()
+                        .map(serde_json::to_value)
+                        .collect::<Result<Vec<_>, _>>()
+                    {
+                        Ok(events) => events,
+                        Err(error) => {
+                            tracing::warn!(
+                                error = %error,
+                                "chat projection could not serialize accepted Events"
+                            );
+                            return;
+                        }
+                    };
                     // Persist the complete encrypted discussion history,
                     // including Sidecar exchange control Events, before any
                     // projection work. New controller devices and devices
@@ -705,7 +729,7 @@ pub(super) fn ChatEffects(
                     loaded_moderation_appeal_prompts.extend(
                         moderation_appeal_prompts_from_sdk_events(
                             &selected_realm_for_load,
-                            &backfill.events,
+                            &complete_events,
                             &account_did_for_load,
                         ),
                     );

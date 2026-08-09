@@ -549,7 +549,11 @@ async fn resolve_proposal_authority_route(
                     .events_read_all_pages(event.realm_id.as_str())
                     .await
                     .map_err(anyhow::Error::from)?;
-                managed_agent_pcr_authority_set_ref_from_events(event, &accepted.events)?
+                let accepted_events = crate::models::require_complete_event_rows(
+                    &accepted.events,
+                    "managed Agent PCR authority resolution",
+                )?;
+                managed_agent_pcr_authority_set_ref_from_events(event, &accepted_events)?
             };
             // A managed Agent PCR write is executed by the delegated
             // controller, so the controller's device key — not the Agent's —

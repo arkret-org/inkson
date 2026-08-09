@@ -97,13 +97,17 @@ async fn ensure_initial_active_series(
     submitter
         .submit_sdk_events_batch(control_realm.as_str(), vec![event], None)
         .await?;
-    let mut accepted = http
+    let accepted_rows = http
         .events_read_all_pages(control_realm.as_str())
         .await?
-        .events
-        .into_iter()
-        .filter(|event| event.actor_id.as_str() == actor_id)
-        .collect::<Vec<_>>();
+        .events;
+    let mut accepted = crate::models::require_complete_event_rows(
+        &accepted_rows,
+        "key-backup active-series successor Seal construction",
+    )?
+    .into_iter()
+    .filter(|event| event.actor_id.as_str() == actor_id)
+    .collect::<Vec<_>>();
     accepted.sort_by_key(|event| event.actor_seq);
     if accepted.last().map(|event| &event.event_id) != Some(&active_series_event_id) {
         return Err(anyhow!(
