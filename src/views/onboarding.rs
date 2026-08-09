@@ -1810,6 +1810,9 @@ mod tests {
             gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
             request_id: request_id.to_owned(),
             account_handle: "alice:auth.example".to_owned(),
+            account_subject: Some(
+                arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
+            ),
             holder_jkt: "holder-jkt".to_owned(),
             audience: "did:webvh:z6mkfixture:principal.example".to_owned(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),

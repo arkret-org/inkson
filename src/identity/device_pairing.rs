@@ -155,6 +155,21 @@ pub fn pairing_request_body(
         Some(value @ Value::Object(_)) => serde_json::from_value(value.clone())?,
         _ => anyhow::bail!("pairing payload is missing new_device_pubkey"),
     };
+    let hpke_key = payload
+        .get("hpke_key")
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("pairing payload is missing hpke_key"))
+        .and_then(|value| serde_json::from_value(value).map_err(anyhow::Error::from))?;
+    let device_signature = payload
+        .get("device_signature")
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("pairing payload is missing device_signature"))
+        .and_then(|value| serde_json::from_value(value).map_err(anyhow::Error::from))?;
+    let authorize_event = payload
+        .get("authorize_event")
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("pairing payload is missing authorize_event"))
+        .and_then(|value| serde_json::from_value(value).map_err(anyhow::Error::from))?;
     let challenge_proof = payload
         .get("challenge_proof")
         .cloned()
@@ -189,7 +204,10 @@ pub fn pairing_request_body(
     Ok(arkret_sdk::AccountDevicePairRequestBody {
         pairing_code,
         new_device_pubkey,
+        hpke_key,
+        device_signature,
         challenge_proof,
+        authorize_event,
         display_name,
         device_metadata,
         device_pairing_request_id,

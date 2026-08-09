@@ -59,6 +59,7 @@ pub fn prepare_registration_checkpoint(
         gate_account_base: handoff.gate_account_base.clone(),
         handoff_request_id: handoff.request_id.clone(),
         account_handle: handoff.account_handle.clone(),
+        account_subject: handoff.account_subject.clone(),
         lease_id,
         lease_fence,
         device_id: device_id.trim().to_owned(),
@@ -171,6 +172,7 @@ pub fn recover_registration_checkpoint_from_reservation(
         gate_account_base: handoff.gate_account_base.clone(),
         handoff_request_id: handoff.request_id.clone(),
         account_handle: handoff.account_handle.clone(),
+        account_subject: handoff.account_subject.clone(),
         lease_id,
         lease_fence,
         device_id: handoff.device_id.trim().to_owned(),
@@ -227,7 +229,9 @@ pub fn checkpoint_belongs_to_handoff(
 ) -> bool {
     let same_context = checkpoint.principal_server_url == handoff.principal_server_url
         && checkpoint.gate_account_base == handoff.gate_account_base
-        && checkpoint.trust_domain == handoff.trust_domain;
+        && checkpoint.trust_domain == handoff.trust_domain
+        && checkpoint.account_subject.is_some()
+        && checkpoint.account_subject == handoff.account_subject;
     if !same_context {
         return false;
     }
@@ -355,6 +359,13 @@ pub async fn complete_account_handoff_binding(
     recovery_key: &str,
     dpop: &crate::identity::account_auth::grant_dpop::DpopHandle,
 ) -> anyhow::Result<IdentityBindingCompletion> {
+    let expected_account_subject = handoff
+        .account_subject
+        .as_ref()
+        .context("account handoff subject is unavailable; authenticate again")?;
+    if checkpoint.account_subject.as_ref() != Some(expected_account_subject) {
+        anyhow::bail!("account handoff subject does not match the frozen registration draft");
+    }
     if handoff.expires_at <= Utc::now() {
         anyhow::bail!("account handoff expired; authenticate the account again");
     }
@@ -432,6 +443,7 @@ pub async fn complete_account_handoff_binding(
             .await?;
         let request = garth::identity_creation_register_request(
             &challenge,
+            expected_account_subject,
             did_operation,
             unit,
             initial.clone(),
@@ -447,6 +459,11 @@ pub async fn complete_account_handoff_binding(
         .binding_receipt
         .clone()
         .context("Account Authority omitted identity-creation binding receipt")?;
+    if &binding_receipt.account_subject != expected_account_subject
+        || binding_receipt.principal_id.as_str() != checkpoint.did
+    {
+        anyhow::bail!("Account Authority binding receipt does not match the frozen account or DID");
+    }
     let pcr_genesis_receipt = register_outcome
         .pcr_genesis_receipt
         .clone()
@@ -480,6 +497,9 @@ mod tests {
             gate_account_base: "https://account.example/_arkret/gate/account".to_owned(),
             request_id: "ak:request:019f0000-0000-7000-8000-000000000001".to_owned(),
             account_handle: "alice:example.com".to_owned(),
+            account_subject: Some(
+                arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
+            ),
             holder_jkt: "holder-jkt".to_owned(),
             audience: "did:webvh:z6mkfixture:principal.example".to_owned(),
             expires_at: Utc::now() + chrono::Duration::minutes(15),

@@ -624,6 +624,10 @@ pub struct PendingAccountHandoff {
     /// handoff continuity or principal identity.
     #[serde(default)]
     pub account_handle: String,
+    /// Stable Account Authority subject frozen from the authenticated handoff.
+    /// Legacy checkpoints omit it and must fail closed before cold-root signing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_subject: Option<arkret_sdk::Hash>,
     pub holder_jkt: String,
     pub audience: String,
     pub expires_at: DateTime<Utc>,
@@ -657,6 +661,9 @@ pub struct PendingPrincipalRegistration {
     /// or the server's typed reserved identity, never by this string.
     #[serde(default)]
     pub account_handle: String,
+    /// Account Authority subject frozen with this registration draft.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_subject: Option<arkret_sdk::Hash>,
     pub lease_id: String,
     pub lease_fence: u64,
     pub device_id: String,
