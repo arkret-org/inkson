@@ -1203,7 +1203,7 @@ fn managed_agent_pcr_delegated_controller(
                     .and_then(|object| object.get("fields"))
                     .and_then(|fields| fields.get("purpose"))
                     .and_then(serde_json::Value::as_str)
-                    == Some("managed_agent_control")
+                    == Some(arkret_bootstrap::PRINCIPAL_CONTROL_PURPOSE)
         })
         .collect::<Vec<_>>();
     if managed.is_empty() {
@@ -1237,7 +1237,7 @@ fn managed_agent_pcr_delegated_controller(
             .and_then(|object| object.get("fields"))
             .and_then(|fields| fields.get("purpose"))
             .and_then(serde_json::Value::as_str)
-            != Some("managed_agent_control")
+            != Some(arkret_bootstrap::PRINCIPAL_CONTROL_PURPOSE)
         || !notary.includes_signer_as_primary(&create.actor_id)
     {
         return Err(

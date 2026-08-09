@@ -818,7 +818,7 @@ fn has_managed_agent_pcr_create(events: &[arkret_sdk::Event]) -> bool {
                 .and_then(|object| object.get("fields"))
                 .and_then(|fields| fields.get("purpose"))
                 .and_then(serde_json::Value::as_str)
-                == Some("managed_agent_control")
+                == Some(arkret_bootstrap::PRINCIPAL_CONTROL_PURPOSE)
     })
 }
 

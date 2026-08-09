@@ -1588,7 +1588,10 @@ mod notary_derivation_tests {
                 .iter()
                 .all(|reference| reference.role != arkret_bootstrap::DID_INCEPTION_REF_ROLE)
         );
-        assert_eq!(event.payload["object"]["purpose"], "managed_agent_control");
+        assert_eq!(
+            event.payload["object"]["purpose"],
+            arkret_bootstrap::PRINCIPAL_CONTROL_PURPOSE
+        );
         assert!(event.payload["object"].get("genesis_salt").is_none());
         assert!(
             event.payload["object"]
