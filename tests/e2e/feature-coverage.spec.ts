@@ -471,7 +471,7 @@ test.describe("feature coverage placeholders", () => {
               backup_id: "ak:backup:019eca5c-2fcb-7592-9000-000000000001",
               actor_id: "did:web:alice.example",
               device_id: "ak:device:01964137-0000-7000-8000-0000000000a1",
-              backup_kind: "did_recovery",
+              backup_kind: "secret_storage",
               backup_version: "v1",
               created_at: "2026-06-15T08:00:00.000Z",
               ciphertext_digest: `sha256:${"1".repeat(64)}`,
@@ -551,7 +551,7 @@ test.describe("feature coverage placeholders", () => {
       recoveryPanel.getByTestId("restore-delete-button"),
     ).toHaveCount(0);
     await expect(recoveryPanel).not.toContainText("ak:backup:");
-    await expect(recoveryPanel).not.toContainText("did_recovery");
+    await expect(recoveryPanel).not.toContainText("recovery_key_share");
   });
 
   // ---- Discoverability ≠ Join Rule ≠ History ----

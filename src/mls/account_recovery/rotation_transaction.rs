@@ -203,12 +203,13 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     )?;
 
     let principal = Did::new(actor_id.to_owned())?;
-    let control_realm = arkret_sdk::principal_control_realm_id(&principal);
+    let control_realm =
+        crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
     let frontier = submitter
-        .events_frontier_realm_seal_view(&control_realm)
+        .events_frontier_realm_seal_view(control_realm.as_str())
         .await?;
     let revoke = crate::operation::ak_ops::device_revoke(
-        &control_realm,
+        control_realm.as_str(),
         actor_id,
         target_device_id,
         current_device_id,
@@ -219,6 +220,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let mut pointer_events = Vec::with_capacity(prepared.classes.len());
     for class in &prepared.classes {
         pointer_events.push(build_active_series_event(
+            &control_realm,
             actor_id,
             class.backup_kind,
             class.new_series_id.as_str(),
@@ -364,7 +366,8 @@ async fn drive_security_rotation(
     let http = api.sdk_http_client()?;
     let submitter = api.event_submitter()?;
     let principal = Did::new(actor_id.to_owned())?;
-    let control_realm = arkret_sdk::principal_control_realm_id(&principal);
+    let control_realm =
+        crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
     let transaction_id = transaction.transaction_id.clone();
     let engine = crate::security_transaction::security_transaction_engine(
         http.clone(),
@@ -405,13 +408,13 @@ async fn drive_security_rotation(
     };
     if transaction.next_required_step == Some(SecurityTransactionStep::EraseOldMaterial) {
         let erase_frontier = submitter
-            .events_frontier_realm_seal_view(&control_realm)
+            .events_frontier_realm_seal_view(control_realm.as_str())
             .await?;
         let erase_lease = crate::authorization_lease::acquire_for_intent(
             &http,
             arkret_wire::AuthorizationLeaseIssueIntent {
                 scope_ref: arkret_sdk::ScopeRef::Realm {
-                    realm_id: arkret_sdk::RealmId::new(control_realm.clone())?,
+                    realm_id: control_realm.clone(),
                 },
                 action: "ak.keys.backup_series.erase".to_owned(),
                 authorization_rule_id: "realm_admission".to_owned(),
@@ -666,6 +669,7 @@ pub(super) fn wire_backup_kind(kind: BackupRotationKind) -> &'static str {
 }
 
 pub(super) fn build_active_series_event(
+    principal_control_realm_id: &arkret_sdk::RealmId,
     actor_id: &str,
     kind: BackupRotationKind,
     series_id: &str,
@@ -700,7 +704,7 @@ pub(super) fn build_active_series_event(
     .map_err(anyhow::Error::msg)?;
     let payload = unsigned.attach_signature(signature)?;
     crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::KeyBackupActiveSeries>(
-        arkret_sdk::principal_control_realm_id(&principal),
+        principal_control_realm_id.to_string(),
         actor_id,
         payload,
     )

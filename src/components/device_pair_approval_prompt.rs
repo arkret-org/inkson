@@ -20,7 +20,7 @@ use std::collections::HashSet;
 use dioxus::prelude::*;
 
 use crate::identity::device_pairing::{
-    PendingPairingRequest, pairing_request_body, parse_pending_pairing_requests,
+    PendingPairingRequest, author_pairing_request_body, parse_pending_pairing_requests,
 };
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::dialog::Dialog;
@@ -153,25 +153,26 @@ pub fn DevicePairApprovalPrompt(token: Signal<String>, device_id: Signal<String>
                         variant: ButtonVariant::Primary,
                         "data-testid": "device-pair-approval-approve",
                         onclick: move |_| {
-                            let body = match pairing_request_body(&approve_payload) {
-                                Ok(body) => body,
-                                Err(err) => {
-                                    status.set(format!("Cannot approve: {err}"));
-                                    return;
-                                }
-                            };
                             let base = base_url();
                             let api_token = token();
                             let key = approve_key.clone();
                             let device = approve_device.clone();
                             let code = approve_code.clone();
+                            let payload = approve_payload.clone();
                             status.set("Approving…".to_owned());
                             spawn(async move {
-                                match crate::transport::auth::with_endpoint_clients(
+                                match crate::transport::auth::with_authed_api(
                                     &base,
                                     api_token,
-                                    None,
-                                    |clients| async move {
+                                    |api| async move {
+                                        let body = author_pairing_request_body(
+                                            &api,
+                                            &payload,
+                                        )
+                                        .await?;
+                                        let clients = crate::transport::EndpointClients::from_http(
+                                            api.sdk_http_client()?,
+                                        );
                                         clients.keys().account_device_pair(&body).await
                                     },
                                 )

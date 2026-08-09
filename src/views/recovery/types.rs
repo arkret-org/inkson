@@ -14,7 +14,6 @@ pub(crate) struct BackupSummaryRow {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct BackupClassCounts {
-    pub(crate) did_recovery: usize,
     pub(crate) secret_storage: usize,
     pub(crate) mls_history: usize,
     pub(crate) other: usize,

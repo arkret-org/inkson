@@ -856,12 +856,19 @@ pub(crate) fn decrypt_chat_encrypted_content(
     circle_id: Option<&str>,
     encrypted_content: &Value,
 ) -> Option<String> {
+    let effective_scope = match circle_id {
+        Some(circle_id) => Some(arkret_sdk::ScopeRef::Circle {
+            realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?,
+            circle_id: arkret_sdk::CircleId::new(circle_id.to_owned()).ok()?,
+        }),
+        None => None,
+    };
     decrypt_chat_encrypted_content_value(
         state_store,
         realm_id,
         actor_id,
         device_id,
-        circle_id,
+        effective_scope.as_ref(),
         encrypted_content,
     )
     .and_then(|content_value| display_body_from_value(&content_value))
@@ -872,7 +879,7 @@ fn decrypt_chat_encrypted_content_value(
     realm_id: &str,
     actor_id: &str,
     device_id: &str,
-    circle_id: Option<&str>,
+    effective_scope: Option<&arkret_sdk::ScopeRef>,
     encrypted_content: &Value,
 ) -> Option<Value> {
     let envelope =
@@ -880,13 +887,26 @@ fn decrypt_chat_encrypted_content_value(
     let payload_value =
         serde_json::to_value(arkret_sdk::mls::encrypted_envelope_to_payload(&envelope).ok()?)
             .ok()?;
-    let plaintext = crate::state::projection::try_local_mls_decrypt_core_for_effective_scope(
+    let payload: arkret_sdk::EncryptedPayload = serde_json::from_value(payload_value).ok()?;
+    let realm_scope;
+    let effective_scope = match effective_scope {
+        Some(scope) => scope,
+        None => {
+            realm_scope = arkret_sdk::ScopeRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?,
+            };
+            &realm_scope
+        }
+    };
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let plaintext = crate::mls::runtime::decrypt_application_payload_for_scope(
         state_store,
+        secure_store.as_ref(),
         realm_id,
         actor_id,
         device_id,
-        &payload_value,
-        circle_id,
+        &payload,
+        effective_scope,
     )?;
     serde_json::from_slice::<Value>(&plaintext).ok()
 }
@@ -1342,17 +1362,15 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     if proof_verdict == ChatProofVerdict::Rejected {
         return None;
     }
-    let effective_scope_circle = candidates
+    let effective_scope = candidates
         .iter()
         .find_map(|candidate| {
             candidate
-                .get("effective_scope")
-                .and_then(|scope| scope.get("circle_id"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
+                .get("scope_ref")
+                .or_else(|| candidate.get("effective_scope"))
+                .cloned()
         })
-        .map(ToOwned::to_owned);
+        .and_then(|scope| serde_json::from_value::<arkret_sdk::ScopeRef>(scope).ok());
     if poll_content_from_candidates(&candidates)
         .and_then(|content| content.get("kind").and_then(Value::as_str))
         .is_some_and(|kind| kind == "ak.content.poll.response")
@@ -1427,14 +1445,15 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     };
     let decrypt_was_attempted = decrypt_context.is_some();
     let decrypted_body = decrypt_context.and_then(|(store, actor_id, device_id, encrypted)| {
-        decrypt_chat_encrypted_content(
+        decrypt_chat_encrypted_content_value(
             store,
             message_realm,
             actor_id,
             device_id,
-            effective_scope_circle.as_deref(),
+            effective_scope.as_ref(),
             encrypted,
         )
+        .and_then(|content_value| display_body_from_value(&content_value))
     });
     let body_was_decrypted = decrypted_body.is_some();
     let body = if is_redaction_tombstone {
@@ -1620,14 +1639,15 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
             (direct_content.is_none() && private_content.is_none()).then(|| {
                 let message_realm =
                     first_string_in_candidates(&candidates, &["realm_id"]).unwrap_or(realm_id);
-                let effective_scope_circle = candidates.iter().find_map(|candidate| {
-                    candidate
-                        .get("effective_scope")
-                        .and_then(|scope| scope.get("circle_id"))
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                });
+                let effective_scope = candidates
+                    .iter()
+                    .find_map(|candidate| {
+                        candidate
+                            .get("scope_ref")
+                            .or_else(|| candidate.get("effective_scope"))
+                            .cloned()
+                    })
+                    .and_then(|scope| serde_json::from_value::<arkret_sdk::ScopeRef>(scope).ok());
                 let encrypted_content = candidates.iter().find_map(|candidate| {
                     candidate.get("encrypted_content").or_else(|| {
                         candidate
@@ -1641,7 +1661,7 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
                     message_realm,
                     actor_id,
                     device_id,
-                    effective_scope_circle,
+                    effective_scope.as_ref(),
                     encrypted_content,
                 )
             });

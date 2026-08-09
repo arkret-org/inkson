@@ -34,16 +34,17 @@ pub type ActiveRecoveryPolicy = RecoveryPolicySummary;
 #[derive(Clone, Debug, Default)]
 pub struct AccountRecoveryState {
     pub active_policy: Option<ActiveRecoveryPolicy>,
-    pub accepted_did_recovery_first_backup_count: usize,
     pub recovery_public_key_secret_storage_backup_count: usize,
     pub local_recovery_key_fingerprint: Option<String>,
 }
 
 impl AccountRecoveryState {
-    /// The account is recoverable only when the server has both the accepted
-    /// policy and the DID recovery backup required by the first-backup gate.
+    /// The recovery-material gate is satisfied by the accepted recovery
+    /// policy. Identity-root generations are derived from the offline recovery
+    /// secret and verified public DID history; there is no wire backup class
+    /// for DID recovery.
     pub fn server_recovery_configured(&self) -> bool {
-        self.active_policy.is_some() && self.accepted_did_recovery_first_backup_count > 0
+        self.active_policy.is_some()
     }
 
     /// Local fingerprints prove only that this browser once saw a recovery key.
@@ -69,34 +70,100 @@ pub fn parse_active_recovery_policy(response: &Value) -> Option<ActiveRecoveryPo
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FirstBackupGateStatus {
-    Satisfied { backup_id: String },
+    Satisfied,
     Blocked(FirstBackupGateBlockReason),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FirstBackupGateBlockReason {
+    NoAcceptedPrincipalControlSeal,
     NoActiveRecoveryPolicy,
-    NoMatchingDidRecoveryBackup {
-        policy_id: String,
-        policy_version: u64,
-    },
 }
 
 pub fn first_backup_gate_status_from_payloads(
+    accepted_principal_control_seal: bool,
     recovery_policy_response: &Value,
-    backup_list_payload: &Value,
 ) -> FirstBackupGateStatus {
+    if !accepted_principal_control_seal {
+        return FirstBackupGateStatus::Blocked(
+            FirstBackupGateBlockReason::NoAcceptedPrincipalControlSeal,
+        );
+    }
     let Some(policy) = parse_active_recovery_policy(recovery_policy_response) else {
         return FirstBackupGateStatus::Blocked(FirstBackupGateBlockReason::NoActiveRecoveryPolicy);
     };
-    match matching_did_recovery_first_backup_id(backup_list_payload, &policy) {
-        Some(backup_id) => FirstBackupGateStatus::Satisfied { backup_id },
-        None => FirstBackupGateStatus::Blocked(
-            FirstBackupGateBlockReason::NoMatchingDidRecoveryBackup {
-                policy_id: policy.policy_id.as_str().to_owned(),
-                policy_version: policy.version,
-            },
-        ),
+    let _ = policy;
+    FirstBackupGateStatus::Satisfied
+}
+
+pub async fn submit_principal_bootstrap_seal(
+    api: &TransportClient,
+    seal: &arkret_sdk::Seal,
+) -> anyhow::Result<()> {
+    let outcome = api.sdk_http_client()?.events_submit_seal(seal).await?;
+    if outcome.seal_id != seal.id
+        || outcome.accepted_event_digests != seal.delta
+        || outcome.post_state_root != seal.state_root
+    {
+        anyhow::bail!("Principal Server returned a mismatched PCR bootstrap Seal outcome");
+    }
+    Ok(())
+}
+
+pub async fn verify_recovery_material_evidence(
+    api: &TransportClient,
+    evidence: &crate::state::RecoveryMaterialEvidence,
+) -> anyhow::Result<()> {
+    evidence.pcr_genesis_unit.validate_ordered_envelopes()?;
+    if evidence.pcr_genesis_unit.create().actor_id != evidence.principal_id
+        || evidence.pcr_genesis_unit.create().realm_id != evidence.principal_control_realm_id
+        || evidence.pcr_genesis_unit.founding_authorize().realm_id
+            != evidence.principal_control_realm_id
+        || evidence.bootstrap_seal.realm_id != evidence.principal_control_realm_id
+    {
+        anyhow::bail!("durable recovery-material evidence has mixed PCR scope");
+    }
+    let create = evidence.pcr_genesis_unit.create();
+    let authorize = evidence.pcr_genesis_unit.founding_authorize();
+    let create_digest = arkret_sdk::Hash::new(create.event_digest()?)?;
+    let authorize_digest = arkret_sdk::Hash::new(authorize.event_digest()?)?;
+    if !evidence.bootstrap_seal.delta.contains(&create_digest)
+        || !evidence.bootstrap_seal.delta.contains(&authorize_digest)
+        || !evidence
+            .bootstrap_seal
+            .covered_event_digests
+            .contains(&create_digest)
+        || !evidence
+            .bootstrap_seal
+            .covered_event_digests
+            .contains(&authorize_digest)
+    {
+        anyhow::bail!("durable bootstrap Seal does not cover the complete PCR genesis unit");
+    }
+    let http = api.sdk_http_client()?;
+    let resolved = http
+        .events_resolve(&arkret_sdk::EventsResolveRequestBody {
+            event_ids: vec![create.event_id.clone(), authorize.event_id.clone()],
+            event_digests: vec![create_digest, authorize_digest],
+            seal_refs: vec![evidence.bootstrap_seal.id.clone()],
+            include_payload: Some(true),
+        })
+        .await?;
+    if !resolved.events.iter().any(|event| event == create)
+        || !resolved.events.iter().any(|event| event == authorize)
+        || !resolved
+            .seals
+            .iter()
+            .any(|seal| seal == &evidence.bootstrap_seal)
+    {
+        anyhow::bail!("server no longer resolves the durable PCR bootstrap evidence exactly");
+    }
+    let policy = serde_json::to_value(api.get_recovery_policy().await?)?;
+    match first_backup_gate_status_from_payloads(true, &policy) {
+        FirstBackupGateStatus::Satisfied => Ok(()),
+        FirstBackupGateStatus::Blocked(reason) => {
+            anyhow::bail!("durable recovery-material evidence is incomplete: {reason:?}")
+        }
     }
 }
 
@@ -106,13 +173,8 @@ pub fn account_recovery_state_from_payloads(
     local_recovery_key_fingerprint: Option<String>,
 ) -> AccountRecoveryState {
     let active_policy = parse_active_recovery_policy(recovery_policy_response);
-    let accepted_did_recovery_first_backup_count = active_policy
-        .as_ref()
-        .map(|policy| count_matching_did_recovery_first_backups(backup_list_payload, policy))
-        .unwrap_or(0);
     AccountRecoveryState {
         active_policy,
-        accepted_did_recovery_first_backup_count,
         recovery_public_key_secret_storage_backup_count: count_backups_by_class_and_method(
             backup_list_payload,
             "secret_storage",
@@ -142,19 +204,6 @@ fn count_backups_by_class_and_method(
                     .and_then(Value::as_str)
                     == Some(recipient_method)
         })
-        .count()
-}
-
-fn count_matching_did_recovery_first_backups(
-    list_payload: &Value,
-    policy: &ActiveRecoveryPolicy,
-) -> usize {
-    list_payload
-        .get("backups")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|backup| did_recovery_backup_matches_active_policy(backup, policy))
         .count()
 }
 
@@ -407,6 +456,7 @@ pub async fn ensure_active_recovery_policy(
     api: &TransportClient,
     principal_id: &str,
     device_id: &str,
+    principal_control_realm_id: &arkret_sdk::RealmId,
     key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
 ) -> anyhow::Result<ActiveRecoveryPolicy> {
     if let Some(policy) = fetch_active_recovery_policy(api).await? {
@@ -426,7 +476,14 @@ pub async fn ensure_active_recovery_policy(
         device_id,
         key_material,
     )?;
-    publish_recovery_policy(api, principal_id, device_id, body).await?;
+    publish_recovery_policy(
+        api,
+        principal_id,
+        device_id,
+        principal_control_realm_id,
+        body,
+    )
+    .await?;
 
     let policy = fetch_active_recovery_policy(api)
         .await?
@@ -439,12 +496,11 @@ async fn publish_recovery_policy(
     api: &TransportClient,
     principal_id: &str,
     device_id: &str,
+    principal_control_realm_id: &arkret_sdk::RealmId,
     policy_value: Value,
 ) -> anyhow::Result<arkret_sdk::RecoveryPolicyPublishOutcome> {
     let policy: RecoveryPolicy = serde_json::from_value(policy_value)?;
     policy.validate()?;
-    let principal = arkret_sdk::Did::new(principal_id.to_owned())?;
-    let realm_id = arkret_sdk::principal_control_realm_id(&principal);
     let recovery_payload = arkret_sdk::RecoveryPolicySetPayload {
         policy_id: policy.policy_id.clone(),
         value: policy,
@@ -458,7 +514,7 @@ async fn publish_recovery_policy(
         reason: None,
     };
     let event = crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::PolicySet>(
-        realm_id,
+        principal_control_realm_id.to_string(),
         principal_id,
         payload,
     )
@@ -665,129 +721,26 @@ pub async fn submit_recovery_unlock_proof(
     .await
 }
 
-pub async fn ensure_recovery_policy_and_did_recovery_backup(
+pub async fn ensure_recovery_policy(
     api: &TransportClient,
     principal_id: &str,
     device_id: &str,
+    principal_control_realm_id: &arkret_sdk::RealmId,
     recovery_key: &str,
-) -> anyhow::Result<String> {
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("active device signer is required"))?;
+) -> anyhow::Result<ActiveRecoveryPolicy> {
     let key_material = arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
         recovery_key,
         "",
         0,
     )?;
-    let policy = ensure_active_recovery_policy(api, principal_id, device_id, &key_material).await?;
-    // `matching_did_recovery_first_backup_id` reads `backups[]` leniently via
-    // `Value` accessors; serialize the typed list back to its wire JSON.
-    let list = serde_json::to_value(
-        &api.list_key_backups_by_series(None, Some("did_recovery"))
-            .await?,
-    )?;
-    if let Some(backup_id) = matching_did_recovery_first_backup_id(&list, &policy) {
-        return Ok(backup_id);
-    }
-
-    let backup_id = format!("ak:backup:{}", crate::operation::uuid_v7());
-    let recovery_key_ref = format!("{}#backup-hpke-0", principal_id.trim());
-    let created_at = arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now());
-    #[derive(serde::Serialize)]
-    struct RecoveryPolicyBinding<'a> {
-        policy_id: &'a str,
-        policy_version: u64,
-    }
-
-    #[derive(serde::Serialize)]
-    struct DidRecoveryMetadata<'a> {
-        schema: &'static str,
-        principal_id: &'a str,
-        root_generation: u64,
-        root_public_key_multibase: &'a str,
-        next_root_public_key_multibase: &'a str,
-        next_root_key_hash: &'a str,
-        recovery_policy_ref: RecoveryPolicyBinding<'a>,
-        created_at: &'a str,
-    }
-
-    let plaintext = crate::canonical::canonical_json_bytes(&DidRecoveryMetadata {
-        schema: "ak.local.did_recovery_metadata.v1",
-        principal_id,
-        root_generation: key_material.root_generation,
-        root_public_key_multibase: &key_material.root_public_key_multikey,
-        next_root_public_key_multibase: &key_material.next_root_public_key_multikey,
-        next_root_key_hash: &key_material.next_root_key_hash,
-        recovery_policy_ref: RecoveryPolicyBinding {
-            policy_id: policy.policy_id.as_str(),
-            policy_version: policy.version,
-        },
-        created_at: &created_at,
-    })?;
-    let body = crate::key_backup::build_did_recovery_backup_body(
-        &backup_id,
+    ensure_active_recovery_policy(
+        api,
         principal_id,
         device_id,
-        &key_material.backup_hpke_public_key,
-        &recovery_key_ref,
-        &plaintext,
-        policy.policy_id.as_str(),
-        policy.version,
-    )?;
-    api.put_key_backup(&backup_id, body, &signer).await?;
-    Ok(backup_id)
-}
-
-pub fn matching_did_recovery_first_backup_id(
-    list_payload: &Value,
-    policy: &ActiveRecoveryPolicy,
-) -> Option<String> {
-    list_payload
-        .get("backups")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|backup| {
-            if !did_recovery_backup_matches_active_policy(backup, policy) {
-                return None;
-            }
-            backup
-                .get("backup_id")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|backup_id| !backup_id.is_empty())
-                .map(str::to_owned)
-        })
-        .next()
-}
-
-fn did_recovery_backup_matches_active_policy(
-    backup: &Value,
-    policy: &ActiveRecoveryPolicy,
-) -> bool {
-    backup.get("backup_kind").and_then(Value::as_str) == Some("did_recovery")
-        && backup
-            .get("encryption")
-            .and_then(|encryption| encryption.get("recipient_method"))
-            .and_then(Value::as_str)
-            == Some("recovery_public_key")
-        && backup
-            .get("recovery_policy_ref")
-            .and_then(|policy_ref| policy_ref.get("policy_id"))
-            .and_then(Value::as_str)
-            == Some(policy.policy_id.as_str())
-        && backup
-            .get("recovery_policy_ref")
-            .and_then(|policy_ref| policy_ref.get("policy_version"))
-            .and_then(Value::as_u64)
-            == Some(policy.version)
-        && backup_series_seq_is_first_when_present(backup)
-}
-
-fn backup_series_seq_is_first_when_present(backup: &Value) -> bool {
-    match backup.get("series_seq") {
-        Some(value) => value.as_u64() == Some(0),
-        None => true,
-    }
+        principal_control_realm_id,
+        &key_material,
+    )
+    .await
 }
 
 /// Build the `recovery-session.schema.json` `create_request` body.

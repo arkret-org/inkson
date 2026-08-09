@@ -72,6 +72,20 @@ pub(crate) fn issue_protocol_hlc_for_active_device(
     issue_protocol_hlc(actor_id, device_id, realm_id)
 }
 
+/// Allocate HLC metadata for account-data payloads before their transport
+/// resolves the holder's event-derived PCR. The constant is only a local
+/// allocator namespace and is never used as the account-data Event realm.
+pub(crate) fn issue_account_data_hlc(
+    actor_id: &str,
+    device_id: &str,
+) -> anyhow::Result<arkret_sdk::Hlc> {
+    issue_protocol_hlc(
+        actor_id,
+        device_id,
+        "ak:realm:ASyOHakrqmsRPkLKvhTD20V-YWCl-X7zYrlca5tdQLaR",
+    )
+}
+
 pub(crate) fn issue_protocol_hlc_with_secret(
     actor_id: &str,
     device_id: &str,
@@ -92,6 +106,22 @@ pub(crate) fn issue_protocol_hlc_with_secret(
     #[cfg(any(target_arch = "wasm32", test))]
     let floor = memory_stamp_store().advance_stamp_floor_blocking(scope.clone(), update)?;
     garth::hlc_from_floor(&scope, local_node_secret, floor).map_err(Into::into)
+}
+
+/// Allocate the first Realm-create HLC before the Event-derived Realm id
+/// exists. This constant is only a local allocator namespace; it is never
+/// written into the Event and does not predict or alias the resulting Realm.
+pub(crate) fn issue_realm_genesis_hlc_with_secret(
+    actor_id: &str,
+    device_id: &str,
+    local_node_secret: &[u8],
+) -> anyhow::Result<arkret_sdk::Hlc> {
+    issue_protocol_hlc_with_secret(
+        actor_id,
+        device_id,
+        "ak:realm:ASyOHakrqmsRPkLKvhTD20V-YWCl-X7zYrlca5tdQLaR",
+        local_node_secret,
+    )
 }
 
 #[cfg(all(not(target_arch = "wasm32"), not(test)))]

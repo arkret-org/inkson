@@ -608,8 +608,8 @@ async fn fetch_authoritative_active_series(
 ) -> Result<Vec<Value>> {
     let actor = arkret_sdk::Did::new(actor_id.to_owned())
         .map_err(|error| anyhow!("invalid backup actor_id: {error}"))?;
-    let realm_id = arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&actor))
-        .map_err(|error| anyhow!("invalid principal control Realm id: {error}"))?;
+    let http = api.http();
+    let realm_id = crate::identity::principal_control::resolve_accepted(http, &actor).await?;
     let events = api
         .http()
         .events_read_all_pages_with_completeness(realm_id.as_str())
@@ -1028,10 +1028,7 @@ async fn hydrate_mls_restore_payload_with_unlock_proof(
             .get("backup_kind")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        if matches!(
-            backup_kind,
-            "secret_storage" | "mls_history" | "did_recovery"
-        ) {
+        if matches!(backup_kind, "secret_storage" | "mls_history") {
             let active_series =
                 super::selection::active_series_id_for_backup_class(&payload, backup_kind);
             if entry.get("series_id").and_then(Value::as_str) != active_series {
@@ -1042,10 +1039,7 @@ async fn hydrate_mls_restore_payload_with_unlock_proof(
             full_backups.push(entry);
             continue;
         }
-        if !matches!(
-            backup_kind,
-            "secret_storage" | "mls_history" | "did_recovery"
-        ) {
+        if !matches!(backup_kind, "secret_storage" | "mls_history") {
             full_backups.push(entry);
             continue;
         }

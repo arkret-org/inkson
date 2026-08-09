@@ -505,11 +505,6 @@ fn classify_proposal_authority_route(
     if is_managed_agent_pcr_control(event) {
         return Ok(ProposalAuthorityRouteKind::ManagedAgentPcr);
     }
-    if event.realm_id
-        == arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&event.actor_id))?
-    {
-        return Ok(ProposalAuthorityRouteKind::SelfPrincipalControlRealm);
-    }
     Ok(ProposalAuthorityRouteKind::RemoteCurrentAuthority)
 }
 
@@ -819,9 +814,10 @@ mod tests {
         );
 
         let mut self_pcr = event();
-        self_pcr.realm_id =
-            arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&self_pcr.actor_id))
-                .unwrap();
+        self_pcr.realm_id = arkret_sdk::RealmId::new(
+            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
+        )
+        .unwrap();
         self_pcr.scope_ref = arkret_sdk::ScopeRef::Realm {
             realm_id: self_pcr.realm_id.clone(),
         };
@@ -880,138 +876,21 @@ mod tests {
     }
 
     #[test]
-    fn managed_agent_pcr_authority_preserves_the_complete_notary_profile() {
-        let agent_id = "did:web:agent.example";
-        let controller_id = "did:web:alice.example";
-        // The PCR id is subject-derived from the Agent DID, not chosen.
-        let realm_id =
-            arkret_sdk::principal_control_realm_id(&arkret_sdk::Did::new(agent_id).unwrap());
-        let realm_id = realm_id.as_str();
-        let accepted = crate::event_builders::build_managed_agent_pcr_bootstrap_events(
-            agent_id,
-            controller_id,
+    fn managed_agent_authority_lookup_fails_before_exact_pcr_create_exists() {
+        let error = crate::event_builders::build_managed_agent_pcr_bootstrap_events(
+            "did:web:agent.example",
+            "did:web:alice.example",
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
             arkret_sdk::EventId::new("ak:event:AStKv4uwui9iKv7StOHRotQgjBDBvjla-y05nQAwQaJf")
                 .unwrap(),
         )
-        .unwrap();
-        let mut target = event();
-        target.realm_id = arkret_sdk::RealmId::new(realm_id).unwrap();
-        target.scope_ref = arkret_sdk::ScopeRef::Realm {
-            realm_id: target.realm_id.clone(),
-        };
-        target.actor_id = arkret_sdk::Did::new(agent_id).unwrap();
-        target.executed_by = Some(arkret_sdk::Did::new(controller_id).unwrap());
-        target.authorization_ref = Some(
-            arkret_sdk::AuthorizationRef::new("did:web:agent.example#managed-controller").unwrap(),
+        .expect_err("authority lookup must wait for an exact PCR create");
+        assert!(
+            error
+                .to_string()
+                .contains("authoritative event-derived PCR id")
         );
-
-        let authority =
-            managed_agent_pcr_authority_set_ref_from_events(&target, &accepted).unwrap();
-        let expected = arkret_sdk::Hash::new(
-            arkret_sdk::canonical::canonical_sha256(&accepted[0].payload["object"]["notary"])
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(authority, expected);
-    }
-
-    // `test_guard` serializes the process-wide submitter fixture. These tests
-    // run on the `current_thread` flavor, so the std guard is never moved
-    // across executor threads and cannot deadlock the runtime.
-    #[allow(clippy::await_holding_lock)]
-    #[tokio::test(flavor = "current_thread")]
-    async fn managed_agent_pcr_genesis_submission_carries_controller_receipt() {
-        let _guard = test_guard();
-        let agent_id = "did:web:agent.example";
-        let controller_id = "did:web:alice.example";
-        let mut events = crate::event_builders::build_managed_agent_pcr_bootstrap_events(
-            agent_id,
-            controller_id,
-            "did:web:agent.example#managed-controller",
-            "ak:trust_domain:did.web.example",
-            arkret_sdk::EventId::new("ak:event:AStKv4uwui9iKv7StOHRotQgjBDBvjla-y05nQAwQaJf")
-                .unwrap(),
-        )
-        .unwrap();
-        let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
-            [42_u8; 32],
-            controller_id,
-            "ak:device:01964137-0000-7000-8000-000000000097",
-        ));
-        let _signer = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
-        let previous_proof_mode = crate::operation::current_proof_mode();
-        crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
-        let signed = crate::event_signer::sign_sdk_event_with_active_context(
-            &mut events[0],
-            crate::event_signer::EventProofContext::new(),
-        );
-        crate::operation::set_proof_mode(previous_proof_mode);
-        signed.unwrap();
-        let http = arkret_sdk::http_client::Client::builder("http://127.0.0.1:9/".parse().unwrap())
-            .allow_insecure_localhost()
-            .build()
-            .unwrap();
-
-        let submission = standard_initial_submission(&http, &events[0])
-            .await
-            .unwrap();
-
-        assert!(submission.authorization_lease.is_none());
-        assert!(submission.control_proposal_ack.is_some());
-    }
-
-    #[test]
-    fn managed_agent_pcr_authority_ignores_later_prestate_dependent_writes() {
-        let agent_id = arkret_sdk::Did::new("did:web:agent.example").unwrap();
-        let controller_id = arkret_sdk::Did::new("did:web:alice.example").unwrap();
-        // The PCR id is subject-derived from the Agent DID, not chosen.
-        let realm_id =
-            arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&agent_id)).unwrap();
-        let authorization_ref =
-            arkret_sdk::DidUrl::new("did:web:agent.example#managed-controller").unwrap();
-        let mut accepted = crate::event_builders::build_managed_agent_pcr_bootstrap_events(
-            agent_id.as_str(),
-            controller_id.as_str(),
-            authorization_ref.as_str(),
-            "ak:trust_domain:did.web.example",
-            arkret_sdk::EventId::new("ak:event:AStKv4uwui9iKv7StOHRotQgjBDBvjla-y05nQAwQaJf")
-                .unwrap(),
-        )
-        .unwrap();
-        accepted.push(
-            arkret_event_draft::build_agent_key_revoke_event(
-                &arkret_sdk::AgentKeyRevokePayload {
-                    agent_id: agent_id.clone(),
-                    key_id: arkret_sdk::NonEmptyString::new("runtime-1").unwrap(),
-                    revoked_by: controller_id.clone(),
-                    revoked_at: Utc::now(),
-                    reason: Some("replacement".to_owned()),
-                },
-                arkret_sdk::ScopeRef::Realm {
-                    realm_id: realm_id.clone(),
-                },
-                agent_id.clone(),
-                controller_id.clone(),
-                authorization_ref,
-                1,
-                arkret_sdk::Hlc::new("000000000001-0000-00000000").unwrap(),
-            )
-            .unwrap(),
-        );
-
-        let mut target = event();
-        target.realm_id = realm_id.clone();
-        target.scope_ref = arkret_sdk::ScopeRef::Realm { realm_id };
-        target.actor_id = agent_id;
-        target.executed_by = Some(controller_id);
-        target.authorization_ref = Some(
-            arkret_sdk::AuthorizationRef::new("did:web:agent.example#managed-controller").unwrap(),
-        );
-
-        managed_agent_pcr_authority_set_ref_from_events(&target, &accepted)
-            .expect("later frozen-pre-state writes must not redefine the genesis authority");
     }
 
     fn rebind_and_resign(lease: &mut AuthorizationLease, basis_ref: arkret_wire::LeaseBasisRef) {

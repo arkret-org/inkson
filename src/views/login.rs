@@ -875,7 +875,7 @@ async fn finish_oidc_callback(
             holder_jkt: dpop_handle.jkt().to_owned(),
             audience: principal_audience.to_string(),
             expires_at: handoff.expires_at,
-            lease_id: Some(lease.lease_id.clone()),
+            lease_id: Some(lease.identity_creation_lease_id.clone()),
             lease_fence: Some(lease.fence),
             lease_expires_at: Some(lease.expires_at),
             reserved_identity: lease

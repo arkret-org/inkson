@@ -7,6 +7,7 @@
 
 use dioxus::prelude::*;
 use dioxus_router::Link;
+use dioxus_router::hooks::use_navigator;
 
 use crate::recovery_crypto::{RecoveryKeyConfirmationDiff, recovery_key_confirmation_diff};
 use crate::routes::Route;
@@ -522,7 +523,8 @@ fn PendingAccountIdentityCreation(
     mut needs_device_authorization: Signal<bool>,
     mut device_authorization_check_complete: Signal<bool>,
 ) -> Element {
-    let state_store = crate::app::SessionContext::get().state_store;
+    let mut state_store = crate::app::SessionContext::get().state_store;
+    let navigator = use_navigator();
     let mut choice = use_signal(IdentityChoice::default);
     let mut recovery_key = use_signal(String::new);
     let mut confirmation = use_signal(String::new);
@@ -557,6 +559,13 @@ fn PendingAccountIdentityCreation(
     let Some(handoff) = handoff else {
         return rsx! {};
     };
+    let pending_abandonment = state_store
+        .read()
+        .pending_principal_registration()
+        .and_then(|checkpoint| checkpoint.identity_abandonment);
+    let abandonment_challenge_expired = pending_abandonment
+        .as_ref()
+        .is_some_and(|pending| pending.challenge.expires_at <= chrono::Utc::now());
 
     if let Some(retry_after_ms) = handoff.retry_after_ms {
         let retry_after_seconds = retry_after_ms.div_ceil(1_000).max(1);
@@ -589,12 +598,124 @@ fn PendingAccountIdentityCreation(
         1
     };
     let hosting_name = hosting_label(&handoff.principal_server_url);
+    let handoff_for_creation = handoff.clone();
+    let handoff_for_abandonment = handoff.clone();
 
     rsx! {
         div { class: "event onboarding-card", "data-testid": "account-handoff-onboarding",
             SetupProgress { current: current_step }
 
-            if choice() == IdentityChoice::Choose {
+            if let Some(pending_abandonment) = pending_abandonment {
+                div { class: "onboarding-heading",
+                    span { class: "eyebrow", "Explicit abandonment" }
+                    h2 { "Confirm giving up this provisional identity" }
+                    p { class: "muted",
+                        "The orphan anchor will be permanently unusable and cannot be deactivated or continued. A new identity root DID and PCR must be created."
+                    }
+                }
+                div { class: "callout warn",
+                    div { class: "body",
+                        strong { "This cannot be undone." }
+                        " Confirm only after re-authenticating the account."
+                    }
+                }
+                div { class: "onboarding-footer-actions",
+                    Link { class: "secondary", to: Route::Login, "Authenticate again" }
+                    if abandonment_challenge_expired {
+                        Button {
+                            variant: ButtonVariant::Primary,
+                            "data-testid": "restart-identity-abandonment-challenge",
+                            disabled: busy(),
+                            onclick: move |_| {
+                                let Some(handoff) = state_store.read().pending_account_handoff() else {
+                                    status.set("Authenticate the account again before renewing the abandonment challenge.".to_owned());
+                                    return;
+                                };
+                                let Some(mut checkpoint) = state_store.read().pending_principal_registration() else {
+                                    status.set("The provisional identity checkpoint is unavailable.".to_owned());
+                                    return;
+                                };
+                                busy.set(true);
+                                status.set("Renewing explicit abandonment challenge…".to_owned());
+                                spawn(async move {
+                                    let result = async {
+                                        let dpop = {
+                                            let mut store = state_store.write();
+                                            crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)?
+                                        };
+                                        let pending = crate::identity::identity_abandonment::issue_challenge(
+                                            &handoff,
+                                            &checkpoint,
+                                            &dpop,
+                                        ).await?;
+                                        checkpoint.identity_abandonment = Some(pending);
+                                        let barrier = {
+                                            let mut store = state_store.write();
+                                            store.set_pending_principal_registration(Some(checkpoint))?;
+                                            store.begin_durable_flush()?
+                                        };
+                                        barrier.wait().await?;
+                                        crate::identity::account_auth::clear_account_handoff_grant()
+                                    }.await;
+                                    match result {
+                                        Ok(()) => status.set("Challenge renewed. Authenticate once more with a fresh account handoff to confirm.".to_owned()),
+                                        Err(error) => status.set(format!("Could not renew abandonment challenge: {error}")),
+                                    }
+                                    busy.set(false);
+                                });
+                            },
+                            if busy() { "Renewing…" } else { "Renew expired challenge" }
+                        }
+                    } else {
+                        Button {
+                            variant: ButtonVariant::Primary,
+                            "data-testid": "confirm-identity-abandonment",
+                            disabled: busy(),
+                            onclick: move |_| {
+                                let Some(handoff) = state_store.read().pending_account_handoff() else {
+                                    status.set("Authenticate the account again before confirming abandonment.".to_owned());
+                                    return;
+                                };
+                                let Some(checkpoint) = state_store.read().pending_principal_registration() else {
+                                    status.set("The provisional identity checkpoint is unavailable.".to_owned());
+                                    return;
+                                };
+                                let pending = pending_abandonment.clone();
+                                let navigator = navigator.clone();
+                                busy.set(true);
+                                status.set("Confirming explicit abandonment…".to_owned());
+                                spawn(async move {
+                                    let result = async {
+                                        let dpop = {
+                                            let mut store = state_store.write();
+                                            crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)?
+                                        };
+                                        crate::identity::identity_abandonment::confirm(
+                                            &handoff,
+                                            &checkpoint,
+                                            &pending,
+                                            &dpop,
+                                        ).await?;
+                                        clear_pending_principal_setup(state_store).await
+                                    }.await;
+                                    match result {
+                                        Ok(()) => {
+                                            status.set("Provisional identity abandoned. Authenticate to create a new identity root.".to_owned());
+                                            navigator.push(Route::Login);
+                                        }
+                                        Err(error) => status.set(format!("Identity abandonment failed: {error}")),
+                                    }
+                                    busy.set(false);
+                                });
+                            },
+                            if busy() { "Confirming…" } else { "Permanently abandon identity" }
+                        }
+                    }
+                }
+                if !status().is_empty() {
+                    div { class: "form-hint-warn", role: "status", "{status}" }
+                }
+            } else if choice() == IdentityChoice::Choose {
                 div { class: "onboarding-heading",
                     span { class: "eyebrow", "Step 1" }
                     h2 { "Set up your identity" }
@@ -736,7 +857,7 @@ fn PendingAccountIdentityCreation(
                                 }
                             }
 
-                            let handoff = handoff.clone();
+                            let handoff = handoff_for_creation.clone();
                             let supplied_key = recovery_key();
                             let device = handoff.device_id.clone();
                             let base = handoff.principal_server_url.clone();
@@ -778,6 +899,49 @@ fn PendingAccountIdentityCreation(
                             });
                         },
                         if busy() { "Finishing…" } else { "Save and continue" }
+                    }
+                    if state_store.read().pending_principal_registration().is_some() {
+                        Button {
+                            variant: ButtonVariant::Secondary,
+                            "data-testid": "issue-identity-abandonment-challenge",
+                            disabled: busy(),
+                            onclick: move |_| {
+                                let Some(mut checkpoint) = state_store.read().pending_principal_registration() else {
+                                    status.set("No provisional identity is available to abandon.".to_owned());
+                                    return;
+                                };
+                                let handoff = handoff_for_abandonment.clone();
+                                busy.set(true);
+                                status.set("Issuing explicit abandonment challenge…".to_owned());
+                                spawn(async move {
+                                    let result = async {
+                                        let dpop = {
+                                            let mut store = state_store.write();
+                                            crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)?
+                                        };
+                                        let pending = crate::identity::identity_abandonment::issue_challenge(
+                                            &handoff,
+                                            &checkpoint,
+                                            &dpop,
+                                        ).await?;
+                                        checkpoint.identity_abandonment = Some(pending);
+                                        let barrier = {
+                                            let mut store = state_store.write();
+                                            store.set_pending_principal_registration(Some(checkpoint))?;
+                                            store.begin_durable_flush()?
+                                        };
+                                        barrier.wait().await?;
+                                        crate::identity::account_auth::clear_account_handoff_grant()
+                                    }.await;
+                                    match result {
+                                        Ok(()) => status.set("Challenge saved. Authenticate again with a fresh account handoff to confirm.".to_owned()),
+                                        Err(error) => status.set(format!("Could not issue abandonment challenge: {error}")),
+                                    }
+                                    busy.set(false);
+                                });
+                            },
+                            "Give up this provisional identity"
+                        }
                     }
                 }
             }
@@ -1013,6 +1177,7 @@ async fn create_and_bind_identity(
                 &checkpoint,
                 recovery_key,
                 &dpop,
+                state_store,
             )
             .await
             {
@@ -1234,13 +1399,13 @@ async fn finish_principal_setup(
     actor: &str,
     device: &str,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<()> {
     crate::identity::principal_registration::validate_checkpoint_recovery_key(
         registration,
         recovery_key,
     )?;
     let mut registration = registration.clone();
-    let mut active_session = session.to_owned();
+    let active_session = session.to_owned();
 
     if registration.stage != crate::state::PendingPrincipalRegistrationStage::Accepted {
         anyhow::bail!(
@@ -1248,21 +1413,85 @@ async fn finish_principal_setup(
         );
     }
 
+    let bootstrap_seal: arkret_sdk::Seal = match registration.pcr_bootstrap_seal.clone() {
+        Some(seal) => seal,
+        None => {
+            let unit: arkret_wire::PcrGenesisUnit = serde_json::from_value(
+                registration
+                    .pcr_genesis_unit
+                    .clone()
+                    .context("identity registration checkpoint omits its PCR genesis unit")?,
+            )?;
+            let signer = crate::event_signer::active_signer()
+                .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
+            if signer.device_id() != Some(device) {
+                anyhow::bail!("active signer does not match the founding PCR device");
+            }
+            let hlc = crate::signing_stamp::issue_protocol_hlc(
+                actor,
+                device,
+                unit.create().realm_id.as_str(),
+            )?;
+            let seal = signer
+                .sign_self_principal_bootstrap_seal(unit.create(), unit.founding_authorize(), hlc)
+                .map_err(|error| anyhow::anyhow!("sign principal bootstrap Seal: {error}"))?;
+            registration.pcr_bootstrap_seal = Some(seal.clone());
+            let barrier = {
+                let mut store = state_store.write();
+                store.set_pending_principal_registration(Some(registration.clone()))?;
+                store.begin_durable_flush()?
+            };
+            barrier.wait().await?;
+            seal
+        }
+    };
+
     let recovery_actor = actor.to_owned();
     let recovery_device = device.to_owned();
     let recovery_key_value = recovery_key.to_owned();
-    let backup_id =
-        crate::transport::auth::with_authed_api(base_url, active_session, |api| async move {
-            crate::recovery_strand::ensure_recovery_policy_and_did_recovery_backup(
-                &api,
-                &recovery_actor,
-                &recovery_device,
-                &recovery_key_value,
-            )
-            .await
-        })
+    let principal_control_realm_id = bootstrap_seal.realm_id.clone();
+    let bootstrap_seal_for_submit = bootstrap_seal.clone();
+    crate::transport::auth::with_authed_api(base_url, active_session, |api| async move {
+        crate::recovery_strand::submit_principal_bootstrap_seal(&api, &bootstrap_seal_for_submit)
+            .await?;
+        crate::recovery_strand::ensure_recovery_policy(
+            &api,
+            &recovery_actor,
+            &recovery_device,
+            &principal_control_realm_id,
+            &recovery_key_value,
+        )
         .await
-        .map_err(|error| anyhow::anyhow!(error.display()))?;
+    })
+    .await
+    .map_err(|error| anyhow::anyhow!(error.display()))?;
+    registration
+        .advance_registration_stage(
+            crate::state::PendingPrincipalRegistrationStage::RecoveryMaterialComplete,
+        )
+        .map_err(anyhow::Error::msg)?;
+    let pcr_genesis_unit: arkret_wire::PcrGenesisUnit = serde_json::from_value(
+        registration
+            .pcr_genesis_unit
+            .clone()
+            .context("recovery-material evidence omits PCR genesis unit")?,
+    )?;
+    let recovery_material_evidence = crate::state::RecoveryMaterialEvidence {
+        principal_id: arkret_sdk::Did::new(actor.to_owned())?,
+        device_id: arkret_sdk::DeviceId::new(device.to_owned())?,
+        principal_control_realm_id: bootstrap_seal.realm_id.clone(),
+        pcr_genesis_unit,
+        bootstrap_seal,
+    };
+    {
+        let barrier = {
+            let mut store = state_store.write();
+            store.set_pending_principal_registration(Some(registration))?;
+            store.set_recovery_material_evidence(Some(recovery_material_evidence))?;
+            store.begin_durable_flush()?
+        };
+        barrier.wait().await?;
+    }
     crate::event_submit::remember_verified_recovery_gate(actor, device);
     crate::views::recovery::save_generated_recovery_key_metadata(
         &mut state_store,
@@ -1275,7 +1504,7 @@ async fn finish_principal_setup(
     let recovery_metadata_barrier = state_store.read().begin_durable_flush()?;
     recovery_metadata_barrier.wait().await?;
     crate::identity::account_auth::clear_prepared_identity_creation_request()?;
-    Ok(backup_id)
+    Ok(())
 }
 
 #[component]

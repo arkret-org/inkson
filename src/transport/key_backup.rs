@@ -278,7 +278,6 @@ impl crate::transport::TransportClient {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(|value| match value {
-                "did_recovery" => Ok(arkret_sdk::BackupKind::DidRecovery),
                 "secret_storage" => Ok(arkret_sdk::BackupKind::SecretStorage),
                 "mls_history" => Ok(arkret_sdk::BackupKind::MlsHistory),
                 other => Err(anyhow::anyhow!("unknown backup_kind `{other}`")),

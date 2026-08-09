@@ -195,30 +195,6 @@ pub(super) fn reset_card_detail_edit(
     card_detail_edit_status.set(String::new());
 }
 
-pub(super) fn sidecar_private_track_card(
-    source: &KanbanCard,
-    private_strand_id: &str,
-    raw_operations: &[RawOperationRecord],
-    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
-) -> KanbanCard {
-    let mut private = source.clone();
-    private.id = private_strand_id.to_owned();
-    private.primary_strand_id = private_strand_id.to_owned();
-    private.body.clear();
-    private.synthesis.clear();
-    private.body_locked = false;
-    private.synthesis_locked = false;
-    private.security_encrypted = Some(true);
-    for update in raw_operations
-        .iter()
-        .filter_map(|record| local_card_update_from_raw_operation(record, decrypt_ctx))
-        .filter(|update| update.strand_id == private_strand_id)
-    {
-        apply_card_update_overlay(&mut private, &update);
-    }
-    private
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn save_card_detail_edit(
     base_url: String,

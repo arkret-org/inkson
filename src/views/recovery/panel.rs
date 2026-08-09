@@ -541,7 +541,7 @@ pub fn RecoveryPanel(
                 if backup_rows().is_empty() {
                     div { class: "muted", "data-testid": "restore-empty",
                         if restore_loaded_once() {
-                            "No server backups found. Recovery is incomplete until an active policy and did_recovery backup exist."
+                            "No encrypted server backups found. Recovery policy status is checked separately."
                         } else {
                             "No backup times loaded yet."
                         }

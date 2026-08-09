@@ -161,9 +161,43 @@ pub fn decrypt_application_payload_for_effective_scope(
     payload: &arkret_sdk::EncryptedPayload,
     circle_id: Option<&str>,
 ) -> Option<Vec<u8>> {
-    let circle = circle_id
-        .map(str::trim)
-        .filter(|circle_id| !circle_id.is_empty());
+    let realm = arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?;
+    let effective_scope = match circle_id.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(circle_id) => arkret_sdk::ScopeRef::Circle {
+            realm_id: realm,
+            circle_id: arkret_sdk::CircleId::new(circle_id.to_owned()).ok()?,
+        },
+        None => arkret_sdk::ScopeRef::Realm { realm_id: realm },
+    };
+    decrypt_application_payload_for_scope(
+        state_store,
+        secure_store,
+        realm_id,
+        actor_id,
+        device_id,
+        payload,
+        &effective_scope,
+    )
+}
+
+pub fn decrypt_application_payload_for_scope(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    payload: &arkret_sdk::EncryptedPayload,
+    effective_scope: &arkret_sdk::ScopeRef,
+) -> Option<Vec<u8>> {
+    if effective_scope.realm_id_opt()?.as_str() != realm_id {
+        return None;
+    }
+    let circle = match effective_scope {
+        arkret_sdk::ScopeRef::Circle { circle_id, .. } => Some(circle_id.as_str()),
+        arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Sidecar { .. } => None,
+        _ => return None,
+    };
+    let sidecar_scoped = matches!(effective_scope, arkret_sdk::ScopeRef::Sidecar { .. });
     let digest = payload.payload_digest.as_str();
     if let Some(plaintext) = state_store.mls_decrypted_plaintext_for(realm_id, digest) {
         return Some(plaintext);
@@ -182,12 +216,11 @@ pub fn decrypt_application_payload_for_effective_scope(
     // `history_secret` — so a never-Welcomed joiner (no snapshot) can still read
     // granted history via the group-free standalone path below. When no snapshot
     // is present we skip straight to tier-3 history decrypt.
-    let Some(snapshot) = state_store.mls_snapshot_for_effective_scope(realm_id, circle) else {
-        let plaintext = circle
-            .is_none()
+    let Some(snapshot) = state_store.mls_snapshot_for_scope(effective_scope) else {
+        let plaintext = (!sidecar_scoped && circle.is_none())
             .then(|| try_history_decrypt_standalone(state_store, realm_id, payload))
             .flatten();
-        if plaintext.is_none() && circle.is_none() {
+        if plaintext.is_none() && circle.is_none() && !sidecar_scoped {
             warn_mls_decrypt_once(
                 realm_id,
                 digest,
@@ -201,7 +234,7 @@ pub fn decrypt_application_payload_for_effective_scope(
     let secret = match load_device_snapshot_secret(secure_store, actor_id, device_id) {
         Ok(secret) => secret,
         Err(error) => {
-            if circle.is_none() {
+            if circle.is_none() && !sidecar_scoped {
                 warn_mls_decrypt_once(
                     realm_id,
                     digest,
@@ -220,7 +253,7 @@ pub fn decrypt_application_payload_for_effective_scope(
     let mut group = match crate::mls::persistence::restore_envelope(&snapshot, &secret, 0) {
         Ok(group) => group,
         Err(error) => {
-            if circle.is_none() {
+            if circle.is_none() && !sidecar_scoped {
                 warn_mls_decrypt_once(
                     realm_id,
                     digest,
@@ -275,11 +308,10 @@ pub fn decrypt_application_payload_for_effective_scope(
             // payload's epoch and decrypt it as `mls_exporter_aead_v1` content.
             // This is group-free, so it works whether or not the snapshot could
             // ratchet to the payload's epoch.
-            let plaintext = circle
-                .is_none()
+            let plaintext = (!sidecar_scoped && circle.is_none())
                 .then(|| try_history_decrypt_standalone(state_store, realm_id, payload))
                 .flatten();
-            if plaintext.is_none() && circle.is_none() {
+            if plaintext.is_none() && circle.is_none() && !sidecar_scoped {
                 warn_mls_decrypt_once(
                     realm_id,
                     digest,
@@ -301,8 +333,11 @@ pub fn decrypt_application_payload_for_effective_scope(
     let advanced = export_receive_chain_envelope(&group, realm_id, &secret, &snapshot);
     match advanced {
         Ok(envelope) => {
-            state_store.advance_mls_receive_chain_for_effective_scope(
-                realm_id, circle, envelope, digest, &plaintext,
+            state_store.advance_mls_receive_chain_for_scope(
+                effective_scope,
+                envelope,
+                digest,
+                &plaintext,
             );
         }
         Err(err) => {
@@ -1317,24 +1352,17 @@ fn verify_welcome_governance_binding(
                 .to_owned(),
         );
     }
-    let request = crate::mls::governance_proof::proof_request(
+    let request = crate::mls::governance_proof::proof_request_for_scope(
         state_store,
-        realm_id,
-        binding.circle_id().map(|circle_id| circle_id.as_str()),
+        binding.effective_scope().clone(),
         binding.mls_group_id(),
         binding.previous_epoch(),
         binding.next_epoch(),
     )?;
     let verified = crate::mls::governance_proof::cached_verified_binding(state_store, &request)?;
-    let proof_binding = if binding.sidecar_binding().is_some() {
-        crate::mls::governance_proof::strip_sidecar_scope(&binding)
-            .map_err(|error| error.to_string())?
-    } else {
-        binding.clone()
-    };
-    if verified != proof_binding {
+    if verified != binding {
         return Err(
-            "durable Welcome governance binding base differs from the locally verified Seal proof"
+            "durable Welcome governance binding differs from the locally verified Seal proof"
                 .to_owned(),
         );
     }
@@ -1563,7 +1591,23 @@ pub fn apply_welcome_messages_with_device_snapshot(
         // generation/nonce reuse on the next send) and desync `expected_prev_epoch`
         // from the server. Skip when we already hold an equal-or-higher epoch for
         // the same group.
-        if let Some(existing) = state_store.mls_snapshot_for(realm_id)
+        let welcome_binding = welcome_value_for_governance
+            .get("governance_binding")
+            .cloned()
+            .and_then(|value| {
+                serde_json::from_value::<arkret_sdk::MlsGovernanceBindingPayload>(value).ok()
+            });
+        let Some(effective_scope) = welcome_binding
+            .as_ref()
+            .map(|binding| binding.effective_scope().clone())
+        else {
+            outcome.record_failure(
+                "Welcome governance binding disappeared before persistence".to_owned(),
+            );
+            continue;
+        };
+        if let Some(existing) =
+            state_store.mls_snapshot_for_scope_and_group(&effective_scope, &post_state.group_id)
             && existing.group_id == post_state.group_id
             && existing.epoch >= post_state.epoch
         {
@@ -1601,9 +1645,8 @@ pub fn apply_welcome_messages_with_device_snapshot(
                     continue;
                 }
             };
-            if let Err(error) = state_store.record_mls_group_state_ref_for_effective_scope(
-                realm_id,
-                None,
+            if let Err(error) = state_store.record_mls_group_state_ref_for_scope(
+                &effective_scope,
                 &post_state.group_id,
                 post_state.epoch,
                 commit_ref,
@@ -1612,7 +1655,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
                 continue;
             }
         }
-        state_store.save_mls_snapshot(realm_id.to_owned(), snapshot);
+        state_store.save_mls_snapshot_for_scope(&effective_scope, snapshot);
         // Retain the claimed KeyPackage private state until redelivery has
         // quiesced. The server-side package is single-use, but the durable
         // to-device queue may replay the same Welcome before its ACK lands; the
@@ -1693,8 +1736,9 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
+    let effective_scope = runtime_effective_scope(realm_id, circle, sidecar_binding)?;
     let snapshot = state_store
-        .mls_snapshot_for_effective_scope(realm_id, circle)
+        .mls_snapshot_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
@@ -1704,9 +1748,11 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
-    ensure_realm_membership_is_covered_for_send(state_store, realm_id, circle, &group)?;
-    let use_exporter_aead =
-        realm_content_scheme_is_exporter_aead_for_send(state_store, realm_id, circle)?;
+    if sidecar_binding.is_none() {
+        ensure_realm_membership_is_covered_for_send(state_store, realm_id, circle, &group)?;
+    }
+    let use_exporter_aead = sidecar_binding.is_none()
+        && realm_content_scheme_is_exporter_aead_for_send(state_store, realm_id, circle)?;
     let should_commit = should_force_epoch_advance(
         state_store.realm_projection_is_minimal_metadata(realm_id),
         snapshot.epoch_started_at,
@@ -1816,7 +1862,7 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     new_envelope = new_envelope
         .carry_epoch_started_at(&snapshot)
         .with_app_messages_observed(snapshot.app_messages_observed.saturating_add(sent));
-    state_store.save_mls_snapshot_for_effective_scope(realm_id.to_owned(), circle, new_envelope);
+    state_store.save_mls_snapshot_for_scope(&effective_scope, new_envelope);
     Ok((
         schedule_hash,
         member_dids,
@@ -1876,8 +1922,9 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
+    let effective_scope = runtime_effective_scope(realm_id, circle, sidecar_binding)?;
     let snapshot = state_store
-        .mls_snapshot_for_effective_scope(realm_id, circle)
+        .mls_snapshot_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     // SEC-08 (§2.9) — fail-closed: a `minimal_metadata_realm` message MUST use
     // `aad_visibility=hidden`. Enforce before any optional commit/encrypt so a
@@ -1892,9 +1939,11 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
-    ensure_realm_membership_is_covered_for_send(state_store, realm_id, circle, &group)?;
-    let use_exporter_aead =
-        realm_content_scheme_is_exporter_aead_for_send(state_store, realm_id, circle)?;
+    if sidecar_binding.is_none() {
+        ensure_realm_membership_is_covered_for_send(state_store, realm_id, circle, &group)?;
+    }
+    let use_exporter_aead = sidecar_binding.is_none()
+        && realm_content_scheme_is_exporter_aead_for_send(state_store, realm_id, circle)?;
     let should_commit = should_force_epoch_advance(
         is_minimal_metadata,
         snapshot.epoch_started_at,
@@ -2006,7 +2055,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     new_envelope = new_envelope
         .carry_epoch_started_at(&snapshot)
         .with_app_messages_observed(snapshot.app_messages_observed.saturating_add(sent));
-    state_store.save_mls_snapshot_for_effective_scope(realm_id.to_owned(), circle, new_envelope);
+    state_store.save_mls_snapshot_for_scope(&effective_scope, new_envelope);
     Ok((
         schedule_hash,
         member_dids,
@@ -2083,10 +2132,10 @@ fn self_update_with_verified_governance_binding(
                 "MLS commit requires the current governance binding predecessor".to_owned(),
             )
         })?;
-    let request = crate::mls::governance_proof::proof_request(
+    let effective_scope = runtime_effective_scope(realm_id, circle_id, sidecar_binding)?;
+    let request = crate::mls::governance_proof::proof_request_for_scope(
         state_store,
-        realm_id,
-        circle_id,
+        effective_scope,
         group.group_id(),
         group.epoch(),
         group.epoch().saturating_add(1),
@@ -2106,6 +2155,30 @@ fn self_update_with_verified_governance_binding(
         envelope,
         previous_governance_binding,
     })
+}
+
+fn runtime_effective_scope(
+    realm_id: &str,
+    circle_id: Option<&str>,
+    sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
+) -> Result<arkret_sdk::ScopeRef, MlsRuntimeError> {
+    let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
+        .map_err(|error| MlsRuntimeError::Serialize(format!("invalid MLS Realm id: {error}")))?;
+    if let Some(binding) = sidecar_binding {
+        return Ok(arkret_sdk::ScopeRef::Sidecar {
+            realm_id,
+            sidecar_id: binding.sidecar_id.clone(),
+        });
+    }
+    match circle_id.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(circle_id) => Ok(arkret_sdk::ScopeRef::Circle {
+            realm_id,
+            circle_id: arkret_sdk::CircleId::new(circle_id.to_owned()).map_err(|error| {
+                MlsRuntimeError::Serialize(format!("invalid MLS Circle id: {error}"))
+            })?,
+        }),
+        None => Ok(arkret_sdk::ScopeRef::Realm { realm_id }),
+    }
 }
 
 /// SEC-08 — fail-closed committer-side assertion that a `minimal_metadata_realm`

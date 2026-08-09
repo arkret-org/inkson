@@ -117,7 +117,6 @@ pub(crate) fn build_sidecar_mls_admission_events_from_claims(
     state_store: &LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    circle_id: &str,
     actor_id: &str,
     device_id: &str,
     claims: &[(arkret_sdk::KeyPackageClaimRecord, String)],
@@ -127,7 +126,7 @@ pub(crate) fn build_sidecar_mls_admission_events_from_claims(
         state_store,
         secure_store,
         realm_id,
-        Some(circle_id),
+        None,
         actor_id,
         device_id,
         claims,
@@ -168,18 +167,15 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
             sidecar_binding.clone(),
         )
         .map_err(|err| err.user_message())?;
-    let commit = match (circle_id, sidecar_binding) {
-        (Some(circle_id), Some(binding)) => {
-            crate::mls::group_events::mls_commit_event_from_store_for_effective_scope_with_sidecar_binding(
-                state_store,
-                realm_id,
-                circle_id,
-                actor_id,
-                &add.commit,
-                &previous_governance_binding,
-                binding,
-            )?
-        }
+    let commit = match sidecar_binding.as_ref() {
+        Some(binding) => crate::mls::group_events::mls_commit_event_from_store_for_sidecar_scope(
+            state_store,
+            realm_id,
+            actor_id,
+            &add.commit,
+            &previous_governance_binding,
+            binding.clone(),
+        )?,
         _ => crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
             state_store,
             realm_id,
@@ -227,7 +223,13 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
         .build_sdk_event("inkson")
         .map_err(|err| format!("MLS Welcome SDK Event conversion failed: {err}"))?;
         let mut welcome = welcome;
-        if let Some(circle_id) = circle_id {
+        if let Some(binding) = sidecar_binding.as_ref() {
+            welcome.scope_ref = arkret_sdk::ScopeRef::Sidecar {
+                realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())
+                    .map_err(|error| format!("invalid Sidecar MLS Realm id: {error}"))?,
+                sidecar_id: binding.sidecar_id.clone(),
+            };
+        } else if let Some(circle_id) = circle_id {
             welcome.scope_ref =
                 crate::mls::group_events::circle_effective_scope(realm_id, circle_id)?;
         }

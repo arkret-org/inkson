@@ -104,13 +104,13 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     let messages_for_composer_lookup = &messages_snapshot;
     let selected_channel_value = active_sidecar_session
         .as_ref()
-        .map(|session| session.private_strand_id.clone())
+        .map(|session| session.source_strand_id.clone())
         .unwrap_or_else(|| (controller.selected_channel)());
     let selected_channel_info = active_sidecar_session
         .as_ref()
         .map(|session| {
             let mut channel = selected_channel_info.clone().unwrap_or(ChannelEntity {
-                strand_id: session.private_strand_id.clone(),
+                strand_id: session.source_strand_id.clone(),
                 name: "Private Sidecar".to_owned(),
                 kind: "discussion".to_owned(),
                 category: "discussion".to_owned(),
@@ -121,14 +121,10 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 security_encrypted: Some(true),
                 scope_circle: None,
             });
-            channel.strand_id = session.private_strand_id.clone();
+            channel.strand_id = session.source_strand_id.clone();
             channel.is_private_sidecar = true;
             channel.security_encrypted = Some(true);
-            channel.scope_circle = Some(StrandScopeCircle {
-                circle_id: session.backing_scope_circle_id.to_string(),
-                title: "Private Sidecar".to_owned(),
-                member_count: session.addressed_agent_ids.len().saturating_add(1) as u32,
-            });
+            channel.scope_circle = None;
             channel
         })
         .or(selected_channel_info);
@@ -1230,22 +1226,35 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             Ok(Some(sidecar)) => {
                                                 let OwnedAgentSidecarEnsureResult {
                                                     sidecar_id,
-                                                    backing_scope_circle_id,
-                                                    private_strand_id,
-                                                    private_relation_id,
                                                     view: sidecar_view,
                                                 } = sidecar;
                                                 let addressed_agent_ids = owned_agent_ids_from_mentions(
                                                     &resolved_mentions,
                                                     &actor,
                                                 );
+                                                let native_scope = arkret_sdk::ScopeRef::Sidecar {
+                                                    realm_id: sidecar_view.sidecar.realm_id.clone(),
+                                                    sidecar_id: sidecar_id.clone(),
+                                                };
+                                                let native_mls_ready = sidecar_view
+                                                    .mls_context
+                                                    .mls_group_id
+                                                    .as_ref()
+                                                    .is_some_and(|group_id| {
+                                                        state_store
+                                                            .read()
+                                                            .mls_snapshot_for_scope_and_group(
+                                                                &native_scope,
+                                                                group_id.as_str(),
+                                                            )
+                                                            .is_some()
+                                                    });
                                                 let addressed_agent_label = sidecar_agent_label(
                                                     &addressed_agent_ids,
                                                     &participants_for_sidecar,
                                                 );
-                                                let private_strand_id = private_strand_id.to_string();
                                                 status_msg
-                                                    .set("Private Sidecar ready".to_owned());
+                                                    .set("Native Sidecar reserved".to_owned());
                                                 sidecar_session.set(Some(crate::sidecar::HostedSidecarState {
                                                     trace_id,
                                                     controller_id: actor.clone(),
@@ -1254,12 +1263,10 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     source_realm_id: realm.clone(),
                                                     source_strand_id: strand_id.clone(),
                                                     sidecar_id,
-                                                    backing_scope_circle_id,
-                                                    private_strand_id,
-                                                    private_relation_id: private_relation_id.to_string(),
                                                     access_readiness: sidecar_view.access_readiness,
                                                     pending_access_reconciliations: sidecar_view.pending_access_reconciliations.clone(),
                                                     mls_context: sidecar_view.mls_context,
+                                                    native_mls_ready,
                                                     display_mode: arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
                                                     migrated_draft: body_for_resolution,
                                                     opened_at: chrono::Utc::now(),
@@ -1649,22 +1656,35 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             Ok(Some(sidecar)) => {
                                                 let OwnedAgentSidecarEnsureResult {
                                                     sidecar_id,
-                                                    backing_scope_circle_id,
-                                                    private_strand_id,
-                                                    private_relation_id,
                                                     view: sidecar_view,
                                                 } = sidecar;
                                                 let addressed_agent_ids = owned_agent_ids_from_mentions(
                                                     &resolved_mentions,
                                                     &actor_for_sidecar,
                                                 );
+                                                let native_scope = arkret_sdk::ScopeRef::Sidecar {
+                                                    realm_id: sidecar_view.sidecar.realm_id.clone(),
+                                                    sidecar_id: sidecar_id.clone(),
+                                                };
+                                                let native_mls_ready = sidecar_view
+                                                    .mls_context
+                                                    .mls_group_id
+                                                    .as_ref()
+                                                    .is_some_and(|group_id| {
+                                                        state_store
+                                                            .read()
+                                                            .mls_snapshot_for_scope_and_group(
+                                                                &native_scope,
+                                                                group_id.as_str(),
+                                                            )
+                                                            .is_some()
+                                                    });
                                                 let addressed_agent_label = sidecar_agent_label(
                                                     &addressed_agent_ids,
                                                     &participants_for_sidecar,
                                                 );
-                                                let private_strand_id = private_strand_id.to_string();
                                                 status_msg
-                                                    .set("Private Sidecar ready".to_owned());
+                                                    .set("Native Sidecar reserved".to_owned());
                                                 sidecar_session.set(Some(crate::sidecar::HostedSidecarState {
                                                     trace_id,
                                                     controller_id: actor_for_sidecar.clone(),
@@ -1673,12 +1693,10 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     source_realm_id: realm_for_sidecar.clone(),
                                                     source_strand_id: strand_for_sidecar.clone(),
                                                     sidecar_id,
-                                                    backing_scope_circle_id,
-                                                    private_strand_id,
-                                                    private_relation_id: private_relation_id.to_string(),
                                                     access_readiness: sidecar_view.access_readiness,
                                                     pending_access_reconciliations: sidecar_view.pending_access_reconciliations.clone(),
                                                     mls_context: sidecar_view.mls_context,
+                                                    native_mls_ready,
                                                     display_mode: arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
                                                     migrated_draft: body_for_resolution,
                                                     opened_at: chrono::Utc::now(),
@@ -1704,7 +1722,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         return;
                                     }
                                     let local_id = new_chat_local_id();
-                                    let private_strand_id = session.private_strand_id.clone();
+                                    let source_strand_id = session.source_strand_id.clone();
                                     messages.write().push(ChatMessage {
                                         realm_id: session.source_realm_id.clone(),
                                         id: local_id.clone(),
@@ -1714,7 +1732,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         body: body.clone(),
                                         timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                                         created_at: Some(chrono::Utc::now()),
-                                        strand_id: private_strand_id.clone(),
+                                        strand_id: source_strand_id.clone(),
                                         reply_to: None,
                                         reactions: Vec::new(),
                                         redacted: false,
@@ -1780,7 +1798,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                 &device_id_for_sidecar,
                                                 &session.source_realm_id,
                                                 &session.source_strand_id,
-                                                &private_strand_id,
+                                                &source_strand_id,
                                                 source_frontier_anchor.as_deref(),
                                                 &body,
                                                 &resolved_mentions,
@@ -1823,7 +1841,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     });
                                     return;
                                 }
-                                let (sidecar_circle_id, sidecar_binding) = (None, None);
                                 // P2: preserve the composer's reply target on the
                                 // encrypted path (it was silently dropped before).
                                 let reply_to = reply_to_message()
@@ -2000,13 +2017,10 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     &message_id,
                                     reply_to.as_deref(),
                                     &secure_content_bytes,
-                                    // sidecar_native writes carry NO exchange
-                                    // binding (spec §7.2 sidecar_native rule),
-                                    // so no encrypted_metadata plaintext here.
                                     None,
                                     None,
-                                    sidecar_circle_id.as_deref(),
-                                    sidecar_binding,
+                                    None,
+                                    None,
                                 ) {
                                     Ok(build) => build,
                                     Err(message) => {
@@ -2034,7 +2048,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 );
                                 let base = base.clone();
                                 let realm_for_record = realm.clone();
-                                let is_sidecar_native_send = sidecar_circle_id.is_some();
                                 let device_for_sidecar_backup = did.clone();
                                 // X9: capture identifiers needed by the
                                 // encrypted Ok(resp) arm to (A) clear the
@@ -2100,7 +2113,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         base.clone(),
                                         token_for_backup_trigger.clone(),
                                         actor_for_backup_trigger.clone(),
-                                        sidecar_circle_id.clone(),
+                                        None,
                                     )
                                     .await;
                                     let resp = match outcome {
@@ -2191,14 +2204,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         found.failed = false;
                                         found.error = None;
                                     }
-                                    if !is_sidecar_native_send {
-                                        frontier_state.set(resp_event_id.clone());
-                                    }
-                                    status_msg.set(if is_sidecar_native_send {
-                                        "Private Sidecar message sent".to_owned()
-                                    } else {
-                                        "Encrypted message sent".to_owned()
-                                    });
+                                    frontier_state.set(resp_event_id.clone());
+                                    status_msg.set("Encrypted message sent".to_owned());
                                     crate::components::schedule_mls_private_plaintext_backup_after_encrypted_write(
                                         base_for_backup_trigger.clone(),
                                         token_for_backup_trigger.clone(),

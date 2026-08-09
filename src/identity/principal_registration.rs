@@ -3,6 +3,7 @@
 use anyhow::{Context as _, anyhow};
 use arkret_sdk::EventPayloadExt as _;
 use chrono::{Timelike as _, Utc};
+use dioxus::prelude::WritableExt as _;
 use url::Url;
 
 use crate::state::{
@@ -45,12 +46,9 @@ pub fn prepare_registration_checkpoint(
             next_root_public_key_multibase: &key_material.next_root_public_key_multikey,
         },
     )?;
-    let draft_actor = arkret_sdk::Did::new(draft.did.clone())?;
-    let draft_realm = arkret_sdk::principal_control_realm_id(&draft_actor);
-    let genesis_hlc = crate::signing_stamp::issue_protocol_hlc_with_secret(
-        draft_actor.as_str(),
+    let genesis_hlc = crate::signing_stamp::issue_realm_genesis_hlc_with_secret(
+        &draft.did,
         device_id.trim(),
-        &draft_realm,
         &key_material.root_seed,
     )?
     .to_string();
@@ -66,6 +64,7 @@ pub fn prepare_registration_checkpoint(
         trust_domain: handoff.trust_domain.clone(),
         did: draft.did,
         version_id: draft.version_id,
+        identity_abandonment: None,
         root_public_key_multibase: draft.root_public_key_multibase,
         root_verification_method: draft.root_verification_method,
         next_root_public_key_multibase: draft.next_root_public_key_multibase,
@@ -75,12 +74,17 @@ pub fn prepare_registration_checkpoint(
             .clone(),
         backup_hpke_public_key_multibase: key_material.backup_hpke_public_key_multikey.clone(),
         recovery_key_fingerprint: crate::recovery_crypto::fingerprint_recovery_key(recovery_key),
+        did_entry0_canonical_base64url: arkret_sdk::base64url_encode(
+            &arkret_sdk::canonical::canonical_json_bytes(&draft.log_entry)?,
+        ),
         did_operation: serde_json::to_value(draft.submit_body)?,
         pcr_genesis_unit: None,
         initial_session: None,
         pcr_genesis_receipt: None,
+        pcr_bootstrap_seal: None,
         genesis_created_at: arkret_sdk::canonical::format_timestamp_canonical(created_at),
         genesis_hlc,
+        genesis_salt: arkret_sdk::GenesisSalt::generate()?.into_string(),
         binding_receipt: None,
         stage: PendingPrincipalRegistrationStage::CustodyConfirmed,
     })
@@ -159,11 +163,9 @@ pub fn recover_registration_checkpoint_from_reservation(
         .and_then(serde_json::Value::as_str)
         .context("reserved DID inception omits its root verification method")?
         .to_owned();
-    let realm = arkret_sdk::principal_control_realm_id(&reserved.principal_id);
-    let genesis_hlc = crate::signing_stamp::issue_protocol_hlc_with_secret(
+    let genesis_hlc = crate::signing_stamp::issue_realm_genesis_hlc_with_secret(
         reserved.principal_id.as_str(),
         handoff.device_id.trim(),
-        &realm,
         &key_material.root_seed,
     )?
     .to_string();
@@ -179,6 +181,7 @@ pub fn recover_registration_checkpoint_from_reservation(
         trust_domain: handoff.trust_domain.clone(),
         did: reserved.principal_id.to_string(),
         version_id,
+        identity_abandonment: None,
         root_public_key_multibase: key_material.root_public_key_multikey.clone(),
         root_verification_method,
         next_root_public_key_multibase: key_material.next_root_public_key_multikey.clone(),
@@ -188,12 +191,17 @@ pub fn recover_registration_checkpoint_from_reservation(
             .clone(),
         backup_hpke_public_key_multibase: key_material.backup_hpke_public_key_multikey.clone(),
         recovery_key_fingerprint: crate::recovery_crypto::fingerprint_recovery_key(recovery_key),
+        did_entry0_canonical_base64url: arkret_sdk::base64url_encode(
+            &arkret_sdk::canonical::canonical_json_bytes(&operation)?,
+        ),
         did_operation: serde_json::to_value(reserved.did_operation)?,
         pcr_genesis_unit: None,
         initial_session: None,
         pcr_genesis_receipt: None,
+        pcr_bootstrap_seal: None,
         genesis_created_at: arkret_sdk::canonical::format_timestamp_canonical(created_at),
         genesis_hlc,
+        genesis_salt: arkret_sdk::GenesisSalt::generate()?.into_string(),
         binding_receipt: None,
         stage: PendingPrincipalRegistrationStage::CustodyConfirmed,
     })
@@ -304,24 +312,16 @@ pub fn prepare_genesis_draft(
     }
 
     let principal_id = arkret_sdk::Did::new(checkpoint.did.clone())?;
-    let realm_id = arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&principal_id))?;
     let created_at = chrono::DateTime::parse_from_rfc3339(&checkpoint.genesis_created_at)
         .context("persisted genesis creation time is invalid")?
         .with_timezone(&Utc);
-    let authorize_hlc = crate::signing_stamp::issue_protocol_hlc_with_secret(
-        principal_id.as_str(),
-        &checkpoint.device_id,
-        realm_id.as_str(),
-        &key_material.root_seed,
-    )?;
     let unit = crate::identity::principal_genesis::build_genesis_unit(
         principal_id,
-        realm_id,
+        arkret_sdk::GenesisSalt::new(checkpoint.genesis_salt.clone())?,
         arkret_sdk::TypedTrustDomainId::new(checkpoint.trust_domain.clone())?,
         checkpoint.version_id.clone(),
         created_at,
         arkret_sdk::Hlc::new(checkpoint.genesis_hlc.clone())?,
-        authorize_hlc,
         &key_material.root_seed,
         &checkpoint.root_public_key_multibase,
         arkret_sdk::DeviceId::new(checkpoint.device_id.clone())?,
@@ -358,6 +358,7 @@ pub async fn complete_account_handoff_binding(
     checkpoint: &PendingPrincipalRegistration,
     recovery_key: &str,
     dpop: &crate::identity::account_auth::grant_dpop::DpopHandle,
+    mut state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
 ) -> anyhow::Result<IdentityBindingCompletion> {
     let expected_account_subject = handoff
         .account_subject
@@ -391,7 +392,7 @@ pub async fn complete_account_handoff_binding(
             .context("checkpoint omits initial session request")?,
     )?;
     let lease = arkret_sdk::IdentityCreationLease {
-        lease_id: checkpoint.lease_id.clone(),
+        identity_creation_lease_id: checkpoint.lease_id.clone(),
         fence: checkpoint.lease_fence,
         expires_at: handoff
             .lease_expires_at
@@ -468,6 +469,29 @@ pub async fn complete_account_handoff_binding(
         .pcr_genesis_receipt
         .clone()
         .context("Account Authority omitted PCR genesis receipt")?;
+
+    // Preserve the exact typed response before any follow-up resolution. A
+    // transient authority-history failure can be retried without discarding
+    // the signed proof or substituting a later response.
+    {
+        let mut durable = checkpoint.clone();
+        durable.binding_receipt = Some(serde_json::to_value(&binding_receipt)?);
+        durable.pcr_genesis_receipt = Some(serde_json::to_value(&pcr_genesis_receipt)?);
+        let barrier = {
+            let mut store = state_store.write();
+            store.set_pending_principal_registration(Some(durable))?;
+            store.begin_durable_flush()?
+        };
+        barrier.wait().await?;
+    }
+
+    verify_registration_terminal_evidence(
+        checkpoint,
+        &register_request,
+        &binding_receipt,
+        &account_client,
+    )
+    .await?;
     let grant = register_outcome
         .session_grant_outcome
         .context("Account Authority omitted initial Standard grant")?;
@@ -485,6 +509,71 @@ pub async fn complete_account_handoff_binding(
         session_private_key_pem,
         dpop_device_key,
     })
+}
+
+async fn verify_registration_terminal_evidence(
+    checkpoint: &PendingPrincipalRegistration,
+    request: &arkret_sdk::AccountRegisterRequestBody,
+    receipt: &arkret_sdk::AccountBindingReceipt,
+    account_client: &arkret_sdk::http_client::Client,
+) -> anyhow::Result<()> {
+    let authority_history = crate::identity::history::fetch_complete_identity_history(
+        account_client,
+        &receipt.account_authority_id,
+    )
+    .await
+    .context("fetch complete Account Authority DID history")?;
+    let authority_resolver =
+        crate::identity::history::FrozenAuthorityHistoryResolver::new(&authority_history)?;
+    garth::verify_binding_receipt_at_issuance(receipt, &authority_resolver)
+        .map_err(|error| anyhow!("verify Account Authority receipt at issuance: {error}"))?;
+
+    let principal_id = arkret_sdk::Did::new(checkpoint.did.clone())?;
+    let principal_client =
+        arkret_sdk::http_client::ClientBuilder::new(Url::parse(&checkpoint.principal_server_url)?)
+            .allow_insecure_localhost()
+            .build()?;
+    let history =
+        crate::identity::history::fetch_complete_identity_history(&principal_client, &principal_id)
+            .await
+            .context("fetch complete principal did.jsonl history")?;
+    if history.method != "did:webvh" || history.native_history != Some(true) {
+        anyhow::bail!("principal history is not a native did:webvh history");
+    }
+    let entry0 = history
+        .entries
+        .first()
+        .context("principal did.jsonl is empty after accepted registration")?;
+    let observed_entry0 =
+        arkret_sdk::base64url_encode(&arkret_sdk::canonical::canonical_json_bytes(entry0)?);
+    if observed_entry0 != checkpoint.did_entry0_canonical_base64url {
+        anyhow::bail!("principal did.jsonl entry 0 differs from the frozen inception bytes");
+    }
+
+    let did_operation: arkret_sdk::DidOperationSubmitRequestBody =
+        serde_json::from_value(checkpoint.did_operation.clone())?;
+    let frozen_entry =
+        serde_json::Value::Object(did_operation.operation.clone().into_iter().collect());
+    if entry0 != &frozen_entry {
+        anyhow::bail!("principal did.jsonl entry 0 differs from the frozen operation");
+    }
+    let validated =
+        arkret_sdk::signatures::webvh::validate_principal_inception_operation(&did_operation)
+            .map_err(|error| anyhow!("revalidate accepted principal inception: {error}"))?;
+    let registration = request
+        .identity_creation
+        .as_ref()
+        .context("identity-creation request lost its frozen registration")?;
+    if validated.principal_id != receipt.principal_id
+        || validated.operation_digest != receipt.operation_digest
+        || validated.log_head_digest != receipt.head_event_digest
+        || validated.did_version_id != registration.control_proof.did_version_id
+        || validated.log_head_digest != registration.control_proof.log_head_digest
+        || validated.control_key_digest != registration.control_proof.control_key_digest
+    {
+        anyhow::bail!("accepted DID history does not reproduce the signed registration pins");
+    }
+    Ok(())
 }
 
 #[cfg(test)]

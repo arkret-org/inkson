@@ -604,11 +604,10 @@ mod tests {
     }
 
     #[test]
-    fn local_index_search_excludes_known_sidecar_private_strands() {
+    fn local_index_search_does_not_hide_a_native_sidecar_source_strand() {
         let actor_id = "did:web:alice.example";
         let realm_id = "ak:realm:Af2ZEitZ_Nla84KWtbRYoWWmZopTUKtZlKf7sz4QHbfy".to_owned();
         let source_strand_id = "ak:strand:AavbN9CgiOJRw5dWi7yMN2_jReUUAXLb-_EF2y2WL8lz".to_owned();
-        let private_strand_id = "ak:strand:AXdAxsk7SCCmOD-PFAqpB6niI3wLXUfvBsBwG4NVUmRq".to_owned();
         let mut store = LocalStateStore::default();
         let pending = crate::sidecar::PendingSidecarSubmission {
             controller_id: actor_id.to_owned(),
@@ -616,16 +615,12 @@ mod tests {
                 "ak:sidecar:AW550jUB3z2wKhAvnsOXRVZTrs8UAJgTHWF5sxYI7TyI",
             )
             .unwrap(),
-            private_strand_id: private_strand_id.clone(),
-            backing_circle_id: arkret_sdk::CircleId::new(
-                "ak:circle:Acg6iB8ocZMFQV8PLom83qOVvRu_F8926x8rDw8RLFla",
-            )
-            .unwrap(),
+            source_strand_id: source_strand_id.clone(),
             exchange_id: arkret_sdk::AgentSidecarExchangeId::new("SearchPrivateStrand001").unwrap(),
             request_context: arkret_sdk::AgentSidecarExchangeRequestContext {
                 source_track_ref: arkret_sdk::AgentSidecarSourceTrackRef {
                     realm_id: arkret_sdk::RealmId::new(realm_id.clone()).unwrap(),
-                    strand_id: arkret_sdk::StrandId::new(source_strand_id).unwrap(),
+                    strand_id: arkret_sdk::StrandId::new(source_strand_id.clone()).unwrap(),
                     track_name: "discussion".to_owned(),
                 },
                 source_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
@@ -652,7 +647,7 @@ mod tests {
                     "actor_id": actor_id,
                     "created_at": "2026-07-29T00:00:00.000Z",
                     "content": {
-                        "strand_id": private_strand_id,
+                        "strand_id": source_strand_id,
                         "body": "sidecar-secret-search-needle"
                     }
                 }]}
@@ -670,7 +665,7 @@ mod tests {
             10,
         );
 
-        assert!(response.results.is_empty());
+        assert_eq!(response.results.len(), 1);
     }
 
     #[test]

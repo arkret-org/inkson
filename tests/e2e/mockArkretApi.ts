@@ -466,7 +466,7 @@ export async function mockArkretApi(
       backup_id: backupId,
       actor_id: accountPrincipalId,
       device_id: currentDeviceId,
-      backup_kind: "did_recovery",
+      backup_kind: "secret_storage",
       backup_version: "v1",
       created_at: "2026-07-29T00:00:02.000Z",
       ciphertext_digest: `sha256:${"b".repeat(64)}`,
@@ -4040,7 +4040,7 @@ export async function mockArkretApi(
     }
 
     // Recovery bootstrap publishes a signed policy and then uploads an
-    // encrypted did_recovery backup. The server mock stores only the public
+    // encrypted secret_storage backup. The server mock stores only the public
     // policy summary plus opaque backup bodies.
     if (url.pathname === "/_arkret/root/identity/recovery-policy") {
       const method = route.request().method().toUpperCase();

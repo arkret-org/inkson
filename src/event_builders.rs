@@ -555,42 +555,19 @@ pub fn build_realm_create_event(
 /// controller only executes the Event under the DID delegation returned by
 /// provisioning.
 pub fn build_managed_agent_pcr_create_event(
-    // The PCR id is subject-derived from `agent_id`; the caller no longer
-    // supplies it (spec realm-and-space.md section 2.5.0).
-    agent_id: &str,
-    controller_id: &str,
-    controller_authorization_ref: &str,
-    trust_domain: &str,
+    _agent_id: &str,
+    _controller_id: &str,
+    _controller_authorization_ref: &str,
+    _trust_domain: &str,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    let agent_did = arkret_sdk::Did::new(agent_id.to_owned())
-        .map_err(|error| anyhow::anyhow!("invalid managed Agent DID: {error}"))?;
-    let controller_did = arkret_sdk::Did::new(controller_id.to_owned())
-        .map_err(|error| anyhow::anyhow!("invalid managed Agent controller DID: {error}"))?;
-    let realm_id = arkret_sdk::RealmId::new(arkret_sdk::principal_control_realm_id(&agent_did))?;
-    let trust_domain = arkret_sdk::TypedTrustDomainId::new(trust_domain.to_owned())?;
-    let capability_action_registry_digest =
-        arkret_sdk::current_capability_action_registry_digest()?;
-    let payload = arkret_bootstrap::build_managed_agent_pcr_create_payload(
-        arkret_bootstrap::ManagedAgentPcrCreatePayloadInput {
-            agent_id: agent_did,
-            controller_id: controller_did.clone(),
-            realm_id,
-            trust_domain,
-            capability_action_registry_digest,
-            created_at: event_timestamp(),
-        },
-    )?;
-    let mut event = build_realm_create_event_from_object(agent_id, payload.object)?;
-    event.executed_by = Some(controller_did);
-    event.authorization_ref = Some(
-        arkret_sdk::AuthorizationRef::new(controller_authorization_ref.to_owned())
-            .map_err(anyhow::Error::msg)?,
-    );
-    Ok(event)
+    Err(crate::identity::principal_control::unavailable(
+        "managed Agent provision prepare",
+    ))
 }
 
 pub fn build_managed_agent_pcr_bootstrap_events(
-    // No realm_id input: the PCR id is subject-derived from `agent_id`.
+    // The committed provision DTO does not carry an exact create draft/Event,
+    // so this remains fail-closed until an event-derived id carrier exists.
     agent_id: &str,
     controller_id: &str,
     controller_authorization_ref: &str,
@@ -1564,75 +1541,25 @@ mod notary_derivation_tests {
     use super::*;
 
     #[test]
-    fn managed_agent_pcr_genesis_keeps_subject_and_executor_distinct() {
-        let event = build_managed_agent_pcr_create_event(
+    fn managed_agent_pcr_prepare_fails_without_an_exact_create_draft() {
+        let error = build_managed_agent_pcr_create_event(
             "did:web:agent.example",
             "did:web:alice.example",
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
         )
-        .unwrap();
+        .expect_err("provision prepare cannot predict an event-derived PCR id");
 
-        assert_eq!(event.actor_id.as_str(), "did:web:agent.example");
-        assert_eq!(
-            event.executed_by.as_ref().map(arkret_sdk::Did::as_str),
-            Some("did:web:alice.example")
-        );
-        assert_eq!(
-            event.authorization_ref.as_deref(),
-            Some("did:web:agent.example#managed-controller")
-        );
         assert!(
-            event
-                .refs
-                .iter()
-                .all(|reference| reference.role != arkret_bootstrap::DID_INCEPTION_REF_ROLE)
+            error
+                .to_string()
+                .contains("authoritative event-derived PCR id")
         );
-        assert_eq!(
-            event.payload["object"]["purpose"],
-            arkret_sdk::MANAGED_AGENT_CONTROL_PURPOSE
-        );
-        assert!(event.payload["object"].get("genesis_salt").is_none());
-        assert!(
-            event.payload["object"]
-                .get("content_encryption_floor")
-                .is_none()
-        );
-        assert_eq!(
-            event.payload["object"]["notary"]["did"],
-            event.actor_id.as_str()
-        );
-        assert!(event.payload["object"].get("created_at").is_none());
-        // v1 carries no producer `effects[]`. The genesis leaf set is what the
-        // receiver derives from the registered `ak.realm.create` contract, so
-        // assert the projection itself: the canonical five genesis cells, in the
-        // order `arkret_bootstrap` derives them, with the create-log entry
-        // appending this Realm id at issuer_seq 0.
-        let writes = crate::operation::direct_registered_cell_writes(&event).unwrap();
-        assert_eq!(
-            writes
-                .iter()
-                .map(|write| write.cell.as_str())
-                .collect::<Vec<_>>(),
-            vec![
-                arkret_bootstrap::REALM_GENESIS_CELL,
-                arkret_bootstrap::REALM_CREATE_CELL,
-                arkret_bootstrap::REALM_NOTARY_CELL,
-                arkret_bootstrap::REALM_REDUCER_PROFILE_CELL,
-                arkret_bootstrap::REALM_AUTHORITY_ROOT_CELL,
-            ]
-        );
-        assert_eq!(writes[1].op.op_type, arkret_sdk::LatticeOpType::Append);
-        assert_eq!(
-            writes[1].op.value.as_ref(),
-            Some(&Value::String(event.realm_id.to_string()))
-        );
-        assert_eq!(writes[1].op.issuer_seq, Some(0));
     }
 
     #[test]
-    fn managed_agent_pcr_bootstrap_is_delegated_create_only() {
-        let events = build_managed_agent_pcr_bootstrap_events(
+    fn managed_agent_pcr_bootstrap_fails_closed_without_an_exact_create_draft() {
+        let error = build_managed_agent_pcr_bootstrap_events(
             "did:web:agent.example",
             "did:web:alice.example",
             "did:web:agent.example#managed-controller",
@@ -1640,24 +1567,12 @@ mod notary_derivation_tests {
             arkret_sdk::EventId::new("ak:event:AStKv4uwui9iKv7StOHRotQgjBDBvjla-y05nQAwQaJf")
                 .unwrap(),
         )
-        .unwrap();
+        .expect_err("bootstrap cannot predict an event-derived PCR id");
 
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].kind.as_str(), "ak.realm.create");
-        assert_eq!(
-            events[0].executed_by.as_ref().map(arkret_sdk::Did::as_str),
-            Some("did:web:alice.example")
-        );
-        assert_eq!(
-            events[0].authorization_ref.as_deref(),
-            Some("did:web:agent.example#managed-controller")
-        );
         assert!(
-            arkret_bootstrap::materialize_managed_agent_pcr_control(
-                &events,
-                &crate::operation::cell_write_projector,
-            )
-            .is_ok()
+            error
+                .to_string()
+                .contains("authoritative event-derived PCR id")
         );
     }
 
@@ -1816,15 +1731,19 @@ mod notary_derivation_tests {
     }
 
     #[test]
-    fn managed_agent_pcr_create_candidate_matches_closed_schema() {
-        let event = build_managed_agent_pcr_create_event(
+    fn managed_agent_pcr_create_candidate_is_unavailable_without_registered_carrier() {
+        let error = build_managed_agent_pcr_create_event(
             "did:web:agent.example",
             "did:web:alice.example",
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
         )
-        .unwrap();
-        assert_realm_candidate_matches_closed_schema(&event);
+        .expect_err("managed Agent create must remain unavailable");
+        assert!(
+            error
+                .to_string()
+                .contains("authoritative event-derived PCR id")
+        );
     }
 
     #[test]

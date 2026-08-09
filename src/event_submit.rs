@@ -14,11 +14,11 @@ use arkret_sdk::ErrorEnvelope;
 use arkret_sdk::events::{CbaEffectPlane, cba_cell_family_plane};
 use garth::outbound::BoxOutboundFuture;
 use garth::{
-    OutboundEngine, OutboundEngineOutcome, OutboundGenerationFenceDecision, OutboundPostAcceptHook,
-    OutboundSubmitOutcome, OutboundSubmitter, QueuedAuthoredEventAttempt as AuthoredEventAttempt,
-    QueuedEventIntent as EventIntent, QueuedPostAcceptAction as PostAcceptAction,
-    QueuedRealmBootstrap, QueuedRecord, QueuedSdkEvent, ScheduledSendDispatchRecord,
-    ScheduledSendSubmissionState,
+    MlsAdmissionStage, OutboundEngine, OutboundEngineOutcome, OutboundGenerationFenceDecision,
+    OutboundPostAcceptHook, OutboundSubmitOutcome, OutboundSubmitter,
+    QueuedAuthoredEventAttempt as AuthoredEventAttempt, QueuedEventIntent as EventIntent,
+    QueuedPostAcceptAction as PostAcceptAction, QueuedRealmBootstrap, QueuedRecord, QueuedSdkEvent,
+    ScheduledSendDispatchRecord, ScheduledSendSubmissionState,
 };
 #[cfg(test)]
 use reqwest::StatusCode;
@@ -102,6 +102,9 @@ async fn persist_post_accept_action(
             realm_id,
             actor_id,
             device_id,
+            stage: _,
+            commit_ingress_receipts: _,
+            commit_was_duplicate: _,
             welcomes: _,
             snapshot,
         } => (realm_id, snapshot, Some((actor_id, device_id))),
@@ -177,6 +180,202 @@ struct EventOutboundSubmitter<'a> {
 }
 
 impl EventOutboundSubmitter<'_> {
+    async fn verify_covering_seal(&self, event: &arkret_sdk::Event) -> anyhow::Result<()> {
+        let digest = arkret_sdk::Hash::new(event.event_digest()?)?;
+        let outcome = self
+            .owner
+            .http
+            .events_resolve(&arkret_sdk::EventsResolveRequestBody {
+                event_ids: vec![event.event_id.clone()],
+                event_digests: vec![digest.clone()],
+                seal_refs: Vec::new(),
+                include_payload: Some(true),
+            })
+            .await?;
+        let resolved = outcome
+            .events
+            .iter()
+            .find(|candidate| candidate.event_id == event.event_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Event {} is durable but has no accepted covering Seal yet",
+                    event.event_id
+                )
+            })?;
+        if arkret_sdk::canonical::canonical_json_bytes(resolved)?
+            != arkret_sdk::canonical::canonical_json_bytes(event)?
+            || arkret_sdk::Hash::new(resolved.event_digest()?)? != digest
+        {
+            anyhow::bail!(
+                "events.resolve returned different canonical bytes for Event {}",
+                event.event_id
+            );
+        }
+        if !outcome.seals.iter().any(|seal| {
+            seal.realm_id == event.realm_id
+                && seal.delta.contains(&digest)
+                && seal.covered_event_digests.contains(&digest)
+        }) {
+            anyhow::bail!(
+                "Event {} is not covered by any returned accepted Seal",
+                event.event_id
+            );
+        }
+        Ok(())
+    }
+
+    async fn resume_mls_admission(
+        &self,
+        mut queued: QueuedSdkEvent,
+    ) -> garth::Result<OutboundSubmitOutcome> {
+        let commit = queued
+            .authored_attempt
+            .as_ref()
+            .ok_or_else(|| {
+                garth::Error::Protocol("MLS admission lost its authored Commit".to_owned())
+            })?
+            .envelope
+            .clone();
+        let stage = match queued.post_accept.as_ref() {
+            Some(PostAcceptAction::MlsAdmission { stage, .. }) => *stage,
+            _ => {
+                return Err(garth::Error::Protocol(
+                    "MLS admission resume called for a non-admission item".to_owned(),
+                ));
+            }
+        };
+
+        match stage {
+            MlsAdmissionStage::CommitPending => Err(garth::Error::Protocol(
+                "commit-pending admission must use the Commit transport path".to_owned(),
+            )),
+            MlsAdmissionStage::CommitAcceptedWaitingSeal => {
+                if let Err(error) = self.verify_covering_seal(&commit).await {
+                    return Ok(OutboundSubmitOutcome::RetryAfter {
+                        delay: Duration::from_secs(1),
+                        reason: format!("MLS Commit finality pending: {error:#}"),
+                    });
+                }
+                let Some(PostAcceptAction::MlsAdmission {
+                    stage, welcomes, ..
+                }) = queued.post_accept.as_mut()
+                else {
+                    unreachable!("admission action was matched above")
+                };
+                *welcomes = self
+                    .owner
+                    .prepare_sdk_events_batch(welcomes.clone())
+                    .await
+                    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+                *stage = MlsAdmissionStage::WelcomesAuthored;
+                Ok(OutboundSubmitOutcome::Prepared {
+                    record: QueuedRecord::SdkEvent(queued),
+                })
+            }
+            MlsAdmissionStage::WelcomesAuthored => {
+                let welcomes = match queued.post_accept.as_ref() {
+                    Some(PostAcceptAction::MlsAdmission { welcomes, .. }) => welcomes.clone(),
+                    _ => unreachable!("admission action was matched above"),
+                };
+                for welcome in &welcomes {
+                    let canonical_body_bytes = arkret_sdk::canonical::canonical_json_bytes(welcome)
+                        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+                    let idempotency_key = welcome.event_id.to_string();
+                    if let Err(error) = self
+                        .owner
+                        .post_persisted_signed_sdk_event(
+                            welcome,
+                            &idempotency_key,
+                            &canonical_body_bytes,
+                        )
+                        .await
+                    {
+                        return Ok(OutboundSubmitOutcome::RetryAfter {
+                            delay: mls_admission_welcome_retry_delay(&error),
+                            reason: format!("immutable MLS Welcome remains queued: {error:#}"),
+                        });
+                    }
+                }
+                let Some(PostAcceptAction::MlsAdmission { stage, .. }) =
+                    queued.post_accept.as_mut()
+                else {
+                    unreachable!("admission action was matched above")
+                };
+                *stage = MlsAdmissionStage::WelcomesAcceptedWaitingSeal;
+                Ok(OutboundSubmitOutcome::Prepared {
+                    record: QueuedRecord::SdkEvent(queued),
+                })
+            }
+            MlsAdmissionStage::WelcomesAcceptedWaitingSeal => {
+                let (welcomes, receipts, duplicate) = match queued.post_accept.as_ref() {
+                    Some(PostAcceptAction::MlsAdmission {
+                        welcomes,
+                        commit_ingress_receipts,
+                        commit_was_duplicate,
+                        ..
+                    }) => (
+                        welcomes.clone(),
+                        commit_ingress_receipts.clone(),
+                        *commit_was_duplicate,
+                    ),
+                    _ => unreachable!("admission action was matched above"),
+                };
+                for welcome in &welcomes {
+                    if let Err(error) = self.verify_covering_seal(welcome).await {
+                        return Ok(OutboundSubmitOutcome::RetryAfter {
+                            delay: Duration::from_secs(1),
+                            reason: format!("MLS Welcome finality pending: {error:#}"),
+                        });
+                    }
+                }
+                if let Err(error) = persist_post_accept_action(
+                    self.state_store.as_ref(),
+                    queued
+                        .post_accept
+                        .as_ref()
+                        .expect("MLS admission action remains present")
+                        .clone(),
+                    commit.event_id.clone(),
+                )
+                .await
+                {
+                    return Ok(OutboundSubmitOutcome::RetryAfter {
+                        delay: Duration::from_secs(60),
+                        reason: format!(
+                            "MLS admission state persistence remains repairable: {error}"
+                        ),
+                    });
+                }
+                let result = SubmitEventResult {
+                    event_id: commit.event_id.to_string(),
+                    status: if duplicate {
+                        arkret_sdk::EventsSubmitStatus::Duplicate
+                    } else {
+                        arkret_sdk::EventsSubmitStatus::Accepted
+                    },
+                    cursor: String::new(),
+                    ingress_receipts: receipts.clone(),
+                };
+                self.results
+                    .accepted
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .insert(queued.local_operation_id.clone(), result);
+                if duplicate {
+                    Ok(OutboundSubmitOutcome::Duplicate {
+                        event_id: commit.event_id,
+                        ingress_receipts: receipts,
+                    })
+                } else {
+                    Ok(OutboundSubmitOutcome::Accepted {
+                        event_id: commit.event_id,
+                        ingress_receipts: receipts,
+                    })
+                }
+            }
+        }
+    }
+
     async fn submit_realm_bootstrap(
         &self,
         item: garth::SendQueueItem,
@@ -249,6 +448,77 @@ impl EventOutboundSubmitter<'_> {
                     }
                 }
             }
+            direct @ QueuedRealmBootstrap::DirectConversationPrepared { .. } => {
+                let submission = direct.direct_conversation_submission()?.ok_or_else(|| {
+                    garth::Error::Protocol(
+                        "Direct Conversation queue record lost its frozen submission".to_owned(),
+                    )
+                })?;
+                if let Some(outcome) = direct.direct_conversation_accepted_outcome()? {
+                    if !direct
+                        .direct_conversation_founding_finality_confirmed()?
+                        .unwrap_or(false)
+                    {
+                        for submitted in &submission.events {
+                            if let Err(error) = self.verify_covering_seal(&submitted.event).await {
+                                return Ok(OutboundSubmitOutcome::RetryAfter {
+                                    delay: Duration::from_secs(2),
+                                    reason: format!(
+                                        "Direct Conversation founding accepted but not final: {error:#}"
+                                    ),
+                                });
+                            }
+                        }
+                        let prepared =
+                            direct.with_direct_conversation_founding_finality_confirmed()?;
+                        return Ok(OutboundSubmitOutcome::Prepared {
+                            record: QueuedRecord::RealmBootstrap(prepared),
+                        });
+                    }
+                    let event_id = outcome.event_ids[0].clone();
+                    return Ok(match outcome.status {
+                        arkret_sdk::direct_conversation_ops::DirectConversationFoundingAcceptanceStatus::Accepted => {
+                            OutboundSubmitOutcome::Accepted {
+                                event_id,
+                                ingress_receipts: Vec::new(),
+                            }
+                        }
+                        arkret_sdk::direct_conversation_ops::DirectConversationFoundingAcceptanceStatus::Duplicate => {
+                            OutboundSubmitOutcome::Duplicate {
+                                event_id,
+                                ingress_receipts: Vec::new(),
+                            }
+                        }
+                    });
+                }
+                match self
+                    .owner
+                    .http
+                    .direct_conversation_founding_submit(&submission)
+                    .await
+                {
+                    Ok(outcome) => {
+                        let prepared = direct.with_direct_conversation_accepted_outcome(outcome)?;
+                        Ok(OutboundSubmitOutcome::Prepared {
+                            record: QueuedRecord::RealmBootstrap(prepared),
+                        })
+                    }
+                    Err(error) => {
+                        let error = anyhow::Error::from(error);
+                        let reason = format!("{error:#}");
+                        if let Some(delay) = outbound_retry_delay(&error) {
+                            Ok(OutboundSubmitOutcome::RetryAfter { delay, reason })
+                        } else {
+                            self.results
+                                .rejected
+                                .lock()
+                                .unwrap_or_else(PoisonError::into_inner)
+                                .insert(item.transaction_id, error);
+                            Ok(OutboundSubmitOutcome::Rejected { reason })
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -297,6 +567,13 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                     record: QueuedRecord::SdkEvent(queued),
                 });
             }
+            if matches!(
+                queued.post_accept.as_ref(),
+                Some(PostAcceptAction::MlsAdmission { stage, .. })
+                    if *stage != MlsAdmissionStage::CommitPending
+            ) {
+                return self.resume_mls_admission(queued).await;
+            }
             let attempt = queued.authored_attempt.as_ref().ok_or_else(|| {
                 garth::Error::Protocol("prepared outbound Event has no authored attempt".to_owned())
             })?;
@@ -311,59 +588,23 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                 .await
             {
                 Ok(result) => {
-                    // The admission queue item is not accepted until every
-                    // bound Welcome has also been delivered. A failure here
-                    // leaves the same immutable commit + Welcome material in
-                    // Garth; retry confirms the commit as duplicate and resumes
-                    // the Welcome before the post-accept snapshot is installed.
-                    if let Some(action @ PostAcceptAction::MlsAdmission { welcomes, .. }) =
-                        queued.post_accept.as_ref()
+                    // Ingress acceptance is not Commit finality. Freeze this
+                    // boundary first, then a later queue pass waits until the
+                    // accepted Realm Seal head crosses the Commit basis.
+                    if let Some(PostAcceptAction::MlsAdmission {
+                        stage,
+                        commit_ingress_receipts,
+                        commit_was_duplicate,
+                        ..
+                    }) = queued.post_accept.as_mut()
                     {
-                        for welcome in welcomes {
-                            let canonical_body_bytes =
-                                arkret_sdk::canonical::canonical_json_bytes(welcome)
-                                    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-                            let idempotency_key = welcome.event_id.to_string();
-                            if let Err(error) = self
-                                .owner
-                                .post_persisted_signed_sdk_event(
-                                    welcome,
-                                    &idempotency_key,
-                                    &canonical_body_bytes,
-                                )
-                                .await
-                            {
-                                let reason = format!("{error:#}");
-                                // The Commit is already accepted and cannot be
-                                // rolled back. Never terminally discard its
-                                // exact Welcome material: even a deterministic
-                                // rejection must remain durably diagnosable and
-                                // retryable after server/policy repair, or the
-                                // sender would be stranded on the old epoch.
-                                let delay = mls_admission_welcome_retry_delay(&error);
-                                return Ok(OutboundSubmitOutcome::RetryAfter { delay, reason });
-                            }
-                        }
-                        let accepted_event_id = arkret_sdk::EventId::new(result.event_id.clone())
-                            .map_err(|error| {
-                            garth::Error::Protocol(format!(
-                                "accepted MLS commit Event id is invalid: {error}"
-                            ))
-                        })?;
-                        if let Err(error) = persist_post_accept_action(
-                            self.state_store.as_ref(),
-                            action.clone(),
-                            accepted_event_id,
-                        )
-                        .await
-                        {
-                            return Ok(OutboundSubmitOutcome::RetryAfter {
-                                delay: Duration::from_secs(60),
-                                reason: format!(
-                                    "MLS admission state persistence remains repairable: {error}"
-                                ),
-                            });
-                        }
+                        *stage = MlsAdmissionStage::CommitAcceptedWaitingSeal;
+                        *commit_ingress_receipts = result.ingress_receipts.clone();
+                        *commit_was_duplicate =
+                            result.status == arkret_sdk::EventsSubmitStatus::Duplicate;
+                        return Ok(OutboundSubmitOutcome::Prepared {
+                            record: QueuedRecord::SdkEvent(queued),
+                        });
                     }
                     let event_id =
                         arkret_sdk::EventId::new(result.event_id.clone()).map_err(|error| {
@@ -757,6 +998,149 @@ impl EventSubmitter {
         }
     }
 
+    /// Persist a fully signed Direct Conversation first-valid unit before the
+    /// first HTTP write and replay its exact canonical body until the source
+    /// service returns the slot-closing receipt. The receipt is frozen first;
+    /// then every Event must resolve with its exact accepted covering Seal
+    /// before the same queue record can become `Sent`.
+    pub(crate) async fn submit_direct_conversation_founding_durable(
+        &self,
+        submission: arkret_sdk::direct_conversation_ops::DirectConversationFoundingUnitSubmission,
+    ) -> anyhow::Result<
+        arkret_sdk::direct_conversation_ops::DirectConversationFoundingAcceptanceOutcome,
+    > {
+        let _single_writer = outbound_submit_lock().lock().await;
+        let queued = QueuedRealmBootstrap::direct_conversation_prepared(submission)?;
+        let first = queued.authority_context_event()?;
+        let actor_id = first.actor_id.clone();
+        let realm_id = first.realm_id.clone();
+        let local_operation_id = match &queued {
+            QueuedRealmBootstrap::DirectConversationPrepared {
+                local_operation_id, ..
+            } => local_operation_id.clone(),
+            _ => unreachable!("constructor returns DirectConversationPrepared"),
+        };
+        let expected_submission = queued
+            .direct_conversation_submission()?
+            .expect("constructor stores a Direct Conversation submission");
+        let expected_submission_bytes =
+            arkret_sdk::canonical::canonical_json_bytes(&expected_submission)?;
+        let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
+            actor_id.as_str(),
+        )?);
+        let existing = outbound
+            .snapshot()
+            .await?
+            .items
+            .into_iter()
+            .find(|item| item.transaction_id == local_operation_id);
+        if let Some(existing) = existing {
+            let QueuedRecord::RealmBootstrap(record) = &existing.record else {
+                anyhow::bail!(
+                    "Direct Conversation founding idempotency key belongs to another record type"
+                );
+            };
+            let stored_submission = record
+                .direct_conversation_submission()?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Direct Conversation founding idempotency key belongs to an ordinary Realm bootstrap"
+                    )
+                })?;
+            if arkret_sdk::canonical::canonical_json_bytes(&stored_submission)?
+                != expected_submission_bytes
+            {
+                anyhow::bail!(
+                    "Direct Conversation founding idempotency key was reused for different signed bytes"
+                );
+            }
+            if existing.status == garth::SendQueueStatus::Sent {
+                return record
+                    .direct_conversation_accepted_outcome()?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "sent Direct Conversation founding record lost its acceptance receipt"
+                        )
+                    });
+            }
+            if matches!(
+                existing.status,
+                garth::SendQueueStatus::Cancelled
+                    | garth::SendQueueStatus::Superseded
+                    | garth::SendQueueStatus::LeaseExpired
+            ) {
+                anyhow::bail!(
+                    "Direct Conversation founding attempt is terminal in the durable queue"
+                );
+            }
+        } else {
+            outbound
+                .enqueue_scoped(
+                    Some(local_operation_id.clone()),
+                    realm_id,
+                    actor_id,
+                    QueuedRecord::RealmBootstrap(queued),
+                    Vec::new(),
+                )
+                .await?;
+        }
+
+        let results = OutboundAttemptResults::default();
+        let submitter = EventOutboundSubmitter {
+            owner: self,
+            results: &results,
+            state_store: None,
+        };
+        loop {
+            let fence = self.resolve_queue_generation_fence(&outbound).await?;
+            match outbound
+                .submit_next_with_fence(&submitter, &fence, chrono::Utc::now())
+                .await?
+            {
+                OutboundEngineOutcome::Prepared(_) | OutboundEngineOutcome::Superseded { .. } => {
+                    continue;
+                }
+                OutboundEngineOutcome::Accepted(item) | OutboundEngineOutcome::Duplicate(item)
+                    if item.transaction_id == local_operation_id =>
+                {
+                    let QueuedRecord::RealmBootstrap(record) = item.record else {
+                        anyhow::bail!(
+                            "Direct Conversation founding queue item changed record type"
+                        );
+                    };
+                    return record
+                        .direct_conversation_accepted_outcome()?
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "Direct Conversation founding queue lost its accepted receipt"
+                            )
+                        });
+                }
+                OutboundEngineOutcome::Rejected { item, reason }
+                | OutboundEngineOutcome::Terminal { item, reason }
+                | OutboundEngineOutcome::Quarantined { item, reason }
+                    if item.transaction_id == local_operation_id =>
+                {
+                    anyhow::bail!("Direct Conversation founding rejected: {reason}");
+                }
+                OutboundEngineOutcome::RetryAt { item, .. }
+                    if item.transaction_id == local_operation_id =>
+                {
+                    return Err(DurablyQueuedError {
+                        event_id: local_operation_id,
+                    }
+                    .into());
+                }
+                OutboundEngineOutcome::Idle => {
+                    anyhow::bail!(
+                        "durable Direct Conversation founding disappeared from the outbound queue"
+                    );
+                }
+                _ => continue,
+            }
+        }
+    }
+
     async fn resolve_queue_generation_fence(
         &self,
         outbound: &OutboundEngine<crate::outbound_store::InksonOutboundStore>,
@@ -955,68 +1339,70 @@ impl EventSubmitter {
         &self,
         event: &arkret_sdk::Event,
     ) -> anyhow::Result<()> {
-        let cache_key = recovery_gate_cache_key(event);
-        let verification = async {
-            let policy: arkret_sdk::RecoveryPolicyActiveOutcome = self
-                .http
-                .get("/_arkret/root/identity/recovery-policy")
-                .await
-                .map_err(anyhow::Error::from)?;
-            let backups = self
-                .http
-                .list_key_backups(&arkret_sdk::KeyBackupsListQuery {
-                    series_id: None,
-                    backup_kind: Some(arkret_sdk::BackupKind::DidRecovery),
-                    cursor: None,
-                    limit: None,
-                })
-                .await
-                .map_err(anyhow::Error::from)?;
-            match crate::recovery_strand::first_backup_gate_status_from_payloads(
-                &serde_json::to_value(policy)?,
-                &serde_json::to_value(backups)?,
-            ) {
-                crate::recovery_strand::FirstBackupGateStatus::Satisfied { .. } => Ok(()),
-                crate::recovery_strand::FirstBackupGateStatus::Blocked(reason) => anyhow::bail!(
-                    "recovery_material_pending blocks post-bootstrap persistent write: {reason:?}"
-                ),
+        if !self.event_enters_post_bootstrap_e2ee_realm(event).await? {
+            return Ok(());
+        }
+        let accepted_principal_control_seal = recovery_gate_cache_key(event).is_some_and(|key| {
+            verified_recovery_gate_cache()
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .contains(&key)
+        });
+        let policy: arkret_sdk::RecoveryPolicyActiveOutcome = self
+            .http
+            .get("/_arkret/root/identity/recovery-policy")
+            .await
+            .map_err(anyhow::Error::from)?;
+        match crate::recovery_strand::first_backup_gate_status_from_payloads(
+            accepted_principal_control_seal,
+            &serde_json::to_value(policy)?,
+        ) {
+            crate::recovery_strand::FirstBackupGateStatus::Satisfied => Ok(()),
+            crate::recovery_strand::FirstBackupGateStatus::Blocked(reason) => {
+                anyhow::bail!("recovery_material_pending blocks E2EE Realm create/join: {reason:?}")
             }
         }
-        .await;
+    }
 
-        match verification {
-            Ok(()) => {
-                if let Some(cache_key) = cache_key {
-                    verified_recovery_gate_cache()
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .insert(cache_key);
-                }
-                Ok(())
-            }
-            Err(error)
-                if outbound_retry_delay(&error).is_some()
-                    && cache_key.as_ref().is_some_and(|cache_key| {
-                        verified_recovery_gate_cache()
-                            .lock()
-                            .unwrap_or_else(PoisonError::into_inner)
-                            .contains(cache_key)
-                    }) =>
-            {
-                Ok(())
-            }
-            Err(error) if outbound_retry_delay(&error).is_some() => Err(error.context(
-                format!(
-                    "retryable recovery-material verification failed without a verified cache entry (cache_key={}, entries={})",
-                    cache_key.is_some(),
-                    verified_recovery_gate_cache()
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .len(),
-                ),
-            )),
-            Err(error) => Err(error),
+    async fn event_enters_post_bootstrap_e2ee_realm(
+        &self,
+        event: &arkret_sdk::Event,
+    ) -> anyhow::Result<bool> {
+        fn is_e2ee_create(event: &arkret_sdk::Event) -> bool {
+            event.kind == arkret_sdk::EventKind::RealmCreate
+                && event
+                    .payload
+                    .get("object")
+                    .and_then(Value::as_object)
+                    .and_then(|object| object.get("encryption_profile"))
+                    .and_then(Value::as_str)
+                    == Some("mls_rfc9420")
+                && !matches!(
+                    event
+                        .payload
+                        .get("object")
+                        .and_then(Value::as_object)
+                        .and_then(|object| object.get("purpose"))
+                        .and_then(Value::as_str),
+                    Some("principal_control" | "managed_agent_control")
+                )
         }
+
+        if event.kind == arkret_sdk::EventKind::RealmCreate {
+            return Ok(is_e2ee_create(event));
+        }
+        let is_join = event.kind.as_str() == "ak.invite.accept"
+            || (event.kind.as_str() == "ak.member.state"
+                && event.payload.get("membership").and_then(Value::as_str) == Some("join"));
+        if !is_join {
+            return Ok(false);
+        }
+        let history = self
+            .http
+            .events_read_all_pages(event.realm_id.as_str())
+            .await
+            .map_err(anyhow::Error::from)?;
+        Ok(history.events.iter().any(is_e2ee_create))
     }
 
     /// Lazily fetch + cache the service describe for this submitter. Only the
@@ -1528,11 +1914,25 @@ impl EventSubmitter {
         }
         let _single_writer = outbound_submit_lock().lock().await;
         self.ensure_recovery_material_ready(&commit).await?;
-        let mut unit = Vec::with_capacity(1 + welcomes.len());
-        unit.push(commit);
-        unit.extend(welcomes);
-        let mut prepared = self.prepare_sdk_events_batch(unit).await?;
-        let signed_commit = prepared.remove(0);
+        // Only the Commit may be authored before finality. Welcome intents are
+        // persisted unsigned and become exact signed Events after an accepted
+        // or duplicate Commit response.
+        let original_commit_event_id = commit.event_id.clone();
+        let mut prepared_commit = self.prepare_sdk_events_batch(vec![commit]).await?;
+        let signed_commit = prepared_commit.remove(0);
+        let mut welcome_intents = welcomes;
+        let rewritten_commit =
+            BTreeMap::from([(original_commit_event_id, signed_commit.event_id.clone())]);
+        for welcome in &mut welcome_intents {
+            rewrite_event_id_references(welcome, &rewritten_commit);
+            welcome.actor_seq = 0;
+            welcome.prev_refs.clear();
+            welcome.hlc = None;
+            welcome.seal_basis = None;
+            welcome.seal_ref = None;
+            welcome.auth_context = None;
+            welcome.proofs.clear();
+        }
         let local_operation_id = signed_commit
             .unsigned
             .get("local_operation_idempotency_alias")
@@ -1574,7 +1974,10 @@ impl EventSubmitter {
                     realm_id,
                     actor_id,
                     device_id,
-                    welcomes: prepared,
+                    stage: MlsAdmissionStage::CommitPending,
+                    commit_ingress_receipts: Vec::new(),
+                    commit_was_duplicate: false,
+                    welcomes: welcome_intents,
                     snapshot: snapshot.into_queued(),
                 }),
             )?,
@@ -3971,6 +4374,9 @@ mod tests {
                 realm_id: realm_id.to_owned(),
                 actor_id: "did:web:alice.example".to_owned(),
                 device_id: "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
+                stage: MlsAdmissionStage::CommitPending,
+                commit_ingress_receipts: Vec::new(),
+                commit_was_duplicate: false,
                 welcomes: vec![welcome.clone()],
                 snapshot: snapshot.into_queued(),
             }),
@@ -4037,6 +4443,9 @@ mod tests {
             realm_id: realm_id.to_owned(),
             actor_id: "did:web:alice.example".to_owned(),
             device_id: "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
+            stage: MlsAdmissionStage::WelcomesAcceptedWaitingSeal,
+            commit_ingress_receipts: Vec::new(),
+            commit_was_duplicate: false,
             welcomes: vec![welcome],
             snapshot: snapshot.into_queued(),
         };

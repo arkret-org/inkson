@@ -65,7 +65,6 @@ fn chat_message_matches_protocol_id_after_server_rekeys_render_id() {
 fn delivered_exchange_projection_fixture(
     realm_id: &str,
     source_strand_id: &str,
-    _private_strand_id: &str,
     source_frontier_anchor: Option<&str>,
     request_event_id: &str,
 ) -> arkret_sdk::AgentSidecarExchangeProjection {
@@ -110,66 +109,17 @@ fn delivered_exchange_projection_fixture(
 }
 
 #[test]
-fn hosted_sidecar_projection_dedupes_echo_and_prefers_private_event() {
-    let shared = "ak:strand:source";
-    let private = "ak:strand:private";
-    let messages = vec![
-        sidecar_projection_message("ak:event:echo", shared, "echo overlay"),
-        sidecar_projection_message("ak:event:shared", shared, "shared"),
-        sidecar_projection_message("ak:event:echo", private, "private event"),
-        sidecar_projection_message("ak:event:private", private, "native private"),
-    ];
-
-    let merged = project_visible_messages(
-        &messages,
-        shared,
-        "ak:realm:test",
-        Some((
-            shared,
-            private,
-            arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
-        )),
-        &[],
-    );
-    assert_eq!(merged.len(), 3);
-    assert_eq!(merged[0].body, "private event");
-    assert_eq!(merged[0].strand_id, private);
-    assert_eq!(merged[1].body, "shared");
-    assert_eq!(merged[2].body, "native private");
-
-    let private_only = project_visible_messages(
-        &messages,
-        shared,
-        "ak:realm:test",
-        Some((
-            shared,
-            private,
-            arkret_sdk::AgentSidecarDisplayMode::SidecarOnly,
-        )),
-        &[],
-    );
-    assert_eq!(private_only.len(), 2);
-    assert!(
-        private_only
-            .iter()
-            .all(|message| message.strand_id == private)
-    );
-}
-
-#[test]
 fn source_routed_echo_is_private_and_stably_follows_its_anchor() {
     let realm = "ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5";
     let source = "ak:strand:ARbUzETAsZ3suuQ0GSmBWTsNjmUnTEEl_ZnDOUWRPm-N";
-    let private = "ak:strand:AcbZeQX0xMn0M0LtYe9f9_xr8Z7FPPgaq35ALTQg0tks";
     let anchor = "ak:event:ATrYU3cGlcWkAcHXWgJ8sIYfraoV9pIwEHNNStEqHvFh";
     let echo = "ak:event:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc";
     let later = "ak:event:AS7wchHFRbXWnMQPln42BrokXsPCf18uboKMm-yhYquI";
-    let projection =
-        delivered_exchange_projection_fixture(realm, source, private, Some(anchor), echo);
+    let projection = delivered_exchange_projection_fixture(realm, source, Some(anchor), echo);
     let messages = vec![
         sidecar_projection_message_for_realm(realm, anchor, source, "anchor"),
         sidecar_projection_message_for_realm(realm, later, source, "later shared"),
-        sidecar_projection_message_for_realm(realm, echo, private, "private echo"),
+        sidecar_projection_message_for_realm(realm, echo, source, "private echo"),
     ];
 
     let visible = project_visible_messages(&messages, source, realm, None, &[projection]);
@@ -181,22 +131,21 @@ fn source_routed_echo_is_private_and_stably_follows_its_anchor() {
             .collect::<Vec<_>>(),
         vec![anchor, echo, later]
     );
-    assert_eq!(visible[1].strand_id, private);
+    assert_eq!(visible[1].strand_id, source);
 }
 
 #[test]
 fn source_routed_echo_waits_until_its_anchor_is_visible() {
     let realm = "ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5";
     let source = "ak:strand:ARbUzETAsZ3suuQ0GSmBWTsNjmUnTEEl_ZnDOUWRPm-N";
-    let private = "ak:strand:AcbZeQX0xMn0M0LtYe9f9_xr8Z7FPPgaq35ALTQg0tks";
     let missing_anchor = "ak:event:ATrYU3cGlcWkAcHXWgJ8sIYfraoV9pIwEHNNStEqHvFh";
     let echo = "ak:event:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc";
     let mut projection =
-        delivered_exchange_projection_fixture(realm, source, private, Some(missing_anchor), echo);
+        delivered_exchange_projection_fixture(realm, source, Some(missing_anchor), echo);
     let messages = vec![sidecar_projection_message_for_realm(
         realm,
         echo,
-        private,
+        source,
         "private echo",
     )];
 

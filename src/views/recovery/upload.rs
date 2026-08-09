@@ -6,14 +6,14 @@ use crate::state::LocalStateStore;
 use crate::transport::auth::with_authed_api;
 
 /// After the caller has displayed the words and verified the offline copy,
-/// publish the active recovery policy and first `did_recovery` backup, then
-/// wrap the account MLS secret for the policy's dedicated HPKE recipient.
+/// publish the active recovery policy, then wrap the account MLS secret for
+/// the policy's dedicated HPKE recipient.
 /// Outcome of attempting to establish a freshly generated account Recovery Key
 /// on the server, reported back to the setup prompt so it can stay fail-closed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RecoveryKeyBackupOutcome {
-    /// Server accepted the recovery policy + DID-recovery (and, when present,
-    /// account-secret) backup. The caller may now persist public-only local
+    /// Server accepted the recovery policy and account-secret backup. The
+    /// caller may now persist public-only local
     /// metadata and clear the already-confirmed plaintext from memory.
     Established,
     /// The server refused because this session device is not an authorized,
@@ -59,7 +59,8 @@ pub(crate) fn upload_recovery_key_account_backup(
     };
     let needs_mls_backup_signal = crate::components::try_needs_mls_backup_signal();
     status.set(
-        "Cold custody confirmed — publishing recovery policy and DID recovery backup…".to_owned(),
+        "Cold custody confirmed — publishing recovery policy and encrypted recovery material…"
+            .to_owned(),
     );
     spawn(async move {
         let actor_for_sidecar = actor.clone();
@@ -68,14 +69,18 @@ pub(crate) fn upload_recovery_key_account_backup(
         let session_for_sidecar = session.clone();
         let mut state_store = state_store;
         let result = with_authed_api(&base, session, |api| async move {
-            let did_backup_id =
-                crate::recovery_strand::ensure_recovery_policy_and_did_recovery_backup(
-                    &api,
-                    &actor,
-                    &device,
-                    &recovery_secret,
-                )
-                .await?;
+            let actor_did = arkret_sdk::Did::new(actor.clone())?;
+            let http = api.sdk_http_client()?;
+            let principal_control_realm_id =
+                crate::identity::principal_control::resolve_accepted(&http, &actor_did).await?;
+            crate::recovery_strand::ensure_recovery_policy(
+                &api,
+                &actor,
+                &device,
+                &principal_control_realm_id,
+                &recovery_secret,
+            )
+            .await?;
             let secure = crate::secure_key_store::default_secure_key_store("inkson");
             crate::mls::runtime::load_or_create_account_mls_secret(
                 secure.as_ref(),
@@ -93,27 +98,22 @@ pub(crate) fn upload_recovery_key_account_backup(
                 )
                 .await?,
             );
-            Ok::<_, anyhow::Error>((did_backup_id, account_backup_id))
+            Ok::<_, anyhow::Error>(account_backup_id)
         })
         .await;
         match result {
-            Ok((did_backup_id, account_backup_id)) => {
+            Ok(account_backup_id) => {
                 // The caller already confirmed cold custody before invoking
                 // this function. Only public local metadata and the server fact
                 // that ciphertext exists are persisted after acceptance.
-                crate::event_submit::remember_verified_recovery_gate(
-                    &actor_for_sidecar,
-                    &device_for_sidecar,
-                );
                 if let Ok(mut store) = state_store.try_write() {
-                    let configured_backup_id = account_backup_id
-                        .as_deref()
-                        .unwrap_or(did_backup_id.as_str());
-                    crate::components::mark_mls_recovery_backup_configured(
-                        &mut store,
-                        &actor_for_sidecar,
-                        configured_backup_id,
-                    );
+                    if let Some(configured_backup_id) = account_backup_id.as_deref() {
+                        crate::components::mark_mls_recovery_backup_configured(
+                            &mut store,
+                            &actor_for_sidecar,
+                            configured_backup_id,
+                        );
+                    }
                 }
                 if account_backup_id.is_some()
                     && let Some(mut needs_mls_backup) = needs_mls_backup_signal
@@ -145,9 +145,9 @@ pub(crate) fn upload_recovery_key_account_backup(
                 }
                 if let Ok(mut slot) = status.try_write() {
                     *slot = if account_backup_id.is_some() {
-                        "Recovery Key generated; DID recovery and encrypted history are backed up. Write the 24 words down — they are the only way to restore on a new device.".to_owned()
+                        "Recovery Key generated; the recovery policy and encrypted account material are backed up. Write the 24 words down — they are the only way to restore on a new device.".to_owned()
                     } else {
-                        "Recovery Key generated and DID recovery backup is on the server. Encrypted content will be backed up to it automatically the first time you use encryption.".to_owned()
+                        "Recovery Key generated and the recovery policy is active. Encrypted content will be backed up automatically the first time you use encryption.".to_owned()
                     };
                 }
                 if let Some(handler) = on_server_configured {

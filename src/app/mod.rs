@@ -778,21 +778,13 @@ fn AppBootstrap() -> Element {
     } else {
         Vec::new()
     };
-    // The principal control / self Realm (device ledger, key log, and the
-    // holder's own private uploads — see key-management.md §4.1) is account
-    // infrastructure, not a collaboration workspace, so it MUST NOT show up in
-    // the sidebar realm list. Derive its canonical id from the account DID and
-    // hide that node plus its descendants, mirroring the direct-conversation
-    // filter below.
-    let self_realm_id: Option<String> = arkret_sdk::Did::new(account_did())
-        .ok()
-        .map(|did| arkret_sdk::principal_control_realm_id(&did));
+    // Direct-conversation Realms are hidden here. PCR filtering must consume
+    // an accepted create/binding projection; the current RealmTreeNode does
+    // not carry that evidence, so it must not guess from the account DID.
     let hidden_realm_tree_node_ids: BTreeSet<String> = loaded_realm_tree_nodes
         .iter()
         .filter(|node| {
-            node.kind == RealmTreeNodeKind::Realm
-                && (realm_tree_node_is_direct_conversation(node)
-                    || self_realm_id.as_deref() == Some(node.id.as_str()))
+            node.kind == RealmTreeNodeKind::Realm && realm_tree_node_is_direct_conversation(node)
         })
         .flat_map(|node| descendant_node_ids(&loaded_realm_tree_nodes, &node.id))
         .collect();

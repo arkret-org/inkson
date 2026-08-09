@@ -29,15 +29,16 @@ async fn current_backup_frontier_ref(
     device_id: &str,
 ) -> Result<arkret_sdk::KeyBackupFrontierRef> {
     let principal = Did::new(actor_id.to_owned())?;
-    let control_realm = arkret_sdk::principal_control_realm_id(&principal);
     let http = api.sdk_http_client()?;
+    let control_realm =
+        crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
     let trust_anchor = super::rotation_transaction::current_controller_backup_trust_anchor(
         &http, actor_id, device_id,
     )
     .await?;
     let frontier = api
         .event_submitter()?
-        .events_frontier_realm_seal_view(&control_realm)
+        .events_frontier_realm_seal_view(control_realm.as_str())
         .await?;
     Ok(arkret_sdk::KeyBackupFrontierRef {
         frontier_digest: frontier.control_event_set_root,
@@ -74,17 +75,19 @@ async fn ensure_initial_active_series(
     }
 
     let principal = Did::new(actor_id.to_owned())?;
-    let control_realm = arkret_sdk::principal_control_realm_id(&principal);
     let http = api.sdk_http_client()?;
+    let control_realm =
+        crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
     let submitter = api.event_submitter()?;
     let frontier = submitter
-        .events_frontier_realm_seal_view(&control_realm)
+        .events_frontier_realm_seal_view(control_realm.as_str())
         .await?;
     let trust_anchor = super::rotation_transaction::current_controller_backup_trust_anchor(
         &http, actor_id, device_id,
     )
     .await?;
     let event = super::rotation_transaction::build_active_series_event(
+        &control_realm,
         actor_id,
         backup_kind,
         series_id,
@@ -116,7 +119,8 @@ async fn ensure_initial_active_series(
     }
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
-    let hlc = crate::signing_stamp::issue_protocol_hlc(actor_id, device_id, &control_realm)?;
+    let hlc =
+        crate::signing_stamp::issue_protocol_hlc(actor_id, device_id, control_realm.as_str())?;
     let seal = signer
         .sign_self_principal_linear_successor_seal(&accepted, &frontier, hlc)
         .map_err(|error| anyhow!("sign {wire_kind} active-series successor Seal: {error}"))?;

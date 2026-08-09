@@ -1450,7 +1450,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         entry,
                                     )
                                     .and_then(|content| {
-                                        let entries = crate::account_data::blocklist_entries_from_account_data(
+                                        let payload = crate::account_data::blocklist_payload_from_account_data(
                                             &content,
                                             &account_did(),
                                         )
@@ -1459,7 +1459,13 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                             .get("revision")
                                             .and_then(serde_json::Value::as_u64)
                                             .ok_or_else(|| anyhow::anyhow!("ak.account.blocklist is missing revision"))?;
-                                        Ok((revision, entries))
+                                        if payload.version != revision {
+                                            anyhow::bail!(
+                                                "ak.account.blocklist payload version {} differs from Account Data revision {revision}",
+                                                payload.version
+                                            );
+                                        }
+                                        Ok((revision, payload.entries))
                                     }) {
                                         Ok((revision, entries)) => {
                                             store.set_client_blocklist(revision, entries);

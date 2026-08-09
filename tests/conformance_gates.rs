@@ -879,14 +879,12 @@ fn realm_bootstrap_carries_alias_as_a_facet_event_not_on_the_closed_realm_object
     assert_envelope_matches_schema("build_realm_bootstrap_events[alias facet]", alias_event);
 }
 
-/// A managed Agent PCR genesis is a single `ak.realm.create`, and
-/// `ak.realm.history_sharing_policy` is absent from the PCR event-kind
-/// allowlist, so the effective policy comes from the profile-fixed baseline
-/// (`ak.profile.principal_control_realm.v1`). Declaring it on the object put a
-/// field on the closed `realm.schema.json` that no schema branch accepts.
+/// The committed provision prepare response asks for a PCR id before it carries
+/// the exact create draft whose Event id defines that PCR. The client must not
+/// guess a realm id from the Agent DID or from a provisional payload.
 #[test]
-fn managed_agent_pcr_genesis_leaves_history_sharing_policy_to_the_profile() {
-    let events = event_builders::build_managed_agent_pcr_bootstrap_events(
+fn managed_agent_pcr_prepare_fails_closed_without_an_exact_create_draft() {
+    let error = event_builders::build_managed_agent_pcr_bootstrap_events(
         "did:web:agent.example",
         TEST_ACTOR_ID,
         "did:web:alice.example#delegation-0",
@@ -894,28 +892,13 @@ fn managed_agent_pcr_genesis_leaves_history_sharing_policy_to_the_profile() {
         arkret_sdk::EventId::new("ak:event:AStKv4uwui9iKv7StOHRotQgjBDBvjla-y05nQAwQaJf")
             .expect("fixture provision Event id"),
     )
-    .expect("build_managed_agent_pcr_bootstrap_events succeeds");
+    .expect_err("managed Agent provision must not predict an event-derived PCR id");
 
-    assert_eq!(
-        events.len(),
-        1,
-        "managed Agent PCR genesis is a single Event"
-    );
-    let mut create = events[0].clone();
-    assert_eq!(create.kind, EventKind::RealmCreate);
     assert!(
-        create.payload["object"]
-            .get("history_sharing_policy")
-            .is_none(),
-        "a managed Agent PCR create object must not declare \
-         history_sharing_policy; the PCR profile fixes the effective baseline"
+        error
+            .to_string()
+            .contains("authoritative event-derived PCR id")
     );
-    assert!(
-        create.payload["object"].get("alias").is_none(),
-        "a PCR is addressable only by realm_id"
-    );
-    stamp_wire_fields(&mut create);
-    assert_envelope_matches_schema("build_managed_agent_pcr_bootstrap_events[create]", &create);
 }
 
 /// A6 — the SAS public-key exchange sends `ak.key.verification.key`, whose

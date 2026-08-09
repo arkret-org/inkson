@@ -63,7 +63,7 @@ mod seal_view;
 pub use seal_view::*;
 
 mod mls_sidecar;
-pub(crate) use mls_sidecar::PendingHistorySecrets;
+pub(crate) use mls_sidecar::{PendingHistorySecrets, mls_scope_snapshot_key};
 
 mod agent_evidence;
 mod did_bindings;

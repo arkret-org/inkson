@@ -280,15 +280,24 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
-    if state_store.mls_genesis_emitted_for_effective_scope(realm_id, circle)
-        && let Some(snapshot) = state_store.mls_snapshot_for_effective_scope(realm_id, circle)
+    let realm = arkret_sdk::RealmId::new(realm_id.to_owned())
+        .map_err(|error| format!("invalid MLS Realm id: {error}"))?;
+    let effective_scope = match sidecar_binding.as_ref() {
+        Some(binding) => arkret_sdk::ScopeRef::Sidecar {
+            realm_id: realm.clone(),
+            sidecar_id: binding.sidecar_id.clone(),
+        },
+        None => match circle {
+            Some(circle_id) => circle_effective_scope(realm_id, circle_id)?,
+            None => arkret_sdk::ScopeRef::Realm {
+                realm_id: realm.clone(),
+            },
+        },
+    };
+    if state_store.mls_genesis_emitted_for_scope(&effective_scope)
+        && let Some(snapshot) = state_store.mls_snapshot_for_scope(&effective_scope)
         && state_store
-            .mls_group_state_ref_for_effective_scope(
-                realm_id,
-                circle,
-                &snapshot.group_id,
-                snapshot.epoch,
-            )
+            .mls_group_state_ref_for_scope(&effective_scope, &snapshot.group_id, snapshot.epoch)
             .is_ok()
     {
         return Ok(None);
@@ -304,23 +313,22 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
         return Ok(None);
     }
 
-    let request = crate::mls::governance_proof::proof_request(
+    let request = crate::mls::governance_proof::proof_request_for_scope(
         state_store,
-        realm_id,
-        circle,
+        effective_scope.clone(),
         summary.group_id.clone(),
         0,
         0,
     )?;
     let governance_binding =
         crate::mls::governance_proof::cached_verified_binding(state_store, &request)?;
-    let governance_binding = match sidecar_binding {
-        Some(binding) => {
-            crate::mls::governance_proof::bind_sidecar_scope(&governance_binding, binding.clone())
-                .map_err(|error| format!("invalid Sidecar MLS governance binding: {error}"))?
-        }
-        None => governance_binding,
-    };
+    if let Some(binding) = sidecar_binding.as_ref()
+        && governance_binding.sidecar_binding() != Some(binding)
+    {
+        return Err(
+            "verified Sidecar MLS binding differs from the accepted Sidecar view".to_owned(),
+        );
+    }
     let payload = crate::mls::runtime::build_mls_genesis_payload(
         summary,
         actor_id,
@@ -339,9 +347,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
     .map(Some)
     .map_err(|err| format!("MLS genesis SDK Event conversion failed: {err}"))?;
     if let Some(event) = event.as_mut() {
-        if let Some(circle_id) = circle {
-            event.scope_ref = circle_effective_scope(realm_id, circle_id)?;
-        }
+        event.scope_ref = effective_scope;
         // The id is a function of the finished content, so it is stamped last —
         // after the scope narrowing above, which is part of that content.
         event.event_id = event
@@ -412,10 +418,9 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_proposal_refs
     )
 }
 
-pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_sidecar_binding(
+pub(crate) fn mls_commit_event_from_store_for_sidecar_scope(
     state_store: &LocalStateStore,
     realm_id: &str,
-    circle_id: &str,
     actor_id: &str,
     commit_envelope: &arkret_sdk::MlsCommitEnvelope,
     previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
@@ -424,7 +429,7 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_sidecar_bindi
     mls_commit_event_from_store_for_effective_scope_with_options(
         state_store,
         realm_id,
-        Some(circle_id),
+        None,
         actor_id,
         commit_envelope,
         previous_governance_binding,
@@ -433,10 +438,9 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_sidecar_bindi
     )
 }
 
-pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_proposal_refs_and_sidecar_binding(
+pub(crate) fn mls_commit_event_from_store_for_sidecar_scope_with_proposal_refs(
     state_store: &LocalStateStore,
     realm_id: &str,
-    circle_id: &str,
     actor_id: &str,
     commit_envelope: &arkret_sdk::MlsCommitEnvelope,
     previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
@@ -446,7 +450,7 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_proposal_refs
     mls_commit_event_from_store_for_effective_scope_with_options(
         state_store,
         realm_id,
-        Some(circle_id),
+        None,
         actor_id,
         commit_envelope,
         previous_governance_binding,
@@ -477,18 +481,29 @@ fn mls_commit_event_from_store_for_effective_scope_with_options(
     // snapshot has advanced past the last server-confirmed epoch, which is what
     // tripped `mls_commit_payload.next_epoch must equal base_epoch + 1`.
     let prev_epoch = commit_envelope.epoch.saturating_sub(1);
+    let realm = arkret_sdk::RealmId::new(realm_id.to_owned())
+        .map_err(|error| format!("invalid MLS Realm id: {error}"))?;
+    let effective_scope = match sidecar_binding.as_ref() {
+        Some(binding) => arkret_sdk::ScopeRef::Sidecar {
+            realm_id: realm.clone(),
+            sidecar_id: binding.sidecar_id.clone(),
+        },
+        None => match circle {
+            Some(circle_id) => circle_effective_scope(realm_id, circle_id)?,
+            None => arkret_sdk::ScopeRef::Realm { realm_id: realm },
+        },
+    };
 
-    let base_group_state_ref = mls_base_epoch_ref_for_scope(
+    let base_group_state_ref = state_store
+        .mls_group_state_ref_for_scope(
+            &effective_scope,
+            commit_envelope.group_id.as_str(),
+            prev_epoch,
+        )?
+        .to_string();
+    let request = crate::mls::governance_proof::proof_request_for_scope(
         state_store,
-        realm_id,
-        circle,
-        commit_envelope.group_id.as_str(),
-        prev_epoch,
-    )?;
-    let request = crate::mls::governance_proof::proof_request(
-        state_store,
-        realm_id,
-        circle,
+        effective_scope.clone(),
         commit_envelope.group_id.clone(),
         prev_epoch,
         commit_envelope.epoch,
@@ -521,9 +536,7 @@ fn mls_commit_event_from_store_for_effective_scope_with_options(
         previous_governance_binding,
     )
     .map_err(|err| format!("MLS commit preconditions failed: {err}"))?;
-    if let Some(circle_id) = circle {
-        event.scope_ref = circle_effective_scope(realm_id, circle_id)?;
-    }
+    event.scope_ref = effective_scope;
     // Stamped last: the id is a function of the finished content.
     event.event_id = event
         .derive_event_id()

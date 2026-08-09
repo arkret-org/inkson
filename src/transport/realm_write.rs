@@ -546,6 +546,38 @@ pub async fn leave_realm(
     .await
 }
 
+/// Exact-pair Direct Conversation repair. The only authored carrier is this
+/// subject's own `leave -> join` membership Event; the reducer's repair profile
+/// rejects first joins, third participants and on-behalf-of joins.
+pub async fn repair_direct_conversation_self_rejoin(
+    submitter: &EventSubmitter,
+    realm_id: &arkret_sdk::RealmId,
+    actor_id: &arkret_sdk::Did,
+) -> anyhow::Result<SubmitEventResult> {
+    // Resolve the fixed profile baseline up front. Repair must not manufacture
+    // a policy Event and must not release old generation keys.
+    crate::transport::account::direct_conversation_history_sharing_policy()?;
+    let mut event = build_member_state_transition_event(
+        realm_id.as_str(),
+        actor_id.as_str(),
+        actor_id.as_str(),
+        Some("leave"),
+        "join",
+        "direct_conversation_self_rejoin",
+    )?;
+    // The repair profile has an exact one-action authority surface. Leaving
+    // this unset lets normal Realm authority resolution select an unrelated
+    // participant/root source, which cannot authorize `ak.member.rejoin.own`.
+    // The reducer derives that action from the self `leave -> join` payload
+    // and verifies the immutable exact-pair binding; the client must select
+    // the registered source before the Event proof is authored.
+    event.authorization_ref = Some(
+        arkret_sdk::AuthorizationRef::new("ak.authority.direct_conversation_repair.v1".to_owned())
+            .map_err(anyhow::Error::msg)?,
+    );
+    submitter.submit_sdk_event(&event).await
+}
+
 /// Archive a Realm via the reversible `ak.realm.archive` lifecycle facet.
 pub async fn archive_realm(
     submitter: &EventSubmitter,

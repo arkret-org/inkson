@@ -490,6 +490,11 @@ mod tests {
             "contacts": [{
                 "peer": {"kind": "human", "principal_id": "did:web:bob.example"},
                 "state": "accepted",
+                "next_prepare_input": {
+                    "basis_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "version": 2,
+                    "predecessor_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
+                },
                 "granted_to_peer_scopes": ["direct_message"],
                 "granted_by_peer_scopes": ["direct_message"],
                 "bidirectional_scopes": ["direct_message"],
@@ -672,6 +677,7 @@ mod tests {
             },
             state: arkret_sdk::ContactState::Accepted,
             request_event_ref: None,
+            request_receipt: None,
             response_event_ref: Some(
                 arkret_sdk::EventId::new(
                     "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
@@ -679,6 +685,17 @@ mod tests {
                 .unwrap(),
             ),
             tombstone_event_ref: None,
+            next_prepare_input: Some(arkret_sdk::contact_operations::ContactNextPrepareInput {
+                basis_id: arkret_sdk::Hash::new(
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                )
+                .unwrap(),
+                version: 2,
+                predecessor_event_ref: arkret_sdk::EventId::new(
+                    "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                )
+                .unwrap(),
+            }),
             granted_to_peer_scopes: Vec::new(),
             granted_by_peer_scopes: vec![ContactScope::Invite],
             bidirectional_scopes: Vec::new(),

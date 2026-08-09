@@ -35,7 +35,6 @@ pub(super) fn AccountRecoveryEffects(
         let base = base_url();
         let credential = token();
         let actor = account_did();
-        let device = device_id();
         let generation = sync_generation();
         if !matches!(session_boot_state(), SessionBootState::Authenticated)
             || base.trim().is_empty()
@@ -56,23 +55,42 @@ pub(super) fn AccountRecoveryEffects(
             let store = state_store.read();
             crate::views::recovery::local_recovery_key_fingerprint(&store, &actor)
         };
-        if local_fingerprint.is_some() {
-            // Recovery metadata is persisted only after the server has accepted
-            // the policy and DID-recovery backup. Rehydrate the in-memory
-            // offline-submit gate after full-page navigation/WASM restart;
-            // replay still revalidates recovery state at the server boundary.
-            crate::event_submit::remember_verified_recovery_gate(&actor, &device);
-        }
+        let recovery_material_evidence = state_store.read().recovery_material_evidence();
+        let gate_actor = actor.clone();
+        let gate_device = device_id();
+        let remember_actor = actor.clone();
+        let remember_device = gate_device.clone();
         let session_coordinator = session_coordinator.clone();
         spawn(async move {
             match crate::transport::auth::with_authed_api(&base, credential, |api| async move {
                 let policy = serde_json::to_value(&api.get_recovery_policy().await?)?;
                 let backups = serde_json::to_value(&api.list_key_backups().await?)?;
-                Ok::<(serde_json::Value, serde_json::Value), anyhow::Error>((policy, backups))
+                let gate_verified = match recovery_material_evidence.as_ref() {
+                    Some(evidence)
+                        if evidence.principal_id.as_str() == gate_actor
+                            && evidence.device_id.as_str() == gate_device =>
+                    {
+                        crate::recovery_strand::verify_recovery_material_evidence(&api, evidence)
+                            .await?;
+                        true
+                    }
+                    _ => false,
+                };
+                Ok::<(serde_json::Value, serde_json::Value, bool), anyhow::Error>((
+                    policy,
+                    backups,
+                    gate_verified,
+                ))
             })
             .await
             {
-                Ok((policy, backups)) => {
+                Ok((policy, backups, gate_verified)) => {
+                    if gate_verified {
+                        crate::event_submit::remember_verified_recovery_gate(
+                            &remember_actor,
+                            &remember_device,
+                        );
+                    }
                     let state = crate::recovery_strand::account_recovery_state_from_payloads(
                         &policy,
                         &backups,

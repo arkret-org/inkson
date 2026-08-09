@@ -829,8 +829,22 @@ mod tests {
                 },
                 state,
                 request_event_ref: None,
+                request_receipt: None,
                 response_event_ref: None,
                 tombstone_event_ref: None,
+                next_prepare_input: (state == arkret_sdk::ContactState::Accepted).then(|| {
+                    arkret_sdk::contact_operations::ContactNextPrepareInput {
+                        basis_id: arkret_sdk::Hash::new(
+                            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        )
+                        .unwrap(),
+                        version: 2,
+                        predecessor_event_ref: arkret_sdk::EventId::new(
+                            "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                        )
+                        .unwrap(),
+                    }
+                }),
                 granted_to_peer_scopes: Vec::new(),
                 granted_by_peer_scopes: Vec::new(),
                 bidirectional_scopes: Vec::new(),
@@ -845,7 +859,10 @@ mod tests {
                         "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1".to_owned(),
                     )
                     .unwrap(),
-                    binding_event_ref: None,
+                    binding_event_ref: arkret_sdk::EventId::new(
+                        "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                    )
+                    .unwrap(),
                     state: arkret_sdk::DirectConversationSummaryState::Found,
                 }),
                 agents: Vec::new(),

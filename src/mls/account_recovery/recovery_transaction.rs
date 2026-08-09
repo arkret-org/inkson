@@ -80,16 +80,24 @@ pub(crate) async fn prepare_root_anchored_recovery(
         )?;
 
     let http = api.sdk_http_client()?;
-    let history = complete_identity_log(&http, verified_session.principal_id.as_str()).await?;
+    let history = crate::identity::history::fetch_complete_identity_history(
+        &http,
+        &verified_session.principal_id,
+    )
+    .await?;
+    if history.method != "did:webvh" || history.native_history != Some(true) {
+        anyhow::bail!("principal DID does not expose native did:webvh history");
+    }
     let previous_entry = history
+        .entries
         .last()
         .ok_or_else(|| anyhow::anyhow!("principal DID history is empty"))?;
     if previous_entry
-        .operation_body
         .get("versionId")
         .and_then(serde_json::Value::as_str)
         != Some(previous_generation.as_str())
-        || verified_session.registry_head != previous_entry.head_event_digest
+        || verified_session.registry_head
+            != Hash::new(arkret_sdk::canonical::canonical_sha256(previous_entry)?)?
     {
         anyhow::bail!("DID history head changed after the recovery snapshot");
     }
@@ -113,15 +121,11 @@ pub(crate) async fn prepare_root_anchored_recovery(
         .next()
         .filter(|value| !value.is_empty())
         .ok_or_else(|| anyhow::anyhow!("principal did:webvh has no local id"))?;
-    let previous_entries = history
-        .iter()
-        .map(|entry| serde_json::Value::Object(entry.operation_body.clone()))
-        .collect::<Vec<_>>();
     let rotation = arkret_sdk::webvh::prepare_principal_rotation(
         &arkret_sdk::webvh::PrincipalRotationInput {
             did: verified_session.principal_id.as_str(),
             local_id,
-            previous_entries: &previous_entries,
+            previous_entries: &history.entries,
             version_time: crate::clock::now_utc(),
             current_root_seed: &root_material.root_seed,
             next_root_public_key_multibase: &root_material.next_root_public_key_multikey,
@@ -337,37 +341,6 @@ fn did_webvh_version_sequence(version_id: &str) -> anyhow::Result<u64> {
         .and_then(|(sequence, _)| sequence.parse::<u64>().ok())
         .filter(|sequence| *sequence > 0)
         .ok_or_else(|| anyhow::anyhow!("DID generation is not a canonical did:webvh versionId"))
-}
-
-async fn complete_identity_log(
-    http: &arkret_sdk::http_client::Client,
-    principal_id: &str,
-) -> anyhow::Result<Vec<arkret_models_identity::DidKeyLogEntry>> {
-    let mut events = Vec::new();
-    let mut cursor = None;
-    loop {
-        let page = http
-            .identity_log(principal_id, cursor.as_deref(), Some(100))
-            .await?;
-        events.extend(page.events);
-        if !page.has_more {
-            break;
-        }
-        let next = page
-            .next_cursor
-            .filter(|next| cursor.as_deref() != Some(next.as_str()))
-            .ok_or_else(|| anyhow::anyhow!("DID history pagination did not advance"))?;
-        cursor = Some(next);
-    }
-    events.sort_by_key(|event| event.seq);
-    if events.first().is_none_or(|event| event.seq != 1)
-        || events
-            .windows(2)
-            .any(|pair| pair[0].seq.checked_add(1) != Some(pair[1].seq))
-    {
-        anyhow::bail!("DID history is incomplete");
-    }
-    Ok(events)
 }
 
 fn recovery_backup_classes_unlocked(

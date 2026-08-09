@@ -651,7 +651,7 @@ pub struct PendingAccountHandoff {
     pub bound_principal_id: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PendingPrincipalRegistration {
     pub principal_server_url: String,
     pub gate_account_base: String,
@@ -670,6 +670,10 @@ pub struct PendingPrincipalRegistration {
     pub trust_domain: String,
     pub did: String,
     pub version_id: String,
+    /// Durable explicit-abandonment challenge. Its grant digest proves the
+    /// confirmation step reauthenticated with a different account handoff.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_abandonment: Option<PendingIdentityAbandonment>,
     pub root_public_key_multibase: String,
     pub root_verification_method: String,
     pub next_root_public_key_multibase: String,
@@ -679,6 +683,10 @@ pub struct PendingPrincipalRegistration {
     pub recovery_key_fingerprint: String,
     /// Typed `DidOperationSubmitRequestBody` serialized as public wire JSON.
     pub did_operation: Value,
+    /// Canonical bytes of the method-native did:webvh inception entry. The
+    /// registration terminal re-reads did.jsonl and compares entry 0 against
+    /// this frozen value before adopting the identity.
+    pub did_entry0_canonical_base64url: String,
     /// Complete client-authored, root/device-signed PCR genesis unit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pcr_genesis_unit: Option<Value>,
@@ -688,11 +696,33 @@ pub struct PendingPrincipalRegistration {
     /// Verified terminal PCR genesis receipt returned with the Standard grant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pcr_genesis_receipt: Option<Value>,
+    /// Exact device-signed bootstrap Seal, durably frozen before its first
+    /// submission so recovery resumes the same bytes after response loss.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pcr_bootstrap_seal: Option<arkret_sdk::Seal>,
     pub genesis_created_at: String,
     pub genesis_hlc: String,
+    /// Random create-time salt committed by `ak.realm.create`. Realm identity
+    /// is derived from that authored Event, never from the principal DID.
+    pub genesis_salt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binding_receipt: Option<Value>,
     pub stage: PendingPrincipalRegistrationStage,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PendingIdentityAbandonment {
+    pub challenge: arkret_sdk::IdentityAbandonmentChallengeOutcome,
+    pub challenge_handoff_grant_digest: arkret_sdk::Hash,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RecoveryMaterialEvidence {
+    pub principal_id: arkret_sdk::Did,
+    pub device_id: arkret_sdk::DeviceId,
+    pub principal_control_realm_id: arkret_sdk::RealmId,
+    pub pcr_genesis_unit: arkret_wire::PcrGenesisUnit,
+    pub bootstrap_seal: arkret_sdk::Seal,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -930,6 +960,11 @@ pub struct ClientLocalState {
     /// Key or derived private material.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_principal_registration: Option<PendingPrincipalRegistration>,
+    /// Durable facts used to revalidate the recovery-material gate after a
+    /// restart. This is public control material only; no recovery secret is
+    /// retained here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_material_evidence: Option<RecoveryMaterialEvidence>,
     /// Client-side telemetry log buffer. Mirrors sodmin's
     /// Persisted MLS group state snapshots, keyed by `realm_id`. Each
     /// entry is the encrypted envelope produced by
@@ -1108,13 +1143,13 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub client_blocklist:
         Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry>,
-    /// Outer Account Data CAS revision that produced `client_blocklist`.
-    /// Payload `version` is only the schema version and never orders updates.
+    /// Account Data CAS revision that produced `client_blocklist`. The
+    /// blocklist payload's `version` is the same counter, not a schema marker.
     #[serde(default)]
     pub client_blocklist_revision: u64,
-    /// Durable actor-block side effects awaiting the standard contact
-    /// tombstone + full consent revoke operation. Entries remain until the
-    /// canonical operation succeeds and are retried by later blocklist writes.
+    /// Durable actor-block side effects awaiting the independent standard
+    /// Contact tombstone leg. Consent is deliberately unrelated to Personal
+    /// DM authority and is not revoked as part of this saga.
     #[serde(default)]
     pub pending_personal_block_sagas: BTreeSet<String>,
     /// Round 4 (spec a77b995) — last `trust_domain` advertised by the
@@ -1366,6 +1401,7 @@ impl Default for ClientLocalState {
             read_cursors: BTreeMap::new(),
             session_grant: None,
             pending_principal_registration: None,
+            recovery_material_evidence: None,
             pending_account_handoff: None,
             mls_snapshots: BTreeMap::new(),
             mls_receive_recovery_snapshots: BTreeMap::new(),

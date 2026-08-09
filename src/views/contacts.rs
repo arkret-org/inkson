@@ -296,8 +296,7 @@ fn ContactRow(
                     Button {
                         variant: ButtonVariant::Primary,
                         "data-testid": "contact-accept-{peer}",
-                        disabled: true,
-                        title: "Unavailable until the signed request acceptance receipt is exposed",
+                        disabled: busy(),
                         onclick: {
                             let base = base_url.clone();
                             let peer = peer.clone();
@@ -321,8 +320,7 @@ fn ContactRow(
                     Button {
                         variant: ButtonVariant::Secondary,
                         "data-testid": "contact-reject-{peer}",
-                        disabled: true,
-                        title: "Unavailable until the signed request acceptance receipt is exposed",
+                        disabled: busy(),
                         onclick: {
                             let base = base_url.clone();
                             let peer = peer.clone();
@@ -389,11 +387,12 @@ fn ContactRow(
                                 busy.set(true);
                                 row_status.set(tr("contacts.dm.opening"));
                                 spawn(async move {
-                                    match with_authed_api(&base, api_token, |api| async move {
+                                    let resolve_peer = peer.clone();
+                                    match with_authed_api(&base, api_token.clone(), |api| async move {
                                         crate::transport::account::direct_conversation_resolve(
                                             &api,
                                             state_store,
-                                            &peer,
+                                            &resolve_peer,
                                             None,
                                             true,
                                             false,
@@ -403,10 +402,17 @@ fn ContactRow(
                                     {
                                         Ok(outcome) => {
                                             use crate::transport::account::DirectConversationEntry;
-                                            match crate::transport::account::direct_conversation_entry(&outcome) {
+                                            let local_blockers = crate::transport::account::direct_conversation_client_local_blockers(
+                                                &state_store.read(),
+                                                &peer,
+                                                &outcome,
+                                            );
+                                            match crate::transport::account::direct_conversation_entry_with_local_blockers(
+                                                &outcome,
+                                                &local_blockers,
+                                            ) {
                                                 // Coordinates exist: open the conversation.
-                                                DirectConversationEntry::Openable
-                                                | DirectConversationEntry::Suspended => {
+                                                DirectConversationEntry::Openable => {
                                                     match crate::transport::account::direct_conversation_coordinates(&outcome) {
                                                         Some(coordinates) => {
                                                             row_status.set(String::new());
@@ -416,6 +422,44 @@ fn ContactRow(
                                                             });
                                                         }
                                                         None => row_status.set(tr("contacts.dm.not_ready")),
+                                                    }
+                                                }
+                                                DirectConversationEntry::Suspended => {
+                                                    if local_blockers.is_empty() {
+                                                        if let Some(coordinates) = crate::transport::account::direct_conversation_coordinates(&outcome) {
+                                                            let realm_id = coordinates.realm_id.clone();
+                                                            let actor = crate::secure_key_store::active_device_seed_scope()
+                                                                .filter(|value| !value.trim().is_empty())
+                                                                .and_then(|value| arkret_sdk::Did::new(value).ok());
+                                                            match actor {
+                                                                Some(actor) => match with_authed_api(
+                                                                    &base,
+                                                                    api_token.clone(),
+                                                                    |api| async move {
+                                                                        crate::transport::realm_write::repair_direct_conversation_self_rejoin(
+                                                                            &api.event_submitter()?,
+                                                                            &realm_id,
+                                                                            &actor,
+                                                                        ).await
+                                                                    },
+                                                                ).await {
+                                                                    Ok(_) => row_status.set("Direct Conversation self-rejoin repair submitted; waiting for the replacement MLS generation.".to_owned()),
+                                                                    Err(error) => row_status.set(format!("Direct Conversation repair unavailable: {}", error.display())),
+                                                                },
+                                                                None => row_status.set(tr("contacts.dm.not_ready")),
+                                                            }
+                                                        } else {
+                                                            row_status.set(tr("contacts.dm.not_ready"));
+                                                        }
+                                                    } else {
+                                                        row_status.set(format!(
+                                                            "Direct Conversation is locally blocked: {}",
+                                                            local_blockers
+                                                                .iter()
+                                                                .map(|blocker| blocker.as_str())
+                                                                .collect::<Vec<_>>()
+                                                                .join(", ")
+                                                        ));
                                                     }
                                                 }
                                                 // This user is the founder: the conversation is

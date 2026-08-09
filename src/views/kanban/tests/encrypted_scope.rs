@@ -796,7 +796,7 @@ fn encrypted_scope_allows_strand_summary_metadata_update() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn sidecar_track_patch_encrypts_with_only_the_circle_snapshot() {
+fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
     let mut state = temp_state_store("sidecar-track-circle-encrypt");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
@@ -824,23 +824,6 @@ fn sidecar_track_patch_encrypts_with_only_the_circle_snapshot() {
         &secret,
         &salt,
     );
-    state.save_mls_snapshot_for_effective_scope(realm.to_owned(), Some(circle), snapshot);
-    // A write at an already-accepted epoch (no fresh genesis, no commit) has to
-    // name the accepted `ak.mls.genesis` as `key_ref.group_state_ref`. Without a
-    // recorded ref the client cannot name one and MUST fail closed, so the
-    // "Circle snapshot already exists" scenario has to record it.
-    state
-        .record_mls_group_state_ref_for_effective_scope(
-            realm,
-            Some(circle),
-            &post_state.group_id,
-            post_state.epoch,
-            arkret_sdk::EventId::new(
-                "ak:event:AXOcDC3EfKDsROtRCskvfBlBSDUo6v4NxBuFO3jguIWC".to_owned(),
-            )
-            .unwrap(),
-        )
-        .unwrap();
     let realm_identity = arkret_sdk::ArkretMlsIdentity::new_basic(
         arkret_sdk::Did::new(actor.to_owned()).unwrap(),
         arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
@@ -874,8 +857,23 @@ fn sidecar_track_patch_encrypts_with_only_the_circle_snapshot() {
             .unwrap(),
         ],
     };
+    let effective_scope = arkret_sdk::ScopeRef::Sidecar {
+        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+        sidecar_id: binding.sidecar_id.clone(),
+    };
+    state.save_mls_snapshot_for_scope(&effective_scope, snapshot);
+    state
+        .record_mls_group_state_ref_for_scope(
+            &effective_scope,
+            &post_state.group_id,
+            post_state.epoch,
+            arkret_sdk::EventId::new(
+                "ak:event:AXOcDC3EfKDsROtRCskvfBlBSDUo6v4NxBuFO3jguIWC".to_owned(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
     let context = SidecarTrackWriteContext {
-        circle_id: circle.to_owned(),
         binding: Some(binding),
         ready: true,
     };
@@ -896,11 +894,7 @@ fn sidecar_track_patch_encrypts_with_only_the_circle_snapshot() {
     assert!(events.genesis.is_none());
     assert!(events.commit.is_none());
     assert_eq!(state.mls_snapshot_for(realm), Some(realm_snapshot));
-    assert!(
-        state
-            .mls_snapshot_for_effective_scope(realm, Some(circle))
-            .is_some()
-    );
+    assert!(state.mls_snapshot_for_scope(&effective_scope).is_some());
     assert_eq!(
         state.private_plaintext_for(realm, strand, "body"),
         Some("\"private overlay\"".to_owned())

@@ -329,16 +329,19 @@ pub fn unblock_target_in(
     list.len() != before
 }
 
-/// Build the canonical blocklist payload. `version` is the payload schema
-/// version and is always 1; concurrency is exclusively the outer Account Data
-/// CAS revision.
+/// Build the canonical blocklist payload for the next Account Data CAS write.
+///
+/// The inner `version` and the outer `ak.account_data.set.expected_revision`
+/// share one counter.  Callers must therefore pass the exact accepted revision
+/// they are about to create (`current + 1`); this is not a schema version.
 pub fn build_blocklist_account_data_body(
     owner: &str,
+    version: u64,
     entries: &[AccountBlocklistPayloadEntry],
 ) -> Result<Value, String> {
     let payload = AccountBlocklistPayload {
         owner: arkret_sdk::Did::new(owner.trim().to_owned()).map_err(|error| error.to_string())?,
-        version: 1,
+        version,
         entries: entries.to_vec(),
         updated_at: Some(chrono::Utc::now()),
     };
@@ -346,21 +349,28 @@ pub fn build_blocklist_account_data_body(
     serde_json::to_value(payload).map_err(|error| error.to_string())
 }
 
-/// Decode the SDK payload and enforce holder binding. The outer Account Data
-/// row owns the CAS revision and is intentionally not compared to payload
-/// `version`.
+/// Decode the SDK payload and enforce holder binding.  The sync layer compares
+/// `payload.version` with the enclosing Account Data row revision before
+/// installing it, so this helper only validates the closed payload itself.
 pub fn blocklist_entries_from_account_data(
     value: &Value,
     expected_owner: &str,
 ) -> Result<Vec<AccountBlocklistPayloadEntry>, String> {
+    Ok(blocklist_payload_from_account_data(value, expected_owner)?.entries)
+}
+
+/// Decode and validate the complete blocklist payload. Sync consumers use the
+/// returned version to enforce equality with the enclosing Account Data CAS
+/// revision before changing the local privacy projection.
+pub fn blocklist_payload_from_account_data(
+    value: &Value,
+    expected_owner: &str,
+) -> Result<AccountBlocklistPayload, String> {
     let payload: AccountBlocklistPayload =
         serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
     payload.validate().map_err(|error| error.to_string())?;
-    if payload.version != 1 {
-        return Err("account blocklist payload schema version must be 1".to_owned());
-    }
     if payload.owner.as_str() != expected_owner.trim() {
         return Err("account blocklist owner does not match the active account".to_owned());
     }
-    Ok(payload.entries)
+    Ok(payload)
 }

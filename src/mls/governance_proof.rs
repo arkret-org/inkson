@@ -115,6 +115,26 @@ pub(crate) fn proof_request(
             realm_id: realm_id.clone(),
         },
     };
+    proof_request_for_scope(
+        state_store,
+        effective_scope,
+        mls_group_id,
+        previous_epoch,
+        next_epoch,
+    )
+}
+
+pub(crate) fn proof_request_for_scope(
+    state_store: &crate::state::LocalStateStore,
+    effective_scope: arkret_sdk::ScopeRef,
+    mls_group_id: impl Into<String>,
+    previous_epoch: u64,
+    next_epoch: u64,
+) -> Result<arkret_sdk::MlsGovernanceProofRequestBodyBody, String> {
+    let realm_id = effective_scope
+        .realm_id_opt()
+        .cloned()
+        .ok_or_else(|| "MLS governance proof rejects RealmGenesis scope".to_owned())?;
     let request = arkret_sdk::MlsGovernanceProofRequestBodyBody {
         realm_id: realm_id.clone(),
         effective_scope,
@@ -254,7 +274,7 @@ pub(crate) async fn fetch_verify_and_cache_proof<S: GovernanceProofStateStore>(
     request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
     leaves: &[arkret_sdk::MlsSecurityFrontierLeaf],
 ) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
-    fetch_verify_and_cache_proof_internal(api, state_store, request, leaves, None)
+    fetch_verify_and_cache_proof_internal(api, state_store, request, leaves, None, None)
         .await
         .map(|(_, binding)| binding)
 }
@@ -265,9 +285,28 @@ pub(crate) async fn fetch_verify_and_cache_proof_bundle<S: GovernanceProofStateS
     request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
     leaves: &[arkret_sdk::MlsSecurityFrontierLeaf],
 ) -> Result<arkret_sdk::MaterializedMlsGovernanceProofBundle, String> {
-    fetch_verify_and_cache_proof_internal(api, state_store, request, leaves, None)
+    fetch_verify_and_cache_proof_internal(api, state_store, request, leaves, None, None)
         .await
         .map(|(bundle, _)| bundle)
+}
+
+pub(crate) async fn fetch_verify_and_cache_sidecar_proof_bundle<S: GovernanceProofStateStore>(
+    api: &crate::transport::TransportClient,
+    state_store: S,
+    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+    leaves: &[arkret_sdk::MlsSecurityFrontierLeaf],
+    sidecar_binding: &arkret_sdk::SidecarMlsBinding,
+) -> Result<arkret_sdk::MaterializedMlsGovernanceProofBundle, String> {
+    fetch_verify_and_cache_proof_internal(
+        api,
+        state_store,
+        request,
+        leaves,
+        None,
+        Some(sidecar_binding),
+    )
+    .await
+    .map(|(bundle, _)| bundle)
 }
 
 pub(crate) async fn fetch_verify_and_cache_expected_proof<S: GovernanceProofStateStore>(
@@ -277,9 +316,16 @@ pub(crate) async fn fetch_verify_and_cache_expected_proof<S: GovernanceProofStat
     leaves: &[arkret_sdk::MlsSecurityFrontierLeaf],
     expected_binding: &arkret_sdk::MlsGovernanceBindingPayload,
 ) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
-    fetch_verify_and_cache_proof_internal(api, state_store, request, leaves, Some(expected_binding))
-        .await
-        .map(|(_, binding)| binding)
+    fetch_verify_and_cache_proof_internal(
+        api,
+        state_store,
+        request,
+        leaves,
+        Some(expected_binding),
+        None,
+    )
+    .await
+    .map(|(_, binding)| binding)
 }
 
 async fn fetch_verify_and_cache_proof_internal<S: GovernanceProofStateStore>(
@@ -288,6 +334,7 @@ async fn fetch_verify_and_cache_proof_internal<S: GovernanceProofStateStore>(
     request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
     leaves: &[arkret_sdk::MlsSecurityFrontierLeaf],
     expected_binding: Option<&arkret_sdk::MlsGovernanceBindingPayload>,
+    sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
 ) -> Result<
     (
         arkret_sdk::MaterializedMlsGovernanceProofBundle,
@@ -374,7 +421,11 @@ async fn fetch_verify_and_cache_proof_internal<S: GovernanceProofStateStore>(
             }
             binding.clone()
         }
-        None => binding_from_verified_frontier(request, verified.security_frontier_digest)?,
+        None => binding_from_verified_frontier(
+            request,
+            verified.security_frontier_digest,
+            sidecar_binding,
+        )?,
     };
     // Persist whatever this verification accepted so the next boot (and every
     // other authority call site) reuses it instead of resolving again.
@@ -451,14 +502,9 @@ pub(crate) async fn ensure_governance_anchor<S: GovernanceProofStateStore>(
     }
     let realm = arkret_sdk::RealmId::new(realm_id.to_owned())
         .map_err(|error| format!("invalid Realm id for governance anchor bootstrap: {error}"))?;
-    // Only a collaboration Realm carries the genesis Event token. A PCR id is
-    // subject-derived and therefore has no Event identity to retype; those
-    // Realms anchor on their did_inception root instead (2.5.4 T2).
-    let create_event_id = realm.event_id().ok_or_else(|| {
-        format!(
-            "governance anchor bootstrap for {realm_id} needs the 2.5.4 T2 identity-root path: a Principal Control Realm id derives from the principal DID, not from a create Event (state_mismatch)"
-        )
-    })?;
+    // Every Realm, including a PCR, is the exact retype of its accepted
+    // create Event and therefore has one mechanically recoverable anchor.
+    let create_event_id = realm.event_id();
     let http = api
         .sdk_http_client()
         .map_err(|error| format!("build governance anchor bootstrap client: {error}"))?;
@@ -929,6 +975,7 @@ pub(crate) fn cached_verified_binding(
 fn binding_from_verified_frontier(
     request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
     security_frontier_digest: arkret_sdk::Hash,
+    sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
 ) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
     let binding = match &request.effective_scope {
         arkret_wire::ScopeRef::Realm { realm_id } => {
@@ -952,6 +999,22 @@ fn binding_from_verified_frontier(
             request.previous_epoch,
             request.next_epoch,
             security_frontier_digest,
+            request.binding_profile.clone(),
+            request.reducer_profile.clone(),
+        ),
+        arkret_wire::ScopeRef::Sidecar {
+            realm_id,
+            sidecar_id,
+        } => arkret_sdk::MlsGovernanceBindingPayload::sidecar(
+            realm_id.clone(),
+            sidecar_id.clone(),
+            request.mls_group_id.clone(),
+            request.previous_epoch,
+            request.next_epoch,
+            security_frontier_digest,
+            sidecar_binding.cloned().ok_or_else(|| {
+                "Sidecar MLS proof materialization requires the accepted Sidecar binding".to_owned()
+            })?,
             request.binding_profile.clone(),
             request.reducer_profile.clone(),
         ),
@@ -980,8 +1043,27 @@ pub(crate) fn current_security_frontier_leaves(
     actor_id: &str,
     device_id: &str,
 ) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
+    let realm = arkret_sdk::RealmId::new(realm_id.to_owned())
+        .map_err(|error| format!("invalid MLS Realm id: {error}"))?;
+    let effective_scope = match circle_id {
+        Some(circle_id) => arkret_sdk::ScopeRef::Circle {
+            realm_id: realm,
+            circle_id: arkret_sdk::CircleId::new(circle_id.to_owned())
+                .map_err(|error| format!("invalid MLS Circle id: {error}"))?,
+        },
+        None => arkret_sdk::ScopeRef::Realm { realm_id: realm },
+    };
+    current_security_frontier_leaves_for_scope(state_store, &effective_scope, actor_id, device_id)
+}
+
+pub(crate) fn current_security_frontier_leaves_for_scope(
+    state_store: &crate::state::LocalStateStore,
+    effective_scope: &arkret_sdk::ScopeRef,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
     let snapshot = state_store
-        .mls_snapshot_for_effective_scope(realm_id, circle_id)
+        .mls_snapshot_for_scope(effective_scope)
         .ok_or_else(|| "MLS security frontier requires a local group snapshot".to_owned())?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let secret = crate::mls::runtime::load_device_snapshot_secret(

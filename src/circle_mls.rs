@@ -44,7 +44,7 @@ fn circle_effective_scope(
 
 fn build_remove_proposal_event(
     realm_id: &str,
-    circle_id: Option<&str>,
+    effective_scope: Option<&arkret_sdk::ScopeRef>,
     actor_id: &str,
     target_principal_id: &str,
     proposal: &arkret_sdk::MlsProposalEnvelope,
@@ -72,8 +72,11 @@ fn build_remove_proposal_event(
     .map_err(|err| format!("MLS proposal payload failed: {err}"))?
     .build_sdk_event("inkson")
     .map_err(|err| format!("MLS proposal SDK Event conversion failed: {err}"))?;
-    if let Some(circle_id) = circle_id {
-        event.scope_ref = circle_effective_scope(realm_id, circle_id)?;
+    if let Some(effective_scope) = effective_scope {
+        event.scope_ref = effective_scope.clone();
+        event.event_id = event
+            .derive_event_id()
+            .map_err(|error| format!("derive scoped MLS proposal Event id: {error}"))?;
     }
     Ok(event)
 }
@@ -89,6 +92,18 @@ fn build_remove_scope_rotate_draft(
     revocation_membership_frontier: &[arkret_sdk::EventId],
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<CircleScopeRotateDraft, String> {
+    let realm = arkret_sdk::RealmId::new(realm_id.to_owned())
+        .map_err(|error| format!("invalid MLS Realm id: {error}"))?;
+    let effective_scope = match sidecar_binding.as_ref() {
+        Some(binding) => arkret_sdk::ScopeRef::Sidecar {
+            realm_id: realm.clone(),
+            sidecar_id: binding.sidecar_id.clone(),
+        },
+        None => match circle_id {
+            Some(circle_id) => circle_effective_scope(realm_id, circle_id)?,
+            None => arkret_sdk::ScopeRef::Realm { realm_id: realm },
+        },
+    };
     let (remove, post_commit_snapshot, previous_governance_binding) =
         crate::mls::runtime::build_mls_remove_members_commit_for_effective_scope_with_sidecar_binding(
             state_store,
@@ -112,27 +127,23 @@ fn build_remove_scope_rotate_draft(
     }
     let mut events = Vec::with_capacity(remove.proposals.len().saturating_add(1));
     let mut proposal_refs = Vec::with_capacity(remove.proposals.len());
-    let request = crate::mls::governance_proof::proof_request(
+    let request = crate::mls::governance_proof::proof_request_for_scope(
         state_store,
-        realm_id,
-        circle_id,
+        effective_scope.clone(),
         remove.commit.group_id.clone(),
         remove.commit.epoch.saturating_sub(1),
         remove.commit.epoch,
     )?;
     // Remove proposals and their commit are governed as one epoch transition,
     // so every durable proposal must carry the same verified binding.
-    let mut proposal_governance_binding =
+    let proposal_governance_binding =
         crate::mls::governance_proof::cached_verified_binding(state_store, &request)?;
     if let Some(sidecar_binding) = sidecar_binding.as_ref() {
-        circle_id.ok_or_else(|| {
-            "Sidecar MLS removal requires the backing Circle effective scope".to_owned()
-        })?;
-        proposal_governance_binding = crate::mls::governance_proof::bind_sidecar_scope(
-            &proposal_governance_binding,
-            sidecar_binding.clone(),
-        )
-        .map_err(|error| error.to_string())?;
+        if proposal_governance_binding.sidecar_binding() != Some(sidecar_binding) {
+            return Err(
+                "verified Sidecar MLS binding differs from the accepted Sidecar view".to_owned(),
+            );
+        }
     }
     for (proposal, removed_principal) in remove
         .proposals
@@ -141,7 +152,7 @@ fn build_remove_scope_rotate_draft(
     {
         let proposal_event = build_remove_proposal_event(
             realm_id,
-            circle_id,
+            Some(&effective_scope),
             actor_id,
             removed_principal.as_str(),
             proposal,
@@ -151,13 +162,9 @@ fn build_remove_scope_rotate_draft(
         events.push(proposal_event);
     }
     let commit_event = if let Some(sidecar_binding) = sidecar_binding {
-        let circle_id = circle_id.ok_or_else(|| {
-            "Sidecar MLS removal requires the backing Circle effective scope".to_owned()
-        })?;
-        crate::mls::group_events::mls_commit_event_from_store_for_effective_scope_with_proposal_refs_and_sidecar_binding(
+        crate::mls::group_events::mls_commit_event_from_store_for_sidecar_scope_with_proposal_refs(
             state_store,
             realm_id,
-            circle_id,
             actor_id,
             &remove.commit,
             &previous_governance_binding,
@@ -192,22 +199,17 @@ pub fn build_sidecar_remove_scope_rotate_draft(
     state_store: &LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    circle_id: &str,
     actor_id: &str,
     device_id: &str,
     target_principal_id: &str,
     revocation_membership_frontier: &[arkret_sdk::EventId],
     sidecar_binding: arkret_sdk::SidecarMlsBinding,
 ) -> Result<CircleScopeRotateDraft, String> {
-    let circle = circle_id.trim();
-    if circle.is_empty() {
-        return Err("circle_id is required for Sidecar MLS scope rotate".to_owned());
-    }
     build_remove_scope_rotate_draft(
         state_store,
         secure_store,
         realm_id,
-        Some(circle),
+        None,
         actor_id,
         device_id,
         &[target_principal_id],

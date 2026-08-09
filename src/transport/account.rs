@@ -100,13 +100,11 @@ pub async fn update_profile(
 }
 
 pub async fn respond_contact(
-    _http: &arkret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     requester: &str,
     action: &str,
 ) -> anyhow::Result<()> {
-    anyhow::bail!(
-        "Contact {action} for `{requester}` is unavailable: the Contact projection does not expose the signed request acceptance receipt required by prepare"
-    )
+    respond_contact_with_service(http, requester, action, None).await
 }
 
 /// Respond to an incoming contact request, optionally carrying the
@@ -117,26 +115,274 @@ pub async fn respond_contact(
 /// empty; cross-PS responses pass the originating PS so soland can route the
 /// accept/reject back. Empty / whitespace-only values are dropped.
 pub async fn respond_contact_with_service(
-    _http: &arkret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     requester: &str,
     action: &str,
     _requester_service_id: Option<&str>,
 ) -> anyhow::Result<()> {
-    anyhow::bail!(
-        "Contact {action} for `{requester}` is unavailable: the Contact projection does not expose the signed request acceptance receipt required by prepare"
-    )
+    let contacts = http.contacts_list().await?;
+    let row = contacts
+        .contacts
+        .into_iter()
+        .find(|row| {
+            row.state == arkret_sdk::ContactState::PendingIncoming
+                && crate::models::contact_peer_id(row).as_str() == requester.trim()
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Contact {action} for `{requester}` requires a fresh pending_incoming list row"
+            )
+        })?;
+    let receipt = row.request_receipt.ok_or_else(|| {
+        anyhow::anyhow!("pending_incoming Contact row omitted its signed request_receipt")
+    })?;
+    submit_contact_response(http, receipt, action).await
 }
 
 pub async fn respond_contact_with_request_id_and_service(
-    _http: &arkret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     requester: &str,
-    _request_event_ref: &str,
+    request_event_ref: &str,
     action: &str,
-    _requester_service_id: Option<&str>,
+    requester_service_id: Option<&str>,
 ) -> anyhow::Result<()> {
-    anyhow::bail!(
-        "Contact {action} for `{requester}` is unavailable: request_event_ref alone is not the signed request acceptance receipt required by prepare"
+    let contacts = http.contacts_list().await?;
+    let row = contacts
+        .contacts
+        .into_iter()
+        .find(|row| {
+            row.state == arkret_sdk::ContactState::PendingIncoming
+                && crate::models::contact_peer_id(row).as_str() == requester.trim()
+                && row.request_event_ref.as_ref().is_some_and(|event_ref| {
+                    event_ref.as_str() == request_event_ref.trim()
+                })
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Contact {action} for `{requester}` requires a fresh list row carrying request Event `{request_event_ref}`"
+            )
+        })?;
+    let receipt = row.request_receipt.ok_or_else(|| {
+        anyhow::anyhow!("pending_incoming Contact row omitted its signed request_receipt")
+    })?;
+    let _ = requester_service_id;
+    submit_contact_response(http, receipt, action).await
+}
+
+async fn submit_contact_response(
+    http: &arkret_sdk::http_client::Client,
+    request_receipt: arkret_sdk::contact_operations::RequestAcceptanceReceipt,
+    action: &str,
+) -> anyhow::Result<()> {
+    use arkret_sdk::contact_operations::{
+        ContactAcceptAction, ContactAcceptPrepareRequestBody, ContactAcceptRequestBody,
+        ContactCommitPhase, ContactCommitRequestBody, ContactOperationOutcome, ContactPreparePhase,
+        ContactPreparedOutcome, ContactRejectAction, ContactRejectPrepareRequestBody,
+        ContactRejectRequestBody, ContactScope,
+    };
+
+    verify_contact_request_receipt(http, &request_receipt).await?;
+    let nonce = crate::operation::uuid_v7();
+    let operation_id =
+        arkret_sdk::ProtocolOperationId::new(format!("ak:operation:contact.{action}.{nonce}"))
+            .map_err(anyhow::Error::msg)?;
+    let idempotency_key = arkret_sdk::IdempotencyKey::new(nonce).map_err(anyhow::Error::msg)?;
+
+    if action == "accept" {
+        let prepare = ContactAcceptRequestBody::Prepare(ContactAcceptPrepareRequestBody {
+            phase: ContactPreparePhase::Prepare,
+            operation_id: operation_id.clone(),
+            idempotency_key: idempotency_key.clone(),
+            request_receipt,
+            action: ContactAcceptAction::Accept,
+            granted_to_peer_scopes: vec![ContactScope::DirectMessage],
+        });
+        let prepared = http.contacts_respond(&prepare).await?;
+        let (returned_operation_id, reservation_handle, event_draft) = match prepared {
+            ContactOperationOutcome::Prepared {
+                outcome:
+                    ContactPreparedOutcome::Response {
+                        operation_id,
+                        reservation_handle,
+                        event_draft,
+                        ..
+                    },
+            } => (operation_id, reservation_handle, event_draft),
+            ContactOperationOutcome::Failed { outcome } => {
+                anyhow::bail!("Contact accept prepare failed: {:?}", outcome.reason)
+            }
+            _ => anyhow::bail!("Contact accept prepare returned the wrong result kind"),
+        };
+        if returned_operation_id != operation_id {
+            anyhow::bail!("Contact accept prepare changed operation_id");
+        }
+        let commit = ContactAcceptRequestBody::Commit(ContactCommitRequestBody {
+            phase: ContactCommitPhase::Commit,
+            operation_id,
+            idempotency_key,
+            reservation_handle,
+            signed_event: crate::transport::contacts::sign_prepared_contact_event(&event_draft)?,
+            control_proposal_ack: None,
+        });
+        match http.contacts_respond(&commit).await? {
+            ContactOperationOutcome::Accepted { .. } => Ok(()),
+            ContactOperationOutcome::Failed { outcome } => {
+                anyhow::bail!("Contact accept commit failed: {:?}", outcome.reason)
+            }
+            _ => anyhow::bail!("Contact accept commit returned the wrong result kind"),
+        }
+    } else if action == "reject" {
+        let prepare = ContactRejectRequestBody::Prepare(ContactRejectPrepareRequestBody {
+            phase: ContactPreparePhase::Prepare,
+            operation_id: operation_id.clone(),
+            idempotency_key: idempotency_key.clone(),
+            request_receipt,
+            action: ContactRejectAction::Reject,
+        });
+        let prepared: ContactOperationOutcome =
+            http.post("/_arkret/self/contacts/reject", &prepare).await?;
+        let (returned_operation_id, reservation_handle, event_draft) = match prepared {
+            ContactOperationOutcome::Prepared {
+                outcome:
+                    ContactPreparedOutcome::Reject {
+                        operation_id,
+                        reservation_handle,
+                        event_draft,
+                        ..
+                    },
+            } => (operation_id, reservation_handle, event_draft),
+            ContactOperationOutcome::Failed { outcome } => {
+                anyhow::bail!("Contact reject prepare failed: {:?}", outcome.reason)
+            }
+            _ => anyhow::bail!("Contact reject prepare returned the wrong result kind"),
+        };
+        if returned_operation_id != operation_id {
+            anyhow::bail!("Contact reject prepare changed operation_id");
+        }
+        let commit = ContactRejectRequestBody::Commit(ContactCommitRequestBody {
+            phase: ContactCommitPhase::Commit,
+            operation_id,
+            idempotency_key,
+            reservation_handle,
+            signed_event: crate::transport::contacts::sign_prepared_contact_event(&event_draft)?,
+            control_proposal_ack: None,
+        });
+        match http
+            .post::<_, ContactOperationOutcome>("/_arkret/self/contacts/reject", &commit)
+            .await?
+        {
+            ContactOperationOutcome::Accepted { .. } => Ok(()),
+            ContactOperationOutcome::Failed { outcome } => {
+                anyhow::bail!("Contact reject commit failed: {:?}", outcome.reason)
+            }
+            _ => anyhow::bail!("Contact reject commit returned the wrong result kind"),
+        }
+    } else {
+        anyhow::bail!("unsupported Contact response action `{action}`")
+    }
+}
+
+/// Verify the source-service receipt against the exact sealed request Event and
+/// the issuer key that was active when the source accepted it.  The list row is
+/// only a carrier; none of its summary fields are an authority input here.
+async fn verify_contact_request_receipt(
+    http: &arkret_sdk::http_client::Client,
+    receipt: &arkret_sdk::contact_operations::RequestAcceptanceReceipt,
+) -> anyhow::Result<()> {
+    receipt.validate_shape()?;
+    let resolved = http
+        .events_resolve(&arkret_sdk::EventsResolveRequestBody {
+            event_ids: vec![receipt.core.request_event_ref.clone()],
+            event_digests: vec![receipt.core.request_digest.clone()],
+            seal_refs: Vec::new(),
+            include_payload: Some(true),
+        })
+        .await?;
+    let request = resolved
+        .events
+        .iter()
+        .find(|event| event.event_id == receipt.core.request_event_ref)
+        .ok_or_else(|| anyhow::anyhow!("Contact request receipt Event is not accepted"))?;
+    let request_digest = arkret_sdk::Hash::new(request.event_digest()?)?;
+    if request_digest != receipt.core.request_digest
+        || !resolved.seals.iter().any(|seal| {
+            seal.realm_id == request.realm_id
+                && seal.delta.contains(&request_digest)
+                && seal.covered_event_digests.contains(&request_digest)
+        })
+    {
+        anyhow::bail!("Contact request receipt Event lacks its exact accepted covering Seal");
+    }
+
+    let history =
+        crate::identity::history::fetch_complete_identity_history(http, &receipt.core.issuer)
+            .await?;
+    if history.did != receipt.core.issuer
+        || history.method != "did:webvh"
+        || history.native_history == Some(false)
+        || history.has_more
+        || history.next_cursor.is_some()
+    {
+        anyhow::bail!("Contact receipt issuer did not return complete native did:webvh history");
+    }
+    let history_point = arkret_signatures::webvh::validate_webvh_history_at(
+        &receipt.core.issuer,
+        &history.entries,
+        receipt.core.accepted_at,
     )
+    .map_err(|error| anyhow::anyhow!("invalid Contact receipt issuer history: {error}"))?;
+    let document: arkret_sdk::DidDocument = serde_json::from_value(history_point.document)?;
+    let verification_method = receipt.signature.verification_method.as_str();
+    if !did_document_assertion_method_contains(&document, verification_method) {
+        anyhow::bail!(
+            "Contact receipt verification method was not an assertionMethod at acceptance"
+        );
+    }
+    let resolved_key =
+        arkret_sdk::resolve_verification_method_key_from_document(&document, verification_method)?;
+    if resolved_key.absolutize(&receipt.core.issuer)? != receipt.signature.verification_method {
+        anyhow::bail!("Contact receipt verification method resolved to another issuer key");
+    }
+    let verifying_key =
+        ed25519_dalek::VerifyingKey::from_bytes(&resolved_key.public_key.ed25519_bytes()?)?;
+    arkret_sdk::verify_contact_request_acceptance_receipt(
+        receipt,
+        &request.event_id,
+        &request_digest,
+        &verifying_key,
+    )?;
+    Ok(())
+}
+
+fn did_document_assertion_method_contains(
+    document: &arkret_sdk::DidDocument,
+    expected: &str,
+) -> bool {
+    fn matches_reference(issuer: &arkret_sdk::Did, reference: &str, expected: &str) -> bool {
+        if reference == expected {
+            return true;
+        }
+        reference
+            .strip_prefix('#')
+            .is_some_and(|fragment| expected == format!("{}#{fragment}", issuer.as_str()))
+    }
+
+    document
+        .raw_properties
+        .get("assertionMethod")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|methods| {
+            methods.iter().any(|method| match method {
+                serde_json::Value::String(reference) => {
+                    matches_reference(&document.id, reference, expected)
+                }
+                serde_json::Value::Object(object) => object
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|reference| matches_reference(&document.id, reference, expected)),
+                _ => false,
+            })
+        })
 }
 
 pub async fn contacts(http: &arkret_sdk::http_client::Client) -> anyhow::Result<ContactListView> {
@@ -200,6 +446,11 @@ pub async fn direct_conversation_resolve(
         .direct_conversation_resolve(&body)
         .await
         .map_err(anyhow::Error::from)?;
+    if outcome.coordinates().is_some() {
+        // The fixed profile baseline is the effective policy. Do not require or
+        // author a fourth founding Event for this Realm class.
+        direct_conversation_history_sharing_policy()?;
+    }
     if enable_owned_agent_reply && direct_conversation_coordinates(&outcome).is_some() {
         preserve_resolved_direct_conversation(
             peer,
@@ -217,7 +468,7 @@ pub async fn direct_conversation_resolve(
 /// Ambiguous network failures are retried by passing the same `prepared` value again; this helper
 /// never authors or substitutes coordinates.
 pub async fn direct_conversation_found(
-    http: &arkret_sdk::http_client::Client,
+    submitter: &crate::event_submit::EventSubmitter,
     resolve: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
     prepared: arkret_sdk::direct_conversation_ops::DirectConversationFoundingUnitSubmission,
 ) -> anyhow::Result<arkret_sdk::direct_conversation_ops::DirectConversationFoundingAcceptanceOutcome>
@@ -225,10 +476,11 @@ pub async fn direct_conversation_found(
     match garth::direct_conversation_founding_action(resolve, Some(prepared))
         .map_err(|error| anyhow::anyhow!(error.to_string()))?
     {
-        garth::DirectConversationFoundingAction::Submit(unit) => http
-            .direct_conversation_founding_submit(&unit)
-            .await
-            .map_err(|error| anyhow::anyhow!("Direct Conversation founding submit: {error}")),
+        garth::DirectConversationFoundingAction::Submit(unit) => {
+            submitter
+                .submit_direct_conversation_founding_durable(unit)
+                .await
+        }
         _ => Err(anyhow::anyhow!(
             "Direct Conversation resolve state does not permit founding submission"
         )),
@@ -289,6 +541,54 @@ pub(crate) fn direct_conversation_entry(
             DirectConversationEntry::Unavailable
         }
     }
+}
+
+/// Holder-device-only blockers are merged after the wire outcome is decoded;
+/// they are deliberately never inserted into the serializable resolver DTO.
+pub(crate) fn direct_conversation_client_local_blockers(
+    state_store: &crate::state::LocalStateStore,
+    peer: &str,
+    outcome: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
+) -> std::collections::BTreeSet<
+    arkret_sdk::direct_conversation_ops::DirectConversationClientLocalBlocker,
+> {
+    use arkret_sdk::direct_conversation_ops::DirectConversationClientLocalBlocker as Local;
+
+    let mut blockers = std::collections::BTreeSet::new();
+    if crate::account_data::is_blocked(&state_store.client_blocklist(), peer) {
+        blockers.insert(Local::PersonalBlocked);
+    }
+    if let Some(coordinates) = outcome.coordinates()
+        && crate::secure_key_store::load_realm_history_secrets(coordinates.realm_id.as_str())
+            .is_none_or(|secrets| secrets.is_empty())
+    {
+        blockers.insert(Local::HistoryKeyUnavailable);
+    }
+    blockers
+}
+
+pub(crate) fn direct_conversation_entry_with_local_blockers(
+    outcome: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
+    local_blockers: &std::collections::BTreeSet<
+        arkret_sdk::direct_conversation_ops::DirectConversationClientLocalBlocker,
+    >,
+) -> DirectConversationEntry {
+    let entry = direct_conversation_entry(outcome);
+    if local_blockers.is_empty() {
+        entry
+    } else if matches!(entry, DirectConversationEntry::Openable) {
+        DirectConversationEntry::Suspended
+    } else {
+        entry
+    }
+}
+
+/// Direct Conversation history policy is profile-fixed and exists even though
+/// the closed three-Event founding unit carries no policy Event.
+pub(crate) fn direct_conversation_history_sharing_policy()
+-> anyhow::Result<arkret_sdk::HistorySharingPolicyPayloadValue> {
+    arkret_policy::history_visibility::direct_conversation_realm_history_sharing_policy()
+        .map_err(anyhow::Error::from)
 }
 
 const DIRECT_CONVERSATION_PEER_CACHE_OBFUSCATION_KEY: &str = "ak.local.direct_conversation.peer.v1";
@@ -523,26 +823,83 @@ pub(crate) fn primary_handle_from_viewer(
 /// Protocol contract: `contacts/tombstone` body carries `contact` and an
 /// optional `block_peer: true`.
 pub async fn tombstone_contact(
-    _http: &arkret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     peer: &str,
-    _block_peer: bool,
+    block_peer: bool,
 ) -> anyhow::Result<()> {
-    anyhow::bail!(
-        "Contact tombstone for `{peer}` is unavailable: the Contact projection does not expose basis_id, version and predecessor_event_ref required by prepare"
-    )
-}
+    use arkret_sdk::contact_operations::{
+        ContactCommitPhase, ContactCommitRequestBody, ContactOperationOutcome, ContactPreparePhase,
+        ContactPreparedOutcome, ContactTombstonePrepareRequestBody, ContactTombstoneRequestBody,
+    };
 
-/// Complete the non-blocklist legs of a personal block saga using the
-/// standard contact command. `full_peer_revoke` revokes every consent scope
-/// while the tombstone removes the contact projection; no private endpoint or
-/// receiver-visible block response is introduced.
-pub async fn tombstone_contact_and_revoke_all(
-    _http: &arkret_sdk::http_client::Client,
-    peer: &str,
-) -> anyhow::Result<()> {
-    anyhow::bail!(
-        "Contact tombstone for `{peer}` is unavailable: the Contact projection does not expose basis_id, version and predecessor_event_ref required by prepare"
-    )
+    if block_peer {
+        anyhow::bail!(
+            "Contact block requires a separate holder-private blocklist CAS; refusing to tombstone only half of the requested action"
+        );
+    }
+    let contacts = http.contacts_list().await?;
+    let row = contacts
+        .contacts
+        .into_iter()
+        .find(|row| {
+            row.state == arkret_sdk::ContactState::Accepted
+                && crate::models::contact_peer_id(row).as_str() == peer.trim()
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!("Contact tombstone for `{peer}` requires a fresh accepted list row")
+        })?;
+    let next = row.next_prepare_input.ok_or_else(|| {
+        anyhow::anyhow!("accepted Contact row omitted its exact next_prepare_input")
+    })?;
+    next.validate_shape()?;
+    let nonce = crate::operation::uuid_v7();
+    let operation_id =
+        arkret_sdk::ProtocolOperationId::new(format!("ak:operation:contact.tombstone.{nonce}"))
+            .map_err(anyhow::Error::msg)?;
+    let idempotency_key = arkret_sdk::IdempotencyKey::new(nonce).map_err(anyhow::Error::msg)?;
+    let prepare = ContactTombstoneRequestBody::Prepare(ContactTombstonePrepareRequestBody {
+        phase: ContactPreparePhase::Prepare,
+        operation_id: operation_id.clone(),
+        idempotency_key: idempotency_key.clone(),
+        peer: row.peer,
+        basis_id: next.basis_id,
+        version: next.version,
+        predecessor_event_ref: next.predecessor_event_ref,
+    });
+    let prepared = http.contacts_tombstone(&prepare).await?;
+    let (returned_operation_id, reservation_handle, event_draft) = match prepared {
+        ContactOperationOutcome::Prepared {
+            outcome:
+                ContactPreparedOutcome::Tombstone {
+                    operation_id,
+                    reservation_handle,
+                    event_draft,
+                    ..
+                },
+        } => (operation_id, reservation_handle, event_draft),
+        ContactOperationOutcome::Failed { outcome } => {
+            anyhow::bail!("Contact tombstone prepare failed: {:?}", outcome.reason)
+        }
+        _ => anyhow::bail!("Contact tombstone prepare returned the wrong result kind"),
+    };
+    if returned_operation_id != operation_id {
+        anyhow::bail!("Contact tombstone prepare changed operation_id");
+    }
+    let commit = ContactTombstoneRequestBody::Commit(ContactCommitRequestBody {
+        phase: ContactCommitPhase::Commit,
+        operation_id,
+        idempotency_key,
+        reservation_handle,
+        signed_event: crate::transport::contacts::sign_prepared_contact_event(&event_draft)?,
+        control_proposal_ack: None,
+    });
+    match http.contacts_tombstone(&commit).await? {
+        ContactOperationOutcome::Accepted { .. } => Ok(()),
+        ContactOperationOutcome::Failed { outcome } => {
+            anyhow::bail!("Contact tombstone commit failed: {:?}", outcome.reason)
+        }
+        _ => anyhow::bail!("Contact tombstone commit returned the wrong result kind"),
+    }
 }
 
 /// Read one holder-private consent cell. Spec OpenAPI
@@ -584,8 +941,11 @@ pub async fn grant_consent(
         Ok(cell) => crate::operation::ak_ops::consent_id_from_cell_id(&cell.cell_id)?,
         Err(_) => arkret_sdk::ConsentId::new_v7_at(crate::clock::now_unix_ms()),
     };
+    let holder_did = did_for_request_field("holder", holder)?;
+    let principal_control_realm_id =
+        crate::identity::principal_control::resolve_accepted(http, &holder_did).await?;
     let event = crate::operation::ak_ops::consent_grant(
-        &arkret_sdk::principal_control_realm_id(&did_for_request_field("holder", holder)?),
+        principal_control_realm_id.as_str(),
         holder.trim(),
         &consent_id,
         peer,
@@ -618,8 +978,11 @@ pub async fn revoke_consent(
 ) -> anyhow::Result<arkret_sdk::ConsentCellView> {
     let cell = consent_cell(http, holder, peer, scope).await?;
     let consent_id = crate::operation::ak_ops::consent_id_from_cell_id(&cell.cell_id)?;
+    let holder_did = did_for_request_field("holder", holder)?;
+    let principal_control_realm_id =
+        crate::identity::principal_control::resolve_accepted(http, &holder_did).await?;
     let event = crate::operation::ak_ops::consent_revoke(
-        &arkret_sdk::principal_control_realm_id(&did_for_request_field("holder", holder)?),
+        principal_control_realm_id.as_str(),
         holder.trim(),
         &consent_id,
         &cell.active_grant_dots,
@@ -759,18 +1122,19 @@ async fn account_data_set_submission(
     expected_revision: u64,
 ) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
     let holder = account_data_holder()?;
-    let realm_id = arkret_sdk::principal_control_realm_id(&holder);
+    let realm_id =
+        crate::identity::principal_control::resolve_accepted(submitter.http(), &holder).await?;
     let key = crate::account_data::AccountDataKey::from_wire(type_key);
     let builder = match value {
         Some(value) => crate::account_data::build_account_data_set(
-            &realm_id,
+            realm_id.as_str(),
             holder.as_str(),
             &key,
             value,
             expected_revision,
         ),
         None => crate::account_data::build_account_data_tombstone(
-            &realm_id,
+            realm_id.as_str(),
             holder.as_str(),
             &key,
             expected_revision,

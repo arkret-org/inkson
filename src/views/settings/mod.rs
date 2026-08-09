@@ -271,9 +271,12 @@ pub(crate) fn push_blocklist_account_data(
             let outcome = crate::transport::account::update_account_data_with_merge(
                 &sub,
                 AccountDataKey::ACCOUNT_BLOCKLIST,
-                |_| {
+                |snapshot| {
                     let plaintext = crate::account_data::build_blocklist_account_data_body(
                         &account_did,
+                        snapshot.revision.checked_add(1).ok_or_else(|| {
+                            anyhow::anyhow!("ak.account.blocklist revision overflow")
+                        })?,
                         &entries,
                     )
                     .map_err(anyhow::Error::msg)?;
@@ -287,8 +290,7 @@ pub(crate) fn push_blocklist_account_data(
             .await?;
             let pending_peers = state_store.read().pending_personal_block_sagas();
             for peer in pending_peers {
-                crate::transport::account::tombstone_contact_and_revoke_all(sub.http(), &peer)
-                    .await?;
+                crate::transport::account::tombstone_contact(sub.http(), &peer, true).await?;
                 state_store.write().complete_personal_block_saga(&peer);
             }
             Ok(outcome)

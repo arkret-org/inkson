@@ -294,11 +294,9 @@ impl ChatController {
                 return;
             }
         };
-        let account_realm = arkret_sdk::principal_control_realm_id(&actor);
-        let hlc = match crate::signing_stamp::issue_protocol_hlc(
+        let hlc = match crate::signing_stamp::issue_account_data_hlc(
             actor.as_str(),
             &context.device_id,
-            &account_realm,
         ) {
             Ok(hlc) => hlc,
             Err(error) => {

@@ -40,7 +40,7 @@ fn prepared_contact_request(
     }
 }
 
-fn sign_prepared_contact_event(
+pub(crate) fn sign_prepared_contact_event(
     draft: &ContactPreparedEventDraft,
 ) -> anyhow::Result<arkret_sdk::Event> {
     let mut event = draft.unsigned_event()?;

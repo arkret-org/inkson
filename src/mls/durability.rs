@@ -187,10 +187,10 @@ pub fn seal_history_secrets(
 }
 
 /// HKDF `info` deriving the offline RRK X25519 private key from the 24-word
-/// recovery credential. Distinct from the `did_recovery` HPKE key-schedule info
-/// in `crate::hpke_backup` so the RRK domain is isolated
+/// recovery credential. Distinct from the identity backup-HPKE derivation in
+/// `crate::hpke_backup` so the RRK domain is isolated
 /// (identity-did.md §8.3 / realm-and-space.md §2.3.1: the same key MUST NOT serve
-/// both `did_recovery` and `ArkretRealmHistoryRecoveryKey`).
+/// both identity backup encryption and `ArkretRealmHistoryRecoveryKey`).
 const RRK_DERIVE_INFO: &[u8] = b"arkret-realm-history-recovery-key-x25519-v1";
 
 /// Derive the offline RRK X25519 keypair (raw 32-byte `(private, public)`) from
@@ -553,11 +553,11 @@ mod tests {
         let expected_pub =
             *x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(sk1)).as_bytes();
         assert_eq!(pk1, expected_pub);
-        // Domain isolation: the RRK private key MUST differ from the did_recovery
-        // HPKE key derived from the same mnemonic.
-        let (did_recovery_sk, _) =
+        // Domain isolation: the RRK private key MUST differ from the identity
+        // backup-HPKE key derived from the same mnemonic.
+        let (identity_backup_sk, _) =
             crate::hpke_backup::derive_recovery_keypair_from_recovery_key(RRK_MNEMONIC).unwrap();
-        assert_ne!(sk1.as_slice(), did_recovery_sk.as_slice());
+        assert_ne!(sk1.as_slice(), identity_backup_sk.as_slice());
     }
 
     #[test]

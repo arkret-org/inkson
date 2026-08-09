@@ -309,9 +309,10 @@ pub fn DraftApprovalPanel(token: Signal<String>, controller_id: String) -> Eleme
 
     // Controller-private events (action_approve / action_reject) author
     // in the controller's principal-control realm.
-    let principal_realm = arkret_sdk::Did::new(controller_id.clone())
-        .ok()
-        .map(|principal| arkret_sdk::principal_control_realm_id(&principal).to_string());
+    // The draft DTO does not carry the controller's accepted PCR create or a
+    // typed PCR binding. Keep approval disabled instead of deriving a Realm
+    // identifier from the controller DID.
+    let principal_realm: Option<String> = None;
 
     rsx! {
         div { class: "event", "data-testid": "agent-draft-approval",

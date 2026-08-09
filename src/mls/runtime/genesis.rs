@@ -77,8 +77,30 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
+    let realm_typed = arkret_sdk::RealmId::new(realm.to_owned())
+        .map_err(|error| MlsRuntimeError::Genesis(format!("invalid Realm id: {error}")))?;
+    let effective_scope = match sidecar_binding.as_ref() {
+        Some(binding) => arkret_sdk::ScopeRef::Sidecar {
+            realm_id: realm_typed.clone(),
+            sidecar_id: binding.sidecar_id.clone(),
+        },
+        None => match circle {
+            Some(circle_id) => arkret_sdk::ScopeRef::Circle {
+                realm_id: realm_typed.clone(),
+                circle_id: arkret_sdk::CircleId::new(circle_id.to_owned()).map_err(|error| {
+                    MlsRuntimeError::Genesis(format!("invalid Circle id: {error}"))
+                })?,
+            },
+            None => arkret_sdk::ScopeRef::Realm {
+                realm_id: realm_typed.clone(),
+            },
+        },
+    };
+    let group_seed =
+        crate::state::mls_scope_snapshot_key(&effective_scope).map_err(MlsRuntimeError::Genesis)?;
+    let group_id = arkret_sdk::base64url_encode(group_seed.as_bytes());
     if state_store
-        .mls_snapshot_for_effective_scope(realm, circle)
+        .mls_snapshot_for_scope_and_group(&effective_scope, &group_id)
         .is_some()
     {
         return Ok(None);
@@ -92,21 +114,24 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     let identity = arkret_sdk::ArkretMlsIdentity::new_basic(principal_did, device_id_typed)
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
-    let group_seed = circle.unwrap_or(realm);
-    let group_id = arkret_sdk::base64url_encode(group_seed.as_bytes());
-    let proof_request =
-        crate::mls::governance_proof::proof_request(state_store, realm, circle, group_id, 0, 0)
-            .map_err(MlsRuntimeError::Genesis)?;
+    let proof_request = crate::mls::governance_proof::proof_request_for_scope(
+        state_store,
+        effective_scope.clone(),
+        group_id,
+        0,
+        0,
+    )
+    .map_err(MlsRuntimeError::Genesis)?;
     let governance_binding =
         crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
             .map_err(MlsRuntimeError::Genesis)?;
-    let governance_binding = match sidecar_binding {
-        Some(binding) => {
-            crate::mls::governance_proof::bind_sidecar_scope(&governance_binding, binding.clone())
-                .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?
-        }
-        None => governance_binding,
-    };
+    if let Some(binding) = sidecar_binding.as_ref()
+        && governance_binding.sidecar_binding() != Some(binding)
+    {
+        return Err(MlsRuntimeError::Genesis(
+            "verified Sidecar MLS binding differs from the accepted Sidecar view".to_owned(),
+        ));
+    }
     let group = identity
         .create_group_with_governance_binding(group_seed.as_bytes(), &governance_binding)
         .map_err(|err| MlsRuntimeError::Genesis(format!("create group: {err}")))?;
@@ -137,7 +162,7 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
         ratchet_tree_bytes,
         cipher_suite,
     };
-    state_store.save_mls_snapshot_for_effective_scope(realm.to_owned(), circle, snapshot);
+    state_store.save_mls_snapshot_for_scope(&effective_scope, snapshot);
     Ok(Some(summary))
 }
 
@@ -195,7 +220,33 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope_with_bindi
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
-    let Some(snapshot) = state_store.mls_snapshot_for_effective_scope(realm, circle) else {
+    let realm_typed = arkret_sdk::RealmId::new(realm.to_owned())
+        .map_err(|error| MlsRuntimeError::Genesis(format!("invalid Realm id: {error}")))?;
+    let effective_scope = match sidecar_binding.as_ref() {
+        Some(binding) => arkret_sdk::ScopeRef::Sidecar {
+            realm_id: realm_typed.clone(),
+            sidecar_id: binding.sidecar_id.clone(),
+        },
+        None => match circle {
+            Some(circle_id) => arkret_sdk::ScopeRef::Circle {
+                realm_id: realm_typed.clone(),
+                circle_id: arkret_sdk::CircleId::new(circle_id.to_owned()).map_err(|error| {
+                    MlsRuntimeError::Genesis(format!("invalid Circle id: {error}"))
+                })?,
+            },
+            None => arkret_sdk::ScopeRef::Realm {
+                realm_id: realm_typed.clone(),
+            },
+        },
+    };
+    let expected_group_id = arkret_sdk::base64url_encode(
+        crate::state::mls_scope_snapshot_key(&effective_scope)
+            .map_err(MlsRuntimeError::Genesis)?
+            .as_bytes(),
+    );
+    let Some(snapshot) =
+        state_store.mls_snapshot_for_scope_and_group(&effective_scope, &expected_group_id)
+    else {
         return Ok(None);
     };
     if snapshot.epoch != 0 {
@@ -208,10 +259,9 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope_with_bindi
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
         .map_err(|err| MlsRuntimeError::Genesis(format!("restore epoch-0 snapshot: {err}")))?;
     let group_id = group.group_id();
-    let proof_request = crate::mls::governance_proof::proof_request(
+    let proof_request = crate::mls::governance_proof::proof_request_for_scope(
         state_store,
-        realm,
-        circle,
+        effective_scope,
         group_id.clone(),
         0,
         0,
@@ -220,13 +270,13 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope_with_bindi
     let expected_binding =
         crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
             .map_err(MlsRuntimeError::Genesis)?;
-    let expected_binding = match sidecar_binding {
-        Some(binding) => {
-            crate::mls::governance_proof::bind_sidecar_scope(&expected_binding, binding.clone())
-                .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?
-        }
-        None => expected_binding,
-    };
+    if let Some(binding) = sidecar_binding.as_ref()
+        && expected_binding.sidecar_binding() != Some(binding)
+    {
+        return Err(MlsRuntimeError::Genesis(
+            "verified Sidecar MLS binding differs from the accepted Sidecar view".to_owned(),
+        ));
+    }
     let current_binding = group.current_governance_binding().map_err(|err| {
         MlsRuntimeError::Genesis(format!("read epoch-0 governance binding: {err}"))
     })?;

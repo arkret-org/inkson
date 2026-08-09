@@ -152,7 +152,7 @@ fn backup_series_id(body: &Value) -> &str {
 }
 
 fn payload_with_inferred_active_series(backups: Vec<Value>) -> Value {
-    let active_series = ["secret_storage", "mls_history", "did_recovery"]
+    let active_series = ["secret_storage", "mls_history"]
         .into_iter()
         .filter_map(|backup_kind| {
             backups

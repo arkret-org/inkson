@@ -128,41 +128,6 @@ pub fn open_passphrase_kdf_backup_body(
         .map_err(|error| anyhow::anyhow!("decrypt key backup: {error}"))
 }
 
-/// Build a `did_recovery` backup, HPKE-sealed to the actor's recovery public
-/// key. Spec §5.0.1 first-backup gate forbids passphrase_kdf-only did_recovery,
-/// so this uses `recovery_public_key` (a single passphrase must never control
-/// DID recovery). `recovery_key_ref` names the recovery policy verification
-/// method / DID `recoveryKeyAgreement`.
-#[allow(clippy::too_many_arguments)]
-pub fn build_did_recovery_backup_body(
-    backup_id: &str,
-    actor_id: &str,
-    device_id: &str,
-    recovery_public_key: &[u8],
-    recovery_key_ref: &str,
-    recovery_secret: &[u8],
-    // did_recovery backups MUST bind the active recovery policy.
-    policy_id: &str,
-    policy_version: u64,
-) -> anyhow::Result<KeyBackup> {
-    build_recovery_public_key_backup_body(
-        backup_id,
-        actor_id,
-        device_id,
-        recovery_public_key,
-        recovery_key_ref,
-        BackupKind::DidRecovery,
-        "recovery_policy",
-        &KeyBackupContentItem {
-            item_kind: "recovery_key_share".to_owned(),
-            secret_id: Some("inkson_did_recovery_share".to_owned()),
-            ..Default::default()
-        },
-        recovery_secret,
-        Some((policy_id, policy_version)),
-    )
-}
-
 /// AEAD identifiers for HPKE backups. This surface pins the v1 default-MUST
 /// application-layer HPKE suite `ak.hpke_x25519_aead_chacha20poly1305.v1`
 /// (see [`HPKE_SUITE_X25519_CHACHA20POLY1305_V1`]), whose AEAD is RFC 9180
@@ -222,10 +187,8 @@ pub fn build_recovery_public_key_backup_body(
     subdomain: &str,
     item: &KeyBackupContentItem,
     plaintext: &[u8],
-    // Active recovery policy this backup binds (key-backup.schema.json
-    // `recovery_policy_ref`). REQUIRED for `did_recovery`; an optional signed
-    // hint for other classes. The server cross-checks it against the actor's
-    // currently accepted recovery policy and rejects on mismatch.
+    // Active recovery policy this recovery-public-key envelope binds. The
+    // server cross-checks it against the actor's accepted policy.
     recovery_policy_ref: Option<(&str, u64)>,
 ) -> anyhow::Result<KeyBackup> {
     build_recovery_public_key_backup_body_in_series(

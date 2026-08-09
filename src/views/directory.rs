@@ -306,8 +306,6 @@ pub fn DirectoryPanel(
                     Button {
                         variant: ButtonVariant::Secondary,
                         "data-testid": "accept-contact-button",
-                        disabled: true,
-                        title: "Unavailable until the signed request acceptance receipt is exposed",
                         onclick: {
                             let base = base_url.clone();
                             move |_| {
@@ -332,8 +330,6 @@ pub fn DirectoryPanel(
                     Button {
                         variant: ButtonVariant::Secondary,
                         "data-testid": "reject-contact-button",
-                        disabled: true,
-                        title: "Unavailable until the signed request acceptance receipt is exposed",
                         onclick: {
                             let base = base_url.clone();
                             move |_| {

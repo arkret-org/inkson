@@ -35,7 +35,6 @@ pub(crate) fn backup_class_counts(rows: &[BackupSummaryRow]) -> BackupClassCount
     let mut counts = BackupClassCounts::default();
     for row in rows {
         match row.backup_kind.as_str() {
-            "did_recovery" => counts.did_recovery += 1,
             "secret_storage" => counts.secret_storage += 1,
             "mls_history" => counts.mls_history += 1,
             _ => counts.other += 1,
@@ -81,20 +80,16 @@ pub(crate) fn fmt_backup_timestamp(iso: &str) -> String {
 pub(crate) fn backup_inventory_status(rows: &[BackupSummaryRow]) -> String {
     let counts = backup_class_counts(rows);
     if rows.is_empty() {
-        return "Loaded 0 backup timestamps from the server. Recovery is incomplete: no did_recovery backup is available.".to_owned();
+        return "Loaded 0 backup timestamps from the server. Recovery policy status is checked separately from encrypted backup inventory.".to_owned();
     }
     let latest = sorted_backups_latest_first(rows)
         .first()
         .map(|row| fmt_backup_timestamp(&row.created_at))
         .unwrap_or_else(|| "Unknown time".to_owned());
-    let mut message = format!(
+    let message = format!(
         "Loaded {} backup timestamp(s). Last backup: {latest}",
         rows.len()
     );
-    if counts.did_recovery == 0 {
-        message.push_str(
-            ". Recovery is incomplete for fresh devices until a did_recovery backup exists.",
-        );
-    }
+    let _ = counts;
     message
 }

@@ -293,7 +293,7 @@ fn key_backup_auth_data_rejects_tamper_and_wrong_key() {
     // Tamper a signed field (ciphertext is covered via ciphertext_digest, but
     // mutate backup_kind which is in signed_fields) → verify fails.
     let mut tampered = body.clone();
-    tampered.backup_kind = BackupKind::DidRecovery;
+    tampered.backup_kind = BackupKind::MlsHistory;
     assert!(verify_key_backup_auth_data(&tampered, &signing_key.verifying_key()).is_err());
 
     // Wrong verifying key → fails.
@@ -350,74 +350,6 @@ fn open_refuses_tampered_ciphertext_via_digest_mismatch() {
         err.to_string().contains("ciphertext_digest mismatch"),
         "unexpected error: {err}"
     );
-}
-
-#[test]
-fn did_recovery_backup_uses_separate_domain_and_hpke() {
-    let (sk, pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
-    let body = build_did_recovery_backup_body(
-        "ak:backup:01964137-0000-7000-8000-00000000d1d0",
-        ACTOR,
-        DEVICE,
-        &pk,
-        "did:web:alice.example#recovery",
-        b"recovery share",
-        "ak:policy:01964137-0000-7000-8000-0000000000aa",
-        1,
-    )
-    .unwrap();
-
-    let wire_body = wire(&body);
-
-    assert_eq!(body.backup_kind, BackupKind::DidRecovery);
-    assert_eq!(
-        body.encryption.recipient_method,
-        arkret_sdk::KeyBackupRecipientMethod::RecoveryPublicKey
-    );
-    // 6.2 — did_recovery MUST carry recovery_policy_ref (top-level).
-    assert_eq!(
-        body.recovery_policy_ref
-            .as_ref()
-            .unwrap()
-            .policy_id
-            .as_str(),
-        "ak:policy:01964137-0000-7000-8000-0000000000aa"
-    );
-    assert_eq!(body.recovery_policy_ref.as_ref().unwrap().policy_version, 1);
-    assert_eq!(body.series_seq, 0);
-    assert_eq!(body.contents[0].item_kind, "recovery_key_share");
-    assert_eq!(
-        body.domain_separation.hkdf_info,
-        "arkret-key-backup/did_recovery/recovery_policy/v1"
-    );
-    validate_wire_envelope(&wire_body, BackupKind::DidRecovery)
-        .expect("did_recovery HPKE envelope should validate");
-    // Round-trips the standard typed keybag with the recovery private key.
-    let plaintext = open_recovery_public_key_backup_body(&sk, &wire_body).unwrap();
-    plaintext.validate_for_envelope(&body).unwrap();
-    assert_eq!(
-        B64.decode(plaintext.items[0].secret_b64u.as_bytes())
-            .unwrap(),
-        b"recovery share"
-    );
-}
-
-#[test]
-fn did_recovery_passphrase_kdf_is_rejected() {
-    // Spec §5.0.1 first-backup gate: passphrase_kdf-only did_recovery forbidden.
-    let root = test_root();
-    let body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();
-    let mut body = wire(&body);
-    body["backup_kind"] = json!("did_recovery");
-    body["contents"][0]["item_kind"] = json!("recovery_key_share");
-    body["recovery_policy_ref"] = json!({
-        "policy_id": "ak:policy:01964137-0000-7000-8000-0000000000aa",
-        "policy_version": 1,
-    });
-    attach_key_backup_domain_separation(&mut body, BackupKind::DidRecovery, "recovery_policy");
-    let err = validate_wire_envelope(&body, BackupKind::DidRecovery)
-        .expect_err("passphrase_kdf did_recovery must be rejected");
-    assert!(err.contains("passphrase_kdf"), "{err}");
 }
 
 #[test]

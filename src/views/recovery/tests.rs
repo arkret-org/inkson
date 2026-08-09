@@ -47,18 +47,13 @@ fn parse_backup_summary_rejects_missing_id() {
 
 #[test]
 fn backup_inventory_status_marks_empty_server_as_incomplete() {
-    assert!(backup_inventory_status(&[]).contains("Recovery is incomplete"));
+    assert!(backup_inventory_status(&[]).contains("checked separately"));
 }
 
 #[test]
 fn backup_inventory_status_counts_classes() {
     let rows = parse_backup_list(&json!({
         "backups": [
-            {
-                "backup_id": "ak:backup:a",
-                "backup_kind": "did_recovery",
-                "encryption": {"recipient_method": "recovery_public_key"}
-            },
             {
                 "backup_id": "ak:backup:b",
                 "backup_kind": "secret_storage",
@@ -72,7 +67,6 @@ fn backup_inventory_status_counts_classes() {
         ]
     }));
     let counts = backup_class_counts(&rows);
-    assert_eq!(counts.did_recovery, 1);
     assert_eq!(counts.secret_storage, 1);
     assert_eq!(counts.mls_history, 1);
     assert!(!backup_inventory_status(&rows).contains("incomplete"));

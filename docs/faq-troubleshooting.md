@@ -75,7 +75,7 @@ is fine for low-stakes testing or read-only browsing.
 
 **Symptom**: clicking **Finish** on `/onboarding` stays on step 4.
 
-**Cause**: no `backup_kind=did_recovery` envelope has been published yet.
+**Cause**: no active recovery policy has been accepted yet.
 
 **Fix**: complete the recovery-policy step. The gate is hard-blocking and
 intentional — inception without a backup envelope is unrecoverable.

@@ -2996,15 +2996,23 @@ pub(crate) fn apply_account_data_entries(
                 &entry.payload,
             )
             .and_then(|content| {
-                let entries =
-                    crate::account_data::blocklist_entries_from_account_data(&content, account_did)
-                        .map_err(anyhow::Error::msg)?;
+                let payload = crate::account_data::blocklist_payload_from_account_data(
+                    &content,
+                    account_did,
+                )
+                .map_err(anyhow::Error::msg)?;
                 let revision = entry
                     .payload
                     .get("revision")
                     .and_then(Value::as_u64)
                     .ok_or_else(|| anyhow::anyhow!("ak.account.blocklist is missing revision"))?;
-                Ok((revision, entries))
+                if payload.version != revision {
+                    anyhow::bail!(
+                        "ak.account.blocklist payload version {} differs from Account Data revision {revision}",
+                        payload.version
+                    );
+                }
+                Ok((revision, payload.entries))
             }) {
                 Ok((revision, entries)) => {
                     store.set_client_blocklist(revision, entries);

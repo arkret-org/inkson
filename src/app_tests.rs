@@ -6,6 +6,11 @@ fn direct_route_resolves_agent_peer_independently_of_reply_participation() {
         {
             "peer": {"kind": "human", "principal_id": "did:web:example.com:users:alice"},
             "state": "accepted",
+            "next_prepare_input": {
+                "basis_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "version": 2,
+                "predecessor_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
+            },
             "granted_to_peer_scopes": ["direct_message"],
             "granted_by_peer_scopes": ["direct_message"],
             "bidirectional_scopes": ["direct_message"],
@@ -965,7 +970,7 @@ fn mls_recovery_setup_missing_stays_false_when_account_recovery_is_configured() 
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn mls_recovery_setup_missing_stays_false_for_local_recovery_key_and_did_backup() {
+fn mls_recovery_setup_missing_stays_false_for_local_recovery_key_and_secret_storage_backup() {
     let actor = "did:web:alice.example";
     let mut store = isolated_store("mls-recovery-local-did-backup");
     store.save_realm_tree_projection(
@@ -989,8 +994,8 @@ fn mls_recovery_setup_missing_stays_false_for_local_recovery_key_and_did_backup(
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let payload = serde_json::json!({
         "backups": [{
-            "backup_id": "ak:backup:did-recovery",
-            "backup_kind": "did_recovery",
+            "backup_id": "ak:backup:secret-storage",
+            "backup_kind": "secret_storage",
             "encryption": { "recipient_method": "recovery_public_key" },
         }]
     });

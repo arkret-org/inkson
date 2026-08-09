@@ -59,42 +59,6 @@ fn sidecar_transition_suspends_only_track_edits_without_mixing_drafts() {
 }
 
 #[test]
-fn sidecar_private_track_card_uses_only_private_strand_updates() {
-    let source_id = "ak:strand:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg";
-    let private_id = "ak:strand:AZiQUXWgexBvj0pdmSuNERtMTAFCjqds5-eP8K9OsgEo";
-    let mut source = test_card(source_id, "U");
-    source.primary_strand_id = source_id.to_owned();
-    source.body = "shared body".to_owned();
-    source.synthesis = "shared synthesis".to_owned();
-    let operation = |id: &str, strand_id: &str, body: &str| RawOperationRecord {
-        operation_id: id.to_owned(),
-        realm_id: Some(TEST_REALM_ID.to_owned()),
-        received_at: chrono::Utc::now(),
-        payload: json!({
-            "kind": "ak.strand.update",
-            "operation_id": id,
-            "write_state": "accepted",
-            "body": {
-                "strand_id": strand_id,
-                "patch": { "body": { "$op": "set", "value": body } }
-            }
-        }),
-    };
-    let operations = vec![
-        operation("source-op", source_id, "new shared body"),
-        operation("private-op", private_id, "private overlay"),
-    ];
-
-    let private = sidecar_private_track_card(&source, private_id, &operations, None);
-
-    assert_eq!(private.id, private_id);
-    assert_eq!(private.primary_strand_id, private_id);
-    assert_eq!(private.body, "private overlay");
-    assert!(private.synthesis.is_empty());
-    assert_eq!(private.security_encrypted, Some(true));
-}
-
-#[test]
 fn local_card_update_overlay_replays_queued_summary_and_body_on_top_of_projection() {
     // Simulate: server projection returns the pre-edit card; the user
     // had queued a ak.strand.update locally that bumped summary + body.

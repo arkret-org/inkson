@@ -22,7 +22,6 @@ pub(super) struct CardDetailContext {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct SidecarTrackEditContext {
     source_strand_id: String,
-    private_strand_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -237,22 +236,13 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
     } = controller;
     let mut sidecar_edit_context_seen = use_signal(SidecarTrackEditContext::default);
     let mut suspended_shared_track_edits = use_signal(BTreeMap::<String, SuspendedTrackEdit>::new);
-    let mut suspended_private_track_edits = use_signal(BTreeMap::<String, SuspendedTrackEdit>::new);
     let mut card_detail_backdrop_pressed = use_signal(|| false);
-    let edit_context_realm_id = selected_realm_id.clone();
     use_effect(move || {
         let selected_strand = selected_card()
             .map(|card| card.primary_strand_id)
             .unwrap_or_default();
-        let private_strand_id = hosted_sidecar_state()
-            .filter(|session| {
-                session.source_realm_id == edit_context_realm_id
-                    && selected_strand == session.source_strand_id
-            })
-            .map(|session| session.private_strand_id);
         let next = SidecarTrackEditContext {
             source_strand_id: selected_strand,
-            private_strand_id,
         };
         let previous = sidecar_edit_context_seen.peek().clone();
         if previous == next {
@@ -265,11 +255,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                 card_edit_synthesis(),
                 card_edit_synthesis_target_id(),
             ) {
-                if let Some(private_strand_id) = previous.private_strand_id {
-                    suspended_private_track_edits
-                        .write()
-                        .insert(private_strand_id, edit);
-                } else if !previous.source_strand_id.is_empty() {
+                if !previous.source_strand_id.is_empty() {
                     suspended_shared_track_edits
                         .write()
                         .insert(previous.source_strand_id, edit);
@@ -280,15 +266,9 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
             card_detail_edit_status.set(String::new());
             card_edit_synthesis_target_id.set(None);
         }
-        let suspended = if let Some(private_strand_id) = next.private_strand_id.as_ref() {
-            suspended_private_track_edits
-                .write()
-                .remove(private_strand_id)
-        } else {
-            suspended_shared_track_edits
-                .write()
-                .remove(&next.source_strand_id)
-        };
+        let suspended = suspended_shared_track_edits
+            .write()
+            .remove(&next.source_strand_id);
         sidecar_edit_context_seen.set(next);
         if let Some(edit) = suspended {
             card_edit_scope.set(edit.scope);
@@ -309,29 +289,11 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                     });
                     let sidecar_track_write = active_sidecar_session.as_ref().map(|session| {
                         SidecarTrackWriteContext {
-                            circle_id: session.backing_scope_circle_id.to_string(),
                             binding: session.mls_binding().ok(),
                             ready: session.membership_ready(),
                         }
                     });
-                    let private_track_card = active_sidecar_session.as_ref().map(|session| {
-                        let store = state_store.read();
-                        let snapshot = store.load();
-                        let circle_id = session.backing_scope_circle_id.to_string();
-                        let decrypt_ctx = MlsDecryptCtx {
-                            state_store: &store,
-                            realm_id: &selected_realm_id,
-                            actor_id: &account_did,
-                            device_id: &device_id,
-                            circle_id: Some(&circle_id),
-                        };
-                        sidecar_private_track_card(
-                            card,
-                            &session.private_strand_id,
-                            &snapshot.raw_operations,
-                            Some(&decrypt_ctx),
-                        )
-                    });
+                    let private_track_card: Option<KanbanCard> = None;
                     let track_card = private_track_card.as_ref().unwrap_or(card);
                     let sidecar_track_active = active_sidecar_session.is_some();
                     let show_shared_track_base = active_sidecar_session.as_ref().is_some_and(|session| {

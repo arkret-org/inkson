@@ -975,25 +975,15 @@ pub fn KanbanPanel(
                 device_id: &memo_device_id,
                 circle_id: None,
             };
-            let active_sidecar = hosted_sidecar_state().filter(|session| {
+            let _active_sidecar = hosted_sidecar_state().filter(|session| {
                 session.source_realm_id == memo_realm_id
                     && session.source_strand_id == card.primary_strand_id
             });
-            let circle_id = active_sidecar
-                .as_ref()
-                .map(|session| session.backing_scope_circle_id.to_string());
             let sidecar_decrypt_ctx = MlsDecryptCtx {
-                circle_id: circle_id.as_deref(),
+                circle_id: None,
                 ..decrypt_ctx
             };
-            let private_card = active_sidecar.as_ref().map(|session| {
-                sidecar_private_track_card(
-                    &card,
-                    &session.private_strand_id,
-                    &snapshot.raw_operations,
-                    Some(&sidecar_decrypt_ctx),
-                )
-            });
+            let private_card: Option<KanbanCard> = None;
             let projected_card = private_card.as_ref().unwrap_or(&card);
             card_synthesis_track_entries_with_author_context_and_decrypt(
                 projected_card,

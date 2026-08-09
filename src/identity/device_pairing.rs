@@ -15,6 +15,55 @@
 
 use serde_json::{Value, json};
 
+pub fn sign_target_attestation(
+    signer: &crate::event_signer::InksonEventSigner,
+    actor_id: &str,
+    device_id: &str,
+    transcript_digest: arkret_sdk::Hash,
+) -> anyhow::Result<arkret_sdk::DevicePairingTargetAttestation> {
+    let signer_device = signer
+        .device_id()
+        .ok_or_else(|| anyhow::anyhow!("device pairing signer is not bound to a device"))?;
+    if signer_device != device_id {
+        anyhow::bail!("device pairing signer does not match the target device");
+    }
+    let public_key_multibase = signer
+        .public_key_multibase()
+        .ok_or_else(|| anyhow::anyhow!("target device signer cannot expose its Ed25519 key"))?;
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let (_, hpke_public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair(
+        secure_store.as_ref(),
+        actor_id,
+        device_id,
+    )?;
+    let unsigned = arkret_sdk::UnsignedDevicePairingTargetAttestation::new(
+        arkret_sdk::DeviceId::new(device_id.to_owned())?,
+        arkret_sdk::DidKey::new(format!("did:key:{public_key_multibase}"))
+            .map_err(anyhow::Error::msg)?,
+        arkret_sdk::NonEmptyString::new(crate::identity::did_key::encode_x25519_multibase(
+            &hpke_public_key,
+        ))
+        .map_err(anyhow::Error::msg)?,
+        vec![
+            arkret_sdk::NonEmptyString::new(
+                arkret_wire::HPKE_SUITE_X25519_CHACHA20POLY1305_V1.to_owned(),
+            )
+            .map_err(anyhow::Error::msg)?,
+            arkret_sdk::NonEmptyString::new(arkret_sdk::mls::ARKRET_MLS_ALGORITHM.to_owned())
+                .map_err(anyhow::Error::msg)?,
+        ],
+        transcript_digest,
+    )?;
+    let signature = arkret_sdk::NonEmptyString::new(arkret_sdk::base64url_encode(
+        signer.sign_raw(&unsigned.signing_input()?)?,
+    ))
+    .map_err(anyhow::Error::msg)?;
+    let attestation =
+        unsigned.attach_signature(arkret_sdk::SignatureMaterial::NonEmptyString(signature));
+    arkret_sdk::signatures::device_pairing::verify_device_pairing_target_attestation(&attestation)?;
+    Ok(attestation)
+}
+
 /// One pending same-principal pairing request parsed from the to-device inbox.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PendingPairingRequest {
@@ -37,7 +86,7 @@ pub struct PendingPairingRequest {
     /// server flips the staged row to `authorized` for the new device's status
     /// poll. `None` for direct QR/paste pairing.
     pub device_pairing_request_id: Option<String>,
-    /// The exact payload handed to [`pairing_request_body`].
+    /// The exact payload handed to [`author_pairing_request_body`].
     pub request_payload: Value,
 }
 
@@ -46,7 +95,7 @@ pub struct PendingPairingRequest {
 /// Filters to `ak.key.verification.request` messages carrying
 /// `purpose == "same_principal_device_authorization"` and the full pairing
 /// material (`from_device`, `pairing_code`, `new_device_pubkey`,
-/// `hpke_key`, `device_signature`, `challenge_proof`, `authorize_event`).
+/// `target_attestation`, `challenge_proof`).
 /// Incomplete requests are skipped.
 pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequest> {
     inbox
@@ -64,10 +113,8 @@ pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequ
             let requesting_device_id = content.get("from_device").and_then(Value::as_str)?;
             let pairing_code = content.get("pairing_code").and_then(Value::as_str)?;
             let new_device_pubkey = content.get("new_device_pubkey")?.clone();
-            let hpke_key = content.get("hpke_key")?.clone();
-            let device_signature = content.get("device_signature")?.clone();
+            let target_attestation = content.get("target_attestation")?.clone();
             let challenge_proof = content.get("challenge_proof")?.clone();
-            let authorize_event = content.get("authorize_event")?.clone();
             let device_metadata = content
                 .get("device_metadata")
                 .cloned()
@@ -104,10 +151,8 @@ pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequ
             let mut request_payload = json!({
                 "pairing_code": pairing_code,
                 "new_device_pubkey": new_device_pubkey,
-                "hpke_key": hpke_key,
-                "device_signature": device_signature,
+                "target_attestation": target_attestation,
                 "challenge_proof": challenge_proof,
-                "authorize_event": authorize_event,
                 "device_metadata": device_metadata,
             });
             if !display_name.is_empty()
@@ -128,6 +173,16 @@ pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequ
                     challenge_transcript.clone(),
                 );
             }
+            if let Some(gate_audience) = content.get("gate_audience")
+                && let Some(object) = request_payload.as_object_mut()
+            {
+                object.insert("gate_audience".to_owned(), gate_audience.clone());
+            }
+            if let Some(server_challenge) = content.get("server_challenge")
+                && let Some(object) = request_payload.as_object_mut()
+            {
+                object.insert("server_challenge".to_owned(), server_challenge.clone());
+            }
             Some(PendingPairingRequest {
                 request_key,
                 requesting_device_id: requesting_device_id.to_owned(),
@@ -142,52 +197,174 @@ pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequ
         .collect()
 }
 
-/// Build the strongly-typed `account_device_pair` body from a parsed request
-/// payload (or a pasted QR payload of the same shape). Fails closed when the
-/// required pairing material is missing or malformed.
-pub fn pairing_request_body(
+/// After the approving user confirms the displayed code, verify the target's
+/// possession attestation and only then author the exact authorize Event.  The
+/// target never authors or supplies this Event.
+pub async fn author_pairing_request_body(
+    api: &crate::transport::TransportClient,
     payload: &Value,
 ) -> anyhow::Result<arkret_sdk::AccountDevicePairRequestBody> {
+    let attestation: arkret_sdk::DevicePairingTargetAttestation = serde_json::from_value(
+        payload
+            .get("target_attestation")
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("pairing payload is missing target_attestation"))?,
+    )?;
+    arkret_sdk::signatures::device_pairing::verify_device_pairing_target_attestation(&attestation)?;
+    let challenge_proof: arkret_sdk::DevicePairingChallengeProof = serde_json::from_value(
+        payload
+            .get("challenge_proof")
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("pairing payload is missing challenge_proof"))?,
+    )?;
+    if challenge_proof.transcript_digest != attestation.pairing_challenge_transcript_digest {
+        anyhow::bail!(
+            "pairing challenge proof and target attestation describe different transcripts"
+        );
+    }
+    let new_device_pubkey: arkret_sdk::PublicKey = serde_json::from_value(
+        payload
+            .get("new_device_pubkey")
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("pairing payload is missing new_device_pubkey"))?,
+    )?;
+    if new_device_pubkey.kid.as_str() != attestation.device_id.as_str() {
+        anyhow::bail!("pairing public key and target attestation name different devices");
+    }
+    match challenge_proof.transcript {
+        arkret_sdk::DevicePairingChallengeTranscriptKind::ServerMediated => {
+            let challenge = payload
+                .get("server_challenge")
+                .and_then(Value::as_object)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("server-mediated pairing omitted its exact challenge")
+                })?;
+            let server_challenge =
+                arkret_sdk::signatures::device_pairing::ServerDevicePairingChallenge {
+                    client_nonce: arkret_sdk::DevicePairingNonce::new(required_string(
+                        challenge,
+                        "client_nonce",
+                    )?)
+                    .map_err(anyhow::Error::msg)?,
+                    device_pairing_request_id: arkret_sdk::DevicePairingRequestId::new(
+                        required_string(challenge, "device_pairing_request_id")?,
+                    )
+                    .map_err(anyhow::Error::msg)?,
+                    expires_at: required_string(challenge, "expires_at")?
+                        .parse::<chrono::DateTime<chrono::Utc>>()?,
+                    gate_audience: required_string(challenge, "gate_audience")?,
+                    pairing_code: arkret_sdk::DevicePairingCode::new(required_string(
+                        challenge,
+                        "pairing_code",
+                    )?)
+                    .map_err(anyhow::Error::msg)?,
+                    server_nonce: arkret_sdk::DevicePairingNonce::new(required_string(
+                        challenge,
+                        "server_nonce",
+                    )?)
+                    .map_err(anyhow::Error::msg)?,
+                };
+            arkret_sdk::signatures::device_pairing::verify_server_device_pairing_challenge(
+                &new_device_pubkey,
+                &server_challenge,
+                &challenge_proof,
+                chrono::Utc::now(),
+            )?;
+        }
+        arkret_sdk::DevicePairingChallengeTranscriptKind::ToDevice => {
+            let transcript: arkret_sdk::DevicePairingToDeviceChallengeTranscript =
+                serde_json::from_value(payload.get("challenge_transcript").cloned().ok_or_else(
+                    || anyhow::anyhow!("to-device pairing omitted its exact transcript"),
+                )?)?;
+            let gate_audience = payload
+                .get("gate_audience")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("to-device pairing omitted gate_audience"))?;
+            let pairing_code = arkret_sdk::DevicePairingCode::new(
+                payload
+                    .get("pairing_code")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("pairing payload is missing pairing_code"))?
+                    .to_owned(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            arkret_sdk::signatures::device_pairing::verify_to_device_pairing_challenge(
+                &new_device_pubkey,
+                &pairing_code,
+                gate_audience,
+                &transcript,
+                &challenge_proof,
+                chrono::Utc::now(),
+            )?;
+        }
+    }
+
+    let principal = arkret_sdk::Did::new(
+        crate::secure_key_store::active_device_seed_scope()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| anyhow::anyhow!("no active principal can approve device pairing"))?,
+    )?;
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("no active device signer can approve device pairing"))?;
+    let authorizing_device = arkret_sdk::DeviceId::new(
+        signer
+            .device_id()
+            .ok_or_else(|| anyhow::anyhow!("active pairing approver is not device-bound"))?
+            .to_owned(),
+    )?;
+    let device_signature = match &attestation.device_signature {
+        arkret_sdk::SignatureMaterial::NonEmptyString(value) => {
+            arkret_sdk::Base64UrlString::new(value.as_str().to_owned())
+                .map_err(anyhow::Error::msg)?
+        }
+        _ => anyhow::bail!("accepted-device target attestation must use a base64url signature"),
+    };
+    let created_at = chrono::Utc::now();
+    let authorize_payload = arkret_sdk::UnsignedDeviceAuthorizePayload::new(
+        principal.clone(),
+        attestation.device_id.clone(),
+        arkret_sdk::NonEmptyString::new(attestation.device_public_key.as_str().to_owned())
+            .map_err(anyhow::Error::msg)?,
+        attestation.hpke_key.clone(),
+        attestation.algorithms.clone(),
+        Some(arkret_sdk::NonEmptyString::new("Ed25519".to_owned()).map_err(anyhow::Error::msg)?),
+        arkret_sdk::DeviceOrPrincipalRef::DeviceId(authorizing_device),
+        None,
+        created_at,
+        None,
+        arkret_sdk::DeviceAuthorizationBindingKind::AcceptedDevice,
+        None,
+    )?
+    .attach_signature(device_signature)?;
+    let http = api.sdk_http_client()?;
+    let realm_id = crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
+    let authorize = crate::operation::TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::DeviceAuthorize,
+    >(realm_id.as_str(), principal.as_str(), authorize_payload)
+    .created_at(created_at)
+    .build_sdk_event("inkson-device-pairing")?;
+    let authorize_event = api
+        .event_submitter()?
+        .prepare_initial_submissions(vec![authorize])
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("device authorize Event was not prepared"))?;
+
     let pairing_code = arkret_sdk::DevicePairingCode::new(
         payload
             .get("pairing_code")
             .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
             .ok_or_else(|| anyhow::anyhow!("pairing payload is missing pairing_code"))?
             .to_owned(),
     )
     .map_err(anyhow::Error::msg)?;
-    let new_device_pubkey = match payload.get("new_device_pubkey") {
-        Some(value @ Value::Object(_)) => serde_json::from_value(value.clone())?,
-        _ => anyhow::bail!("pairing payload is missing new_device_pubkey"),
-    };
-    let hpke_key = payload
-        .get("hpke_key")
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("pairing payload is missing hpke_key"))
-        .and_then(|value| serde_json::from_value(value).map_err(anyhow::Error::from))?;
-    let device_signature = payload
-        .get("device_signature")
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("pairing payload is missing device_signature"))
-        .and_then(|value| serde_json::from_value(value).map_err(anyhow::Error::from))?;
-    let authorize_event = payload
-        .get("authorize_event")
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("pairing payload is missing authorize_event"))
-        .and_then(|value| serde_json::from_value(value).map_err(anyhow::Error::from))?;
-    let challenge_proof = payload
-        .get("challenge_proof")
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("pairing payload is missing challenge_proof"))
-        .and_then(|value| serde_json::from_value(value).map_err(anyhow::Error::from))?;
     let display_name = payload
         .get("display_name")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(arkret_sdk::NonEmptyString::new)
+        .map(|value| arkret_sdk::NonEmptyString::new(value.to_owned()))
         .transpose()
         .map_err(anyhow::Error::msg)?;
     let device_metadata = payload
@@ -199,8 +376,7 @@ pub fn pairing_request_body(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .map(arkret_sdk::DevicePairingRequestId::new)
+        .map(|value| arkret_sdk::DevicePairingRequestId::new(value.to_owned()))
         .transpose()
         .map_err(anyhow::Error::msg)?;
     let challenge_transcript = payload
@@ -208,11 +384,11 @@ pub fn pairing_request_body(
         .cloned()
         .map(serde_json::from_value)
         .transpose()?;
-    let body = arkret_sdk::AccountDevicePairRequestBody {
+    let request = arkret_sdk::AccountDevicePairRequestBody {
         pairing_code,
         new_device_pubkey,
-        hpke_key,
-        device_signature,
+        hpke_key: attestation.hpke_key.clone(),
+        device_signature: attestation.device_signature.clone(),
         challenge_proof,
         authorize_event,
         display_name,
@@ -220,74 +396,100 @@ pub fn pairing_request_body(
         device_pairing_request_id,
         challenge_transcript,
     };
-    body.validate_authorize_event_binding()
-        .map_err(anyhow::Error::from)?;
-    Ok(body)
+    attestation.validate_against_pair_request(&request)?;
+    Ok(request)
+}
+
+/// Target-device fence before treating an `authorized` status as success.
+/// The status row is only an index; trust comes from the exact accepted Event
+/// and its target-owned attestation binding.
+pub async fn verify_authorized_pairing_event(
+    http: &arkret_sdk::http_client::Client,
+    principal: &arkret_sdk::Did,
+    outcome: &arkret_sdk::DevicePairingStatusOutcome,
+    attestation: &arkret_sdk::DevicePairingTargetAttestation,
+) -> anyhow::Result<arkret_sdk::Event> {
+    arkret_sdk::signatures::device_pairing::verify_device_pairing_target_attestation(attestation)?;
+    let device_id = outcome
+        .device_id
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("authorized pairing status omitted device_id"))?;
+    let event_ref = outcome
+        .authorized_event_ref
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("authorized pairing status omitted authorized_event_ref"))?;
+    if device_id != &attestation.device_id {
+        anyhow::bail!("authorized pairing status names another target device");
+    }
+    let resolved = http
+        .events_resolve(&arkret_sdk::EventsResolveRequestBody {
+            event_ids: vec![event_ref.clone()],
+            event_digests: Vec::new(),
+            seal_refs: Vec::new(),
+            include_payload: Some(true),
+        })
+        .await?;
+    let event = resolved
+        .events
+        .into_iter()
+        .find(|event| &event.event_id == event_ref)
+        .ok_or_else(|| anyhow::anyhow!("authorized device Event is not accepted"))?;
+    event.verify_event_id_matches_content()?;
+    if event.kind != arkret_sdk::EventKind::DeviceAuthorize || event.actor_id != *principal {
+        anyhow::bail!(
+            "authorized pairing status does not reference this principal's authorize Event"
+        );
+    }
+    let pcr = crate::identity::principal_control::resolve_accepted(http, principal).await?;
+    if event.realm_id != pcr {
+        anyhow::bail!("authorized pairing Event is outside the principal control Realm");
+    }
+    let digest = arkret_sdk::Hash::new(event.event_digest()?)?;
+    if !resolved.seals.iter().any(|seal| {
+        seal.realm_id == event.realm_id
+            && seal.delta.contains(&digest)
+            && seal.covered_event_digests.contains(&digest)
+    }) {
+        anyhow::bail!("authorized pairing Event lacks its exact accepted covering Seal");
+    }
+    let payload: arkret_sdk::DeviceAuthorizePayload =
+        serde_json::from_value(serde_json::to_value(&event.payload)?)?;
+    if payload.principal_id != *principal
+        || payload.device_id != attestation.device_id
+        || payload.device_public_key.as_str() != attestation.device_public_key.as_str()
+        || payload.hpke_key != attestation.hpke_key
+        || payload.algorithms != attestation.algorithms
+        || payload.authorization_binding_kind
+            != arkret_sdk::DeviceAuthorizationBindingKind::AcceptedDevice
+        || payload.device_signature != attestation.device_signature
+        || !event.proofs.iter().any(|proof| {
+            proof
+                .verification_method
+                .as_str()
+                .strip_prefix(principal.as_str())
+                .is_some_and(|suffix| suffix.starts_with('#'))
+                && !proof
+                    .verification_method
+                    .as_str()
+                    .ends_with(attestation.device_id.as_str())
+        })
+    {
+        anyhow::bail!("authorized pairing Event does not match the target attestation");
+    }
+    Ok(event)
+}
+
+fn required_string(object: &serde_json::Map<String, Value>, field: &str) -> anyhow::Result<String> {
+    object
+        .get(field)
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("pairing server challenge omitted `{field}`"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn authorize_event_fixture() -> Value {
-        let principal = arkret_sdk::Did::new("did:web:alice").unwrap();
-        let target_device =
-            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001").unwrap();
-        let authorizing_device =
-            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000000").unwrap();
-        let hpke_key = arkret_sdk::NonEmptyString::new("hpke-abc-123").unwrap();
-        let device_signature =
-            arkret_sdk::Base64UrlString::new("Y2hhbGxlbmdlLXNpZ25hdHVyZQ").unwrap();
-        let payload = arkret_sdk::UnsignedDeviceAuthorizePayload::new(
-            principal.clone(),
-            target_device,
-            arkret_sdk::NonEmptyString::new("abc-123").unwrap(),
-            hpke_key,
-            vec![arkret_sdk::NonEmptyString::new("Ed25519").unwrap()],
-            Some(arkret_sdk::NonEmptyString::new("Ed25519").unwrap()),
-            arkret_sdk::DeviceOrPrincipalRef::DeviceId(authorizing_device.clone()),
-            None,
-            "2026-06-17T11:00:00Z".parse().unwrap(),
-            None,
-            arkret_sdk::DeviceAuthorizationBindingKind::AcceptedDevice,
-            None,
-        )
-        .unwrap()
-        .attach_signature(device_signature)
-        .unwrap();
-        let realm_id = arkret_sdk::principal_control_realm_id(&principal);
-        let mut event = crate::operation::TypedOperationBuilder::new::<
-            arkret_sdk::event_spec::DeviceAuthorize,
-        >(realm_id.as_str(), principal.as_str(), payload)
-        .seal_basis(arkret_sdk::SealBasis {
-            leaves: vec![
-                arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "a".repeat(64))).unwrap(),
-            ],
-        })
-        .build_sdk_event("device-pairing-test")
-        .unwrap();
-        let verification_method = arkret_sdk::DidUrl::new(format!(
-            "{}#{}",
-            principal.as_str(),
-            authorizing_device.as_str()
-        ))
-        .unwrap();
-        let signer = arkret_sdk::Ed25519PayloadSigner::new(
-            ed25519_dalek::SigningKey::from_bytes(&[7_u8; 32]),
-            principal,
-            verification_method.clone(),
-        );
-        arkret_sdk::signatures::sign_event_with_digest_suite(
-            &mut event,
-            &signer,
-            &verification_method,
-            arkret_sdk::canonical::DigestSuite::Sha256,
-            arkret_sdk::signatures::SignEventOptions::new()
-                .with_created_at("2026-06-17T11:00:00Z".parse().unwrap()),
-        )
-        .unwrap();
-        serde_json::to_value(arkret_wire::EventInitialSubmission::online(event)).unwrap()
-    }
 
     fn request_message() -> Value {
         json!({
@@ -306,9 +508,16 @@ mod tests {
                     "algorithm": "Ed25519",
                     "key": "abc-123"
                 },
-                "hpke_key": "hpke-abc-123",
-                "device_signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ",
-                "authorize_event": authorize_event_fixture(),
+                "target_attestation": {
+                    "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
+                    "device_public_key": "did:key:z6MkogKw38hXxUkpMWitoBubBGHZzeGrQJ4oHF36iegUbmpA",
+                    "hpke_key": "hpke-abc-123",
+                    "algorithms": ["Ed25519"],
+                    "device_key_algorithm": "Ed25519",
+                    "authorization_binding_kind": "accepted_device",
+                    "pairing_challenge_transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "device_signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
+                },
                 "challenge_proof": {
                     "transcript": "ak.device-pairing.challenge.v1",
                     "kid": "ak:device:01904100-0000-7000-8000-000000000001",
@@ -373,90 +582,5 @@ mod tests {
             rows[0].request_key,
             "ak:device:01904100-0000-7000-8000-000000000001:7H2K9M4Q"
         );
-    }
-
-    #[test]
-    fn builds_body_from_request_payload() {
-        let row = parse_pending_pairing_requests(&[request_message()])
-            .pop()
-            .unwrap();
-        let body = pairing_request_body(&row.request_payload).expect("body");
-        assert_eq!(body.pairing_code.as_str(), "7H2K9M4Q");
-        assert_eq!(
-            body.challenge_proof.transcript.as_str(),
-            "ak.device-pairing.challenge.v1"
-        );
-        assert_eq!(body.display_name.as_deref(), Some("New browser"));
-        assert_eq!(body.new_device_pubkey.kty.as_str(), "OKP");
-        assert_eq!(body.new_device_pubkey.key.as_str(), "abc-123");
-        assert_eq!(
-            body.new_device_pubkey.kid.as_str(),
-            "ak:device:01904100-0000-7000-8000-000000000001"
-        );
-    }
-
-    #[test]
-    fn body_accepts_canonical_pubkey_with_kty() {
-        let payload = json!({
-            "pairing_code": "7H2K9M4Q",
-            "challenge_proof": {
-                "transcript": "ak.device-pairing.challenge.v1",
-                "kid": "ak:device:01904100-0000-7000-8000-000000000001",
-                "signature_algorithm": "Ed25519",
-                "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
-            },
-            "device_pairing_request_id": "device_pairing_request:01904100-0000-7000-8000-000000000001",
-            "new_device_pubkey": {
-                "kty": "OKP",
-                "kid": "ak:device:01904100-0000-7000-8000-000000000001",
-                "algorithm": "Ed25519",
-                "key": "abc-123"
-            },
-            "hpke_key": "hpke-abc-123",
-            "device_signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ",
-            "authorize_event": authorize_event_fixture()
-        });
-        let body = pairing_request_body(&payload).expect("canonical body");
-        assert_eq!(body.new_device_pubkey.kty.as_str(), "OKP");
-        assert_eq!(body.new_device_pubkey.key.as_str(), "abc-123");
-    }
-
-    #[test]
-    fn body_rejects_noncanonical_public_key_field() {
-        let payload = json!({
-            "pairing_code": "7H2K9M4Q",
-            "challenge_proof": {
-                "transcript": "ak.device-pairing.challenge.v1",
-                "kid": "ak:device:01904100-0000-7000-8000-000000000001",
-                "signature_algorithm": "Ed25519",
-                "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
-            },
-            "device_pairing_request_id": "device_pairing_request:01904100-0000-7000-8000-000000000001",
-            "new_device_pubkey": {
-                "kty": "OKP",
-                "kid": "ak:device:01904100-0000-7000-8000-000000000001",
-                "algorithm": "Ed25519",
-                "public_key": "abc-123"
-            }
-        });
-        assert!(pairing_request_body(&payload).is_err());
-    }
-
-    #[test]
-    fn body_fails_closed_on_missing_pubkey() {
-        let payload = json!({
-            "pairing_code": "7H2K9M4Q",
-            "challenge_proof": {
-                "transcript": "ak.device-pairing.challenge.v1",
-                "kid": "ak:device:01904100-0000-7000-8000-000000000001",
-                "signature_algorithm": "Ed25519",
-                "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
-            },
-            "device_pairing_request_id": "device_pairing_request:01904100-0000-7000-8000-000000000001"
-        });
-        assert!(pairing_request_body(&payload).is_err());
     }
 }

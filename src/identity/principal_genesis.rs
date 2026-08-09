@@ -81,12 +81,11 @@ pub fn founding_descriptor(
 #[allow(clippy::too_many_arguments)]
 pub fn build_genesis_unit(
     principal_id: arkret_sdk::Did,
-    realm_id: arkret_sdk::RealmId,
+    genesis_salt: arkret_sdk::GenesisSalt,
     trust_domain: arkret_sdk::TypedTrustDomainId,
     did_inception_version_id: String,
     created_at: DateTime<Utc>,
     create_hlc: arkret_sdk::Hlc,
-    authorize_hlc: arkret_sdk::Hlc,
     root_seed: &[u8; 32],
     root_public_key_multibase: &str,
     device_id: arkret_sdk::DeviceId,
@@ -108,7 +107,7 @@ pub fn build_genesis_unit(
     let mut create = arkret_bootstrap::build_self_principal_pcr_create(
         arkret_bootstrap::SelfPrincipalPcrCreateInput {
             principal_id: principal_id.clone(),
-            realm_id: realm_id.clone(),
+            genesis_salt,
             trust_domain,
             did_inception_ref: arkret_sdk::EventRef::new(
                 did_inception_version_id,
@@ -134,6 +133,18 @@ pub fn build_genesis_unit(
         &root_method,
         arkret_sdk::canonical::DigestSuite::Sha256,
         arkret_sdk::signatures::SignEventOptions::new().with_created_at(created_at),
+    )?;
+
+    // The PCR Realm exists only after the signed create draft has a stable
+    // Event id. The authorize slot must use that exact event-derived id.
+    let realm_id = create.realm_id.clone();
+    let authorize_hlc = crate::signing_stamp::issue_protocol_hlc_with_secret(
+        principal_id.as_str(),
+        device_signer
+            .device_id()
+            .ok_or_else(|| anyhow::anyhow!("founding signer is not bound to a device"))?,
+        realm_id.as_str(),
+        root_seed,
     )?;
 
     let mut authorize =

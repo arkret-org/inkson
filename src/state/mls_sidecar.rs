@@ -44,10 +44,10 @@ fn attach_group_state_ref_to_snapshot(
 
 fn projection_mls_genesis_event_id(
     state: &ClientLocalState,
-    realm_id: &str,
-    circle_id: Option<&str>,
+    effective_scope: &arkret_sdk::ScopeRef,
     group_id: &str,
 ) -> Option<arkret_sdk::EventId> {
+    let realm_id = effective_scope.realm_id_opt()?.as_str();
     let projection = state.realm_tree_projections.get(realm_id)?;
     let events = projection
         .get("state")
@@ -82,23 +82,10 @@ fn projection_mls_genesis_event_id(
         if event_group_id != group_id {
             return None;
         }
-        let effective_scope = payload.get("effective_scope")?;
-        if effective_scope.get("realm_id").and_then(Value::as_str) != Some(realm_id) {
+        let projected_scope = payload.get("effective_scope")?;
+        let expected_scope = serde_json::to_value(effective_scope).ok()?;
+        if projected_scope != &expected_scope {
             return None;
-        }
-        match circle_id {
-            Some(circle_id) => {
-                if effective_scope.get("kind").and_then(Value::as_str) != Some("circle")
-                    || effective_scope.get("circle_id").and_then(Value::as_str) != Some(circle_id)
-                {
-                    return None;
-                }
-            }
-            None => {
-                if effective_scope.get("kind").and_then(Value::as_str) != Some("realm") {
-                    return None;
-                }
-            }
         }
         event
             .get("event_id")
@@ -171,14 +158,27 @@ impl LocalStateStore {
         &mut self,
         realm_id: impl Into<String>,
         circle_id: Option<&str>,
+        envelope: crate::mls::persistence::MlsSnapshotEnvelope,
+    ) {
+        let realm_id = realm_id.into();
+        let Ok(scope) = mls_realm_or_circle_scope(&realm_id, circle_id) else {
+            return;
+        };
+        self.save_mls_snapshot_for_scope(&scope, envelope);
+    }
+
+    pub fn save_mls_snapshot_for_scope(
+        &mut self,
+        effective_scope: &arkret_sdk::ScopeRef,
         mut envelope: crate::mls::persistence::MlsSnapshotEnvelope,
     ) {
         // YOU-02-004: order this write after any decrypt write-backs so the
         // overlay can never shadow it (overlay snapshots always derive from
         // the state this caller just read via `mls_snapshot_for`).
         self.absorb_mls_receive_overlay();
-        let realm_id = realm_id.into();
-        let key = mls_effective_scope_snapshot_key(&realm_id, circle_id);
+        let Ok(key) = mls_scope_snapshot_key_for_group(effective_scope, &envelope.group_id) else {
+            return;
+        };
         if let Some(record) = self.cached.mls_group_state_refs.get(&key)
             && record.group_id == envelope.group_id
             && record.epoch == envelope.epoch
@@ -216,7 +216,38 @@ impl LocalStateStore {
         realm_id: &str,
         circle_id: Option<&str>,
     ) -> Option<crate::mls::persistence::MlsSnapshotEnvelope> {
-        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        let scope = mls_realm_or_circle_scope(realm_id, circle_id).ok()?;
+        self.mls_snapshot_for_scope(&scope)
+    }
+
+    pub fn mls_snapshot_for_scope(
+        &self,
+        effective_scope: &arkret_sdk::ScopeRef,
+    ) -> Option<crate::mls::persistence::MlsSnapshotEnvelope> {
+        match effective_scope {
+            arkret_sdk::ScopeRef::Sidecar { .. } => {
+                let prefix = format!("{}\u{1f}", mls_scope_snapshot_key(effective_scope).ok()?);
+                self.load()
+                    .mls_snapshots
+                    .iter()
+                    .filter(|(key, _)| key.starts_with(&prefix))
+                    .map(|(_, snapshot)| snapshot)
+                    .max_by_key(|snapshot| snapshot.epoch)
+                    .cloned()
+            }
+            _ => {
+                let key = mls_scope_snapshot_key(effective_scope).ok()?;
+                self.load().mls_snapshots.get(&key).cloned()
+            }
+        }
+    }
+
+    pub fn mls_snapshot_for_scope_and_group(
+        &self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        group_id: &str,
+    ) -> Option<crate::mls::persistence::MlsSnapshotEnvelope> {
+        let key = mls_scope_snapshot_key_for_group(effective_scope, group_id).ok()?;
         self.load().mls_snapshots.get(&key).cloned()
     }
 
@@ -345,17 +376,64 @@ impl LocalStateStore {
         realm_id: &str,
         circle_id: Option<&str>,
     ) {
+        let Ok(scope) = mls_realm_or_circle_scope(realm_id, circle_id) else {
+            return;
+        };
+        self.drop_mls_snapshot_for_scope(&scope);
+    }
+
+    pub fn drop_mls_snapshot_for_scope(&mut self, effective_scope: &arkret_sdk::ScopeRef) {
         self.absorb_mls_receive_overlay();
-        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        let Ok(key) = mls_scope_snapshot_key(effective_scope) else {
+            return;
+        };
+        let keys = match effective_scope {
+            arkret_sdk::ScopeRef::Sidecar { .. } => {
+                let prefix = format!("{key}\u{1f}");
+                self.cached
+                    .mls_snapshots
+                    .keys()
+                    .chain(self.cached.mls_receive_recovery_snapshots.keys())
+                    .filter(|candidate| candidate.starts_with(&prefix))
+                    .cloned()
+                    .collect::<std::collections::BTreeSet<_>>()
+            }
+            _ => [key].into_iter().collect(),
+        };
+        let mut dropped_snapshot = false;
+        let mut dropped_recovery = false;
+        for key in keys {
+            dropped_snapshot |= self.cached.mls_snapshots.remove(&key).is_some();
+            dropped_recovery |= self
+                .cached
+                .mls_receive_recovery_snapshots
+                .remove(&key)
+                .is_some();
+        }
+        // The decrypted-plaintext cache is keyed to ciphertext minted under
+        // the dropped group state; it stays readable history (same lifetime
+        // policy as the author sidecar) and is NOT wiped here.
+        if dropped_snapshot || dropped_recovery {
+            let _ = self.flush();
+            self.persist_e2ee_plaintext_cache_if_ready();
+        }
+    }
+
+    pub fn drop_mls_snapshot_for_scope_and_group(
+        &mut self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        group_id: &str,
+    ) {
+        self.absorb_mls_receive_overlay();
+        let Ok(key) = mls_scope_snapshot_key_for_group(effective_scope, group_id) else {
+            return;
+        };
         let dropped_snapshot = self.cached.mls_snapshots.remove(&key).is_some();
         let dropped_recovery = self
             .cached
             .mls_receive_recovery_snapshots
             .remove(&key)
             .is_some();
-        // The decrypted-plaintext cache is keyed to ciphertext minted under
-        // the dropped group state; it stays readable history (same lifetime
-        // policy as the author sidecar) and is NOT wiped here.
         if dropped_snapshot || dropped_recovery {
             let _ = self.flush();
             self.persist_e2ee_plaintext_cache_if_ready();
@@ -487,10 +565,30 @@ impl LocalStateStore {
         payload_digest: &str,
         plaintext: &[u8],
     ) {
+        let Ok(scope) = mls_realm_or_circle_scope(realm_id, circle_id) else {
+            return;
+        };
+        self.advance_mls_receive_chain_for_scope(&scope, envelope, payload_digest, plaintext);
+    }
+
+    pub fn advance_mls_receive_chain_for_scope(
+        &self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        envelope: crate::mls::persistence::MlsSnapshotEnvelope,
+        payload_digest: &str,
+        plaintext: &[u8],
+    ) {
         use base64::Engine as _;
         let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(plaintext);
-        let scope_key = mls_effective_scope_snapshot_key(realm_id, circle_id);
-        let previous_snapshot = self.mls_snapshot_for_effective_scope(realm_id, circle_id);
+        let Ok(scope_key) = mls_scope_snapshot_key_for_group(effective_scope, &envelope.group_id)
+        else {
+            return;
+        };
+        let previous_snapshot =
+            self.mls_snapshot_for_scope_and_group(effective_scope, &envelope.group_id);
+        let Some(realm_id) = effective_scope.realm_id_opt().map(ToString::to_string) else {
+            return;
+        };
         {
             let mut overlay = self.lock_mls_receive_overlay();
             if let Some(previous_snapshot) = previous_snapshot {
@@ -502,7 +600,7 @@ impl LocalStateStore {
             overlay.snapshots.insert(scope_key, envelope);
             overlay
                 .plaintexts
-                .entry(realm_id.to_owned())
+                .entry(realm_id)
                 .or_default()
                 .insert(payload_digest.to_owned(), encoded);
         }
@@ -524,8 +622,26 @@ impl LocalStateStore {
         realm_id: &str,
         circle_id: Option<&str>,
     ) -> bool {
-        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
-        self.load().mls_genesis_emitted.contains(&key)
+        let Ok(scope) = mls_realm_or_circle_scope(realm_id, circle_id) else {
+            return false;
+        };
+        self.mls_genesis_emitted_for_scope(&scope)
+    }
+
+    pub fn mls_genesis_emitted_for_scope(&self, effective_scope: &arkret_sdk::ScopeRef) -> bool {
+        let Ok(key) = mls_scope_snapshot_key(effective_scope) else {
+            return false;
+        };
+        match effective_scope {
+            arkret_sdk::ScopeRef::Sidecar { .. } => {
+                let prefix = format!("{key}\u{1f}");
+                self.load()
+                    .mls_genesis_emitted
+                    .iter()
+                    .any(|candidate| candidate.starts_with(&prefix))
+            }
+            _ => self.load().mls_genesis_emitted.contains(&key),
+        }
     }
 
     pub fn pending_mls_genesis_event_for_effective_scope(
@@ -533,11 +649,61 @@ impl LocalStateStore {
         realm_id: &str,
         circle_id: Option<&str>,
     ) -> Option<arkret_sdk::Event> {
-        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        let scope = mls_realm_or_circle_scope(realm_id, circle_id).ok()?;
+        self.pending_mls_genesis_event_for_scope(&scope)
+    }
+
+    pub fn pending_mls_genesis_event_for_scope(
+        &self,
+        effective_scope: &arkret_sdk::ScopeRef,
+    ) -> Option<arkret_sdk::Event> {
+        let key = mls_scope_snapshot_key(effective_scope).ok()?;
+        match effective_scope {
+            arkret_sdk::ScopeRef::Sidecar { .. } => {
+                let prefix = format!("{key}\u{1f}");
+                self.load()
+                    .pending_mls_genesis_events
+                    .iter()
+                    .find(|(candidate, _)| candidate.starts_with(&prefix))
+                    .and_then(|(_, event)| serde_json::from_str(event).ok())
+            }
+            _ => self
+                .load()
+                .pending_mls_genesis_events
+                .get(&key)
+                .and_then(|event| serde_json::from_str(event).ok()),
+        }
+    }
+
+    pub fn pending_mls_genesis_event_for_scope_and_group(
+        &self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        group_id: &str,
+    ) -> Option<arkret_sdk::Event> {
+        let key = mls_scope_snapshot_key_for_group(effective_scope, group_id).ok()?;
         self.load()
             .pending_mls_genesis_events
             .get(&key)
             .and_then(|event| serde_json::from_str(event).ok())
+    }
+
+    pub fn clear_pending_mls_genesis_event_for_scope_and_group(
+        &mut self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        group_id: &str,
+    ) {
+        self.ensure_cached_loaded();
+        let Ok(key) = mls_scope_snapshot_key_for_group(effective_scope, group_id) else {
+            return;
+        };
+        if self
+            .cached
+            .pending_mls_genesis_events
+            .remove(&key)
+            .is_some()
+        {
+            let _ = self.flush();
+        }
     }
 
     pub fn save_pending_mls_genesis_event_for_effective_scope(
@@ -546,8 +712,24 @@ impl LocalStateStore {
         circle_id: Option<&str>,
         event: arkret_sdk::Event,
     ) -> Result<(), serde_json::Error> {
+        let scope = mls_realm_or_circle_scope(realm_id, circle_id)
+            .expect("validated Realm/Circle MLS scope");
+        self.save_pending_mls_genesis_event_for_scope(&scope, event)
+    }
+
+    pub fn save_pending_mls_genesis_event_for_scope(
+        &mut self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        event: arkret_sdk::Event,
+    ) -> Result<(), serde_json::Error> {
         self.ensure_cached_loaded();
-        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        let group_id = event
+            .payload
+            .get("mls_group_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let key = mls_scope_snapshot_key_for_group(effective_scope, group_id)
+            .expect("validated MLS effective scope and genesis group");
         self.cached
             .pending_mls_genesis_events
             .insert(key, serde_json::to_string(&event)?);
@@ -560,14 +742,41 @@ impl LocalStateStore {
         realm_id: &str,
         circle_id: Option<&str>,
     ) {
+        let Ok(scope) = mls_realm_or_circle_scope(realm_id, circle_id) else {
+            return;
+        };
+        self.clear_pending_mls_genesis_event_for_scope(&scope);
+    }
+
+    pub fn clear_pending_mls_genesis_event_for_scope(
+        &mut self,
+        effective_scope: &arkret_sdk::ScopeRef,
+    ) {
         self.ensure_cached_loaded();
-        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
-        if self
-            .cached
-            .pending_mls_genesis_events
-            .remove(&key)
-            .is_some()
-        {
+        let Ok(key) = mls_scope_snapshot_key(effective_scope) else {
+            return;
+        };
+        let keys = match effective_scope {
+            arkret_sdk::ScopeRef::Sidecar { .. } => {
+                let prefix = format!("{key}\u{1f}");
+                self.cached
+                    .pending_mls_genesis_events
+                    .keys()
+                    .filter(|candidate| candidate.starts_with(&prefix))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            }
+            _ => vec![key],
+        };
+        let mut removed = false;
+        for key in keys {
+            removed |= self
+                .cached
+                .pending_mls_genesis_events
+                .remove(&key)
+                .is_some();
+        }
+        if removed {
             let _ = self.flush();
         }
     }
@@ -613,11 +822,42 @@ impl LocalStateStore {
         circle_id: Option<&str>,
         genesis_event_id: &arkret_sdk::EventId,
     ) {
-        self.ensure_cached_loaded();
         let realm_id = realm_id.into();
-        let key = mls_effective_scope_snapshot_key(&realm_id, circle_id);
-        let mut changed = self.cached.mls_genesis_emitted.insert(key);
-        let pending_key = mls_effective_scope_snapshot_key(&realm_id, circle_id);
+        let Ok(scope) = mls_realm_or_circle_scope(&realm_id, circle_id) else {
+            return;
+        };
+        self.mark_mls_genesis_emitted_for_scope_with_event(&scope, genesis_event_id);
+    }
+
+    pub fn mark_mls_genesis_emitted_for_scope_with_event(
+        &mut self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        genesis_event_id: &arkret_sdk::EventId,
+    ) {
+        self.ensure_cached_loaded();
+        let Ok(scope_key) = mls_scope_snapshot_key(effective_scope) else {
+            return;
+        };
+        let pending_key = match effective_scope {
+            arkret_sdk::ScopeRef::Sidecar { .. } => {
+                let prefix = format!("{scope_key}\u{1f}");
+                self.cached
+                    .pending_mls_genesis_events
+                    .iter()
+                    .find_map(|(key, raw)| {
+                        key.starts_with(&prefix)
+                            .then(|| serde_json::from_str::<arkret_sdk::Event>(raw).ok())
+                            .flatten()
+                            .filter(|event| &event.event_id == genesis_event_id)
+                            .map(|_| key.clone())
+                    })
+            }
+            _ => Some(scope_key.clone()),
+        };
+        let Some(pending_key) = pending_key else {
+            return;
+        };
+        let mut changed = self.cached.mls_genesis_emitted.insert(pending_key.clone());
         changed |= self
             .cached
             .pending_mls_genesis_events
@@ -651,7 +891,17 @@ impl LocalStateStore {
         group_id: &str,
         epoch: u64,
     ) -> Result<arkret_sdk::EventId, String> {
-        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        let scope = mls_realm_or_circle_scope(realm_id, circle_id)?;
+        self.mls_group_state_ref_for_scope(&scope, group_id, epoch)
+    }
+
+    pub fn mls_group_state_ref_for_scope(
+        &self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        group_id: &str,
+        epoch: u64,
+    ) -> Result<arkret_sdk::EventId, String> {
+        let key = mls_scope_snapshot_key_for_group(effective_scope, group_id)?;
         let state = self.load();
         let record = state
             .mls_group_state_refs
@@ -698,7 +948,7 @@ impl LocalStateStore {
             })
             .or_else(|| {
                 (epoch == 0)
-                    .then(|| projection_mls_genesis_event_id(&state, realm_id, circle_id, group_id))
+                    .then(|| projection_mls_genesis_event_id(&state, effective_scope, group_id))
                     .flatten()
                     .map(|event_id| MlsGroupStateRefRecord {
                         group_id: group_id.to_owned(),
@@ -738,8 +988,9 @@ impl LocalStateStore {
         if snapshot.epoch != 0 {
             return Ok(false);
         }
+        let scope = mls_realm_or_circle_scope(realm_id, circle_id)?;
         let Some(event_id) =
-            projection_mls_genesis_event_id(&self.cached, realm_id, circle_id, &snapshot.group_id)
+            projection_mls_genesis_event_id(&self.cached, &scope, &snapshot.group_id)
         else {
             return Ok(false);
         };
@@ -764,9 +1015,20 @@ impl LocalStateStore {
         epoch: u64,
         event_id: arkret_sdk::EventId,
     ) -> Result<(), String> {
-        self.ensure_cached_loaded();
         let realm_id = realm_id.into();
-        let key = mls_effective_scope_snapshot_key(&realm_id, circle_id);
+        let scope = mls_realm_or_circle_scope(&realm_id, circle_id)?;
+        self.record_mls_group_state_ref_for_scope(&scope, group_id, epoch, event_id)
+    }
+
+    pub fn record_mls_group_state_ref_for_scope(
+        &mut self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        group_id: &str,
+        epoch: u64,
+        event_id: arkret_sdk::EventId,
+    ) -> Result<(), String> {
+        self.ensure_cached_loaded();
+        let key = mls_scope_snapshot_key_for_group(effective_scope, group_id)?;
         if let Some(current) = self.cached.mls_group_state_refs.get(&key) {
             if current.group_id != group_id {
                 return Err(format!(
@@ -1050,6 +1312,56 @@ pub(crate) fn mls_effective_scope_snapshot_key(realm_id: &str, circle_id: Option
     {
         Some(circle_id) => circle_id.to_owned(),
         None => realm_id.to_owned(),
+    }
+}
+
+pub(crate) fn mls_scope_snapshot_key(
+    effective_scope: &arkret_sdk::ScopeRef,
+) -> Result<String, String> {
+    match effective_scope {
+        arkret_sdk::ScopeRef::Realm { realm_id } => Ok(realm_id.to_string()),
+        arkret_sdk::ScopeRef::Circle { circle_id, .. } => Ok(circle_id.to_string()),
+        arkret_sdk::ScopeRef::Sidecar {
+            realm_id,
+            sidecar_id,
+        } => Ok(format!("{}\u{1f}{}", realm_id, sidecar_id)),
+        arkret_sdk::ScopeRef::RealmGenesis => {
+            Err("RealmGenesis is not an executable MLS effective scope".to_owned())
+        }
+        _ => Err("unsupported MLS effective scope".to_owned()),
+    }
+}
+
+pub(crate) fn mls_scope_snapshot_key_for_group(
+    effective_scope: &arkret_sdk::ScopeRef,
+    group_id: &str,
+) -> Result<String, String> {
+    let key = mls_scope_snapshot_key(effective_scope)?;
+    match effective_scope {
+        arkret_sdk::ScopeRef::Sidecar { .. } => {
+            let group_id = group_id.trim();
+            if group_id.is_empty() {
+                return Err("Sidecar MLS storage requires mls_group_id".to_owned());
+            }
+            Ok(format!("{key}\u{1f}{group_id}"))
+        }
+        _ => Ok(key),
+    }
+}
+
+fn mls_realm_or_circle_scope(
+    realm_id: &str,
+    circle_id: Option<&str>,
+) -> Result<arkret_sdk::ScopeRef, String> {
+    let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
+        .map_err(|error| format!("invalid MLS Realm id: {error}"))?;
+    match circle_id.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(circle_id) => Ok(arkret_sdk::ScopeRef::Circle {
+            realm_id,
+            circle_id: arkret_sdk::CircleId::new(circle_id.to_owned())
+                .map_err(|error| format!("invalid MLS Circle id: {error}"))?,
+        }),
+        None => Ok(arkret_sdk::ScopeRef::Realm { realm_id }),
     }
 }
 

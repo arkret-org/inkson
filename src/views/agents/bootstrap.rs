@@ -139,7 +139,8 @@ async fn current_mls_history_active_series(
     highest_seen: Option<u64>,
 ) -> anyhow::Result<Option<MlsHistoryActiveSeries>> {
     let controller = arkret_sdk::Did::new(controller_id.to_owned())?;
-    let realm_id = arkret_sdk::principal_control_realm_id(&controller);
+    let realm_id =
+        crate::identity::principal_control::resolve_accepted(submitter.http(), &controller).await?;
     let backfill = submitter.backfill(realm_id.as_str()).await?;
     let accepted_events = backfill.complete_events("MLS history active-series resolution")?;
     let mut current = None::<arkret_sdk::KeyBackupActiveSeriesHead>;
@@ -532,6 +533,7 @@ fn current_controller_backup_hpke_key_ref(
 }
 
 fn build_active_mls_history_series_event(
+    controller_realm_id: &arkret_sdk::RealmId,
     controller_id: &str,
     series_id: &str,
     pointer_version: u64,
@@ -566,7 +568,7 @@ fn build_active_mls_history_series_event(
     let payload = unsigned.attach_signature(signature)?;
 
     TypedOperationBuilder::new::<arkret_sdk::event_spec::KeyBackupActiveSeries>(
-        arkret_sdk::principal_control_realm_id(&controller),
+        controller_realm_id.to_string(),
         controller_id,
         payload,
     )
@@ -1051,7 +1053,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
         .complete_events("managed Agent PCR bootstrap")?;
     if !has_managed_agent_pcr_create(&accepted_events) {
         let controller_realm_id =
-            arkret_models_identity::did_document::principal_control_realm_id(&controller_did);
+            crate::identity::principal_control::resolve_accepted(&http, &controller_did).await?;
         let provision_rows = http
             .events_read_all_pages(controller_realm_id.as_str())
             .await?
@@ -1300,11 +1302,14 @@ pub(crate) async fn bootstrap_provisioned_agent(
             publish_pointer,
         } => {
             if let Some((pointer_version, previous_series_ids)) = publish_pointer {
-                let controller_realm_id = arkret_sdk::principal_control_realm_id(&controller_did);
+                let controller_realm_id =
+                    crate::identity::principal_control::resolve_accepted(&http, &controller_did)
+                        .await?;
                 let controller_frontier = submitter
                     .events_frontier_realm_seal_view(controller_realm_id.as_str())
                     .await?;
                 let active_series = build_active_mls_history_series_event(
+                    &controller_realm_id,
                     &controller_id,
                     &series_id,
                     pointer_version,
@@ -1384,11 +1389,13 @@ pub(crate) async fn bootstrap_provisioned_agent(
     api.put_key_backup(&backup_id, backup, &signer).await?;
 
     if let Some((pointer_version, previous_series_ids)) = series_target.publish_pointer {
-        let controller_realm_id = arkret_sdk::principal_control_realm_id(&controller_did);
+        let controller_realm_id =
+            crate::identity::principal_control::resolve_accepted(&http, &controller_did).await?;
         let controller_frontier = submitter
             .events_frontier_realm_seal_view(controller_realm_id.as_str())
             .await?;
         let active_series = build_active_mls_history_series_event(
+            &controller_realm_id,
             &controller_id,
             &series_target.series_id,
             pointer_version,

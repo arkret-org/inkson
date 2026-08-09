@@ -228,8 +228,25 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
+    let realm = arkret_sdk::RealmId::new(realm_id.to_owned())
+        .map_err(|error| MlsRuntimeError::Commit(format!("invalid Realm id: {error}")))?;
+    let effective_scope = match sidecar_binding.as_ref() {
+        Some(binding) => arkret_sdk::ScopeRef::Sidecar {
+            realm_id: realm.clone(),
+            sidecar_id: binding.sidecar_id.clone(),
+        },
+        None => match circle {
+            Some(circle_id) => arkret_sdk::ScopeRef::Circle {
+                realm_id: realm.clone(),
+                circle_id: arkret_sdk::CircleId::new(circle_id.to_owned()).map_err(|error| {
+                    MlsRuntimeError::Commit(format!("invalid Circle id: {error}"))
+                })?,
+            },
+            None => arkret_sdk::ScopeRef::Realm { realm_id: realm },
+        },
+    };
     let snapshot = state_store
-        .mls_snapshot_for_effective_scope(realm_id, circle)
+        .mls_snapshot_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
@@ -246,24 +263,23 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let previous_governance_binding = current_governance_binding_predecessor(&group)?;
-    let proof_request = crate::mls::governance_proof::proof_request(
+    let proof_request = crate::mls::governance_proof::proof_request_for_scope(
         state_store,
-        realm_id,
-        circle,
+        effective_scope,
         group.group_id(),
         group.epoch(),
         group.epoch().saturating_add(1),
     )
     .map_err(MlsRuntimeError::Commit)?;
-    let mut governance_binding =
+    let governance_binding =
         crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
             .map_err(MlsRuntimeError::Commit)?;
-    if let Some(sidecar_binding) = sidecar_binding {
-        governance_binding = crate::mls::governance_proof::bind_sidecar_scope(
-            &governance_binding,
-            sidecar_binding.clone(),
-        )
-        .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
+    if let Some(binding) = sidecar_binding.as_ref()
+        && governance_binding.sidecar_binding() != Some(binding)
+    {
+        return Err(MlsRuntimeError::Commit(
+            "verified Sidecar MLS binding differs from the accepted Sidecar view".to_owned(),
+        ));
     }
     let remove = group
         .remove_members_by_principal_with_governance_binding(&targets, &governance_binding)
@@ -358,8 +374,25 @@ pub fn build_add_member_commit_for_effective_scope_with_binding(
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
+    let realm = arkret_sdk::RealmId::new(realm_id.to_owned())
+        .map_err(|error| MlsRuntimeError::Commit(format!("invalid Realm id: {error}")))?;
+    let effective_scope = match sidecar_binding.as_ref() {
+        Some(binding) => arkret_sdk::ScopeRef::Sidecar {
+            realm_id: realm.clone(),
+            sidecar_id: binding.sidecar_id.clone(),
+        },
+        None => match circle {
+            Some(circle_id) => arkret_sdk::ScopeRef::Circle {
+                realm_id: realm.clone(),
+                circle_id: arkret_sdk::CircleId::new(circle_id.to_owned()).map_err(|error| {
+                    MlsRuntimeError::Commit(format!("invalid Circle id: {error}"))
+                })?,
+            },
+            None => arkret_sdk::ScopeRef::Realm { realm_id: realm },
+        },
+    };
     let snapshot = state_store
-        .mls_snapshot_for_effective_scope(realm_id, circle)
+        .mls_snapshot_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
@@ -369,10 +402,9 @@ pub fn build_add_member_commit_for_effective_scope_with_binding(
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let previous_governance_binding = current_governance_binding_predecessor(&group)?;
-    let proof_request = crate::mls::governance_proof::proof_request(
+    let proof_request = crate::mls::governance_proof::proof_request_for_scope(
         state_store,
-        realm_id,
-        circle,
+        effective_scope,
         group.group_id(),
         group.epoch(),
         group.epoch().saturating_add(1),
@@ -381,13 +413,13 @@ pub fn build_add_member_commit_for_effective_scope_with_binding(
     let governance_binding =
         crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
             .map_err(MlsRuntimeError::Commit)?;
-    let governance_binding = match sidecar_binding {
-        Some(binding) => {
-            crate::mls::governance_proof::bind_sidecar_scope(&governance_binding, binding.clone())
-                .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?
-        }
-        None => governance_binding,
-    };
+    if let Some(binding) = sidecar_binding.as_ref()
+        && governance_binding.sidecar_binding() != Some(binding)
+    {
+        return Err(MlsRuntimeError::Commit(
+            "verified Sidecar MLS binding differs from the accepted Sidecar view".to_owned(),
+        ));
+    }
     let add = group
         .add_member_with_governance_binding(member_key_package, &governance_binding)
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
@@ -463,8 +495,25 @@ pub fn build_add_members_commit_for_effective_scope_with_binding(
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
+    let realm = arkret_sdk::RealmId::new(realm_id.to_owned())
+        .map_err(|error| MlsRuntimeError::Commit(format!("invalid Realm id: {error}")))?;
+    let effective_scope = match sidecar_binding.as_ref() {
+        Some(binding) => arkret_sdk::ScopeRef::Sidecar {
+            realm_id: realm.clone(),
+            sidecar_id: binding.sidecar_id.clone(),
+        },
+        None => match circle {
+            Some(circle_id) => arkret_sdk::ScopeRef::Circle {
+                realm_id: realm.clone(),
+                circle_id: arkret_sdk::CircleId::new(circle_id.to_owned()).map_err(|error| {
+                    MlsRuntimeError::Commit(format!("invalid Circle id: {error}"))
+                })?,
+            },
+            None => arkret_sdk::ScopeRef::Realm { realm_id: realm },
+        },
+    };
     let snapshot = state_store
-        .mls_snapshot_for_effective_scope(realm_id, circle)
+        .mls_snapshot_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
@@ -474,10 +523,9 @@ pub fn build_add_members_commit_for_effective_scope_with_binding(
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let previous_governance_binding = current_governance_binding_predecessor(&group)?;
-    let proof_request = crate::mls::governance_proof::proof_request(
+    let proof_request = crate::mls::governance_proof::proof_request_for_scope(
         state_store,
-        realm_id,
-        circle,
+        effective_scope,
         group.group_id(),
         group.epoch(),
         group.epoch().saturating_add(1),

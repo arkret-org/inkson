@@ -163,8 +163,19 @@ pub async fn upload_actor_private_file(
     media_type: &str,
     plaintext: Vec<u8>,
 ) -> anyhow::Result<FileTransferUploadResult> {
-    let prepared =
-        prepare_actor_private_file(crypto, actor_id, device_id, filename, media_type, plaintext)?;
+    let http = api.sdk_http_client()?;
+    let actor = arkret_sdk::Did::new(actor_id.trim().to_owned())?;
+    let principal_control_realm_id =
+        crate::identity::principal_control::resolve_accepted(&http, &actor).await?;
+    let prepared = prepare_actor_private_file(
+        crypto,
+        &principal_control_realm_id,
+        actor_id,
+        device_id,
+        filename,
+        media_type,
+        plaintext,
+    )?;
     let account_data_key = prepared.account_data_key.clone();
     // Auto-dispatch: large ciphertexts take the resumable (tus) binding
     // when the server advertises it in /_arkret/describe, with automatic
@@ -211,8 +222,19 @@ pub async fn upload_device_bound_file(
     recipient_devices: Vec<FileTransferRecipientDevice>,
     plaintext: Vec<u8>,
 ) -> anyhow::Result<FileTransferDeviceBoundUploadResult> {
-    let prepared =
-        prepare_actor_private_file(crypto, actor_id, device_id, filename, media_type, plaintext)?;
+    let http = api.sdk_http_client()?;
+    let actor = arkret_sdk::Did::new(actor_id.trim().to_owned())?;
+    let principal_control_realm_id =
+        crate::identity::principal_control::resolve_accepted(&http, &actor).await?;
+    let prepared = prepare_actor_private_file(
+        crypto,
+        &principal_control_realm_id,
+        actor_id,
+        device_id,
+        filename,
+        media_type,
+        plaintext,
+    )?;
     let account_data_key = prepared.account_data_key.clone();
     let clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
     let upload = clients
@@ -461,6 +483,7 @@ pub fn display_filename(record: &FileTransferRecord) -> String {
 
 fn prepare_actor_private_file(
     crypto: &FileTransferCryptoContext,
+    principal_control_realm_id: &arkret_sdk::RealmId,
     actor_id: &str,
     device_id: &str,
     filename: Option<&str>,
@@ -474,9 +497,11 @@ fn prepare_actor_private_file(
         anyhow::bail!("device_id is required for file transfer");
     }
     let actor = arkret_sdk::Did::new(actor_id.trim().to_owned())?;
-    let realm_id = arkret_sdk::principal_control_realm_id(&actor);
-    let updated_hlc =
-        crate::signing_stamp::issue_protocol_hlc(actor.as_str(), device_id.trim(), &realm_id)?;
+    let updated_hlc = crate::signing_stamp::issue_protocol_hlc(
+        actor.as_str(),
+        device_id.trim(),
+        principal_control_realm_id.as_str(),
+    )?;
     let transfer_id = crate::random::base64url_token(24, "file-transfer transfer-id rng")?;
     let account_data_key =
         crate::account_data::file_transfer_account_data_key(crypto.namespace_key(), &transfer_id)?;
@@ -1135,6 +1160,11 @@ mod tests {
     const RECIPIENT_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000002";
     const OTHER_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000003";
 
+    fn test_pcr() -> arkret_sdk::RealmId {
+        arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned())
+            .unwrap()
+    }
+
     fn test_account_secret() -> String {
         URL_SAFE_NO_PAD.encode([7u8; 32])
     }
@@ -1144,6 +1174,7 @@ mod tests {
             FileTransferCryptoContext::from_account_secret(&test_account_secret()).unwrap();
         let prepared = prepare_actor_private_file(
             &crypto,
+            &test_pcr(),
             ACTOR,
             DEVICE,
             Some("vault.txt"),
@@ -1183,6 +1214,7 @@ mod tests {
             FileTransferCryptoContext::from_account_secret(&test_account_secret()).unwrap();
         let prepared = prepare_actor_private_file(
             &crypto,
+            &test_pcr(),
             ACTOR,
             DEVICE,
             Some("merge.txt"),
@@ -1243,6 +1275,7 @@ mod tests {
             FileTransferCryptoContext::from_account_secret(&test_account_secret()).unwrap();
         let prepared = prepare_actor_private_file(
             &crypto,
+            &test_pcr(),
             ACTOR,
             DEVICE,
             Some("report.pdf"),
@@ -1376,6 +1409,7 @@ mod tests {
             FileTransferCryptoContext::from_account_secret(&test_account_secret()).unwrap();
         let prepared = prepare_actor_private_file(
             &crypto,
+            &test_pcr(),
             ACTOR,
             DEVICE,
             Some("report.pdf"),
@@ -1411,6 +1445,7 @@ mod tests {
             FileTransferCryptoContext::from_account_secret(&test_account_secret()).unwrap();
         let prepared = prepare_actor_private_file(
             &crypto,
+            &test_pcr(),
             ACTOR,
             DEVICE,
             Some("a.txt"),
@@ -1436,6 +1471,7 @@ mod tests {
             FileTransferCryptoContext::from_account_secret(&test_account_secret()).unwrap();
         let prepared = prepare_actor_private_file(
             &crypto,
+            &test_pcr(),
             ACTOR,
             DEVICE,
             Some("a.txt"),

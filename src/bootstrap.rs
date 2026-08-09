@@ -287,14 +287,14 @@ fn device_status_field_authorization(status: &str) -> Option<bool> {
     device_status_authorization(status)
 }
 
-fn did_recovery_public_key_backup_present(list_payload: &Value) -> bool {
+fn recovery_public_key_secret_storage_backup_present(list_payload: &Value) -> bool {
     list_payload
         .get("backups")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .any(|backup| {
-            backup.get("backup_kind").and_then(Value::as_str) == Some("did_recovery")
+            backup.get("backup_kind").and_then(Value::as_str) == Some("secret_storage")
                 && backup
                     .get("encryption")
                     .and_then(|encryption| encryption.get("recipient_method"))
@@ -312,7 +312,7 @@ fn recovery_key_path_configured_for_mls_setup(
     if matches!(account_recovery_configured, Some(true)) {
         return true;
     }
-    if !did_recovery_public_key_backup_present(list_payload) {
+    if !recovery_public_key_secret_storage_backup_present(list_payload) {
         return false;
     }
     crate::views::recovery::local_recovery_key_fingerprint(state_store, actor_id).is_some()
@@ -766,13 +766,9 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
             preview.binding.realm_id().as_str(),
         )
         .await?;
-        let request = crate::mls::governance_proof::proof_request(
+        let request = crate::mls::governance_proof::proof_request_for_scope(
             &state_store.read(),
-            preview.binding.realm_id().as_str(),
-            preview
-                .binding
-                .circle_id()
-                .map(|circle_id| circle_id.as_str()),
+            preview.binding.effective_scope().clone(),
             preview.binding.mls_group_id(),
             preview.binding.previous_epoch(),
             preview.binding.next_epoch(),

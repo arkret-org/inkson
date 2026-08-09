@@ -4,10 +4,10 @@
 //!   is the ONLY user-visible recovery credential — `normalize_recovery_key_input` (and therefore
 //!   the `MlsUnlockPrompt` restore path) only accepts this 24-word format. Enrollment is
 //!   custody-first: the client generates and displays the words in memory, requires an exact
-//!   re-entry, and only then publishes the recovery policy and `did_recovery` backup. Public local
-//!   metadata (SHA-256 fingerprint, backup-HPKE multikey, and rotation timestamp) is committed
-//!   after server acceptance. The recovery secret is never uploaded or persisted as ordinary device
-//!   state.
+//!   re-entry, and only then publishes the recovery policy and encrypted account backup. Public
+//!   local metadata (SHA-256 fingerprint, backup-HPKE multikey, and rotation timestamp) is
+//!   committed after server acceptance. The recovery secret is never uploaded or persisted as
+//!   ordinary device state.
 //! - **Backup history**: summarizes the server-side `ak.schema.key_backup.v1` ciphertext envelopes
 //!   by creation time, emphasizing the latest encrypted backup without exposing per-backup
 //!   controls.

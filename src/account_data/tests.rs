@@ -439,11 +439,11 @@ fn typed_blocklist_mutators_dedupe_and_unblock_exact_targets() {
 }
 
 #[test]
-fn blocklist_payload_uses_schema_version_one_and_preserves_empty_clear() {
+fn blocklist_payload_uses_cas_revision_and_preserves_empty_clear() {
     let owner = "did:web:owner.example";
-    let body = build_blocklist_account_data_body(owner, &[]).unwrap();
+    let body = build_blocklist_account_data_body(owner, 7, &[]).unwrap();
     assert_eq!(body["owner"], owner);
-    assert_eq!(body["version"], 1);
+    assert_eq!(body["version"], 7);
     assert_eq!(body["entries"], json!([]));
     assert!(
         blocklist_entries_from_account_data(&body, owner)
@@ -453,13 +453,13 @@ fn blocklist_payload_uses_schema_version_one_and_preserves_empty_clear() {
 }
 
 #[test]
-fn blocklist_payload_rejects_wrong_owner_and_non_v1_schema() {
+fn blocklist_payload_rejects_wrong_owner_and_zero_revision() {
     let owner = "did:web:owner.example";
-    let body = build_blocklist_account_data_body(owner, &[]).unwrap();
+    let body = build_blocklist_account_data_body(owner, 2, &[]).unwrap();
     assert!(blocklist_entries_from_account_data(&body, "did:web:other.example").is_err());
 
     let mut wrong_version = body;
-    wrong_version["version"] = json!(2);
+    wrong_version["version"] = json!(0);
     assert!(blocklist_entries_from_account_data(&wrong_version, owner).is_err());
 }
 
@@ -483,7 +483,7 @@ fn blocklist_payload_round_trip_keeps_sdk_closed_types() {
     entry.mode = AccountBlocklistMode::Hide;
 
     let body =
-        build_blocklist_account_data_body("did:web:owner.example", &[entry.clone()]).unwrap();
+        build_blocklist_account_data_body("did:web:owner.example", 9, &[entry.clone()]).unwrap();
     let decoded = blocklist_entries_from_account_data(&body, "did:web:owner.example").unwrap();
     assert_eq!(decoded, vec![entry]);
     assert!(matches!(
