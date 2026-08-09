@@ -6,12 +6,14 @@ use serde_json::Value;
 
 use super::backup_body::{
     build_mls_account_secret_backup_body_with_kek_and_version,
+    build_mls_account_secret_backup_successor_body_with_kek_and_version,
     build_mls_account_secret_recovery_public_key_backup_in_series,
     build_mls_private_plaintext_backup_body_with_kek,
+    build_mls_private_plaintext_backup_successor_body_with_kek,
 };
 use super::restore::fetch_mls_restore_payload;
 use super::selection::{select_mls_history_tail_for_realm, select_mls_private_plaintext_backup};
-use super::series::{apply_next_series, fresh_backup_id};
+use super::series::fresh_backup_id;
 use crate::recovery_crypto::derive_vault_kek;
 
 fn passphrase_is_blank(passphrase: &[u8]) -> bool {
@@ -19,6 +21,34 @@ fn passphrase_is_blank(passphrase: &[u8]) -> bool {
         || std::str::from_utf8(passphrase)
             .map(|text| text.trim().is_empty())
             .unwrap_or(false)
+}
+
+async fn current_backup_frontier_ref(
+    api: &crate::transport::TransportClient,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<arkret_sdk::KeyBackupFrontierRef> {
+    let principal = Did::new(actor_id.to_owned())?;
+    let control_realm = arkret_sdk::principal_control_realm_id(&principal);
+    let http = api.sdk_http_client()?;
+    let trust_anchor = super::rotation_transaction::current_controller_backup_trust_anchor(
+        &http, actor_id, device_id,
+    )
+    .await?;
+    let frontier = api
+        .event_submitter()?
+        .events_frontier_realm_seal_view(&control_realm)
+        .await?;
+    Ok(arkret_sdk::KeyBackupFrontierRef {
+        frontier_digest: frontier.control_event_set_root,
+        seal_ref: Some(frontier.seal_id.to_string()),
+        device_generation_ref: trust_anchor.generation_ref,
+    })
+}
+
+fn typed_backup_predecessor(previous: &Value) -> Result<arkret_sdk::KeyBackup> {
+    serde_json::from_value(previous.clone())
+        .map_err(|error| anyhow!("typed key backup predecessor: {error}"))
 }
 
 // Invariant assertions: each `expect` message names the check that
@@ -197,21 +227,34 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
         BackupRotationKind::SecretStorage,
     )
     .await?;
-    // Fresh backup_id per series link (see `apply_next_series`).
+    // Fresh backup_id per immutable series link.
     let account_backup_id = fresh_backup_id();
 
     let kek = derive_vault_kek(passphrase).map_err(|err| anyhow!("derive KEK: {err}"))?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
-    let mut account_body = build_mls_account_secret_backup_body_with_kek_and_version(
-        &account_backup_id,
-        actor_id,
-        device_id,
-        &kek,
-        &stored.secret,
-        stored.version,
-    )?;
-    apply_next_series(previous_account_backup.as_ref(), &mut account_body)?;
+    let account_body = if let Some(previous) = previous_account_backup.as_ref() {
+        let predecessor = typed_backup_predecessor(previous)?;
+        let frontier = current_backup_frontier_ref(api, actor_id, device_id).await?;
+        build_mls_account_secret_backup_successor_body_with_kek_and_version(
+            &account_backup_id,
+            &predecessor,
+            &kek,
+            &stored.secret,
+            stored.version,
+            &frontier.frontier_digest,
+            frontier.device_generation_ref,
+        )?
+    } else {
+        build_mls_account_secret_backup_body_with_kek_and_version(
+            &account_backup_id,
+            actor_id,
+            device_id,
+            &kek,
+            &stored.secret,
+            stored.version,
+        )?
+    };
     let account_series_id = account_body.series_id.to_string();
     api.put_key_backup(&account_backup_id, account_body, &signer)
         .await
@@ -295,6 +338,11 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
     let recovery_key_ref = format!("{actor_id}#recovery");
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
+    let frontier_ref = if previous_account_backup.is_some() {
+        Some(current_backup_frontier_ref(api, actor_id, device_id).await?)
+    } else {
+        None
+    };
     let account_body = build_mls_account_secret_recovery_public_key_backup_in_series(
         &account_backup_id,
         actor_id,
@@ -305,6 +353,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
         stored.version,
         recovery_policy_ref,
         previous_account_backup.as_ref(),
+        frontier_ref,
     )?;
     let account_series_id = account_body.series_id.to_string();
     api.put_key_backup(&account_backup_id, account_body, &signer)
@@ -403,7 +452,7 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
 
     let kek =
         derive_vault_kek(stored.secret.as_bytes()).map_err(|err| anyhow!("derive KEK: {err}"))?;
-    // Fresh backup_id per series link (see `apply_next_series`).
+    // Fresh backup_id per immutable series link.
     let backup_id = fresh_backup_id();
 
     let list_payload = fetch_mls_restore_payload(api, actor_id).await?;
@@ -417,14 +466,26 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
     .await?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
-    let mut body = build_mls_private_plaintext_backup_body_with_kek(
-        &backup_id,
-        actor_id,
-        device_id,
-        &kek,
-        sidecar_json,
-    )?;
-    apply_next_series(previous_backup.as_ref(), &mut body)?;
+    let body = if let Some(previous) = previous_backup.as_ref() {
+        let predecessor = typed_backup_predecessor(previous)?;
+        let frontier = current_backup_frontier_ref(api, actor_id, device_id).await?;
+        build_mls_private_plaintext_backup_successor_body_with_kek(
+            &backup_id,
+            &predecessor,
+            &kek,
+            sidecar_json,
+            &frontier.frontier_digest,
+            frontier.device_generation_ref,
+        )?
+    } else {
+        build_mls_private_plaintext_backup_body_with_kek(
+            &backup_id,
+            actor_id,
+            device_id,
+            &kek,
+            sidecar_json,
+        )?
+    };
     let (_, sent_body) = api
         .put_key_backup_returning_sent_body(&backup_id, body, &signer)
         .await
@@ -507,12 +568,21 @@ pub async fn upload_mls_history_backup_with_previous(
     .await?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
-    let (backup_id, mut body) =
+    let (backup_id, body) = if let Some(previous) = previous.as_ref() {
+        let predecessor = typed_backup_predecessor(previous)?;
+        let frontier = current_backup_frontier_ref(api, actor_id, device_id).await?;
+        crate::mls::runtime::build_mls_history_backup_successor_body(
+            snapshot,
+            actor_id,
+            device_id,
+            &predecessor,
+            frontier,
+        )
+        .map_err(|error| anyhow!(error.user_message()))?
+    } else {
         crate::mls::runtime::build_mls_history_backup_body(snapshot, actor_id, device_id)
-            .map_err(|error| anyhow!(error.user_message()))?;
-    if previous.is_some() {
-        apply_next_series(previous.as_ref(), &mut body)?;
-    }
+            .map_err(|error| anyhow!(error.user_message()))?
+    };
     let (_, sent_body) = api
         .put_key_backup_returning_sent_body(&backup_id, body, &signer)
         .await

@@ -1,6 +1,7 @@
 //! Durable, client-authored identity creation with atomic PCR genesis.
 
 use anyhow::{Context as _, anyhow};
+use arkret_sdk::EventPayloadExt as _;
 use chrono::{Timelike as _, Utc};
 use url::Url;
 

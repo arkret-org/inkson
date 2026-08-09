@@ -545,7 +545,7 @@ mod tests {
     fn invite(video: bool) -> arkret_sdk::CallSignalData {
         arkret_sdk::CallSignalData::Invite(arkret_sdk::CallInviteSignalData {
             lifetime_ms: 60_000,
-            mode: arkret_sdk::CallMode::P2p,
+            mode: arkret_models_collaboration::call_signal::CallMode::P2p,
             offer: arkret_sdk::SessionDescription {
                 sdp_type: arkret_sdk::SessionDescriptionType::Offer,
                 sdp: "v=0".to_owned(),

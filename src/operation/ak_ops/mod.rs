@@ -78,7 +78,7 @@ pub(super) fn morph_id_value(value: &str) -> anyhow::Result<arkret_sdk::MorphId>
         .map_err(|err| anyhow::anyhow!("invalid morph id {value:?}: {err:?}"))
 }
 
-pub(super) fn strand_create_payload(
+pub(crate) fn strand_create_payload(
     object: arkret_sdk::StrandCreateObject,
 ) -> arkret_sdk::StrandCreatePayload {
     arkret_sdk::StrandCreatePayload {

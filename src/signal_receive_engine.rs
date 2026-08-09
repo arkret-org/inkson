@@ -657,18 +657,31 @@ mod tests {
     /// decoded is simply dropped.
     #[test]
     fn the_call_route_body_still_parses_as_the_closed_call_plaintext() {
+        let call_plaintext = arkret_sdk::CallSignalPlaintext::new(
+            7,
+            arkret_sdk::CallId::new(
+                "ak:call:ASJkvorx6tEzdxoAC5naL70uFcivCk9bMINhB1IWdS80".to_owned(),
+            )
+            .unwrap(),
+            7,
+            arkret_sdk::CallSignalData::Invite(arkret_sdk::CallInviteSignalData {
+                lifetime_ms: 30_000,
+                mode: arkret_models_collaboration::call_signal::CallMode::P2p,
+                offer: arkret_sdk::SessionDescription {
+                    sdp_type: arkret_sdk::SessionDescriptionType::Offer,
+                    sdp: "v=0".to_owned(),
+                },
+                media: arkret_sdk::CallMediaSelection {
+                    audio: true,
+                    video: true,
+                    screen: None,
+                },
+            }),
+        )
+        .unwrap();
         let plaintext = plaintext_of(
             garth::SIGNAL_PLAINTEXT_KIND_CALL,
-            json!({
-                "kind": "ak.call.signal",
-                // §7.8's closed shape carries the shared plaintext minimum, so
-                // the route has to pass `payload_sequence` through untouched.
-                "payload_sequence": 7,
-                "call_id": "ak:call:ASJkvorx6tEzdxoAC5naL70uFcivCk9bMINhB1IWdS80",
-                "signal_kind": "invite",
-                "seq": 7,
-                "data": {"media": {"video": true}}
-            }),
+            serde_json::to_value(call_plaintext).unwrap(),
         );
 
         let body = decrypted_body_value(&plaintext).unwrap();

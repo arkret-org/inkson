@@ -224,7 +224,7 @@ pub(crate) fn sdk_events_from_values(values: &[serde_json::Value]) -> Vec<arkret
                         .expect("fixture actor id")
                 });
             let mut event = arkret_wire::test_support::raw_event(
-                kind,
+                kind.as_str(),
                 arkret_sdk::ScopeRef::Realm { realm_id },
                 actor_id,
                 1,
@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn client_event_path_projects_without_reparsing_the_envelope() {
         let mut event = arkret_wire::test_support::raw_event(
-            arkret_sdk::EventKind::StrandUpdate,
+            arkret_sdk::EventKind::StrandUpdate.as_str(),
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(
                     "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",

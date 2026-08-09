@@ -153,7 +153,8 @@ pub fn sign_terminal_receipt_continue(
     )?;
     let receipt_signature = arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
         signer.sign_raw(&receipt.signing_payload_bytes()?)?,
-    ))?;
+    ))
+    .map_err(anyhow::Error::msg)?;
     let receipt = receipt.attach_signature(receipt_signature)?;
     receipt.validate()?;
 
@@ -170,7 +171,8 @@ pub fn sign_terminal_receipt_continue(
     )?;
     let attestation_signature = arkret_sdk::NonEmptyString::new(arkret_sdk::base64url_encode(
         signer.sign_raw(&attestation.signing_bytes()?)?,
-    ))?;
+    ))
+    .map_err(anyhow::Error::msg)?;
     let attestation = attestation.attach_signature(attestation_signature)?;
     attestation.validate_structural()?;
     Ok(TypedSecurityTransactionContinueRequest {

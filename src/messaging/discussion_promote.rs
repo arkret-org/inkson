@@ -184,11 +184,13 @@ mod tests {
         // The relation travels on the object branch, the only one the
         // registered `ak.relation.create` contract can project into a cell.
         let relation = &ops[2].payload["relation"];
-        assert_eq!(relation["relation_kind"], "confidential_discussion_of");
-        // The object branch has a `scope_circle_id` member, so the private
-        // scope is now stated on the Relation fact itself as well as by the
-        // Circle-scoped Strand (ops[1]).
-        assert_eq!(relation["scope_circle_id"], ids.circle_id);
+        assert_eq!(relation["kind"], "confidential_discussion_of");
+        // Relation scope belongs to the signed Event envelope, not the
+        // closed RelationSnapshot payload.
+        assert_eq!(
+            ops[2].scope_ref.circle_id().map(|id| id.as_str()),
+            Some(ids.circle_id.as_str())
+        );
         assert!(
             !ops[2].payload.contains_key("scope_circle_id"),
             "the flat branch member must not appear beside the object branch"

@@ -2219,7 +2219,7 @@ mod tests {
         let mut metadata = arkret_sdk::MessageMetadata::default();
         metadata.set_sidecar_exchange_binding(&binding).unwrap();
         let mut event = arkret_wire::test_support::raw_event(
-            arkret_sdk::EventKind::MessageCreate,
+            arkret_sdk::EventKind::MessageCreate.as_str(),
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
@@ -2408,7 +2408,7 @@ mod tests {
         let mut metadata = arkret_sdk::MessageMetadata::default();
         metadata.set_sidecar_exchange_binding(&binding).unwrap();
         let mut event = arkret_wire::test_support::raw_event(
-            arkret_sdk::EventKind::MessageCreate,
+            arkret_sdk::EventKind::MessageCreate.as_str(),
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
@@ -2521,7 +2521,7 @@ mod tests {
         );
 
         let mut control_event = arkret_wire::test_support::raw_event(
-            arkret_sdk::EventKind::AgentSidecarExchangeControl,
+            arkret_sdk::EventKind::AgentSidecarExchangeControl.as_str(),
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
@@ -2612,7 +2612,7 @@ mod tests {
         let mut metadata = arkret_sdk::MessageMetadata::default();
         metadata.set_sidecar_exchange_binding(&binding).unwrap();
         let mut event = arkret_wire::test_support::raw_event(
-            arkret_sdk::EventKind::MessageCreate,
+            arkret_sdk::EventKind::MessageCreate.as_str(),
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
@@ -2678,7 +2678,7 @@ mod tests {
             .unwrap();
 
         let mut event = arkret_wire::test_support::raw_event(
-            arkret_sdk::EventKind::MessageCreate,
+            arkret_sdk::EventKind::MessageCreate.as_str(),
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },

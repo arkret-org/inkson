@@ -93,7 +93,7 @@ pub(crate) fn run_local_mls_encrypt(
         principal_id,
         device_id,
         arkret_sdk::MESSAGE_CONTENT_BLOCK_MLS_CONTENT_TYPE,
-        arkret_sdk::EventKind::MessageCreate,
+        arkret_sdk::EventKind::MessageCreate.as_str(),
         plaintext_bytes,
         metadata_plaintext_bytes.map(|_| arkret_sdk::MESSAGE_METADATA_MLS_CONTENT_TYPE),
         metadata_plaintext_bytes,
@@ -408,7 +408,7 @@ pub(crate) fn build_sidecar_exchange_control_send(
         actor,
         device_id,
         "application/vnd.arkret.agent-sidecar-exchange-control+json",
-        arkret_sdk::EventKind::AgentSidecarExchangeControl,
+        arkret_sdk::EventKind::AgentSidecarExchangeControl.as_str(),
         &plaintext,
         None,
         None,
@@ -639,7 +639,7 @@ pub(crate) async fn submit_secure_send(
     } {
         Ok(resp) => SecureSendOutcome::Sent {
             event_id: resp.event_id,
-            status: resp.status,
+            status: format!("{:?}", resp.status).to_ascii_lowercase(),
         },
         // §2.4.1 `epoch_update_required`: record the receiver's coverage
         // refusal so the per-Realm MLS effect advances the epoch instead of

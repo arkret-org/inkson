@@ -161,7 +161,7 @@ pub(super) async fn submit_call_state_participant(
         };
         (
             Some(arkret_sdk::CallFocus {
-                mode: arkret_sdk::CallMode::Sfu,
+                mode: arkret_models_collaboration::events_payloads::call::CallMode::Sfu,
                 session_focus: Some(
                     arkret_sdk::NonEmptyString::new(session.focus_id.clone())
                         .map_err(|err| err.to_string())?,
@@ -173,7 +173,7 @@ pub(super) async fn submit_call_state_participant(
         (None, None)
     };
     let payload = arkret_sdk::CallStatePayload {
-        call_id,
+        call_id: call_id.clone(),
         state_transition: Some(state_transition),
         focus,
         recording_transition: None,

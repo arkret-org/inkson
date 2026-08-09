@@ -60,7 +60,8 @@ pub fn build_audit_accessed(
         late_recovery_original_event_id: None,
         cell_head_before: None,
         cell_head_after: None,
-        purpose: arkret_sdk::NonEmptyString::new(format!("e2ee_read;reader_device={device_id}"))?,
+        purpose: arkret_sdk::NonEmptyString::new(format!("e2ee_read;reader_device={device_id}"))
+            .map_err(anyhow::Error::msg)?,
         accessed_at: crate::clock::now_utc_millis(),
         ryw_required: None,
     };
@@ -127,7 +128,7 @@ pub fn build_presentation_request(
     requested_claims: Vec<String>,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let payload = arkret_sdk::IdentityPresentationRequestStatePayload {
-        request_id: arkret_sdk::NonEmptyString::new(request_id)?,
+        request_id: arkret_sdk::NonEmptyString::new(request_id).map_err(anyhow::Error::msg)?,
         value: Some(serde_json::json!({
             "target": target,
             "requested_claims": requested_claims,

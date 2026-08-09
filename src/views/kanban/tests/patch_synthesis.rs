@@ -316,7 +316,8 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
     // `ak.strand.update` carrying its authoritative per-event `actor_id`. So
     // multi-author attribution is recovered from local state with NO per-tab
     // realm backfill.
-    let mut card = test_card("ak:strand:edit-me", "U");
+    let strand_id = "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";
+    let mut card = test_card(strand_id, "U");
     card.synthesis = join_synthesis_entry_bodies(vec![
         "alice synthesis".to_owned(),
         "bob synthesis".to_owned(),
@@ -331,23 +332,23 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
     let history_events = vec![
         json!({
             "event_kind": "ak.strand.update",
-            "event_id": "op-1",
+            "event_id": "ak:event:AZUYAeUiTiKHqTOGKrrTfa2xZPZj09T6IRYuDuCNc9ZQ",
             "actor_id": "did:web:acme.example:users:alice",
             "created_at": "2026-05-22T10:00:00.000Z",
-            "realm_id": "ak:realm:r1",
+            "realm_id": TEST_REALM_ID,
             "payload": {
-                "strand_id": "ak:strand:edit-me",
+                "target_ref": strand_id,
                 "patch": { "synthesis": { "$op": "set", "value": "alice synthesis" } }
             }
         }),
         json!({
             "event_kind": "ak.strand.update",
-            "event_id": "op-2",
+            "event_id": "ak:event:AYiSAxDIS8PlP8d9iucotDVTdZ9-CahOJVw2Km3R38HU",
             "actor_id": "did:web:acme.example:users:bob",
             "created_at": "2026-05-22T11:00:00.000Z",
-            "realm_id": "ak:realm:r1",
+            "realm_id": TEST_REALM_ID,
             "payload": {
-                "strand_id": "ak:strand:edit-me",
+                "target_ref": strand_id,
                 "patch": {
                     "synthesis": { "$op": "set", "value": "alice synthesis\n\n---\n\nbob synthesis" }
                 }

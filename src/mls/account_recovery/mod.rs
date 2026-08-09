@@ -27,7 +27,7 @@ mod selection;
 mod series;
 mod upload;
 
-pub(crate) use series::apply_next_series;
+pub(crate) use series::series_supersedes_digest;
 
 #[cfg(test)]
 mod tests;

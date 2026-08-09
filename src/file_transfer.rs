@@ -1169,15 +1169,11 @@ mod tests {
             )
             .unwrap();
         assert_eq!(dispatches.len(), 1);
-        assert_eq!(
-            dispatches[0].kind,
-            arkret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND
-        );
         (
             record,
             ciphertext,
             recipient_sk,
-            dispatches[0].content.clone(),
+            serde_json::to_value(&dispatches[0].content).unwrap(),
         )
     }
 

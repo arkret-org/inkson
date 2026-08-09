@@ -3471,7 +3471,7 @@ mod tests {
     #[tokio::test]
     async fn account_response_projects_client_events_and_decodes_realm_payloads() {
         let message_event = sdk_event(
-            arkret_sdk::EventKind::MessageCreate,
+            arkret_sdk::EventKind::MessageCreate.as_str(),
             json!({
                 "strand_id": "ak:strand:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg",
                 "track_name": "discussion",
@@ -3545,18 +3545,15 @@ mod tests {
         use arkret_sdk::EventsSubscribeFrameKind;
 
         let realm_id = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
-        let board_id = "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+        let object = arkret_sdk::Space::create_object(
+            arkret_sdk::RealmId::new(realm_id).unwrap(),
+            "board",
+            "Cross-member board",
+            sdk_actor_id(),
+        );
         let space_create = sdk_event(
             arkret_sdk::EventKind::SpaceCreate.as_str(),
-            json!({
-                "object": {
-                    "id": board_id,
-                    "schema": "ak.schema.space.v1",
-                    "realm_id": realm_id,
-                    "kind": "board",
-                    "title": "Cross-member board"
-                }
-            }),
+            serde_json::to_value(arkret_sdk::SpaceCreatePayload::new(object)).unwrap(),
         );
         // Mirrors the server's `events/subscribe` framing: one `event` frame
         // carrying the projection-event JSON, a `catchup_complete`, a heartbeat.
@@ -3702,7 +3699,7 @@ mod tests {
             crate::operation::uuid_v7()
         ));
         let mut store = LocalStateStore::with_path(temp);
-        let event = sdk_event(
+        let mut event = sdk_event(
             arkret_sdk::EventKind::StrandUpdate.as_str(),
             json!({
                 "target_ref": "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
@@ -3711,6 +3708,7 @@ mod tests {
                 }
             }),
         );
+        event.actor_id = arkret_sdk::Did::new("did:web:bob.example").unwrap();
 
         let changed =
             ingest_kanban_projection_events(&mut store, sdk_realm_id().as_str(), &[event]);

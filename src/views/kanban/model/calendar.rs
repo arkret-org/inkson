@@ -1,3 +1,5 @@
+use arkret_sdk::EventPayloadExt as _;
+
 use super::*;
 
 pub(crate) const CALENDAR_PROFILE_FIELD: &str = "profile";

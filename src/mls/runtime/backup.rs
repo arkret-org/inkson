@@ -49,6 +49,64 @@ pub fn build_mls_history_backup_body_with_secret(
     Ok((backup_id, body))
 }
 
+pub fn build_mls_history_backup_body_with_secret_in_series(
+    snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,
+    actor_id: &str,
+    device_id: &str,
+    account_secret: &str,
+    series_id: arkret_sdk::BackupSeriesId,
+) -> Result<(String, arkret_sdk::KeyBackup), MlsRuntimeError> {
+    let backup_id = format!("ak:backup:{}", crate::operation::uuid_v7());
+    let wrap_key = derive_mls_history_backup_key(account_secret)?;
+    let body = snapshot
+        .to_key_backup_body_in_series(&backup_id, actor_id, device_id, &wrap_key, series_id)
+        .map_err(|error| MlsRuntimeError::Backup(error.to_string()))?;
+    Ok((backup_id, body))
+}
+
+pub fn build_mls_history_backup_successor_body(
+    snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,
+    actor_id: &str,
+    device_id: &str,
+    predecessor: &arkret_sdk::KeyBackup,
+    frontier_ref: arkret_sdk::KeyBackupFrontierRef,
+) -> Result<(String, arkret_sdk::KeyBackup), MlsRuntimeError> {
+    let store = crate::secure_key_store::default_secure_key_store("inkson");
+    let account_secret = load_device_snapshot_secret(store.as_ref(), actor_id, device_id)
+        .map_err(MlsRuntimeError::DeviceSecret)?;
+    build_mls_history_backup_successor_body_with_secret(
+        snapshot,
+        actor_id,
+        device_id,
+        &account_secret,
+        predecessor,
+        frontier_ref,
+    )
+}
+
+pub fn build_mls_history_backup_successor_body_with_secret(
+    snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,
+    actor_id: &str,
+    device_id: &str,
+    account_secret: &str,
+    predecessor: &arkret_sdk::KeyBackup,
+    frontier_ref: arkret_sdk::KeyBackupFrontierRef,
+) -> Result<(String, arkret_sdk::KeyBackup), MlsRuntimeError> {
+    let backup_id = format!("ak:backup:{}", crate::operation::uuid_v7());
+    let wrap_key = derive_mls_history_backup_key(account_secret)?;
+    let body = snapshot
+        .to_key_backup_successor_body(
+            &backup_id,
+            actor_id,
+            device_id,
+            &wrap_key,
+            predecessor,
+            frontier_ref,
+        )
+        .map_err(|error| MlsRuntimeError::Backup(error.to_string()))?;
+    Ok((backup_id, body))
+}
+
 pub async fn upload_mls_snapshot_backup(
     api: &crate::transport::TransportClient,
     snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,

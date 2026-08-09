@@ -7,6 +7,7 @@ use serde_json::Value;
 use super::backup_body::{
     MLS_ACCOUNT_SECRET_ITEM_KIND, MLS_ACCOUNT_SECRET_SECRET_ID, MLS_PRIVATE_PLAINTEXT_ITEM_KIND,
     MLS_PRIVATE_PLAINTEXT_SECRET_ID, build_mls_account_secret_backup_body_with_kek,
+    build_mls_account_secret_backup_successor_body_with_kek_and_version,
     build_mls_account_secret_recovery_public_key_backup,
     build_mls_account_secret_recovery_public_key_backup_in_series,
     build_mls_private_plaintext_backup_body_with_kek, decrypt_mls_account_secret_backup,
@@ -24,12 +25,13 @@ use super::selection::{
     select_mls_history_tail_for_realm, select_mls_private_plaintext_backup,
     select_preferred_mls_account_secret_backup,
 };
-use super::series::{apply_next_series, series_supersedes_digest, verify_series_chain};
+use super::series::{series_supersedes_digest, verify_series_chain};
 use crate::key_backup::BackupKind;
 use crate::recovery_crypto::derive_vault_kek;
 use crate::secure_key_store::MemorySecureKeyStore;
 
 const BACKUP_ID: &str = "ak:backup:01964137-0000-7000-8000-00000000beef";
+const SIDECAR_BACKUP_ID: &str = "ak:backup:01964137-0000-7000-8000-00000000cafe";
 const ACTOR: &str = "did:web:alice.example";
 const DEVICE: &str = "ak:device:01964137-0000-7000-8000-000000000001";
 const PASSPHRASE: &[u8] = b"correct horse battery staple";
@@ -41,6 +43,15 @@ const ACTIVE_SECRET_STORAGE_SERIES: &str = "ak:backup_series:01964137-1000-7000-
 const STALE_SECRET_STORAGE_SERIES: &str = "ak:backup_series:01964137-1000-7000-8000-0000000000a2";
 const ACTIVE_MLS_HISTORY_SERIES: &str = "ak:backup_series:01964137-1000-7000-8000-0000000000b1";
 const STALE_MLS_HISTORY_SERIES: &str = "ak:backup_series:01964137-1000-7000-8000-0000000000b2";
+
+fn backup_frontier_ref() -> arkret_sdk::KeyBackupFrontierRef {
+    arkret_sdk::KeyBackupFrontierRef {
+        frontier_digest: arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
+        seal_ref: Some(format!("ak:seal:sha256:{}", "b".repeat(64))),
+        device_generation_ref: arkret_sdk::NonEmptyString::new("device-generation-1".to_owned())
+            .unwrap(),
+    }
+}
 
 fn key_backup_wire(body: &arkret_sdk::KeyBackup) -> Value {
     serde_json::to_value(body).expect("key backup must serialize at the wire test boundary")
@@ -220,6 +231,7 @@ fn managed_agent_pcr_history_body(series_id: &str) -> Value {
             b"managed Agent PCR state",
             Some(("ak:policy:01964137-2000-7000-8000-000000000004", 3)),
             Some(series_id),
+            None,
             None,
         )
         .unwrap(),
@@ -605,24 +617,58 @@ fn verify_series_chain_rejects_missing_intermediate() {
 
 #[test]
 fn verify_series_chain_accepts_well_formed_successor() {
-    // Mirror what the upload path now produces: genesis then a successor
-    // linked by apply_next_series.
-    let mut genesis = wrap();
-    genesis["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000d0");
-    genesis["series_id"] =
-        serde_json::json!("ak:backup_series:01964137-0000-7000-8000-0000000000d1");
-    genesis["series_seq"] = serde_json::json!(0);
-
-    let mut successor: arkret_sdk::KeyBackup = serde_json::from_value(wrap()).unwrap();
-    successor.backup_id =
-        arkret_sdk::BackupId::new("ak:backup:01964137-0000-7000-8000-0000000000d2".to_owned())
-            .unwrap();
-    apply_next_series(Some(&genesis), &mut successor)
-        .expect("successor series metadata must build");
+    let genesis = wrap();
+    let predecessor: arkret_sdk::KeyBackup = serde_json::from_value(genesis.clone()).unwrap();
+    let frontier = backup_frontier_ref();
+    let successor = build_mls_account_secret_backup_successor_body_with_kek_and_version(
+        "ak:backup:01964137-0000-7000-8000-0000000000d2",
+        &predecessor,
+        &derive_vault_kek(PASSPHRASE).unwrap(),
+        ACCOUNT_SECRET,
+        2,
+        &frontier.frontier_digest,
+        frontier.device_generation_ref,
+    )
+    .expect("SDK successor builder must seal the final series identity");
     let successor = key_backup_wire(&successor);
 
     verify_series_chain(&successor, &[genesis, successor.clone()])
-        .expect("an apply_next_series-linked successor must verify");
+        .expect("an SDK-built successor must verify");
+    assert_eq!(
+        decrypt_mls_account_secret_backup(PASSPHRASE, &successor).unwrap(),
+        ACCOUNT_SECRET.as_bytes(),
+        "successor plaintext identity must decrypt under its final series metadata"
+    );
+}
+
+#[test]
+fn private_plaintext_successor_is_sealed_with_final_series_metadata() {
+    let kek = derive_vault_kek(ACCOUNT_SECRET.as_bytes()).unwrap();
+    let genesis = build_mls_private_plaintext_backup_body_with_kek(
+        SIDECAR_BACKUP_ID,
+        ACTOR,
+        DEVICE,
+        &kek,
+        br#"{"realm":{"strand":{"title":"first"}}}"#,
+    )
+    .unwrap();
+    let frontier = backup_frontier_ref();
+    let successor = super::backup_body::build_mls_private_plaintext_backup_successor_body_with_kek(
+        "ak:backup:01964137-0000-7000-8000-00000000caf1",
+        &genesis,
+        &kek,
+        br#"{"realm":{"strand":{"title":"successor"}}}"#,
+        &frontier.frontier_digest,
+        frontier.device_generation_ref,
+    )
+    .unwrap();
+    let successor_wire = key_backup_wire(&successor);
+    assert_eq!(successor.series_id, genesis.series_id);
+    assert_eq!(successor.series_seq, 1);
+    assert_eq!(
+        decrypt_mls_private_plaintext_backup(ACCOUNT_SECRET.as_bytes(), &successor_wire).unwrap(),
+        br#"{"realm":{"strand":{"title":"successor"}}}"#
+    );
 }
 
 #[test]
@@ -835,6 +881,7 @@ fn recovery_public_key_successor_is_sealed_with_final_series_metadata() {
         2,
         recovery_policy_ref,
         Some(&genesis_wire),
+        Some(backup_frontier_ref()),
     )
     .unwrap();
 
@@ -975,23 +1022,25 @@ fn mls_history_successor_chains_onto_previous_tail() {
     // the SAME series (inherited series_id, seq+1, supersedes +
     // supersedes_digest over the canonical predecessor) instead of opening
     // a parallel genesis series.
-    let env_v1 = history_envelope("ak:realm:a", "g-a", 1, ACCOUNT_SECRET);
+    let env_v1 = history_envelope(FIRST_REALM_ID, "g-a", 1, ACCOUNT_SECRET);
     let genesis = history_body(&env_v1);
     // Genesis shape: fresh series, seq 0, no predecessor fields.
     assert_eq!(genesis["series_seq"], 0);
     assert!(genesis.get("supersedes").is_none());
     assert!(genesis.get("supersedes_digest").is_none());
 
-    let env_v2 = history_envelope("ak:realm:a", "g-a", 2, ACCOUNT_SECRET);
-    let mut successor = env_v2
-        .to_key_backup_body(
+    let env_v2 = history_envelope(FIRST_REALM_ID, "g-a", 2, ACCOUNT_SECRET);
+    let predecessor: arkret_sdk::KeyBackup = serde_json::from_value(genesis.clone()).unwrap();
+    let successor = env_v2
+        .to_key_backup_successor_body(
             "ak:backup:01964137-0000-7000-8000-000000000123",
             ACTOR,
             DEVICE,
             &crate::mls::runtime::derive_mls_history_backup_key(ACCOUNT_SECRET).unwrap(),
+            &predecessor,
+            backup_frontier_ref(),
         )
         .unwrap();
-    apply_next_series(Some(&genesis), &mut successor).unwrap();
 
     assert_eq!(successor.series_id.as_str(), backup_series_id(&genesis));
     assert_eq!(successor.series_seq, 1);
@@ -1012,22 +1061,27 @@ fn mls_history_successor_chains_onto_previous_tail() {
     );
     // Still a valid mls_history envelope after the successor mutation.
     validate_wire_envelope(&key_backup_wire(&successor), BackupKind::MlsHistory).unwrap();
+    assert_eq!(
+        crate::mls::runtime::decode_mls_history_backup_envelope(&successor, ACCOUNT_SECRET)
+            .unwrap(),
+        env_v2
+    );
 }
 
 #[test]
 fn mls_history_tail_selection_uses_the_active_series_tail() {
     let series_a = "ak:backup_series:01964137-0000-7000-8000-0000000000a0";
-    let env_a = history_envelope("ak:realm:a", "g-a", 1, ACCOUNT_SECRET);
+    let env_a = history_envelope(FIRST_REALM_ID, "g-a", 1, ACCOUNT_SECRET);
     let mut a0 = history_body(&env_a);
     a0["backup_id"] = serde_json::json!("ak:backup:a0");
     a0["series_id"] = serde_json::json!(series_a);
     a0["series_seq"] = serde_json::json!(0);
-    let env_a2 = history_envelope("ak:realm:a", "g-a", 2, ACCOUNT_SECRET);
+    let env_a2 = history_envelope(FIRST_REALM_ID, "g-a", 2, ACCOUNT_SECRET);
     let mut a1 = history_body(&env_a2);
     a1["backup_id"] = serde_json::json!("ak:backup:a1");
     a1["series_id"] = serde_json::json!(series_a);
     a1["series_seq"] = serde_json::json!(1);
-    let env_b = history_envelope("ak:realm:b", "g-b", 5, ACCOUNT_SECRET);
+    let env_b = history_envelope(OTHER_REALM_ID, "g-b", 5, ACCOUNT_SECRET);
     let mut b0 = history_body(&env_b);
     b0["backup_id"] = serde_json::json!("ak:backup:b0");
     b0["series_id"] = serde_json::json!(series_a);
@@ -1040,11 +1094,11 @@ fn mls_history_tail_selection_uses_the_active_series_tail() {
 
     // Per-Realm chaining target: realm a -> highest-seq link a1; realm b
     // -> its genesis; unknown realm -> none.
-    let tail_a = select_mls_history_tail_for_realm(&payload, "ak:realm:a").unwrap();
+    let tail_a = select_mls_history_tail_for_realm(&payload, FIRST_REALM_ID).unwrap();
     assert_eq!(tail_a["backup_id"], "ak:backup:a1");
-    let tail_b = select_mls_history_tail_for_realm(&payload, "ak:realm:b").unwrap();
+    let tail_b = select_mls_history_tail_for_realm(&payload, OTHER_REALM_ID).unwrap();
     assert_eq!(tail_b["backup_id"], "ak:backup:b0");
-    assert!(select_mls_history_tail_for_realm(&payload, "ak:realm:absent").is_none());
+    assert!(select_mls_history_tail_for_realm(&payload, PROMPT_REALM_ID).is_none());
 
     // Restore-side quota guard: only series tails survive the filter.
     let tails = mls_history_series_tail_ids(&payload);
@@ -1132,21 +1186,21 @@ fn select_account_secret_fails_closed_when_active_series_is_missing() {
 
 #[test]
 fn select_history_honors_active_series_record() {
-    let env_a1 = history_envelope("ak:realm:a", "g-a", 1, ACCOUNT_SECRET);
+    let env_a1 = history_envelope(FIRST_REALM_ID, "g-a", 1, ACCOUNT_SECRET);
     let mut active0 = history_body(&env_a1);
     active0["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000b0");
     active0["series_id"] = serde_json::json!(ACTIVE_MLS_HISTORY_SERIES);
     active0["series_seq"] = serde_json::json!(0);
     active0["created_at"] = serde_json::json!("2026-01-01T00:00:00.000Z");
 
-    let env_a2 = history_envelope("ak:realm:a", "g-a", 2, ACCOUNT_SECRET);
+    let env_a2 = history_envelope(FIRST_REALM_ID, "g-a", 2, ACCOUNT_SECRET);
     let mut active1 = history_body(&env_a2);
     active1["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000b1");
     active1["series_id"] = serde_json::json!(ACTIVE_MLS_HISTORY_SERIES);
     active1["series_seq"] = serde_json::json!(1);
     active1["created_at"] = serde_json::json!("2026-01-02T00:00:00.000Z");
 
-    let env_stale = history_envelope("ak:realm:a", "g-a", 99, ACCOUNT_SECRET);
+    let env_stale = history_envelope(FIRST_REALM_ID, "g-a", 99, ACCOUNT_SECRET);
     let mut stale = history_body(&env_stale);
     stale["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000b2");
     stale["series_id"] = serde_json::json!(STALE_MLS_HISTORY_SERIES);
@@ -1171,7 +1225,7 @@ fn select_history_honors_active_series_record() {
     assert!(!tails.contains("ak:backup:01964137-0000-7000-8000-0000000000b0"));
     assert!(!tails.contains("ak:backup:01964137-0000-7000-8000-0000000000b2"));
 
-    let tail = select_mls_history_tail_for_realm(&payload, "ak:realm:a").unwrap();
+    let tail = select_mls_history_tail_for_realm(&payload, FIRST_REALM_ID).unwrap();
     assert_eq!(tail["backup_id"], active1["backup_id"]);
 }
 
@@ -1218,9 +1272,14 @@ fn wrap_sidecar() -> (Vec<u8>, Value) {
     let sidecar = sample_sidecar();
     let json = serde_json::to_vec(&sidecar).unwrap();
     let kek = derive_vault_kek(ACCOUNT_SECRET.as_bytes()).unwrap();
-    let body =
-        build_mls_private_plaintext_backup_body_with_kek(BACKUP_ID, ACTOR, DEVICE, &kek, &json)
-            .unwrap();
+    let body = build_mls_private_plaintext_backup_body_with_kek(
+        SIDECAR_BACKUP_ID,
+        ACTOR,
+        DEVICE,
+        &kek,
+        &json,
+    )
+    .unwrap();
     (json, sign_wire_envelope(key_backup_wire(&body)))
 }
 
@@ -1344,10 +1403,33 @@ fn restore_brings_back_the_sidecar_into_the_store() {
     );
 
     // The sidecar is encrypted under the ACCOUNT SECRET (not the passphrase).
-    let (_json, sidecar_body) = wrap_sidecar();
-    let mut sidecar_body: arkret_sdk::KeyBackup = serde_json::from_value(sidecar_body).unwrap();
     let account_secret_body = wrap();
-    apply_next_series(Some(&account_secret_body), &mut sidecar_body).unwrap();
+    let account_secret_predecessor: arkret_sdk::KeyBackup =
+        serde_json::from_value(account_secret_body.clone()).unwrap();
+    let sidecar_json = serde_json::to_vec(&sample_sidecar()).unwrap();
+    let sidecar_kek = derive_vault_kek(ACCOUNT_SECRET.as_bytes()).unwrap();
+    let sidecar_body = arkret_crypto::backup::build_key_backup_successor_envelope(
+        arkret_sdk::BackupId::new(SIDECAR_BACKUP_ID).unwrap(),
+        &account_secret_predecessor,
+        "kb_1",
+        &sidecar_kek,
+        vec![arkret_sdk::PlaintextItem {
+            item_kind: MLS_PRIVATE_PLAINTEXT_ITEM_KIND.to_owned(),
+            secret_id: MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned(),
+            secret_b64u: B64.encode(sidecar_json),
+            secret_generation: None,
+            realm_id: None,
+            managed_principal_binding: None,
+            mls_group_id: None,
+            epoch: None,
+            first_event_id: None,
+            last_event_id: None,
+            extra: Default::default(),
+        }],
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        arkret_sdk::NonEmptyString::new("fixture_generation:1").unwrap(),
+    )
+    .unwrap();
     let sidecar_body = sign_wire_envelope(key_backup_wire(&sidecar_body));
 
     let payload = payload_with_inferred_active_series(vec![
@@ -1367,7 +1449,8 @@ fn restore_brings_back_the_sidecar_into_the_store() {
     assert_eq!(report.restored, 1);
     assert!(
         report.private_plaintext_restored,
-        "sidecar must be restored"
+        "sidecar must be restored: {:?}",
+        report.first_error
     );
     assert_eq!(
         state.private_plaintext_for("ak:realm:demo", "ak:strand:alpha", "body"),

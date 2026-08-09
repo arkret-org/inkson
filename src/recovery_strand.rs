@@ -368,8 +368,9 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
     let bytes = unsigned.signing_payload_bytes()?;
     let signature =
         sign_raw(&bytes).map_err(|err| anyhow::anyhow!("recovery policy sign: {err:?}"))?;
-    let typed_policy =
-        unsigned.attach_signature(arkret_sdk::Base64UrlString::new(B64.encode(signature))?)?;
+    let typed_policy = unsigned.attach_signature(
+        arkret_sdk::Base64UrlString::new(B64.encode(signature)).map_err(anyhow::Error::msg)?,
+    )?;
     typed_policy.validate()?;
     Ok(serde_json::to_value(typed_policy)?)
 }

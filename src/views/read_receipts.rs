@@ -337,7 +337,6 @@ mod tests {
             actor_id: arkret_sdk::Did::new("did:web:a").unwrap(),
             payload_sequence: 3,
             ttl_ms: None,
-            body: body.into_iter().collect(),
             sent_at: at,
             expires_at: at + chrono::Duration::seconds(30),
             scope_ref: arkret_sdk::ScopeRef::Realm {

@@ -181,7 +181,8 @@ pub(crate) async fn prepare_root_anchored_recovery(
     )?;
     let authorize_signature = arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
         device_signer.sign_raw(&authorize_payload.device_possession_signature_input()?)?,
-    ))?;
+    ))
+    .map_err(anyhow::Error::msg)?;
     let authorize_payload = authorize_payload.attach_signature(authorize_signature)?;
     let authorize_payload_wire = serde_json::to_value(&authorize_payload)?;
     let digest_suite = arkret_sdk::canonical::DigestSuite::Sha256;

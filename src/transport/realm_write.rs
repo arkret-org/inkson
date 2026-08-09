@@ -385,7 +385,11 @@ pub async fn set_realm_policy_events(
         build_realm_state_event::<arkret_sdk::event_spec::RealmJoinRule>(
             realm_id,
             actor_id,
-            arkret_sdk::RealmJoinRulePayload::new(serde_json::from_value(json!(join_rule))?),
+            arkret_sdk::StatePayload {
+                value: Some(serde_json::to_value(join_rule)?),
+                state: None,
+                reason: None,
+            },
         )?,
         build_realm_state_event::<arkret_sdk::event_spec::RealmHistoryVisibility>(
             realm_id,

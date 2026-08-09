@@ -627,36 +627,34 @@ mod tests {
             crate::event_signer::ActiveSignerTestGuard::replace(Some(active_signer));
         let actor = "did:web:alice.example";
         let device = "ak:device:01904100-0000-7000-8000-0000000000a1";
-        let mut envelope = arkret_sdk::MlsWelcomeClaimEnvelope {
-            keypackage_ref:
-                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
-            keypackage_digest: arkret_sdk::Hash::new(
-                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            )
-            .unwrap(),
-            intended_realm_id: arkret_sdk::RealmId::new(
-                "ak:realm:Aa8_CTduEn4HY_7QtwQ1Ct3QH2pg-9mfHGxJfGOYYHxx",
-            )
-            .unwrap(),
-            claim_id: arkret_sdk::NonEmptyString::new("ak:mls:kp:test:nonce").unwrap(),
-            requester_did: arkret_sdk::Did::new(actor.to_owned()).unwrap(),
-            trust_binding: arkret_sdk::MlsRequesterTrustBinding::RequesterDeviceId(
-                arkret_sdk::DeviceId::new(device).unwrap(),
-            ),
-            nonce: arkret_sdk::NonEmptyString::new("nonce").unwrap(),
-            welcome_digest: arkret_sdk::Hash::new(
-                "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            )
-            .unwrap(),
-            created_at: crate::clock::now_utc(),
-            signature: arkret_sdk::KeyOperationSignature {
-                kid: arkret_sdk::NonEmptyString::new("placeholder-kid").unwrap(),
-                signature_algorithm: Some(arkret_sdk::NonEmptyString::new("Ed25519").unwrap()),
-                sig: arkret_sdk::Base64UrlString::new("c2ln").unwrap(),
+        let envelope = arkret_sdk::UnsignedMlsWelcomeClaimEnvelope::new(
+            arkret_sdk::MlsWelcomeClaimEnvelopeSigningInput {
+                keypackage_ref:
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        .to_owned(),
+                keypackage_digest: arkret_sdk::Hash::new(
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                )
+                .unwrap(),
+                intended_realm_id: arkret_sdk::RealmId::new(
+                    "ak:realm:Aa8_CTduEn4HY_7QtwQ1Ct3QH2pg-9mfHGxJfGOYYHxx",
+                )
+                .unwrap(),
+                claim_id: arkret_sdk::NonEmptyString::new("ak:mls:kp:test:nonce").unwrap(),
+                requester_did: arkret_sdk::Did::new(actor.to_owned()).unwrap(),
+                trust_binding: arkret_sdk::MlsRequesterTrustBinding::RequesterDeviceId(
+                    arkret_sdk::DeviceId::new(device).unwrap(),
+                ),
+                nonce: arkret_sdk::NonEmptyString::new("nonce").unwrap(),
+                welcome_digest: arkret_sdk::Hash::new(
+                    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                )
+                .unwrap(),
+                created_at: crate::clock::now_utc(),
             },
-        };
+        );
 
-        sign_welcome_claim_envelope(&state, &secure, actor, device, &mut envelope).unwrap();
+        let envelope = sign_welcome_claim_envelope(actor, device, envelope).unwrap();
 
         assert_eq!(
             envelope

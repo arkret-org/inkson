@@ -13,6 +13,7 @@ const BACKUP_ID: &str = "ak:backup:01964137-0000-7000-8000-00000000beef";
 const ACTOR: &str = "did:web:alice.example";
 const DEVICE: &str = "ak:device:01964137-0000-7000-8000-000000000001";
 const DEVICE_AUTHORIZE_EVENT: &str = "ak:event:AcIMom-0qqAXx_hmDJfxxaUJb_oJ64S3ARW1-WKFDCoD";
+const REALM_ID: &str = "ak:realm:ASlHbbnJj2aIvNxwyukjGz90ltQwXHCbjIihxsRDrRR5";
 
 fn test_root() -> VaultKek {
     derive_vault_kek_with_salt(b"correct horse battery staple", &[7u8; VAULT_SALT_LEN]).unwrap()
@@ -126,6 +127,7 @@ fn managed_agent_pcr_binding_is_bound_into_hpke_aad() {
         "managed_agent_pcr",
         &KeyBackupContentItem {
             item_kind: "mls_group_state".to_owned(),
+            secret_id: Some("inkson_managed_agent_pcr_snapshot".to_owned()),
             realm_id: Some(binding.principal_control_realm_id.clone()),
             managed_principal_binding: Some(binding.clone()),
             mls_group_id: Some("YWdlbnQtcGNy".to_owned()),
@@ -452,7 +454,10 @@ fn key_backup_validator_rejects_recipient_method_aad_mismatch() {
     body["domain_separation"]["aead_aad"]["recipient_method"] = json!("recovery_public_key");
     let err = validate_wire_envelope(&body, BackupKind::SecretStorage)
         .expect_err("recipient_method/AAD mismatch must be rejected");
-    assert!(err.contains("recipient_method"), "{err}");
+    assert!(
+        err.contains("authenticated domain metadata mismatch"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -496,7 +501,7 @@ fn mls_history_rejects_passphrase_kdf() {
 #[test]
 fn mls_history_accepts_secret_storage_key() {
     let envelope = crate::mls::persistence::encrypt_state(
-        "ak:realm:demo",
+        REALM_ID,
         "group-a",
         3,
         b"opaque sdk state",
@@ -540,7 +545,7 @@ fn recovery_public_key_backup_round_trips_and_validates() {
             ..Default::default()
         },
         b"opaque mls snapshot bytes",
-        None,
+        Some(("ak:policy:01964137-0000-7000-8000-000000000077", 1)),
     )
     .unwrap();
 
@@ -569,7 +574,7 @@ fn recovery_public_key_backup_round_trips_and_validates() {
 #[test]
 fn mls_history_rejects_obvious_plaintext_fields() {
     let envelope = crate::mls::persistence::encrypt_state(
-        "ak:realm:demo",
+        REALM_ID,
         "group-a",
         3,
         b"not real sdk state",
@@ -589,7 +594,7 @@ fn mls_history_rejects_obvious_plaintext_fields() {
 
     let err = validate_wire_envelope(&body, BackupKind::MlsHistory)
         .expect_err("MLS history backups must stay opaque");
-    assert!(err.contains("plaintext field"));
+    assert!(err.contains("extension keys must match"), "{err}");
 }
 
 #[test]

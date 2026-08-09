@@ -77,7 +77,7 @@ fn golden_event(
 fn client_core_message_decode_golden_matches_inkson_ingest() {
     let create = golden_event(
         "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z",
-        arkret_sdk::EventKind::MessageCreate,
+        arkret_sdk::EventKind::MessageCreate.as_str(),
         1,
         "2026-07-08T00:00:00.000Z",
         serde_json::json!({
@@ -88,7 +88,7 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
     );
     let reaction = golden_event(
         "ak:event:AbHexNOxiiU334tA-ZHyM5pRxJxbMY0jvwlMVDY3Xjrz",
-        arkret_sdk::EventKind::ReactionAdd,
+        arkret_sdk::EventKind::ReactionAdd.as_str(),
         2,
         "2026-07-08T00:00:01.000Z",
         serde_json::json!({

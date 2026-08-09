@@ -85,6 +85,36 @@ pub fn build_passphrase_kdf_backup_body(
     Ok(envelope)
 }
 
+/// Build a `passphrase_kdf` successor after its complete series/frontier
+/// identity has been resolved. The SDK seals the plaintext keybag only after
+/// inheriting the predecessor series and attaching the supersedes link, so no
+/// caller can mutate ciphertext-bound identity metadata afterward.
+#[allow(clippy::too_many_arguments)]
+pub fn build_passphrase_kdf_backup_successor_body(
+    backup_id: &str,
+    predecessor: &KeyBackup,
+    root: &VaultKek,
+    secret: &[u8],
+    item: &KeyBackupContentItem,
+    frontier_digest: &arkret_sdk::Hash,
+    device_generation_ref: arkret_sdk::NonEmptyString,
+) -> anyhow::Result<KeyBackup> {
+    let envelope = arkret_crypto::backup::build_key_backup_successor_envelope(
+        arkret_sdk::BackupId::new(backup_id.to_owned())?,
+        predecessor,
+        "kb_1",
+        root,
+        vec![plaintext_item(item, secret)?],
+        frontier_digest.as_str(),
+        device_generation_ref,
+    )
+    .map_err(|error| anyhow::anyhow!("build key backup successor: {error}"))?;
+    envelope
+        .validate_envelope_fields()
+        .map_err(|error| anyhow::anyhow!("validate key backup successor: {error}"))?;
+    Ok(envelope)
+}
+
 /// Spec §7.5 reader: re-derive the AAD + nonce transcript from a stored
 /// `passphrase_kdf` envelope and `open_vault` it with `passphrase`. Verifies the
 /// `key_commitment` and recomputes the deterministic nonce.
@@ -211,6 +241,7 @@ pub fn build_recovery_public_key_backup_body(
         recovery_policy_ref,
         None,
         None,
+        None,
     )
 }
 
@@ -231,6 +262,7 @@ pub fn build_recovery_public_key_backup_body_in_series(
     recovery_policy_ref: Option<(&str, u64)>,
     series_id: Option<&str>,
     previous_series_tail: Option<&Value>,
+    frontier_ref: Option<arkret_sdk::KeyBackupFrontierRef>,
 ) -> anyhow::Result<KeyBackup> {
     build_recovery_public_key_backup_body_for_items_in_series(
         backup_id,
@@ -244,6 +276,7 @@ pub fn build_recovery_public_key_backup_body_in_series(
         recovery_policy_ref,
         series_id,
         previous_series_tail,
+        frontier_ref,
     )
 }
 
@@ -262,6 +295,7 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
     recovery_policy_ref: Option<(&str, u64)>,
     series_id: Option<&str>,
     previous_series_tail: Option<&Value>,
+    frontier_ref: Option<arkret_sdk::KeyBackupFrontierRef>,
 ) -> anyhow::Result<KeyBackup> {
     if plaintext_items.is_empty() {
         anyhow::bail!("recovery_public_key backup requires at least one content item");
@@ -331,22 +365,30 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
         series_seq: 0,
         supersedes: None,
         supersedes_digest: None,
-        frontier_ref: None,
+        frontier_ref,
         recovery_policy_ref: recovery_policy_ref
             .map(|(policy_id, policy_version)| {
-                Ok(arkret_sdk::RecoveryPolicyRef {
-                    policy_id: arkret_sdk::PolicyId::new(policy_id.to_owned())?,
-                    policy_version,
+                arkret_sdk::PolicyId::new(policy_id.to_owned()).map(|policy_id| {
+                    arkret_sdk::RecoveryPolicyRef {
+                        policy_id,
+                        policy_version,
+                    }
                 })
             })
             .transpose()?,
         extra: Default::default(),
     };
     if let Some(previous) = previous_series_tail {
+        if body.frontier_ref.is_none() {
+            anyhow::bail!("key backup successor requires frontier_ref before encryption");
+        }
         let predecessor = serde_json::from_value::<KeyBackup>(previous.clone())
             .map_err(|error| anyhow::anyhow!("typed key backup predecessor: {error}"))?;
         body.series_id = predecessor.series_id;
-        body.series_seq = predecessor.series_seq + 1;
+        body.series_seq = predecessor
+            .series_seq
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("key backup successor series_seq overflow"))?;
         body.supersedes = Some(predecessor.backup_id);
         body.supersedes_digest = Some(crate::mls::account_recovery::series_supersedes_digest(
             previous,
@@ -366,7 +408,9 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
     let info = recovery_public_key_info(&body)?;
     let sealed = crate::hpke_backup::hpke_seal(recovery_public_key, &info, &aad, &plaintext_bytes)?;
 
-    body.encryption.aead.enc = Some(arkret_sdk::Base64UrlString::new(B64.encode(&sealed.enc))?);
+    body.encryption.aead.enc = Some(
+        arkret_sdk::Base64UrlString::new(B64.encode(&sealed.enc)).map_err(anyhow::Error::msg)?,
+    );
     body.ciphertext = B64.encode(&sealed.ciphertext);
     body.ciphertext_digest = format!(
         "sha256:{}",

@@ -310,7 +310,7 @@ fn inkson_accepts_server_contract_payloads() {
         "cursor": "sx:1760000000000"
     }))
     .unwrap();
-    assert_eq!(submit.status, "accepted");
+    assert_eq!(submit.status, arkret_sdk::EventsSubmitStatus::Accepted);
     assert_eq!(
         submit.event_id,
         "ak:event:AVH7487ydDzo_3WXy2IlHWvtBeElcucZHd5d5hYKcjZl"

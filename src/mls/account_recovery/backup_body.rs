@@ -106,6 +106,34 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
     )
 }
 
+/// Build the next passphrase-recoverable account-secret envelope after the
+/// predecessor series and current PCR frontier have been resolved.
+#[allow(clippy::too_many_arguments)]
+pub fn build_mls_account_secret_backup_successor_body_with_kek_and_version(
+    backup_id: &str,
+    predecessor: &KeyBackup,
+    kek: &VaultKek,
+    account_secret: &str,
+    account_secret_version: u32,
+    frontier_digest: &arkret_sdk::Hash,
+    device_generation_ref: arkret_sdk::NonEmptyString,
+) -> Result<KeyBackup> {
+    crate::key_backup::build_passphrase_kdf_backup_successor_body(
+        backup_id,
+        predecessor,
+        kek,
+        account_secret.as_bytes(),
+        &KeyBackupContentItem {
+            item_kind: MLS_ACCOUNT_SECRET_ITEM_KIND.to_owned(),
+            secret_id: Some(MLS_ACCOUNT_SECRET_SECRET_ID.to_owned()),
+            secret_version: Some(account_secret_version),
+            ..Default::default()
+        },
+        frontier_digest,
+        device_generation_ref,
+    )
+}
+
 /// Decrypt a downloaded `mls_account_secret` backup body with the user's
 /// recovery passphrase and return the account snapshot secret bytes.
 ///
@@ -185,6 +213,31 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
     )
 }
 
+/// Build the next private-plaintext sidecar envelope with its series and PCR
+/// frontier identity fixed before the SDK seals the plaintext keybag.
+pub fn build_mls_private_plaintext_backup_successor_body_with_kek(
+    backup_id: &str,
+    predecessor: &KeyBackup,
+    kek: &VaultKek,
+    sidecar_json: &[u8],
+    frontier_digest: &arkret_sdk::Hash,
+    device_generation_ref: arkret_sdk::NonEmptyString,
+) -> Result<KeyBackup> {
+    crate::key_backup::build_passphrase_kdf_backup_successor_body(
+        backup_id,
+        predecessor,
+        kek,
+        sidecar_json,
+        &KeyBackupContentItem {
+            item_kind: MLS_PRIVATE_PLAINTEXT_ITEM_KIND.to_owned(),
+            secret_id: Some(MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned()),
+            ..Default::default()
+        },
+        frontier_digest,
+        device_generation_ref,
+    )
+}
+
 /// X5.3 — decrypt a downloaded `mls_private_plaintext` backup body and return
 /// the serialized sidecar JSON bytes.
 ///
@@ -253,6 +306,7 @@ pub fn build_mls_account_secret_recovery_public_key_backup(
         account_secret_version,
         recovery_policy_ref,
         None,
+        None,
     )
 }
 
@@ -272,6 +326,7 @@ pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
     account_secret_version: u32,
     recovery_policy_ref: (&str, u64),
     previous_series_tail: Option<&Value>,
+    frontier_ref: Option<arkret_sdk::KeyBackupFrontierRef>,
 ) -> Result<KeyBackup> {
     crate::key_backup::build_recovery_public_key_backup_body_in_series(
         backup_id,
@@ -291,6 +346,7 @@ pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
         Some(recovery_policy_ref),
         None,
         previous_series_tail,
+        frontier_ref,
     )
 }
 

@@ -569,7 +569,7 @@ mod personal_agent_tests {
 
         assert_eq!(
             event.kind.as_str(),
-            arkret_sdk::EventKind::AgentKeyAuthorize
+            arkret_sdk::EventKind::AgentKeyAuthorize.as_str()
         );
         assert_eq!(event.payload["agent_id"], agent);
         assert_eq!(
@@ -762,13 +762,15 @@ mod personal_agent_tests {
             "target": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
             "content": {"body": "draft text"},
         });
-        let payload = build_action_approve_payload(
-            &draft,
-            "did:web:alice.example",
-            "2026-06-26T00:00:00.000Z",
-            "2026-06-26T01:00:00.000Z",
+        let payload = serde_json::to_value(
+            build_action_approve_payload(
+                &draft,
+                "did:web:alice.example",
+                "2026-06-26T00:00:00.000Z",
+                "2026-06-26T01:00:00.000Z",
+            )
+            .unwrap(),
         )
-        .and_then(|payload| serde_json::to_value(payload).map_err(anyhow::Error::from))
         .unwrap();
         assert_eq!(payload["draft_id"], "0197-draft");
         assert_eq!(payload["controller_id"], "did:web:alice.example");
@@ -796,21 +798,21 @@ mod personal_agent_tests {
             "target": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
             "request_canonical_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         });
-        let payload = build_action_approve_payload(
-            &request,
-            "did:web:alice.example",
-            "2026-06-26T00:00:00.000Z",
-            "2026-06-26T01:00:00.000Z",
+        let payload = serde_json::to_value(
+            build_action_approve_payload(
+                &request,
+                "did:web:alice.example",
+                "2026-06-26T00:00:00.000Z",
+                "2026-06-26T01:00:00.000Z",
+            )
+            .unwrap(),
         )
-        .and_then(|payload| serde_json::to_value(payload).map_err(anyhow::Error::from))
         .unwrap();
         assert_eq!(payload["request_id"], "ak:agent-action-request:0197");
         assert_eq!(
             payload["approved_payload_digest"],
             "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        )
-        .and_then(|payload| serde_json::to_value(payload).map_err(anyhow::Error::from))
-        .unwrap();
+        );
         assert!(payload.get("draft_content_digest").is_none());
     }
 
@@ -820,12 +822,16 @@ mod personal_agent_tests {
             "request_id": "ak:agent-action-request:0198",
             "agent_id": "did:web:agents.example:summary",
         });
-        let payload = build_action_reject_payload(
-            &request,
-            "did:web:alice.example",
-            "2026-06-26T00:00:00.000Z",
-            Some("needs review"),
-        );
+        let payload = serde_json::to_value(
+            build_action_reject_payload(
+                &request,
+                "did:web:alice.example",
+                "2026-06-26T00:00:00.000Z",
+                Some("needs review"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
         assert_eq!(payload["request_id"], "ak:agent-action-request:0198");
         assert_eq!(payload["controller_id"], "did:web:alice.example");
         assert_eq!(payload["rejected_at"], "2026-06-26T00:00:00.000Z");

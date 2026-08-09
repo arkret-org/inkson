@@ -790,7 +790,7 @@ pub(super) fn dispatch_board_archive_cascade(
         .filter(|view| {
             view.kind == "list"
                 && view.parent_space_id.as_deref() == Some(board_space_id.as_str())
-                && view.state == arkret_sdk::ProjectionObjectState::Active
+                && view.state == arkret_sdk::ProjectionSpaceState::Active
         })
         .map(|view| view.space_id)
         .collect();

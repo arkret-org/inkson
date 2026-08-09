@@ -34,7 +34,7 @@ pub fn build_account_data_set(
         (arkret_sdk::AccountDataBody::Value(value), None)
     };
     let payload = arkret_sdk::AccountDataSetPayload {
-        key: arkret_sdk::NonEmptyString::new(key.as_wire())?,
+        key: arkret_sdk::NonEmptyString::new(key.as_wire()).map_err(anyhow::Error::msg)?,
         owner: Some(arkret_sdk::Did::new(actor.to_owned())?),
         expected_revision,
         body,
@@ -55,7 +55,7 @@ pub fn build_account_data_tombstone(
     expected_revision: u64,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let payload = arkret_sdk::AccountDataSetPayload {
-        key: arkret_sdk::NonEmptyString::new(key.as_wire())?,
+        key: arkret_sdk::NonEmptyString::new(key.as_wire()).map_err(anyhow::Error::msg)?,
         owner: Some(arkret_sdk::Did::new(actor.to_owned())?),
         expected_revision,
         body: arkret_sdk::AccountDataBody::Absent,
@@ -185,7 +185,7 @@ pub fn build_private_account_data_set(
         anyhow::bail!("private account_data encrypted_payload must be an object");
     };
     let payload = arkret_sdk::AccountDataSetPayload {
-        key: arkret_sdk::NonEmptyString::new(key)?,
+        key: arkret_sdk::NonEmptyString::new(key).map_err(anyhow::Error::msg)?,
         owner: Some(arkret_sdk::Did::new(actor.to_owned())?),
         expected_revision,
         body: arkret_sdk::AccountDataBody::Absent,
@@ -207,7 +207,7 @@ pub fn build_private_account_data_tombstone(
 ) -> anyhow::Result<TypedOperationBuilder> {
     validate_private_account_data_key(key)?;
     let payload = arkret_sdk::AccountDataSetPayload {
-        key: arkret_sdk::NonEmptyString::new(key)?,
+        key: arkret_sdk::NonEmptyString::new(key).map_err(anyhow::Error::msg)?,
         owner: Some(arkret_sdk::Did::new(actor.to_owned())?),
         expected_revision,
         body: arkret_sdk::AccountDataBody::Absent,

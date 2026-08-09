@@ -308,7 +308,7 @@ fn reducer_input_plane(envelope: &Event) -> Option<&'static str> {
 /// drift that lets a bootstrap follow-up go untested.
 fn cba_exempt_reducer_kind(kind: &EventKind) -> bool {
     kind == &EventKind::RealmCreate
-        || arkret_policy::realm_bootstrap::is_realm_bootstrap_followup_kind(kind.as_str())
+        || arkret_policy::realm_bootstrap::is_realm_bootstrap_followup_kind(kind)
 }
 
 /// The `{did, key_id, key_epoch}` a DataEvent pins so the receiver knows which
@@ -515,26 +515,30 @@ fn build_space_lifecycle_event_tombstone_matches_event_schema() {
 
 #[test]
 fn build_realm_state_event_join_rule_matches_event_schema() {
-    let mut envelope = event_builders::build_realm_state_event(
-        TEST_REALM_ID,
-        TEST_ACTOR_ID,
-        EventKind::RealmJoinRule,
-        serde_json::json!("invite"),
-    )
-    .expect("build_realm_state_event(join_rule) succeeds");
+    let mut envelope =
+        event_builders::build_realm_state_event::<arkret_sdk::event_spec::RealmJoinRule>(
+            TEST_REALM_ID,
+            TEST_ACTOR_ID,
+            arkret_sdk::StatePayload {
+                value: Some(serde_json::json!("invite")),
+                state: None,
+                reason: None,
+            },
+        )
+        .expect("build_realm_state_event(join_rule) succeeds");
     stamp_wire_fields(&mut envelope);
     assert_envelope_matches_schema("build_realm_state_event[join_rule]", &envelope);
 }
 
 #[test]
 fn build_realm_state_event_history_visibility_matches_event_schema() {
-    let mut envelope = event_builders::build_realm_state_event(
-        TEST_REALM_ID,
-        TEST_ACTOR_ID,
-        EventKind::RealmHistoryVisibility,
-        serde_json::json!("shared"),
-    )
-    .expect("build_realm_state_event(history_visibility) succeeds");
+    let mut envelope =
+        event_builders::build_realm_state_event::<arkret_sdk::event_spec::RealmHistoryVisibility>(
+            TEST_REALM_ID,
+            TEST_ACTOR_ID,
+            arkret_sdk::HistoryVisibilityPayload::new(arkret_sdk::HistoryVisibility::Shared),
+        )
+        .expect("build_realm_state_event(history_visibility) succeeds");
     stamp_wire_fields(&mut envelope);
     assert_envelope_matches_schema("build_realm_state_event[history_visibility]", &envelope);
 }
@@ -567,22 +571,25 @@ fn build_realm_history_sharing_policy_event_matches_event_schema() {
 
 #[test]
 fn build_realm_preview_policy_event_matches_event_schema() {
-    let mut envelope = event_builders::build_realm_state_event(
-        TEST_REALM_ID,
-        TEST_ACTOR_ID,
-        EventKind::RealmPreviewPolicy,
-        serde_json::json!({
-            "mode": "stripped_state",
-            "audiences": ["link_token_holder"],
-            "fields": ["title", "summary", "join_rule", "history_visibility"],
-            "token": {
-                "required": true,
-                "ttl_seconds": 600,
-                "bind_target_digest": true
-            }
-        }),
-    )
-    .expect("build_realm_state_event(preview_policy) succeeds");
+    let mut envelope =
+        event_builders::build_realm_state_event::<arkret_sdk::event_spec::RealmPreviewPolicy>(
+            TEST_REALM_ID,
+            TEST_ACTOR_ID,
+            serde_json::from_value(serde_json::json!({
+                "value": {
+                    "mode": "stripped_state",
+                    "audiences": ["link_token_holder"],
+                    "fields": ["title", "summary", "join_rule", "history_visibility"],
+                    "token": {
+                        "required": true,
+                        "ttl_seconds": 600,
+                        "bind_target_digest": true
+                    }
+                }
+            }))
+            .expect("preview policy fixture is typed"),
+        )
+        .expect("build_realm_state_event(preview_policy) succeeds");
     stamp_wire_fields(&mut envelope);
     assert_envelope_matches_schema("build_realm_state_event[preview_policy]", &envelope);
 }
@@ -941,15 +948,22 @@ fn sas_key_verification_device_message_matches_device_message_schema() {
     )
     .expect("build_sas_key_verification_content succeeds");
 
-    let request = event_builders::build_device_message_envelope(
-        "ak:device_message:01904100-0000-7000-8000-0000000000cc",
-        "did:web:bob.example",
-        target_device,
-        "ak.key.verification.key",
-        "2026-04-26T00:10:00.000Z",
+    let request = arkret_sdk::TypedDeviceMessageTarget::<
+        arkret_sdk::device_message_spec::KeyVerificationKey,
+    >::new(
+        arkret_sdk::DeviceMessageId::new("ak:device_message:01904100-0000-7000-8000-0000000000cc")
+            .expect("fixture message id"),
+        "2026-04-26T00:10:00.000Z"
+            .parse()
+            .expect("fixture expiration"),
         content.clone(),
     )
-    .expect("build_device_message_envelope succeeds");
+    .expect("typed key-verification target")
+    .single_recipient(
+        arkret_sdk::Did::new("did:web:bob.example").expect("fixture recipient"),
+        arkret_sdk::DeviceId::new(target_device).expect("fixture target device"),
+    )
+    .expect("build typed device-message request");
     let request = serde_json::to_value(&request).expect("send request serializes");
     assert_matches_schema(
         "build_device_message_envelope[ak.key.verification.key]",

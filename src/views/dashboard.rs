@@ -34,6 +34,14 @@ impl DashboardContactsSummary {
     }
 }
 
+fn projection_object_state_label(state: arkret_sdk::ProjectionObjectState) -> &'static str {
+    match state {
+        arkret_sdk::ProjectionObjectState::Active => "active",
+        arkret_sdk::ProjectionObjectState::Archived => "archived",
+        arkret_sdk::ProjectionObjectState::Redacted => "redacted",
+    }
+}
+
 #[component]
 #[allow(clippy::redundant_closure)] // `|| signal()` is not equivalent to `&signal` here.
 pub fn DashboardPanel(
@@ -168,7 +176,7 @@ pub fn DashboardPanel(
         // (strand.schema.json). "Recent strands" shows only `active`; `archived`
         // and `redacted` are hidden here. There is NO `deleted` state in the
         // spec, so it is intentionally not referenced.
-        .filter(|strand| strand.state != "archived" && strand.state != "redacted")
+        .filter(|strand| strand.state == arkret_sdk::ProjectionObjectState::Active)
         .take(5)
         .collect::<Vec<_>>();
     let visible_notifications = notification_summaries
@@ -400,7 +408,7 @@ pub fn DashboardPanel(
                                             td { class: "dim", "" }
                                             td { "{strand.title}" }
                                             td { "Current Board" }
-                                            td { "{strand.state}" }
+                                            td { "{projection_object_state_label(strand.state)}" }
                                             td {
                                                 {strand.fields
                                                     .get("due_at")

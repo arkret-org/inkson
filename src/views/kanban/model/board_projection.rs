@@ -297,14 +297,14 @@ pub(crate) fn strand_views_from_ops(
                 if let Some(id) = op_strand_target_id(record)
                     && let Some(view) = by_id.get_mut(&id)
                 {
-                    view.state = arkret_sdk::ProjectionSpaceState::Archived;
+                    view.state = arkret_sdk::ProjectionObjectState::Archived;
                 }
             }
             "ak.strand.restore" => {
                 if let Some(id) = op_strand_target_id(record)
                     && let Some(view) = by_id.get_mut(&id)
                 {
-                    view.state = arkret_sdk::ProjectionSpaceState::Active;
+                    view.state = arkret_sdk::ProjectionObjectState::Active;
                 }
             }
             _ => {}
@@ -430,20 +430,17 @@ mod tests {
         title: &str,
         parent: Option<&str>,
     ) -> arkret_sdk::Event {
-        let mut object = json!({
-            "kind": kind,
-            "title": title,
-            "realm_id": REALM,
-        });
+        let mut object =
+            arkret_sdk::Space::create_object(sdk_realm_id(), kind, title, sdk_actor_id());
         if let Some(parent) = parent {
-            object["parent_space_id"] = json!(parent);
+            object.parent_space_id = Some(arkret_sdk::SpaceId::new(parent).unwrap());
         }
         sdk_event(
             &event_id_naming(id, "ak:space:"),
             arkret_sdk::EventKind::SpaceCreate.as_str(),
             1,
             "2026-06-28T00:00:00.000Z",
-            json!({ "object": object }),
+            serde_json::to_value(arkret_sdk::SpaceCreatePayload::new(object)).unwrap(),
         )
     }
 
@@ -468,29 +465,22 @@ mod tests {
         rank: &str,
         created_at: &str,
     ) -> arkret_sdk::Event {
-        let _ = actor;
+        let mut object = arkret_sdk::StrandCreateObject::new(
+            sdk_realm_id(),
+            arkret_sdk::Did::new(actor).unwrap(),
+        )
+        .with_metadata_title(title)
+        .with_metadata_field("rank", json!(rank))
+        .with_metadata_field("strand_kind", json!("card"))
+        .with_metadata_field("board_space_id", json!(board))
+        .with_metadata_field("list_space_id", json!(list));
+        object.created_at = created_at.parse().unwrap();
         sdk_event(
             &event_id_naming(id, "ak:strand:"),
             arkret_sdk::EventKind::StrandCreate.as_str(),
             2,
             created_at,
-            json!({
-                "object": {
-                    "schema": "ak.schema.strand.v1",
-                    "realm_id": REALM,
-                    "created_by": actor,
-                    "created_at": created_at,
-                    "metadata": {
-                        "title": title,
-                        "fields": {
-                            "rank": rank,
-                            "strand_kind": "card",
-                            "board_space_id": board,
-                            "list_space_id": list,
-                        }
-                    }
-                }
-            }),
+            serde_json::to_value(crate::operation::ak_ops::strand_create_payload(object)).unwrap(),
         )
     }
 
@@ -590,55 +580,16 @@ mod tests {
         // `object.id` — the shape an authored create actually has.
         let card = "ak:strand:AbZt0K_NvenxSDAkOnSDRtorrvUXhGqxSoqT2bFL7m8H";
         let events = vec![
-            sdk_event(
-                &event_id_naming(BOARD, "ak:space:"),
-                "ak.space.create",
-                1,
-                "2026-07-08T00:00:00.000Z",
-                json!({
-                    "object": {
-                        "kind": "board",
-                        "title": "Board1",
-                        "realm_id": REALM
-                    }
-                }),
-            ),
-            sdk_event(
-                &event_id_naming(LIST_A, "ak:space:"),
-                "ak.space.create",
-                2,
-                "2026-07-08T00:00:01.000Z",
-                json!({
-                    "object": {
-                        "kind": "list",
-                        "title": "Todos",
-                        "realm_id": REALM,
-                        "parent_space_id": BOARD
-                    }
-                }),
-            ),
-            sdk_event(
-                &event_id_naming(card, "ak:strand:"),
-                "ak.strand.create",
-                3,
+            space_create_event(BOARD, "board", "Board1", None),
+            space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
+            strand_create_event(
+                card,
+                "did:webvh:z6mkfixture:alice.example",
+                "golden card",
+                BOARD,
+                LIST_A,
+                "U",
                 "2026-07-08T00:00:02.000Z",
-                json!({
-                    "object": {
-                        "schema": "ak.schema.strand.v1",
-                        "realm_id": REALM,
-                        "created_by": "did:webvh:z6mkfixture:alice.example",
-                        "created_at": "2026-07-08T00:00:02.000Z",
-                        "metadata": {
-                            "title": "golden card",
-                            "fields": {
-                                "rank": "U",
-                                "strand_kind": "card",
-                                "board_space_id": BOARD,
-                                "list_space_id": LIST_A
-                            }
-                        }
-                    }
-                }),
             ),
         ];
         let direct_ops = kanban_operations_from_events(&events);

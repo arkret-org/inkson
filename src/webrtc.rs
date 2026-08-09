@@ -253,7 +253,7 @@ mod tests {
         let op = build_call_state(
             "ak:realm:AedjkD9d4O8HsmPTELawvNXaIESdgksYx6jB4w3TZG0J",
             "did:web:alice",
-            "ak:call:c1",
+            "ak:call:AV2POYJXMfLYPg5u4jsNfpIyQjrEWx4_pWcsA9U7yXJQ",
             Some(CallState::Connecting),
             CallState::Active,
         )
@@ -269,7 +269,7 @@ mod tests {
         let op = build_call_recording_start(
             "ak:realm:AedjkD9d4O8HsmPTELawvNXaIESdgksYx6jB4w3TZG0J",
             "did:web:alice",
-            "ak:call:c1",
+            "ak:call:AV2POYJXMfLYPg5u4jsNfpIyQjrEWx4_pWcsA9U7yXJQ",
             "rtc-recording-r1",
             arkret_sdk::RecordingCaptureKind::Recording,
             arkret_sdk::RecordingMode::AudioVideo,
@@ -301,7 +301,7 @@ mod tests {
         let op = build_call_recording_start(
             "ak:realm:AedjkD9d4O8HsmPTELawvNXaIESdgksYx6jB4w3TZG0J",
             "did:web:alice",
-            "ak:call:c1",
+            "ak:call:AV2POYJXMfLYPg5u4jsNfpIyQjrEWx4_pWcsA9U7yXJQ",
             "rtc-transcript-t1",
             arkret_sdk::RecordingCaptureKind::Transcript,
             arkret_sdk::RecordingMode::AudioOnly,

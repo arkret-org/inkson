@@ -94,14 +94,14 @@ pub(crate) fn prepare_rotation_backup_material(
         BackupSeriesId::new(format!("ak:backup_series:{}", crate::operation::uuid_v7()))?;
     let mut history_bodies = Vec::with_capacity(rotation.rewrapped_snapshots.len());
     for snapshot in rotation.rewrapped_snapshots.values() {
-        let (_, mut body) = crate::mls::runtime::build_mls_history_backup_body_with_secret(
+        let (_, body) = crate::mls::runtime::build_mls_history_backup_body_with_secret_in_series(
             snapshot,
             actor_id,
             device_id,
             &rotation.new_secret,
+            history_series_id.clone(),
         )
         .map_err(|error| anyhow!(error.user_message()))?;
-        body.series_id = history_series_id.clone();
         history_bodies.push(sign_rotation_key_backup(body, signer, trust_anchor)?);
     }
     history_bodies.sort_by(|left, right| left.backup_id.as_str().cmp(right.backup_id.as_str()));
@@ -137,14 +137,16 @@ fn sign_rotation_key_backup(
         .ok_or_else(|| anyhow!("active key backup signer has no bound device id"))?;
     let auth = arkret_sdk::UnsignedKeyBackupAuthData::new(
         arkret_sdk::DeviceId::new(device_id.to_owned())?,
-        arkret_sdk::DidUrl::new(signer.verification_method().to_owned())?,
+        arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
+            .map_err(anyhow::Error::msg)?,
         arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
         trust_anchor.authorize_event_id.clone(),
     )?;
     let unsigned = arkret_sdk::UnsignedKeyBackup::new(envelope, auth)?;
     let signature = Base64UrlString::new(
         URL_SAFE_NO_PAD.encode(signer.sign_raw(&unsigned.signing_payload_bytes()?)?),
-    )?;
+    )
+    .map_err(anyhow::Error::msg)?;
     unsigned
         .attach_signature(signature)
         .map_err(anyhow::Error::from)
@@ -496,7 +498,8 @@ async fn drive_security_rotation(
             .map_err(anyhow::Error::msg)?,
     )?;
     let signature =
-        arkret_sdk::NonEmptyString::new(signer.detached_jws_over(&attestation.signing_bytes()?)?)?;
+        arkret_sdk::NonEmptyString::new(signer.detached_jws_over(&attestation.signing_bytes()?)?)
+            .map_err(anyhow::Error::msg)?;
     let attestation = attestation.attach_signature(signature)?;
     let completed = workflow
         .continue_with_signed_local_commit(

@@ -192,7 +192,13 @@ pub fn build_realm_bootstrap_events(
     >(
         realm_id,
         actor_id,
-        arkret_sdk::RealmJoinRulePayload::new(parse_wire_enum("join_rule", join_rule)?),
+        arkret_sdk::StatePayload {
+            value: Some(serde_json::to_value(parse_wire_enum::<
+                arkret_sdk::RealmJoinRuleValue,
+            >("join_rule", join_rule)?)?),
+            state: None,
+            reason: None,
+        },
     )?);
     let history_sharing_policy =
         recommended_history_sharing_policy_for_profile(encryption_profile, history_visibility);
@@ -223,10 +229,15 @@ pub fn build_realm_bootstrap_events(
     >(
         realm_id,
         actor_id,
-        arkret_sdk::RealmDiscoveryPayload::new(parse_wire_enum(
-            "discoverability",
-            discoverability,
-        )?),
+        arkret_sdk::StatePayload {
+            value: Some(serde_json::to_value(parse_wire_enum::<
+                arkret_sdk::RealmDiscoveryValue,
+            >(
+                "discoverability", discoverability
+            )?)?),
+            state: None,
+            reason: None,
+        },
     )?);
     // object-addressing.md §3.3: `ak.realm.alias` is the ONLY wire carrier of a
     // Realm alias, and §2.5 lists it among the seal_basis-exempt bootstrap
@@ -1512,12 +1523,14 @@ pub fn build_sas_key_verification_content(
         anyhow::bail!("ak.key.verification.key content requires a non-empty key")
     }
     let mut content = arkret_sdk::KeyVerificationContent::new(
-        arkret_sdk::DeviceMessageTransactionId::new(transaction_id.to_owned())?,
+        arkret_sdk::DeviceMessageTransactionId::new(transaction_id.to_owned())
+            .map_err(anyhow::Error::msg)?,
         arkret_sdk::DeviceId::new(proof.device_envelope.from_device.clone())?,
     );
-    content.key = Some(arkret_sdk::NonEmptyString::new(
-        public_key_b64.trim().to_owned(),
-    )?);
+    content.key = Some(
+        arkret_sdk::NonEmptyString::new(public_key_b64.trim().to_owned())
+            .map_err(anyhow::Error::msg)?,
+    );
     content.extra.insert(
         "device_envelope".to_owned(),
         serde_json::to_value(proof.device_envelope)?,

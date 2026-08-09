@@ -5,37 +5,6 @@ use serde_json::Value;
 
 use super::selection::backup_series_seq;
 
-/// Chain a successor backup envelope onto the previous series tail.
-///
-/// A genesis envelope (no predecessor) keeps its own freshly-generated
-/// `series_id` / `series_seq=0` and carries no `supersedes`. A successor
-/// inherits the predecessor's `series_id`, bumps `series_seq`, and binds the
-/// chain with `supersedes` (the predecessor's `backup_id`) plus
-/// `supersedes_digest` (the canonical SHA-256 of the predecessor envelope).
-///
-/// soland's `enforce_key_backup_series_chain` rejects any `series_seq > 0`
-/// envelope that omits `supersedes` / `supersedes_digest` with a
-/// `series_chain_broken` 409, so the second and later uploads in a series must
-/// carry these fields. The caller MUST give the successor envelope a *fresh*
-/// `backup_id` (not the predecessor's) so the predecessor stays persisted as a
-/// distinct chain link and `series_predecessor_not_found` is not triggered.
-pub(crate) fn apply_next_series(
-    previous: Option<&Value>,
-    body: &mut arkret_sdk::KeyBackup,
-) -> Result<u64> {
-    let Some(prev) = previous else {
-        return Ok(body.series_seq);
-    };
-    let predecessor = serde_json::from_value::<arkret_sdk::KeyBackup>(prev.clone())
-        .map_err(|error| anyhow!("typed key backup predecessor: {error}"))?;
-    let next_seq = predecessor.series_seq + 1;
-    body.series_id = predecessor.series_id;
-    body.series_seq = next_seq;
-    body.supersedes = Some(predecessor.backup_id);
-    body.supersedes_digest = Some(series_supersedes_digest(prev)?);
-    Ok(next_seq)
-}
-
 /// `sha256:<hex>` over the canonical bytes of the predecessor backup envelope,
 /// used to bind a series successor's `supersedes_digest`. Any
 /// `auth_data.signature` is stripped first so the digest stays stable across

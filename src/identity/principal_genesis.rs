@@ -43,9 +43,10 @@ pub fn build_founding_authorize_payload(
         .sign_raw(&payload.device_possession_signature_input()?)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     payload
-        .attach_signature(arkret_sdk::Base64UrlString::new(
-            URL_SAFE_NO_PAD.encode(signature),
-        )?)
+        .attach_signature(
+            arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(signature))
+                .map_err(anyhow::Error::msg)?,
+        )
         .map_err(anyhow::Error::from)
 }
 

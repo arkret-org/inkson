@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Result, anyhow};
+use arkret_sdk::EventPayloadExt as _;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::Verifier as _;

@@ -120,7 +120,7 @@ fn card_assignment_mutations_create_and_tombstone_relation_events() {
     // projectable, because the registered contract sets
     // `value = {"field": "payload.relation"}` into the relation cell.
     let relation = &create.operation().payload["relation"];
-    assert_eq!(relation["relation_kind"], json!("assigned_to"));
+    assert_eq!(relation["kind"], json!("assigned_to"));
     assert_eq!(relation["from_ref"], json!(current.id));
     assert_eq!(relation["to_ref"], json!("did:web:alice.example"));
     // No `relation.id` on a create payload: the id is derived from this Event

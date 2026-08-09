@@ -235,8 +235,8 @@ fn build_pairing_verification_content(
         arkret_sdk::DeviceId::new(requesting_device_id.to_owned())?,
     );
     content.methods = Some(arkret_sdk::ProtocolKindList::new(vec![
-        arkret_sdk::ProtocolKind::new("ak.sas.v1")?,
-        arkret_sdk::ProtocolKind::new("ak.qr.v1")?,
+        arkret_sdk::ProtocolKind::new("ak.sas.v1").map_err(anyhow::Error::msg)?,
+        arkret_sdk::ProtocolKind::new("ak.qr.v1").map_err(anyhow::Error::msg)?,
     ])?);
     content.timestamp = Some(chrono::Utc::now());
     content.expires_at =
@@ -258,17 +258,21 @@ fn build_pairing_verification_content(
                 .get("algorithm")
                 .and_then(Value::as_str)
                 .map(|value| arkret_sdk::NonEmptyString::new(value.to_owned()))
-                .transpose()?,
+                .transpose()
+                .map_err(anyhow::Error::msg)?,
             public_key: key
                 .get("public_key")
                 .or_else(|| key.get("key"))
                 .and_then(Value::as_str)
                 .map(|value| arkret_sdk::NonEmptyString::new(value.to_owned()))
-                .transpose()?,
+                .transpose()
+                .map_err(anyhow::Error::msg)?,
             extra: std::collections::BTreeMap::new(),
         });
     }
-    content.gate_audience = Some(arkret_sdk::NonEmptyString::new(gate_audience.to_owned())?);
+    content.gate_audience = Some(
+        arkret_sdk::NonEmptyString::new(gate_audience.to_owned()).map_err(anyhow::Error::msg)?,
+    );
     content.request_canonical_digest = Some(arkret_sdk::Hash::new(
         arkret_sdk::canonical::sha256_digest(&canonical),
     )?);

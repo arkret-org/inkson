@@ -2282,7 +2282,7 @@ fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
 fn moderation_appeal_prompts_read_control_plane_sync_state() {
     let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let mut event = arkret_wire::test_support::raw_event(
-        arkret_sdk::EventKind::ModerationDecision,
+        arkret_sdk::EventKind::ModerationDecision.as_str(),
         arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(realm_id).unwrap(),
         },

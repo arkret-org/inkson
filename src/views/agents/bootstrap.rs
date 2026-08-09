@@ -458,7 +458,7 @@ fn build_managed_pcr_backup_body(
     if previous_series_tail.is_none() && series_seq != 0 {
         anyhow::bail!("managed Agent PCR genesis backup must use series_seq=0");
     }
-    let mut body = crate::key_backup::build_recovery_public_key_backup_body_for_items_in_series(
+    crate::key_backup::build_recovery_public_key_backup_body_for_items_in_series(
         backup_id,
         controller_id,
         device_id,
@@ -470,15 +470,15 @@ fn build_managed_pcr_backup_body(
         Some(recovery_policy_ref),
         Some(series_id),
         previous_series_tail,
-    )?;
-    body.frontier_ref = Some(arkret_sdk::KeyBackupFrontierRef {
-        frontier_digest: envelope_frontier.frontier_digest.clone(),
-        seal_ref: envelope_frontier.seal_ref.clone(),
-        device_generation_ref: arkret_sdk::NonEmptyString::new(
-            trust_anchor.generation_ref.as_str().to_owned(),
-        )?,
-    });
-    Ok(body)
+        Some(arkret_sdk::KeyBackupFrontierRef {
+            frontier_digest: envelope_frontier.frontier_digest.clone(),
+            seal_ref: Some(envelope_frontier.seal_ref.clone()),
+            device_generation_ref: arkret_sdk::NonEmptyString::new(
+                trust_anchor.generation_ref.as_str().to_owned(),
+            )
+            .map_err(anyhow::Error::msg)?,
+        }),
+    )
 }
 
 fn current_controller_backup_hpke_key_ref(

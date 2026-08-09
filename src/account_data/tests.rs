@@ -599,6 +599,7 @@ fn build_account_data_set_emits_canonical_kind() {
         json!({"send": false}),
         0,
     )
+    .unwrap()
     .build("node");
     assert_eq!(op.kind, "ak.account_data.set");
     assert_eq!(op.payload["key"], "ak.read_receipt.preferences");
@@ -667,6 +668,7 @@ fn contact_and_realm_remarks_are_encrypted_account_data() {
         json!({"pinned": true}),
         0,
     )
+    .unwrap()
     .build("node");
     assert!(op.payload.contains_key("encrypted_payload"));
     assert!(!op.payload.contains_key("body"));
@@ -703,6 +705,7 @@ fn private_view_and_notification_inbox_are_encrypted_account_data() {
             json!({"ciphertext": "opaque"}),
             0,
         )
+        .unwrap()
         .build("node");
         assert!(op.payload.contains_key("encrypted_payload"), "{key}");
         assert!(!op.payload.contains_key("body"), "{key}");
@@ -779,6 +782,7 @@ fn generic_builder_does_not_put_private_values_under_body() {
         json!({"ciphertext": "opaque"}),
         0,
     )
+    .unwrap()
     .build("node");
     assert!(!op.payload.contains_key("body"));
     assert_eq!(op.payload["encrypted_payload"]["ciphertext"], "opaque");
@@ -792,6 +796,7 @@ fn build_account_data_tombstone_emits_canonical_payload() {
         &AccountDataKey::ClientReadReceipts,
         3,
     )
+    .unwrap()
     .build("node");
     assert_eq!(op.kind, "ak.account_data.set");
     assert_eq!(op.payload["key"], "ak.read_receipt.preferences");

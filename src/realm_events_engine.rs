@@ -336,7 +336,7 @@ mod tests {
     fn direct_message_event() -> ClientEvent {
         let realm_id = arkret_sdk::RealmId::new(REALM_ID.to_owned()).unwrap();
         let mut event = arkret_wire::test_support::raw_event(
-            arkret_sdk::EventKind::MessageCreate,
+            arkret_sdk::EventKind::MessageCreate.as_str(),
             arkret_sdk::ScopeRef::Realm { realm_id },
             arkret_sdk::Did::new(ACTOR_ID.to_owned()).unwrap(),
             1,

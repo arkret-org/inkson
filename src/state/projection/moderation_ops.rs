@@ -252,7 +252,7 @@ mod tests {
             realm_id: arkret_sdk::RealmId::new(realm_id).unwrap(),
         };
         let mut decision = arkret_wire::test_support::raw_event(
-            arkret_sdk::EventKind::ModerationDecision,
+            arkret_sdk::EventKind::ModerationDecision.as_str(),
             realm_scope(),
             arkret_sdk::Did::new("did:web:moderator.example").unwrap(),
             1,
@@ -269,7 +269,7 @@ mod tests {
             arkret_sdk::EventId::new("ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z")
                 .unwrap();
         let message = arkret_wire::test_support::raw_event(
-            arkret_sdk::EventKind::MessageCreate,
+            arkret_sdk::EventKind::MessageCreate.as_str(),
             realm_scope(),
             arkret_sdk::Did::new("did:web:moderator.example").unwrap(),
             2,

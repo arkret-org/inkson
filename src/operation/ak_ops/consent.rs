@@ -61,7 +61,8 @@ pub fn consent_revoke(
             .iter()
             .cloned()
             .map(arkret_sdk::ConsentObservedDot::new)
-            .collect::<arkret_sdk::Result<Vec<_>>>()?,
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(anyhow::Error::from)?,
         revoked_at: Some(crate::clock::now_utc_millis()),
         reason: None,
     };

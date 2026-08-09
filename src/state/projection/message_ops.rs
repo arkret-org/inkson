@@ -213,7 +213,7 @@ mod tests {
     #[test]
     fn typed_message_raw_operation_uses_client_core_decoder() {
         let event = typed_event(
-            arkret_sdk::EventKind::MessageCreate,
+            arkret_sdk::EventKind::MessageCreate.as_str(),
             json!({
                 "strand_id": "ak:strand:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
                 "track_name": "discussion",
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn typed_message_raw_operation_keeps_sidecar_control_and_ignores_unrelated_events() {
         let sidecar_control = typed_event(
-            arkret_sdk::EventKind::AgentSidecarExchangeControl,
+            arkret_sdk::EventKind::AgentSidecarExchangeControl.as_str(),
             json!({
                 "strand_id": "ak:strand:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
                 "encrypted_payload": {
@@ -266,7 +266,10 @@ mod tests {
         // The pre-v1 fixture used `ak.presence`, which is not an Event kind at
         // all any more — presence is Signal ciphertext. Any durable kind
         // outside the discussion allow-list makes the same point.
-        let event = typed_event(arkret_sdk::EventKind::MemberState, json!({"state": "join"}));
+        let event = typed_event(
+            arkret_sdk::EventKind::MemberState.as_str(),
+            json!({"state": "join"}),
+        );
         let value = serde_json::to_value(&event).unwrap();
 
         assert!(typed_message_raw_operation_from_event(&value).is_none());
@@ -275,7 +278,7 @@ mod tests {
     #[test]
     fn client_event_path_keeps_the_typed_event_boundary() {
         let event = typed_event(
-            arkret_sdk::EventKind::MessageCreate,
+            arkret_sdk::EventKind::MessageCreate.as_str(),
             json!({
                 "strand_id": "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
                 "track_name": "discussion",

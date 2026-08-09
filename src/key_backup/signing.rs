@@ -166,7 +166,7 @@ pub fn build_key_backup_unlock_proof(
                 .to_owned()
         });
     let auth = arkret_sdk::UnsignedKeyBackupUnlockProofAuthData::new(
-        arkret_sdk::DidUrl::new(verification_method)?,
+        arkret_sdk::DidUrl::new(verification_method).map_err(anyhow::Error::msg)?,
         arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
     )?;
     let unsigned = arkret_sdk::UnsignedKeyBackupUnlockProof::new(
@@ -196,7 +196,9 @@ pub fn build_key_backup_unlock_proof(
             .map_err(|err| anyhow::anyhow!("key backup unlock proof sign: {err:?}"))?
     };
     unsigned
-        .attach_signature(arkret_sdk::Base64UrlString::new(B64.encode(signature))?)
+        .attach_signature(
+            arkret_sdk::Base64UrlString::new(B64.encode(signature)).map_err(anyhow::Error::msg)?,
+        )
         .map_err(anyhow::Error::from)
 }
 

@@ -484,7 +484,11 @@ fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
             arkret_sdk::PatchOp::set(json!({ "blocks": [] })),
         )
         .unwrap();
-    let payload = arkret_sdk::ObjectPatchPayload::for_target(strand_id, patch).unwrap();
+    let payload = arkret_sdk::StrandPatchPayload::for_strand(
+        arkret_sdk::StrandId::new(strand_id).unwrap(),
+        patch,
+    )
+    .unwrap();
     let event = TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandUpdate>(
         "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
         "did:web:alice.example",
@@ -606,17 +610,21 @@ fn realm_join_and_discovery_authoring_rejects_values_outside_spec_enums() {
     build_realm_state_event::<arkret_sdk::event_spec::RealmJoinRule>(
         realm_id,
         actor_id,
-        arkret_sdk::RealmJoinRulePayload::new(
-            serde_json::from_value(json!("knock_restricted")).unwrap(),
-        ),
+        arkret_sdk::StatePayload {
+            value: Some(json!("knock_restricted")),
+            state: None,
+            reason: None,
+        },
     )
     .unwrap();
     build_realm_state_event::<arkret_sdk::event_spec::RealmDiscovery>(
         realm_id,
         actor_id,
-        arkret_sdk::RealmDiscoveryPayload::new(
-            serde_json::from_value(json!("invite_only")).unwrap(),
-        ),
+        arkret_sdk::StatePayload {
+            value: Some(json!("invite_only")),
+            state: None,
+            reason: None,
+        },
     )
     .unwrap();
 }

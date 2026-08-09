@@ -29,9 +29,8 @@ impl crate::transport::TransportClient {
             .await?;
         let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid key backup id: {err}"))?;
-        let idempotency_key = key_backup_idempotency_key(&backup_id, &record)?;
-        self.sdk_http_client()?
-            .put_key_backup(&backup_id, &record, &idempotency_key)
+        arkret_sdk::KeyBackupClient::new(self.sdk_http_client()?)
+            .put_key_backup(backup_id.as_str(), &record)
             .await
             .map_err(anyhow::Error::from)
     }
@@ -47,10 +46,8 @@ impl crate::transport::TransportClient {
             .await?;
         let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid key backup id: {err}"))?;
-        let idempotency_key = key_backup_idempotency_key(&backup_id, &record)?;
-        let response = self
-            .sdk_http_client()?
-            .put_key_backup(&backup_id, &record, &idempotency_key)
+        let response = arkret_sdk::KeyBackupClient::new(self.sdk_http_client()?)
+            .put_key_backup(backup_id.as_str(), &record)
             .await
             .map_err(anyhow::Error::from)?;
         Ok((response, record))
@@ -121,14 +118,18 @@ impl crate::transport::TransportClient {
         };
         let auth = arkret_sdk::UnsignedKeyBackupAuthData::new(
             device_id,
-            arkret_sdk::DidUrl::new(signer.verification_method().to_owned())?,
+            arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
+                .map_err(anyhow::Error::msg)?,
             arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
             event_id,
         )?;
         let unsigned = arkret_sdk::UnsignedKeyBackup::new(payload, auth)?;
         let signature = signer.sign_raw(&unsigned.signing_payload_bytes()?)?;
         unsigned
-            .attach_signature(arkret_sdk::Base64UrlString::new(B64.encode(signature))?)
+            .attach_signature(
+                arkret_sdk::Base64UrlString::new(B64.encode(signature))
+                    .map_err(anyhow::Error::msg)?,
+            )
             .map_err(anyhow::Error::from)
     }
 
@@ -310,19 +311,4 @@ impl crate::transport::TransportClient {
             .await
             .map_err(anyhow::Error::from)
     }
-}
-
-fn key_backup_idempotency_key(
-    backup_id: &arkret_sdk::BackupId,
-    record: &arkret_sdk::KeyBackup,
-) -> anyhow::Result<String> {
-    let digest = arkret_sdk::canonical::canonical_sha256(&serde_json::json!({
-        "backup_id": backup_id,
-        "body": record,
-    }))
-    .map_err(|error| anyhow::anyhow!("key backup idempotency digest: {error}"))?;
-    Ok(format!(
-        "inkson-key-backup-{}",
-        digest.trim_start_matches("sha256:")
-    ))
 }

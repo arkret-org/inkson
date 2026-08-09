@@ -375,11 +375,117 @@ impl MlsSnapshotEnvelope {
         device_id: &str,
         secret_storage_key: &[u8; 32],
     ) -> anyhow::Result<arkret_sdk::KeyBackup> {
+        self.to_key_backup_body_with_identity(
+            backup_id,
+            actor_id,
+            device_id,
+            secret_storage_key,
+            None,
+            None,
+            None,
+        )
+    }
+
+    /// Build a genesis envelope in a caller-selected series. Rotation uses
+    /// this to give every replacement history envelope the transaction's new
+    /// series id without rewriting encrypted output afterward.
+    pub fn to_key_backup_body_in_series(
+        &self,
+        backup_id: &str,
+        actor_id: &str,
+        device_id: &str,
+        secret_storage_key: &[u8; 32],
+        series_id: arkret_sdk::BackupSeriesId,
+    ) -> anyhow::Result<arkret_sdk::KeyBackup> {
+        self.to_key_backup_body_with_identity(
+            backup_id,
+            actor_id,
+            device_id,
+            secret_storage_key,
+            Some(series_id),
+            None,
+            None,
+        )
+    }
+
+    /// Build an MLS-history successor only after the predecessor series link
+    /// and current controller frontier are known. All identity-bearing fields
+    /// are installed before the snapshot bytes are encrypted.
+    pub fn to_key_backup_successor_body(
+        &self,
+        backup_id: &str,
+        actor_id: &str,
+        device_id: &str,
+        secret_storage_key: &[u8; 32],
+        predecessor: &arkret_sdk::KeyBackup,
+        frontier_ref: arkret_sdk::KeyBackupFrontierRef,
+    ) -> anyhow::Result<arkret_sdk::KeyBackup> {
+        self.to_key_backup_body_with_identity(
+            backup_id,
+            actor_id,
+            device_id,
+            secret_storage_key,
+            None,
+            Some(predecessor),
+            Some(frontier_ref),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn to_key_backup_body_with_identity(
+        &self,
+        backup_id: &str,
+        actor_id: &str,
+        device_id: &str,
+        secret_storage_key: &[u8; 32],
+        genesis_series_id: Option<arkret_sdk::BackupSeriesId>,
+        predecessor: Option<&arkret_sdk::KeyBackup>,
+        frontier_ref: Option<arkret_sdk::KeyBackupFrontierRef>,
+    ) -> anyhow::Result<arkret_sdk::KeyBackup> {
         let envelope_bytes = serde_json::to_vec(self).unwrap_or_default();
         let actor_id = arkret_sdk::Did::new(actor_id.to_owned())?;
         let device_id = arkret_sdk::DeviceId::new(device_id.to_owned()).ok();
         let backup_kind = arkret_sdk::BackupKind::MlsHistory;
         let backup_version = "kb_mls_snapshot_v1".to_owned();
+        let (series_id, series_seq, supersedes, supersedes_digest) =
+            if let Some(predecessor) = predecessor {
+                if predecessor.actor_id != actor_id
+                    || predecessor.device_id != device_id
+                    || predecessor.backup_kind != backup_kind
+                    || predecessor.encryption.recipient_method
+                        != arkret_sdk::KeyBackupRecipientMethod::SecretStorageKey
+                {
+                    anyhow::bail!("MLS-history predecessor identity does not match successor");
+                }
+                if frontier_ref.is_none() {
+                    anyhow::bail!("MLS-history successor requires frontier_ref before encryption");
+                }
+                let predecessor_wire = serde_json::to_value(predecessor)?;
+                (
+                    predecessor.series_id.clone(),
+                    predecessor
+                        .series_seq
+                        .checked_add(1)
+                        .ok_or_else(|| anyhow::anyhow!("MLS-history series sequence overflow"))?,
+                    Some(predecessor.backup_id.clone()),
+                    Some(
+                        arkret_sdk::KeyBackup::signature_independent_digest_from_wire(
+                            &predecessor_wire,
+                        )
+                        .map_err(anyhow::Error::msg)?,
+                    ),
+                )
+            } else {
+                (
+                    genesis_series_id.unwrap_or(arkret_sdk::BackupSeriesId::new(format!(
+                        "ak:backup_series:{}",
+                        crate::operation::uuid_v7()
+                    ))?),
+                    0,
+                    None,
+                    None,
+                )
+            };
         let contents = vec![arkret_sdk::KeyBackupContentItem {
             item_kind: "mls_group_state".to_owned(),
             realm_id: Some(arkret_sdk::RealmId::new(self.realm_id.clone())?),
@@ -440,14 +546,11 @@ impl MlsSnapshotEnvelope {
             plaintext_commitment: None,
             auth_data: None,
             retention: None,
-            series_id: arkret_sdk::BackupSeriesId::new(format!(
-                "ak:backup_series:{}",
-                crate::operation::uuid_v7()
-            ))?,
-            series_seq: 0,
-            supersedes: None,
-            supersedes_digest: None,
-            frontier_ref: None,
+            series_id,
+            series_seq,
+            supersedes,
+            supersedes_digest,
+            frontier_ref,
             recovery_policy_ref: None,
             extra: Default::default(),
         };
@@ -462,7 +565,8 @@ impl MlsSnapshotEnvelope {
             &envelope_bytes,
         )
         .map_err(|error| anyhow::anyhow!("encrypt mls_history backup: {error}"))?;
-        body.encryption.aead.nonce = Some(arkret_sdk::Base64UrlString::new(sealed.nonce_b64)?);
+        body.encryption.aead.nonce =
+            Some(arkret_sdk::Base64UrlString::new(sealed.nonce_b64).map_err(anyhow::Error::msg)?);
         body.ciphertext = sealed.ciphertext_b64;
         body.ciphertext_digest = sealed.digest_sha256;
         body.validate_envelope_fields()
@@ -553,7 +657,39 @@ use crate::canonical::{hex_decode, hex_encode};
 
 #[cfg(test)]
 mod tests {
+    use base64::Engine as _;
+    use ed25519_dalek::Signer as _;
+
     use super::*;
+
+    fn signed_key_backup_wire(mut body: arkret_sdk::KeyBackup) -> serde_json::Value {
+        body.auth_data = None;
+        let auth = arkret_sdk::UnsignedKeyBackupAuthData::new(
+            body.device_id.clone().unwrap(),
+            arkret_sdk::DidUrl::new("did:web:alice.example#test-device".to_owned()).unwrap(),
+            arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
+            arkret_sdk::EventId::new(
+                "ak:event:AcIMom-0qqAXx_hmDJfxxaUJb_oJ64S3ARW1-WKFDCoD".to_owned(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let unsigned = arkret_sdk::UnsignedKeyBackup::new(body, auth).unwrap();
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&[42_u8; 32]);
+        let signature = signing_key.sign(&unsigned.signing_payload_bytes().unwrap());
+        serde_json::to_value(
+            unsigned
+                .attach_signature(
+                    arkret_sdk::Base64UrlString::new(
+                        base64::engine::general_purpose::URL_SAFE_NO_PAD
+                            .encode(signature.to_bytes()),
+                    )
+                    .unwrap(),
+                )
+                .unwrap(),
+        )
+        .unwrap()
+    }
 
     fn fixed_salt() -> Vec<u8> {
         // Deterministic salt for round-trip tests; production callers
@@ -720,7 +856,7 @@ mod tests {
         );
         body.validate_envelope_fields()
             .expect("MLS history backup envelope should validate");
-        let body = serde_json::to_value(&body).unwrap();
+        let body = signed_key_backup_wire(body);
         assert!(body.get("envelope_meta").is_none());
         // The outer key-backup ciphertext is authenticated encryption, and the
         // runtime owner can open it back to the original snapshot envelope.

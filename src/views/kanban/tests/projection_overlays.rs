@@ -127,7 +127,7 @@ fn collection_projection_overlay_applies_remote_encrypted_strand_updates() {
         "created_at": "2026-05-22T10:00:00.000Z",
         "realm_id": TEST_REALM_ID,
         "payload": {
-            "strand_id": strand_id,
+            "target_ref": strand_id,
             "patch": {
                 "body": { "$op": "set", "value": envelope.clone() },
                 "synthesis": { "$op": "set", "value": envelope }
@@ -445,7 +445,7 @@ fn remote_strand_update_events_overlay_detail_fields_on_projection() {
         "created_at": "2026-05-22T10:00:00.000Z",
         "realm_id": "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
         "payload": {
-            "strand_id": strand_id,
+            "target_ref": strand_id,
             "patch": {
                 "metadata.summary": { "$op": "set", "value": "new summary" },
                 "fields.body": { "$op": "set", "value": "new long description" },
@@ -508,7 +508,7 @@ fn remote_encrypted_strand_update_overlay_marks_private_fields_locked() {
         "created_at": "2026-05-22T10:00:00.000Z",
         "realm_id": "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
         "payload": {
-            "strand_id": strand_id,
+            "target_ref": strand_id,
             "patch": {
                 "body": { "$op": "set", "value": envelope.clone() },
                 "tracks.synthesis.body": { "$op": "set", "value": {
