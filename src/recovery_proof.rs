@@ -14,7 +14,7 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::{Signer, SigningKey};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// Build the canonical `principal_signing` proof transcript from a recovery
 /// session JSON (the `ak.schema.recovery_session.v1` create/get response).
@@ -71,29 +71,4 @@ pub fn build_principal_signing_proof(
                 .map_err(anyhow::Error::msg)?,
         },
     ))
-}
-
-/// Same as [`build_principal_signing_proof`] but signs with the process-wide
-/// active signer. Returns `Ok(None)` when no signer is installed. NOTE:
-/// `principal_signing` proofs MUST be signed by a key the active recovery policy
-/// authorizes as principal-grade control; the caller is responsible for ensuring
-/// the active signer is that key.
-pub fn build_principal_signing_proof_active(session: &Value) -> anyhow::Result<Option<Value>> {
-    let Some(signer) = crate::event_signer::active_signer() else {
-        return Ok(None);
-    };
-    let transcript = principal_signing_proof_transcript(session)?;
-    let bytes = crate::canonical::canonical_json_bytes(&transcript)?;
-    let signature = signer.sign_raw(&bytes)?;
-    let challenge = session
-        .get("challenge")
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("recovery session missing `challenge`"))?;
-    Ok(Some(json!({
-        "kind": "principal_signing",
-        "challenge": challenge,
-        "verification_method": signer.verification_method(),
-        "signature_algorithm": signer.algorithm(),
-        "signature": B64.encode(signature),
-    })))
 }

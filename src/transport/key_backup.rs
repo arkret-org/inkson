@@ -1,33 +1,30 @@
-use serde_json::Value;
+use std::sync::Arc;
 
-fn key_backup_authorized_event_ref_for_device(viewer: &Value, device_id: &str) -> Option<String> {
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
+
+fn key_backup_authorized_event_ref_for_device(
+    viewer: &arkret_sdk::AccountView,
+    device_id: &arkret_sdk::DeviceId,
+) -> Option<arkret_sdk::EventId> {
     viewer
-        .get("devices")
-        .and_then(Value::as_array)?
+        .devices
         .iter()
         .find(|device| {
-            device.get("device_id").and_then(Value::as_str) == Some(device_id)
-                && device.get("status").and_then(Value::as_str) == Some("active")
+            &device.device_id == device_id
+                && device.status == arkret_sdk::DeviceSummaryStatus::Active
         })
-        .and_then(|device| {
-            device
-                .get("device_authorize_event_id")
-                .or_else(|| device.get("authorized_event_ref"))
-                .and_then(Value::as_str)
-        })
-        .map(str::trim)
-        .filter(|event_id| !event_id.is_empty())
-        .map(str::to_owned)
+        .and_then(|device| device.authorized_event_ref.clone())
 }
 
 impl crate::transport::TransportClient {
     pub async fn put_key_backup(
         &self,
         backup_id: &str,
-        payload: serde_json::Value,
-        signer: crate::key_backup::KeyBackupSigner<'_>,
+        payload: arkret_sdk::KeyBackup,
+        signer: &Arc<crate::event_signer::InksonEventSigner>,
     ) -> anyhow::Result<arkret_sdk::KeysBackupsReplaceOutcome> {
-        let (record, _) = self
+        let record = self
             .prepare_key_backup_put_payload(backup_id, payload, signer)
             .await?;
         let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
@@ -42,10 +39,10 @@ impl crate::transport::TransportClient {
     pub async fn put_key_backup_returning_sent_body(
         &self,
         backup_id: &str,
-        payload: serde_json::Value,
-        signer: crate::key_backup::KeyBackupSigner<'_>,
-    ) -> anyhow::Result<(arkret_sdk::KeysBackupsReplaceOutcome, serde_json::Value)> {
-        let (record, sent_body) = self
+        payload: arkret_sdk::KeyBackup,
+        signer: &Arc<crate::event_signer::InksonEventSigner>,
+    ) -> anyhow::Result<(arkret_sdk::KeysBackupsReplaceOutcome, arkret_sdk::KeyBackup)> {
+        let record = self
             .prepare_key_backup_put_payload(backup_id, payload, signer)
             .await?;
         let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
@@ -56,91 +53,83 @@ impl crate::transport::TransportClient {
             .put_key_backup(&backup_id, &record, &idempotency_key)
             .await
             .map_err(anyhow::Error::from)?;
-        Ok((response, sent_body))
+        Ok((response, record))
     }
 
     async fn prepare_key_backup_put_payload(
         &self,
         backup_id: &str,
-        payload: serde_json::Value,
-        signer: crate::key_backup::KeyBackupSigner<'_>,
-    ) -> anyhow::Result<(arkret_sdk::KeyBackup, serde_json::Value)> {
-        crate::key_backup::validate_key_backup_put_request(backup_id, &payload)
-            .map_err(|err| anyhow::anyhow!("invalid key backup envelope: {err}"))?;
-        let record: arkret_sdk::KeyBackup = serde_json::from_value(payload)?;
-        let mut payload = serde_json::to_value(&record)?;
-        self.attach_key_backup_current_device_trust_anchor(&mut payload, signer)
+        payload: arkret_sdk::KeyBackup,
+        signer: &Arc<crate::event_signer::InksonEventSigner>,
+    ) -> anyhow::Result<arkret_sdk::KeyBackup> {
+        let expected_backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())?;
+        if payload.backup_id != expected_backup_id {
+            anyhow::bail!("key backup path id does not match envelope backup_id");
+        }
+        let record = self
+            .attach_key_backup_current_device_trust_anchor(payload, signer)
             .await?;
-        crate::key_backup::validate_key_backup_put_request(backup_id, &payload)
-            .map_err(|err| anyhow::anyhow!("invalid key backup envelope: {err}"))?;
-        let record: arkret_sdk::KeyBackup = serde_json::from_value(payload)?;
-        let sent_body = serde_json::to_value(&record)?;
-        Ok((record, sent_body))
+        record
+            .validate()
+            .map_err(|err| anyhow::anyhow!("invalid signed key backup envelope: {err}"))?;
+        Ok(record)
     }
 
     async fn attach_key_backup_current_device_trust_anchor(
         &self,
-        payload: &mut Value,
-        signer: crate::key_backup::KeyBackupSigner<'_>,
-    ) -> anyhow::Result<()> {
-        let Some(device_id) = payload
-            .get("device_id")
-            .and_then(Value::as_str)
-            .or_else(|| {
-                payload
-                    .get("auth_data")
-                    .and_then(|auth| auth.get("device_id"))
-                    .and_then(Value::as_str)
-            })
-            .map(str::to_owned)
-        else {
-            return Ok(());
-        };
+        payload: arkret_sdk::KeyBackup,
+        signer: &Arc<crate::event_signer::InksonEventSigner>,
+    ) -> anyhow::Result<arkret_sdk::KeyBackup> {
+        if payload.auth_data.is_some() {
+            anyhow::bail!("key backup builder must provide an unsigned envelope");
+        }
+        let signer_device_id = signer
+            .device_id()
+            .ok_or_else(|| anyhow::anyhow!("active key backup signer has no bound device id"))?;
+        let device_id = arkret_sdk::DeviceId::new(signer_device_id.to_owned())?;
+        if payload
+            .device_id
+            .as_ref()
+            .is_some_and(|envelope_device_id| envelope_device_id != &device_id)
+        {
+            anyhow::bail!("key backup envelope device_id does not match active signer");
+        }
         let http = self.sdk_http_client()?;
         let viewer = crate::transport::keys::list_devices(&http).await.ok();
-        // `key_backup_authorized_event_ref_for_device` reads the viewer's
-        // `devices[]` leniently via `Value` accessors; serialize the typed
-        // `AccountView` back to its wire JSON so the helper sees the same shape.
         let viewer_event_id = viewer
-            .map(serde_json::to_value)
-            .transpose()?
             .as_ref()
             .and_then(|viewer| key_backup_authorized_event_ref_for_device(viewer, &device_id));
-        let actor_id = payload
-            .get("actor_id")
-            .and_then(Value::as_str)
-            .or_else(|| payload.get("principal_id").and_then(Value::as_str));
         let query_event_id = if viewer_event_id.is_none() {
-            if let Some(actor_id) = actor_id {
-                let actor = arkret_sdk::Did::new(actor_id.to_owned())?;
-                let device = arkret_sdk::DeviceId::new(device_id.clone())?;
-                let outcome =
-                    crate::transport::keys::query_keys(&http, actor_id, &device_id).await?;
-                outcome
-                    .device_keys
-                    .get(&actor)
-                    .and_then(|devices| devices.get(&device))
-                    .and_then(|record| record.device_authorize_event_id.as_ref())
-                    .map(ToString::to_string)
-            } else {
-                None
-            }
+            let outcome = crate::transport::keys::query_keys(
+                &http,
+                payload.actor_id.as_str(),
+                device_id.as_str(),
+            )
+            .await?;
+            let generation = outcome.device_generations.get(&payload.actor_id);
+            outcome
+                .device_keys
+                .get(&payload.actor_id)
+                .and_then(|devices| devices.get(&device_id))
+                .filter(|record| record.is_usable_in_generation(generation))
+                .and_then(|record| record.device_authorize_event_id.clone())
         } else {
             None
         };
         let Some(event_id) = viewer_event_id.or(query_event_id) else {
-            return Ok(());
+            anyhow::bail!("current device has no accepted device.authorize event");
         };
-        let signed = crate::key_backup::sign_key_backup_with_device_and_trust_anchor(
-            payload,
-            &device_id,
-            signer,
-            Some(crate::key_backup::KeyBackupDeviceTrustAnchor::DeviceAuthorizeEventId(event_id)),
+        let auth = arkret_sdk::UnsignedKeyBackupAuthData::new(
+            device_id,
+            arkret_sdk::DidUrl::new(signer.verification_method().to_owned())?,
+            arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
+            event_id,
         )?;
-        if !signed {
-            anyhow::bail!("active device signer is required for service-attested key backup");
-        }
-        Ok(())
+        let unsigned = arkret_sdk::UnsignedKeyBackup::new(payload, auth)?;
+        let signature = signer.sign_raw(&unsigned.signing_payload_bytes()?)?;
+        unsigned
+            .attach_signature(arkret_sdk::Base64UrlString::new(B64.encode(signature))?)
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn list_key_backups(&self) -> anyhow::Result<arkret_sdk::KeysBackupsList> {
@@ -309,12 +298,13 @@ impl crate::transport::TransportClient {
     pub async fn get_key_backup_with_unlock_proof(
         &self,
         backup_id: &str,
-        unlock_proof: &serde_json::Value,
+        proof: &arkret_sdk::KeyBackupUnlockProof,
     ) -> anyhow::Result<arkret_sdk::KeyBackup> {
         let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid key backup id: {err}"))?;
-        let proof: arkret_sdk::KeyBackupUnlockProof = serde_json::from_value(unlock_proof.clone())?;
-        let body = arkret_sdk::KeysBackupsUnlockRequestBody { proof };
+        let body = arkret_sdk::KeysBackupsUnlockRequestBody {
+            proof: proof.clone(),
+        };
         self.sdk_http_client()?
             .unlock_key_backup(&backup_id, &body)
             .await

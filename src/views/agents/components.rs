@@ -222,19 +222,22 @@ pub fn ActionApproveDialog(
                                     "request_canonical_digest": digest,
                                 });
                                 let approved_at = crate::clock::now_timestamp();
-                                let payload = build_action_approve_payload(
+                                let op = build_action_approve_payload(
                                     &request_payload,
                                     &actor,
                                     &approved_at,
                                     &approval_expires_at,
-                                );
-                                let op = crate::operation::OperationBuilder::new(
-                                    &space,
-                                    &actor,
-                                    arkret_sdk::EventKind::AgentActionApprove,
                                 )
-                                .body(payload)
-                                .build_sdk_event("inkson");
+                                .and_then(|payload| {
+                                    crate::operation::TypedOperationBuilder::new::<
+                                        arkret_sdk::event_spec::AgentActionApprove,
+                                    >(
+                                        &space,
+                                        &actor,
+                                        payload,
+                                    )
+                                    .build_sdk_event("inkson")
+                                });
                                 let op = match op {
                                     Ok(op) => op,
                                     Err(err) => {
@@ -449,19 +452,22 @@ pub fn DraftApprovalPanel(token: Signal<String>, controller_id: String) -> Eleme
                                                     // from now, single-use nonce.
                                                     let approved_at = crate::clock::now_timestamp();
                                                     let approval_expires_at = crate::clock::timestamp_in(60);
-                                                    let payload = build_action_approve_payload(
+                                                    let op = build_action_approve_payload(
                                                         &draft,
                                                         &actor,
                                                         &approved_at,
                                                         &approval_expires_at,
-                                                    );
-                                                    let op = crate::operation::OperationBuilder::new(
-                                                        &realm,
-                                                        &actor,
-                                                        arkret_sdk::EventKind::AgentActionApprove,
                                                     )
-                                                    .body(payload)
-                                                    .build_sdk_event("inkson");
+                                                    .and_then(|payload| {
+                                                        crate::operation::TypedOperationBuilder::new::<
+                                                            arkret_sdk::event_spec::AgentActionApprove,
+                                                        >(
+                                                            &realm,
+                                                            &actor,
+                                                            payload,
+                                                        )
+                                                        .build_sdk_event("inkson")
+                                                    });
                                                     spawn(async move {
                                                         let op = match op {
                                                             Ok(op) => op,
@@ -512,19 +518,22 @@ pub fn DraftApprovalPanel(token: Signal<String>, controller_id: String) -> Eleme
                                                     let draft = drafts.read()[idx].clone();
                                                     let reason = reject_reason();
                                                     let rejected_at = crate::clock::now_timestamp();
-                                                    let payload = build_action_reject_payload(
+                                                    let op = build_action_reject_payload(
                                                         &draft,
                                                         &actor,
                                                         &rejected_at,
                                                         Some(&reason),
-                                                    );
-                                                    let op = crate::operation::OperationBuilder::new(
-                                                        &realm,
-                                                        &actor,
-                                                        arkret_sdk::EventKind::AgentActionReject,
                                                     )
-                                                    .body(payload)
-                                                    .build_sdk_event("inkson");
+                                                    .and_then(|payload| {
+                                                        crate::operation::TypedOperationBuilder::new::<
+                                                            arkret_sdk::event_spec::AgentActionReject,
+                                                        >(
+                                                            &realm,
+                                                            &actor,
+                                                            payload,
+                                                        )
+                                                        .build_sdk_event("inkson")
+                                                    });
                                                     spawn(async move {
                                                         let op = match op {
                                                             Ok(op) => op,

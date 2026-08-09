@@ -12,9 +12,7 @@ use crate::components::{
     UiIcon,
 };
 use crate::models::SubmitEventResult;
-use crate::operation::{
-    EventExt, OperationBuilder, ak_ops, sdk_event_local_operation_id, trim_realm_id, uuid_v7,
-};
+use crate::operation::{EventExt, ak_ops, sdk_event_local_operation_id, trim_realm_id, uuid_v7};
 use crate::payload::sdk_payload_value;
 use crate::routes::Route;
 use crate::state::{ClientLocalState, LocalStateStore};
@@ -153,21 +151,6 @@ setTimeout(() => {{
     let _ = document::eval(&script);
 }
 
-fn moderation_prompt_state(prompt: &ModerationAppealPrompt) -> AppealState {
-    match prompt.state.as_str() {
-        "submitted" => AppealState::Submitted,
-        "under_review" => AppealState::UnderReview,
-        "decided" => AppealState::Decided {
-            verdict: prompt
-                .verdict
-                .clone()
-                .unwrap_or_else(|| "unknown".to_owned()),
-        },
-        "closed" => AppealState::Closed,
-        _ => AppealState::None,
-    }
-}
-
 fn timeline_projection_key(
     selected_realm_id: &str,
     realm_live_epoch: u64,
@@ -199,7 +182,6 @@ fn timeline_projection_key(
         prompt.decision_ref.hash(&mut projection);
         prompt.target_ref.hash(&mut projection);
         prompt.state.hash(&mut projection);
-        prompt.verdict.hash(&mut projection);
     }
     private_sidecar_strand_ids.hash(&mut projection);
     format!("{:016x}", projection.finish())
@@ -826,14 +808,14 @@ async fn ensure_owned_agent_sidecar_legacy_circle_scope(
                                 }
                                 let create_event = sign_prepared_sidecar_event(
                                     &create_event_draft,
-                                    arkret_sdk::EventKind::SIDECAR_CREATE,
+                                    arkret_sdk::EventKind::SidecarCreate,
                                     &ceremony_controller_id,
                                     &ceremony_device_id,
                                     &ceremony_realm_id,
                                 )?;
                                 let context_attach_event = sign_prepared_sidecar_event(
                                     &context_attach_event_draft,
-                                    arkret_sdk::EventKind::SIDECAR_CONTEXT_ATTACH,
+                                    arkret_sdk::EventKind::SidecarContextAttach,
                                     &ceremony_controller_id,
                                     &ceremony_device_id,
                                     &ceremony_realm_id,
@@ -897,7 +879,7 @@ async fn ensure_owned_agent_sidecar_legacy_circle_scope(
                                 }
                                 let context_attach_event = sign_prepared_sidecar_event(
                                     &context_attach_event_draft,
-                                    arkret_sdk::EventKind::SIDECAR_CONTEXT_ATTACH,
+                                    arkret_sdk::EventKind::SidecarContextAttach,
                                     &ceremony_controller_id,
                                     &ceremony_device_id,
                                     &ceremony_realm_id,

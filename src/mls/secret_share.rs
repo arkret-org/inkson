@@ -92,7 +92,7 @@ pub fn new_secret_request() -> Result<SecretShareRequester> {
 pub fn build_request_content(
     req: &SecretShareRequester,
     requesting_device_id: &str,
-) -> Result<Value> {
+) -> Result<arkret_crypto::secret_share::SecretShareRequestContent> {
     let content = arkret_crypto::secret_share::SecretShareRequestContent {
         request_id: req.request_id.clone(),
         secret_id: SECRET_SHARE_SECRET_ID.to_owned(),
@@ -100,8 +100,7 @@ pub fn build_request_content(
             .map_err(|err| anyhow!("invalid secret-share requesting device id: {err}"))?,
         recipient_hpke_public_key: req.recipient_public_b64.clone(),
     };
-    serde_json::to_value(content)
-        .map_err(|err| anyhow!("serialize ak.secret.request content: {err}"))
+    Ok(content)
 }
 
 /// Parse and validate an inbound `ak.secret.request.content`.
@@ -137,7 +136,7 @@ pub fn build_send_content(
     account_did: &str,
     self_device_id: &str,
     expires_at: &str,
-) -> Result<Value> {
+) -> Result<arkret_crypto::secret_share::SecretShareSendContent> {
     let recipient_pk = URL_SAFE_NO_PAD
         .decode(request.recipient_hpke_public_key.as_bytes())
         .map_err(|err| anyhow!("decode requester hpke public key: {err}"))?;
@@ -168,7 +167,7 @@ pub fn build_send_content(
         enc: URL_SAFE_NO_PAD.encode(sealed.enc),
         ciphertext: URL_SAFE_NO_PAD.encode(sealed.ciphertext),
     };
-    serde_json::to_value(content).map_err(|err| anyhow!("serialize ak.secret.send content: {err}"))
+    Ok(content)
 }
 
 /// Open an inbound `ak.secret.send.content` on the requesting (new) device.
@@ -274,12 +273,11 @@ pub async fn send_request(
     requesting_device_id: &str,
 ) -> Result<()> {
     let content = build_request_content(requester, requesting_device_id)?;
-    crate::transport::keys::send_device_message_envelope(
+    crate::transport::keys::send_device_message::<arkret_sdk::device_message_spec::SecretRequest>(
         &api.sdk_http_client()?,
         &format!("ak.secret.request:{}", requester.request_id),
         account_did,
         target_existing_device_id,
-        SECRET_REQUEST_KIND,
         &crate::clock::timestamp_in(30),
         content,
     )
@@ -312,12 +310,11 @@ pub async fn respond_to_request(
         self_device_id,
         &expires_at,
     )?;
-    crate::transport::keys::send_device_message_envelope(
+    crate::transport::keys::send_device_message::<arkret_sdk::device_message_spec::SecretSend>(
         &api.sdk_http_client()?,
         &format!("ak.secret.send:{}", request.request_id),
         account_did,
         request.from_device.as_str(),
-        SECRET_SEND_KIND,
         &expires_at,
         content,
     )
@@ -419,11 +416,12 @@ mod tests {
     fn drive_happy_path() -> (SecretShareRequester, Value) {
         let requester = new_secret_request().unwrap();
         let request_content = build_request_content(&requester, NEW_DEVICE).unwrap();
-        let parsed = parse_request_content(&request_content).unwrap();
+        let parsed =
+            parse_request_content(&serde_json::to_value(request_content).unwrap()).unwrap();
         assert_eq!(parsed.from_device.as_str(), NEW_DEVICE);
         let send = build_send_content(&parsed, &stored_secret(), ACCOUNT_DID, OLD_DEVICE, EXPIRES)
             .unwrap();
-        (requester, send)
+        (requester, serde_json::to_value(send).unwrap())
     }
 
     #[test]

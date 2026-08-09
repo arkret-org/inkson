@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Value, json};
 
 use crate::operation::{
-    EventKind, EventRequirements, OperationBuilder, Precondition, Predicate, PredicateOp,
+    EventKind, EventRequirements, Precondition, Predicate, PredicateOp, TypedOperationBuilder,
     trim_realm_id,
 };
 use crate::realm_defaults::{
@@ -168,12 +168,9 @@ pub fn build_realm_bootstrap_events(
         .map(str::trim)
         .filter(|summary| !summary.is_empty())
         .map(ToOwned::to_owned);
-    events.push(build_realm_state_event(
-        realm_id,
-        actor_id,
-        EventKind::RealmProfile,
-        profile.to_value()?,
-    )?);
+    events.push(build_realm_state_event::<
+        arkret_sdk::event_spec::RealmProfile,
+    >(realm_id, actor_id, profile)?);
     // realm-and-space.md §2.5: an ordinary Realm is one genesis transaction of
     // `ak.realm.create` plus the closed follow-up facet whitelist. The creator's
     // root authority is the `ak.component.realm.authority_root.v1` cell the
@@ -187,17 +184,15 @@ pub fn build_realm_bootstrap_events(
             });
     policy_bundle.federation_policy =
         Some(parse_wire_enum("federation_policy", federation_policy)?);
-    events.push(build_realm_state_event(
+    events.push(build_realm_state_event::<
+        arkret_sdk::event_spec::RealmPolicyBundle,
+    >(realm_id, actor_id, policy_bundle)?);
+    events.push(build_realm_state_event::<
+        arkret_sdk::event_spec::RealmJoinRule,
+    >(
         realm_id,
         actor_id,
-        EventKind::RealmPolicyBundle,
-        policy_bundle.to_value()?,
-    )?);
-    events.push(build_realm_state_event(
-        realm_id,
-        actor_id,
-        EventKind::RealmJoinRule,
-        json!(join_rule),
+        arkret_sdk::RealmJoinRulePayload::new(parse_wire_enum("join_rule", join_rule)?),
     )?);
     let history_sharing_policy =
         recommended_history_sharing_policy_for_profile(encryption_profile, history_visibility);
@@ -208,26 +203,30 @@ pub fn build_realm_bootstrap_events(
             )
         })?;
         let digest = crate::canonical::canonical_sha256(policy)?;
-        arkret_sdk::HistoryVisibilityPayload::restricted(digest).to_value()?
+        arkret_sdk::HistoryVisibilityPayload::restricted(digest)
     } else {
-        json!(history_visibility)
+        arkret_sdk::HistoryVisibilityPayload::new(parse_wire_enum(
+            "history_visibility",
+            history_visibility,
+        )?)
     };
-    events.push(build_realm_state_event(
-        realm_id,
-        actor_id,
-        EventKind::RealmHistoryVisibility,
-        history_visibility_payload,
-    )?);
+    events.push(build_realm_state_event::<
+        arkret_sdk::event_spec::RealmHistoryVisibility,
+    >(realm_id, actor_id, history_visibility_payload)?);
     if let Some(policy) = history_sharing_policy {
         events.push(build_realm_history_sharing_policy_event(
             realm_id, actor_id, policy,
         )?);
     }
-    events.push(build_realm_state_event(
+    events.push(build_realm_state_event::<
+        arkret_sdk::event_spec::RealmDiscovery,
+    >(
         realm_id,
         actor_id,
-        EventKind::RealmDiscovery,
-        json!(discoverability),
+        arkret_sdk::RealmDiscoveryPayload::new(parse_wire_enum(
+            "discoverability",
+            discoverability,
+        )?),
     )?);
     // object-addressing.md §3.3: `ak.realm.alias` is the ONLY wire carrier of a
     // Realm alias, and §2.5 lists it among the seal_basis-exempt bootstrap
@@ -253,12 +252,9 @@ pub fn build_realm_bootstrap_events(
     }
 
     let delivery_binding_policy = build_realm_delivery_binding_policy(realm_id, notary_did)?;
-    let delivery_binding_policy_event = build_realm_state_event(
-        realm_id,
-        actor_id,
-        EventKind::RealmDeliveryBindingPolicy,
-        delivery_binding_policy.to_value()?,
-    )?;
+    let delivery_binding_policy_event = build_realm_state_event::<
+        arkret_sdk::event_spec::RealmDeliveryBindingPolicy,
+    >(realm_id, actor_id, delivery_binding_policy)?;
     let delivery_binding_policy_event_id = delivery_binding_policy_event.event_id.clone();
     events.push(delivery_binding_policy_event);
 
@@ -489,19 +485,16 @@ fn build_realm_create_event_from_object(
     // the bootstrap write asserts head_eq null and sets the realm metadata.
     let cell = arkret_wire::null_subject_cell(arkret_wire::CellFamilyId::REALM_CREATE_V1);
     let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
-    let realm_body = arkret_sdk::RealmCreatePayload::new(object)
-        .to_value()
-        .map_err(|e| anyhow::anyhow!("ak.realm.create payload serialize: {e}"))?;
+    let realm_body = arkret_sdk::RealmCreatePayload::new(object);
     // The builder emits the closed `realm_genesis` scope for this kind, so the
     // realm id passed here is a placeholder the envelope never carries.
-    OperationBuilder::new(
+    TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmCreate>(
         arkret_sdk::RealmId::new("ak:realm:ASyOHakrqmsRPkLKvhTD20V-YWCl-X7zYrlca5tdQLaR")
             .expect("placeholder realm id is canonical")
             .into_string(),
         actor_id,
-        arkret_sdk::EventKind::RealmCreate,
+        realm_body,
     )
-    .body(realm_body)
     .preconditions(preconditions)
     .requirements(event_requirements_with_schema("ak.schema.realm_genesis.v1"))
     .created_at(created_at)
@@ -879,14 +872,13 @@ pub fn build_space_create_event(
     // `ak.component.space.create.v1`, which is not even the cell this kind
     // writes — the registered contract sets `payload.object` into the
     // `mv_register` `ak.component.space.metadata.v1`.
-    let space_body = arkret_sdk::SpaceCreatePayload::new(space_object)
-        .to_value()
-        .map_err(|e| anyhow::anyhow!("ak.space.create payload serialize: {e}"))?;
-    OperationBuilder::new(realm_id, actor_id, arkret_sdk::EventKind::SpaceCreate)
-        .body(space_body)
-        .requirements(event_requirements_with_schema("ak.schema.space.v1"))
-        .created_at(created_at)
-        .build_sdk_event("inkson")
+    let space_body = arkret_sdk::SpaceCreatePayload::new(space_object);
+    TypedOperationBuilder::new::<arkret_sdk::event_spec::SpaceCreate>(
+        realm_id, actor_id, space_body,
+    )
+    .requirements(event_requirements_with_schema("ak.schema.space.v1"))
+    .created_at(created_at)
+    .build_sdk_event("inkson")
 }
 
 /// Build a Space lifecycle event (`ak.space.archive` /
@@ -922,26 +914,17 @@ pub fn build_space_lifecycle_event(
     };
     let space_id_typed = arkret_sdk::SpaceId::new(space_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid space id {space_id:?}: {err}"))?;
-    let body = match &kind {
-        EventKind::SpaceArchive | EventKind::SpaceRestore => {
-            serde_json::to_value(arkret_sdk::SpaceStateTransitionPayload {
-                space_id: space_id_typed.clone(),
-                reason: None,
-                effective_at: None,
-            })
-            .map_err(|err| anyhow::anyhow!("space state transition payload: {err}"))?
-        }
-        EventKind::SpaceTombstone => {
-            serde_json::to_value(arkret_sdk::SpaceObjectTombstonePayload {
-                space_id: space_id_typed,
-                reason: Some("user_requested".to_owned()),
-                replacement_space: None,
-                replacement_event: None,
-                effective_at: None,
-            })
-            .map_err(|err| anyhow::anyhow!("space object tombstone payload: {err}"))?
-        }
-        _ => unreachable!("unsupported Space lifecycle kind was rejected above"),
+    let transition_payload = || arkret_sdk::SpaceStateTransitionPayload {
+        space_id: space_id_typed.clone(),
+        reason: None,
+        effective_at: None,
+    };
+    let tombstone_payload = || arkret_sdk::SpaceObjectTombstonePayload {
+        space_id: space_id_typed.clone(),
+        reason: Some("user_requested".to_owned()),
+        replacement_space: None,
+        replacement_event: None,
+        effective_at: None,
     };
     let created_at = event_timestamp();
     let cell = space_cell("ak.component.space.state.v1", space_id);
@@ -949,130 +932,48 @@ pub fn build_space_lifecycle_event(
         &cell,
         Value::String(prior_state.to_owned()),
     )?];
-    OperationBuilder::new(realm_id, actor_id, kind)
-        .target_ref(space_id)
-        .body(body)
-        .preconditions(preconditions)
-        .created_at(created_at)
-        .build_sdk_event("inkson")
+    match kind {
+        EventKind::SpaceArchive => {
+            TypedOperationBuilder::new::<arkret_sdk::event_spec::SpaceArchive>(
+                realm_id,
+                actor_id,
+                transition_payload(),
+            )
+        }
+        EventKind::SpaceRestore => {
+            TypedOperationBuilder::new::<arkret_sdk::event_spec::SpaceRestore>(
+                realm_id,
+                actor_id,
+                transition_payload(),
+            )
+        }
+        EventKind::SpaceTombstone => TypedOperationBuilder::new::<
+            arkret_sdk::event_spec::SpaceTombstone,
+        >(realm_id, actor_id, tombstone_payload()),
+        _ => unreachable!("unsupported Space lifecycle kind was rejected above"),
+    }
+    .target_ref(space_id)
+    .preconditions(preconditions)
+    .created_at(created_at)
+    .build_sdk_event("inkson")
 }
 
 /// Build a Realm facet state event (`ak.realm.join_rule`,
 /// `ak.realm.history_visibility`, `ak.realm.discovery`, ...).
-pub fn build_realm_state_event(
+pub fn build_realm_state_event<K: arkret_sdk::EventSpec>(
     realm_id: &str,
     actor_id: &str,
-    kind: EventKind,
-    value: Value,
+    payload: K::Payload,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    if !matches!(
-        kind,
-        EventKind::RealmProfile
-            | EventKind::RealmJoinRule
-            | EventKind::RealmHistoryVisibility
-            | EventKind::RealmHistorySharingPolicy
-            | EventKind::RealmPreviewPolicy
-            | EventKind::RealmDiscovery
-            | EventKind::RealmSchema
-            | EventKind::RealmPolicyBundle
-            | EventKind::RealmDeliveryBindingPolicy
-    ) {
-        return Err(anyhow::anyhow!(
-            "unsupported Realm state event kind {}",
-            kind.as_str()
-        ));
-    }
     let created_at = event_timestamp();
-    // For the closed enum facets, route authoring through SDK strong types.
-    // The generated registry remains the sole source for the target cell.
-    // For `ak.realm.history_visibility` the body is the spec
-    // `history_visibility_payload` (`{value, restricted_policy_digest?,
-    // reason?}`, additionalProperties:false). Route it through the SDK strong
-    // type so the enum value + the `restricted ⇒ restricted_policy_digest`
-    // conditional are checked at construction; the cell effect keeps the bare
-    // enum string.
-    let body = match kind {
-        EventKind::RealmProfile => {
-            serde_json::from_value::<arkret_sdk::RealmProfile>(value.clone())?.to_value()?
-        }
-        EventKind::RealmJoinRule => {
-            let typed: arkret_sdk::RealmJoinRuleValue = serde_json::from_value(value.clone())
-                .map_err(|err| anyhow::anyhow!("invalid Realm join_rule {value}: {err}"))?;
-            arkret_sdk::RealmJoinRulePayload::new(typed).to_value()?
-        }
-        EventKind::RealmDiscovery => {
-            let typed: arkret_sdk::RealmDiscoveryValue = serde_json::from_value(value.clone())
-                .map_err(|err| anyhow::anyhow!("invalid Realm discovery {value}: {err}"))?;
-            arkret_sdk::RealmDiscoveryPayload::new(typed).to_value()?
-        }
-        EventKind::RealmHistoryVisibility if value.is_object() => {
-            serde_json::from_value::<arkret_sdk::HistoryVisibilityPayload>(value.clone())?
-                .to_value()?
-        }
-        EventKind::RealmHistoryVisibility => {
-            let visibility = value
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("history_visibility value must be a string"))?;
-            let typed: arkret_sdk::HistoryVisibility =
-                serde_json::from_value(Value::String(visibility.to_owned())).map_err(|err| {
-                    anyhow::anyhow!("invalid history_visibility {visibility:?}: {err}")
-                })?;
-            arkret_sdk::HistoryVisibilityPayload::new(typed).to_value()?
-        }
-        EventKind::RealmHistorySharingPolicy => {
-            let typed: arkret_sdk::HistorySharingPolicyPayloadValue =
-                serde_json::from_value(value.clone()).map_err(|err| {
-                    anyhow::anyhow!("invalid Realm history_sharing_policy {value}: {err}")
-                })?;
-            arkret_sdk::HistorySharingPolicyPayload::new(typed).to_value()?
-        }
-        // The policy-bundle payload IS the flat closed object, not a
-        // `state_payload` wrapper (`realm_policy_bundle_payload`'s `$comment`;
-        // `event-envelope.schema.json` dispatches the kind straight to that
-        // def).
-        //
-        // Routed through the strong type again: the closed def now declares all
-        // fifteen components, including `join_policy`, `agent_participation`,
-        // `availability_policy` and `audit_policy`, so the narrow shape no
-        // longer rejects writes the normative prose mandates. Parsing here is
-        // what stops a partial or misspelled component from reaching the
-        // reducer, where a `cas_register` write would silently clear whatever
-        // it failed to restate.
-        EventKind::RealmPolicyBundle => {
-            let typed: arkret_sdk::RealmPolicyBundlePayload = serde_json::from_value(value.clone())
-                .map_err(|err| anyhow::anyhow!("invalid Realm policy_bundle {value}: {err}"))?;
-            typed.to_value()?
-        }
-        EventKind::RealmDeliveryBindingPolicy => {
-            let typed: arkret_sdk::RealmDeliveryBindingPolicyPayload =
-                serde_json::from_value(value.clone()).map_err(|err| {
-                    anyhow::anyhow!("invalid Realm delivery_binding_policy {value}: {err}")
-                })?;
-            typed.to_value()?
-        }
-        EventKind::RealmPreviewPolicy => {
-            let typed: arkret_sdk::PreviewPolicyPayloadValue =
-                serde_json::from_value(value.clone()).map_err(|err| {
-                    anyhow::anyhow!("invalid Realm preview_policy {value}: {err}")
-                })?;
-            serde_json::to_value(arkret_sdk::PreviewPolicyPayload {
-                value: typed,
-                reason: None,
-            })
-            .map_err(|err| anyhow::anyhow!("Realm preview_policy payload serialize: {err}"))?
-        }
-        EventKind::RealmSchema => serde_json::to_value(arkret_sdk::StatePayload {
-            value: Some(value),
-            state: None,
-            reason: None,
-        })
-        .map_err(|err| anyhow::anyhow!("Realm schema payload serialize: {err}"))?,
-        _ => unreachable!("unsupported Realm state kind was rejected above"),
+    let realm_id = arkret_sdk::RealmId::new(crate::operation::trim_realm_id(realm_id))?;
+    let scope_ref = arkret_sdk::ScopeRef::Realm {
+        realm_id: realm_id.clone(),
     };
-    let mut event = OperationBuilder::new(realm_id, actor_id, kind)
-        .body(body)
-        .created_at(created_at)
-        .build_sdk_event("inkson")?;
+    let actor_id = arkret_sdk::Did::new(actor_id.trim().to_owned())?;
+    let hlc = arkret_sdk::Hlc::new("000000000000-0000-00000000")?;
+    let mut event = arkret_sdk::TypedEventDraft::<K>::new(scope_ref, actor_id, payload)?
+        .author(0, hlc, created_at)?;
 
     // event-kind-registry.json declares that `cell_writes[]` is the sole
     // authority for reducer targets; the old flattened descriptor fields are
@@ -1121,9 +1022,7 @@ pub fn build_realm_archive_event(
     if let Some(reason) = reason.map(str::trim).filter(|value| !value.is_empty()) {
         typed = typed.with_reason(reason);
     }
-    let payload = typed.to_value()?;
-    OperationBuilder::new(realm_id, actor_id, arkret_sdk::EventKind::RealmArchive)
-        .body(payload)
+    TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmArchive>(realm_id, actor_id, typed)
         .created_at(created_at)
         .build_sdk_event("inkson")
 }
@@ -1142,9 +1041,8 @@ pub fn build_realm_destroy_event(
     // Strong type: realm_destroy_payload (reason required; verification_stub
     // _required omitted so the reducer applies its default; additionalProperties
     // :false).
-    let payload = arkret_sdk::RealmDestroyPayload::new(reason).to_value()?;
-    OperationBuilder::new(realm_id, actor_id, arkret_sdk::EventKind::RealmDestroy)
-        .body(payload)
+    let payload = arkret_sdk::RealmDestroyPayload::new(reason);
+    TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmDestroy>(realm_id, actor_id, payload)
         .created_at(created_at)
         .build_sdk_event("inkson")
 }
@@ -1292,8 +1190,7 @@ fn build_realm_alias_payload_event(
 ) -> anyhow::Result<arkret_sdk::Event> {
     let cell = arkret_wire::null_subject_cell(arkret_wire::CellFamilyId::REALM_ALIAS_V1);
     let created_at = event_timestamp();
-    OperationBuilder::new(realm_id, actor_id, EventKind::RealmAlias)
-        .body(payload.to_value()?)
+    TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmAlias>(realm_id, actor_id, payload)
         .preconditions(vec![head_eq_precondition(&cell, expected_head)?])
         .created_at(created_at)
         .build_sdk_event("inkson")
@@ -1301,22 +1198,17 @@ fn build_realm_alias_payload_event(
 
 /// Emit `ak.realm.history_sharing_policy` from an already-typed policy value.
 ///
-/// The value is serialized here and re-parsed by [`build_realm_state_event`]'s
-/// typed arm. That hop is deliberate: `build_realm_state_event` is the one
-/// generic entry every Realm facet shares, and keeping its own typed check
-/// means a caller reaching it directly with a `Value` gets the same guarantee
-/// this typed signature gives.
+/// The marker fixes the Event kind and the SDK payload wrapper keeps the
+/// policy value inseparable from that kind.
 pub fn build_realm_history_sharing_policy_event(
     realm_id: &str,
     actor_id: &str,
     policy: arkret_sdk::HistorySharingPolicyPayloadValue,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    build_realm_state_event(
+    build_realm_state_event::<arkret_sdk::event_spec::RealmHistorySharingPolicy>(
         realm_id,
         actor_id,
-        EventKind::RealmHistorySharingPolicy,
-        serde_json::to_value(&policy)
-            .map_err(|err| anyhow::anyhow!("history sharing policy serialize: {err}"))?,
+        arkret_sdk::HistorySharingPolicyPayload::new(policy),
     )
 }
 
@@ -1366,16 +1258,14 @@ pub fn build_plaintext_visible_services_event(
         arkret_wire::CellFamilyId::REALM_PLAINTEXT_VISIBLE_SERVICES_V1,
     );
     let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
-    let body_value = arkret_sdk::PlaintextVisibleServicesPayload::new(services).to_value()?;
-    let event = OperationBuilder::new(
-        realm_id,
-        actor_id,
-        arkret_sdk::EventKind::RealmPlaintextVisibleServices,
-    )
-    .body(body_value)
-    .preconditions(preconditions)
-    .created_at(created_at)
-    .build_sdk_event("inkson")?;
+    let body_value = arkret_sdk::PlaintextVisibleServicesPayload::new(services);
+    let event =
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmPlaintextVisibleServices>(
+            realm_id, actor_id, body_value,
+        )
+        .preconditions(preconditions)
+        .created_at(created_at)
+        .build_sdk_event("inkson")?;
     Ok(Some(event))
 }
 
@@ -1453,7 +1343,6 @@ fn build_member_state_transition_event_with_binding(
     if let Some(delivery_binding) = delivery_binding {
         membership_payload = membership_payload.with_delivery_binding(delivery_binding);
     }
-    let payload = membership_payload.to_value()?;
     let cell = format!("ak:cell:ak.component.member.state.v1:{member_actor_id}");
     let preconditions = if let Some(prior) = from_state {
         vec![head_eq_precondition(
@@ -1463,82 +1352,18 @@ fn build_member_state_transition_event_with_binding(
     } else {
         vec![head_eq_precondition(&cell, Value::Null)?]
     };
-    OperationBuilder::new(realm_id, actor_id, arkret_sdk::EventKind::MemberState)
-        .target_ref(member_actor_id)
-        .body(payload)
-        .preconditions(preconditions)
-        .build_sdk_event("inkson")
+    TypedOperationBuilder::new::<arkret_sdk::event_spec::MemberState>(
+        realm_id,
+        actor_id,
+        membership_payload,
+    )
+    .target_ref(member_actor_id)
+    .preconditions(preconditions)
+    .build_sdk_event("inkson")
 }
 
 fn space_cell(cell_family: &str, space_id: &str) -> String {
     format!("ak:cell:{cell_family}:{space_id}")
-}
-
-/// Build the canonical `ak.schema.device_message.v1` send envelope:
-///
-/// ```json
-/// {
-///   "messages": {
-///     "<target_actor_id>": {
-///       "<target_device_id>": {
-///         "kind": "<kind>",
-///         "expires_at": "<rfc3339>",
-///         "content": <content>
-///       }
-///     }
-///   }
-/// }
-/// ```
-///
-/// The per-target object MUST match the SDK `DeviceMessageTarget`
-/// (`kind` + `content` + `expires_at`) and `device-lifecycle.md` §7,
-/// which both make `kind` and `expires_at` required — the older
-/// `{type, content}` shape dropped `expires_at` and mislabelled `kind`
-/// as `type`, so soland had to fall back to defaults.
-///
-/// Pure function so the wire shape is testable without a live HTTP
-/// client; used by [`TransportClient::send_device_message_envelope`] (R3).
-pub fn build_device_message_envelope(
-    message_id: &str,
-    target_actor: &str,
-    target_device_id: &str,
-    kind: &str,
-    expires_at: &str,
-    content: serde_json::Value,
-) -> anyhow::Result<
-    arkret_models_collaboration::sync_frames::account_sync::DeviceMessagesSendRequestBody,
-> {
-    let message_id = arkret_sdk::DeviceMessageId::new(message_id.to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid device-message message_id: {err}"))?;
-    let target_actor = arkret_sdk::Did::new(target_actor.to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid device-message target actor: {err}"))?;
-    let target_device_id = arkret_sdk::DeviceId::new(target_device_id.to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid device-message target device_id: {err}"))?;
-    let expires_at = chrono::DateTime::parse_from_rfc3339(expires_at)
-        .map_err(|err| anyhow::anyhow!("invalid device-message expires_at: {err}"))?
-        .with_timezone(&chrono::Utc);
-
-    let target = arkret_models_collaboration::sync_frames::account_sync::DeviceMessageTarget {
-        message_id,
-        kind: arkret_sdk::ProtocolKind::new(kind)
-            .map_err(|err| anyhow::anyhow!("invalid device-message kind: {err}"))?,
-        content: content
-            .as_object()
-            .ok_or_else(|| anyhow::anyhow!("device-message content must be an object"))?
-            .clone()
-            .into_iter()
-            .collect(),
-        expires_at,
-    };
-    let mut by_device = BTreeMap::new();
-    by_device.insert(target_device_id, target);
-    let mut messages = BTreeMap::new();
-    messages.insert(target_actor, by_device);
-    Ok(
-        arkret_models_collaboration::sync_frames::account_sync::DeviceMessagesSendRequestBody {
-            messages,
-        },
-    )
 }
 
 /// Wire name of the device verification transcript this module signs.
@@ -1667,20 +1492,11 @@ pub fn build_signed_device_verification_proof(
 /// the spec's `transaction_id` pattern is `^[A-Za-z0-9._~=-]{1,128}$`, which
 /// the SDK type's `ak:transaction:` prefix cannot match. Recorded in arkret-work
 /// `review/code/2026-07-31-sdk-key-verification-transaction-id-off-spec.md`.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct SasKeyVerificationContent {
-    pub transaction_id: String,
-    pub from_device: String,
-    pub key: String,
-    pub device_envelope: DeviceVerificationTranscript,
-    pub signature: arkret_sdk::Proof,
-}
-
 pub fn build_sas_key_verification_content(
     transaction_id: &str,
     public_key_b64: &str,
     proof: SignedDeviceVerificationProof,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<arkret_sdk::KeyVerificationContent> {
     // `device-message.schema.json#/$defs/transaction_id`.
     if transaction_id.is_empty()
         || transaction_id.len() > 128
@@ -1695,15 +1511,22 @@ pub fn build_sas_key_verification_content(
     if public_key_b64.trim().is_empty() {
         anyhow::bail!("ak.key.verification.key content requires a non-empty key")
     }
-    let content = SasKeyVerificationContent {
-        transaction_id: transaction_id.to_owned(),
-        from_device: proof.device_envelope.from_device.clone(),
-        key: public_key_b64.to_owned(),
-        device_envelope: proof.device_envelope,
-        signature: proof.signature,
-    };
-    serde_json::to_value(&content)
-        .map_err(|error| anyhow::anyhow!("serialize key verification content: {error}"))
+    let mut content = arkret_sdk::KeyVerificationContent::new(
+        arkret_sdk::DeviceMessageTransactionId::new(transaction_id.to_owned())?,
+        arkret_sdk::DeviceId::new(proof.device_envelope.from_device.clone())?,
+    );
+    content.key = Some(arkret_sdk::NonEmptyString::new(
+        public_key_b64.trim().to_owned(),
+    )?);
+    content.extra.insert(
+        "device_envelope".to_owned(),
+        serde_json::to_value(proof.device_envelope)?,
+    );
+    content.extra.insert(
+        "signature".to_owned(),
+        serde_json::to_value(proof.signature)?,
+    );
+    Ok(content)
 }
 
 pub fn ensure_device_verification_proof_is_signed(proof: &Value) -> anyhow::Result<()> {

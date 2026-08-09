@@ -83,20 +83,51 @@ pub fn validate_draft_slot(kind: arkret_sdk::DraftKind, draft_slot: &str) -> any
 }
 
 pub fn validate_draft_sync_value(value: &arkret_sdk::DraftSyncValue) -> anyhow::Result<()> {
-    if value.content.is_empty() {
+    let (target_ref, draft_slot, updated_hlc, _origin_device_id, retention_expires_at) =
+        draft_sync_common(value);
+    if value.content().is_empty() {
         anyhow::bail!("draft content must not be null");
     }
-    validate_draft_slot(value.kind, &value.draft_slot)?;
-    arkret_sdk::Hlc::new(value.updated_hlc.as_str())?;
-    validate_timestamp_canonical(&value.retention_expires_at)
+    validate_draft_slot(value.kind(), draft_slot)?;
+    arkret_sdk::Hlc::new(updated_hlc)?;
+    validate_timestamp_canonical(retention_expires_at)
         .map_err(|error| anyhow::anyhow!("retention_expires_at is not canonical: {error:?}"))?;
     super::draft_account_data_key(
         b"inkson-draft-validation-namespace",
-        value.kind,
-        &value.target_ref,
-        &value.draft_slot,
+        value.kind(),
+        target_ref,
+        draft_slot,
     )?;
     Ok(())
+}
+
+fn draft_sync_common(
+    value: &arkret_sdk::DraftSyncValue,
+) -> (&str, &str, &str, &arkret_sdk::DeviceId, &str) {
+    match value {
+        arkret_sdk::DraftSyncValue::Message {
+            target_ref,
+            draft_slot,
+            updated_hlc,
+            origin_device_id,
+            retention_expires_at,
+            ..
+        }
+        | arkret_sdk::DraftSyncValue::StrandField {
+            target_ref,
+            draft_slot,
+            updated_hlc,
+            origin_device_id,
+            retention_expires_at,
+            ..
+        } => (
+            target_ref,
+            draft_slot,
+            updated_hlc,
+            origin_device_id,
+            retention_expires_at,
+        ),
+    }
 }
 
 pub fn draft_sync_value_from_account_data(
@@ -138,9 +169,8 @@ pub fn build_message_draft_sync_value(
     origin_device_id: &str,
     retention_expires_at: &str,
 ) -> anyhow::Result<arkret_sdk::DraftSyncValue> {
-    let value = arkret_sdk::DraftSyncValue {
+    let value = arkret_sdk::DraftSyncValue::Message {
         target_ref: target_ref.to_owned(),
-        kind: arkret_sdk::DraftKind::Message,
         draft_slot: DRAFT_MESSAGE_SLOT.to_owned(),
         content: serde_json::from_value(content)?,
         updated_hlc: updated_hlc.to_owned(),
@@ -179,11 +209,12 @@ pub fn compare_draft_versions(
     validate_same_draft_cell(local, remote)?;
     validate_draft_sync_value(local)?;
     validate_draft_sync_value(remote)?;
-    match arkret_sdk::compare_hlc(&local.updated_hlc, &remote.updated_hlc)? {
-        Ordering::Equal => Ok(local
-            .origin_device_id
+    let (_, _, local_updated_hlc, local_origin_device_id, _) = draft_sync_common(local);
+    let (_, _, remote_updated_hlc, remote_origin_device_id, _) = draft_sync_common(remote);
+    match arkret_sdk::compare_hlc(local_updated_hlc, remote_updated_hlc)? {
+        Ordering::Equal => Ok(local_origin_device_id
             .to_string()
-            .cmp(&remote.origin_device_id.to_string())),
+            .cmp(&remote_origin_device_id.to_string())),
         other => Ok(other),
     }
 }
@@ -233,9 +264,11 @@ fn validate_same_draft_cell(
     local: &arkret_sdk::DraftSyncValue,
     remote: &arkret_sdk::DraftSyncValue,
 ) -> anyhow::Result<()> {
-    if local.target_ref != remote.target_ref
-        || local.kind != remote.kind
-        || local.draft_slot != remote.draft_slot
+    let (local_target_ref, local_draft_slot, ..) = draft_sync_common(local);
+    let (remote_target_ref, remote_draft_slot, ..) = draft_sync_common(remote);
+    if local_target_ref != remote_target_ref
+        || local.kind() != remote.kind()
+        || local_draft_slot != remote_draft_slot
     {
         anyhow::bail!("draft merge requires the same target_ref, kind, and draft_slot");
     }

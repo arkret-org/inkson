@@ -480,7 +480,7 @@ mod tests {
             outcome.event_id,
             "ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
         );
-        assert_eq!(outcome.status, "accepted");
+        assert_eq!(outcome.status, arkret_sdk::EventsSubmitStatus::Accepted);
         assert_eq!(outcome.cursor, "sx:cursor-1");
     }
 
@@ -546,7 +546,7 @@ mod tests {
             outcome.event_id,
             "ak:event:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL"
         );
-        assert_eq!(outcome.status, "duplicate");
+        assert_eq!(outcome.status, arkret_sdk::EventsSubmitStatus::Duplicate);
         assert_eq!(outcome.cursor, "");
     }
 
@@ -931,11 +931,9 @@ pub struct ReceiptResult {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SubmitEventResult {
     pub event_id: String,
-    pub status: String,
+    pub status: arkret_sdk::EventsSubmitStatus,
     #[serde(default)]
     pub cursor: String,
-    #[serde(default)]
-    pub receipt: Value,
     /// Typed `ingress_receipts[]` from the outcome.
     ///
     /// These are the only evidence that the Event arrived inside its
@@ -964,30 +962,10 @@ impl From<arkret_sdk::EventsSubmitOutcome> for SubmitEventResult {
             .cloned()
             .or_else(|| duplicate.first().cloned())
             .unwrap_or_default();
-        let status = match outcome.status {
-            arkret_sdk::EventsSubmitStatus::Accepted => "accepted",
-            arkret_sdk::EventsSubmitStatus::Duplicate => "duplicate",
-            arkret_sdk::EventsSubmitStatus::Partial => "partial",
-            arkret_sdk::EventsSubmitStatus::HistoricalOnly => "historical_only",
-        }
-        .to_owned();
-        let receipt = serde_json::json!({
-            "accepted": accepted,
-            "duplicate": duplicate,
-            "rejected": outcome.rejected,
-            "quarantine": outcome
-                .quarantine
-                .into_iter()
-                .map(|event_id| event_id.as_str().to_owned())
-                .collect::<Vec<_>>(),
-            "realm_actor_frontiers": outcome.realm_actor_frontiers,
-            "realm_frontiers": outcome.realm_frontiers,
-        });
         Self {
             event_id,
-            status,
+            status: outcome.status,
             cursor: outcome.cursor.unwrap_or_default(),
-            receipt,
             ingress_receipts: outcome.ingress_receipts,
         }
     }

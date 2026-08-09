@@ -5,7 +5,7 @@ use arkret_models_collaboration::events_payloads::{
     RealmOrganizationRelationship, RealmOrganizationStatus,
 };
 
-use super::{OperationBuilder, did_id, realm_id_value, space_state_transition_payload_value};
+use super::{TypedOperationBuilder, did_id, realm_id_value, space_id_value};
 
 /// Build a `ak.space.archive` operation against a container Space. The
 /// Space transitions from `Active` to `Archived`; reversible via
@@ -15,14 +15,17 @@ pub fn realm_archive(
     realm_id: &str,
     actor: &str,
     container_space_id: &str,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
+    let payload = arkret_sdk::SpaceStateTransitionPayload {
+        space_id: space_id_value(container_space_id)?,
+        reason: None,
+        effective_at: None,
+    };
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::SpaceArchive)
-            .target_ref(container_space_id)
-            .body(space_state_transition_payload_value(
-                container_space_id,
-                arkret_sdk::ObjectState::Archived,
-            )?),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::SpaceArchive>(
+            realm_id, actor, payload,
+        )
+        .target_ref(container_space_id),
     )
 }
 
@@ -33,7 +36,7 @@ pub fn message_revise_content(
     actor: &str,
     target_ref: &str,
     content: arkret_sdk::ContentBlock,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let mut payload = arkret_sdk::MessageRevisePayload {
         message_id: None,
         target_ref: None,
@@ -53,13 +56,11 @@ pub fn message_revise_content(
     } else {
         payload.target_ref = Some(target_ref.to_owned());
     }
-    let body = serde_json::to_value(payload)
-        .map_err(|err| anyhow::anyhow!("serialize message revise payload: {err}"))?;
-
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MessageRevise)
-            .target_ref(target_ref)
-            .body(body),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageRevise>(
+            realm_id, actor, payload,
+        )
+        .target_ref(target_ref),
     )
 }
 
@@ -97,7 +98,7 @@ pub fn realm_organization_statement(
     issued_at: chrono::DateTime<chrono::Utc>,
     authorization: RealmOrganizationAuthorization,
     revokes_statement_id: Option<String>,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     if control_scopes.is_empty() {
         anyhow::bail!("ak.realm.organization control_scopes must not be empty");
     }
@@ -153,12 +154,10 @@ pub fn realm_organization_statement(
         authorization,
     };
 
-    let body = serde_json::to_value(&payload)
-        .map_err(|err| anyhow::anyhow!("invalid ak.realm.organization payload: {err}"))?;
-
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::RealmOrganization)
-            .target_ref(organization_did)
-            .body(body),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmOrganization>(
+            realm_id, actor, payload,
+        )
+        .target_ref(organization_did),
     )
 }

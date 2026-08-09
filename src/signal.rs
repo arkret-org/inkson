@@ -262,11 +262,10 @@ pub enum SignalPayload {
     },
     CallSignal {
         call_id: arkret_sdk::CallId,
-        signal_kind: String,
         /// Per-call anti-rollback sequence, independent of the common Signal
         /// rail `payload_sequence`.
         seq: u64,
-        data: Option<Value>,
+        signal: arkret_sdk::CallSignalData,
     },
     MessageStream(arkret_sdk::MessageStreamFrame),
 }
@@ -278,12 +277,19 @@ impl SignalPayload {
     pub fn signal_class(&self) -> arkret_wire::SignalClass {
         match self {
             // Call setup wakes a device and establishes a live session.
-            Self::CallSignal { signal_kind, .. }
-                if matches!(signal_kind.as_str(), "invite" | "answer" | "focus_join") =>
+            Self::CallSignal { signal, .. }
+                if matches!(
+                    signal.kind(),
+                    arkret_sdk::CallSignalKind::Invite
+                        | arkret_sdk::CallSignalKind::Answer
+                        | arkret_sdk::CallSignalKind::FocusJoin
+                ) =>
             {
                 arkret_wire::SignalClass::Setup
             }
-            Self::CallSignal { signal_kind, .. } if signal_kind == "moderation" => {
+            Self::CallSignal { signal, .. }
+                if signal.kind() == arkret_sdk::CallSignalKind::Moderation =>
+            {
                 arkret_wire::SignalClass::Moderation
             }
             _ => arkret_wire::SignalClass::Session,
@@ -341,34 +347,17 @@ impl SignalPayload {
             }
             Self::CallSignal {
                 call_id,
-                signal_kind,
                 seq,
-                data,
+                signal,
             } => {
-                let signal_kind: arkret_sdk::CallSignalKind =
-                    serde_json::from_value(Value::String(signal_kind.clone())).map_err(|_| {
-                        anyhow::anyhow!(
-                            "call signal_kind {:?} is not in the canonical enum",
-                            signal_kind
-                        )
-                    })?;
-                let data = data
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("call signal data is required"))?
-                    .as_object()
-                    .ok_or_else(|| anyhow::anyhow!("call signal data must be an object"))?
-                    .clone()
-                    .into_iter()
-                    .collect();
                 // `payload_sequence` and the per-call `seq` are independent axes;
                 // this profile carries both and may omit neither.
                 let payload = arkret_sdk::CallSignalPlaintext::new(
                     sequence.get(),
                     call_id.clone(),
-                    signal_kind,
                     *seq,
-                    data,
-                );
+                    signal.clone(),
+                )?;
                 plaintext(arkret_sdk::seal_signal_plaintext(&payload), "call signal")
             }
             Self::Typing { strand_id, typing } => {
@@ -1008,36 +997,39 @@ mod tests {
     }
 
     #[test]
-    fn call_signal_kind_is_checked_and_drives_the_class_ceiling() {
+    fn call_signal_type_drives_the_class_ceiling() {
         let call_id =
             arkret_sdk::CallId::new("ak:call:AV2POYJXMfLYPg5u4jsNfpIyQjrEWx4_pWcsA9U7yXJQ")
                 .unwrap();
-        let rejected = SignalPayload::CallSignal {
-            call_id: call_id.clone(),
-            signal_kind: "not_a_kind".to_owned(),
-            seq: 3,
-            data: None,
-        };
-        assert!(
-            rejected
-                .to_plaintext(&actor(), SignalSequence::new(3))
-                .is_err()
-        );
-
         let invite = SignalPayload::CallSignal {
             call_id: call_id.clone(),
-            signal_kind: "invite".to_owned(),
             seq: 4,
-            data: None,
+            signal: arkret_sdk::CallSignalData::Invite(arkret_sdk::CallInviteSignalData {
+                lifetime_ms: 60_000,
+                mode: arkret_sdk::CallMode::P2p,
+                offer: arkret_sdk::SessionDescription {
+                    sdp_type: arkret_sdk::SessionDescriptionType::Offer,
+                    sdp: "v=0".to_owned(),
+                },
+                media: arkret_sdk::CallMediaSelection {
+                    audio: true,
+                    video: true,
+                    screen: Some(false),
+                },
+            }),
         };
         assert_eq!(invite.signal_class(), arkret_wire::SignalClass::Setup);
         assert_eq!(invite.signal_class().max_ttl().num_seconds(), 120);
 
         let moderation = SignalPayload::CallSignal {
             call_id: call_id.clone(),
-            signal_kind: "moderation".to_owned(),
             seq: 5,
-            data: None,
+            signal: arkret_sdk::CallSignalData::Moderation(arkret_sdk::CallModerationSignalData {
+                action: arkret_sdk::CallModerationAction::EndForAll,
+                target_actor_id: None,
+                target_device_id: None,
+                reason: None,
+            }),
         };
         assert_eq!(
             moderation.signal_class(),
@@ -1047,9 +1039,14 @@ mod tests {
 
         let candidate = SignalPayload::CallSignal {
             call_id,
-            signal_kind: "candidate".to_owned(),
             seq: 6,
-            data: Some(json!({"sdp_mid": "0"})),
+            signal: arkret_sdk::CallSignalData::Candidate(arkret_sdk::CallCandidateSignalData {
+                candidates: vec![arkret_sdk::IceCandidate {
+                    candidate: "candidate:1".to_owned(),
+                    sdp_mid: Some("0".to_owned()),
+                    sdp_m_line_index: Some(0),
+                }],
+            }),
         };
         assert_eq!(candidate.signal_class(), arkret_wire::SignalClass::Session);
         let body: Value = serde_json::from_slice(

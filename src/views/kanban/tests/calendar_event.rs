@@ -225,7 +225,7 @@ fn calendar_projection_reads_schedule_and_plain_location() {
         schedule_revision_heads: vec![
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
         ],
-        state: "active".to_owned(),
+        state: arkret_sdk::ProjectionObjectState::Active,
         created_by: None,
         created_at: None,
         updated_by: None,

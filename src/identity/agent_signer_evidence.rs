@@ -694,7 +694,7 @@ fn verify_lifecycle_reducer(
                 .refs
                 .iter()
                 .filter(|event_ref| event_ref.role == "agent_provision");
-            event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE
+            event.kind == arkret_sdk::EventKind::RealmCreate
                 && event.event_id == *realm_create_event_id
                 && provision_refs.next().is_some_and(|event_ref| {
                     event_ref.id == agent_provision_event_id.as_str() && event_ref.critical
@@ -708,7 +708,7 @@ fn verify_lifecycle_reducer(
                 predecessor_pause_event_id,
             },
         ) => {
-            event.kind.as_str() == arkret_sdk::EventKind::SELF_AGENT_RESUME
+            event.kind == arkret_sdk::EventKind::SelfAgentResume
                 && event.event_id == *resume_event_id
                 && event.prev_refs.contains(predecessor_pause_event_id)
                 && event.payload.get("transition").and_then(Value::as_str) == Some("resume")

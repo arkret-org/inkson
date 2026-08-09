@@ -4,7 +4,7 @@
 
 use serde_json::{Value, json};
 
-use super::{OperationBuilder, payload_value, trim_realm_id};
+use super::{TypedOperationBuilder, trim_realm_id};
 
 /// `ak.capability.revoke` — drop a standing grant, addressed by `grant_id`.
 /// `reason` shows up in the audit trail and lets the UI explain why the
@@ -19,7 +19,7 @@ pub fn capability_revoke(
     actor: &str,
     grant_id: &str,
     reason: Option<&str>,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let grant_id_typed = arkret_sdk::GrantId::new(grant_id.to_owned())
         .map_err(|err| anyhow::anyhow!("capability revoke grant_id {grant_id:?}: {err}"))?;
     let payload = arkret_sdk::CapabilityRevokePayload {
@@ -28,9 +28,10 @@ pub fn capability_revoke(
         reason: reason.map(ToOwned::to_owned),
     };
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::CapabilityRevoke)
-            .target_ref(grant_id)
-            .body(payload_value(&payload, "capability_revoke payload")?),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::CapabilityRevoke>(
+            realm_id, actor, payload,
+        )
+        .target_ref(grant_id),
     )
 }
 
@@ -57,14 +58,16 @@ pub fn capability_grant_actions(
     actions: &[&str],
     expires_at: Option<&str>,
     constraints: Value,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let realm = trim_realm_id(realm_id);
     capability_grant_actions_with_resources(
         &realm,
         actor,
         subject,
         actions,
-        vec![json!({ "kind": "realm", "realm_id": realm })],
+        vec![arkret_sdk::WireResourceSelector::realm(
+            arkret_sdk::RealmId::new(realm.clone())?,
+        )],
         expires_at,
         constraints,
     )
@@ -82,18 +85,14 @@ pub fn capability_grant_actions_with_resources(
     actor: &str,
     subject: &str,
     actions: &[&str],
-    resources: Vec<Value>,
+    resources: Vec<arkret_sdk::WireResourceSelector>,
     expires_at: Option<&str>,
     constraints: Value,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let realm = trim_realm_id(realm_id);
     let realm_typed = arkret_sdk::RealmId::new(realm.clone())?;
     let actor_typed = arkret_sdk::Did::new(actor.to_owned())?;
     let subject_typed = arkret_sdk::Did::new(subject.to_owned())?;
-    let resources_typed = resources
-        .into_iter()
-        .map(serde_json::from_value::<arkret_sdk::WireResourceSelector>)
-        .collect::<Result<Vec<_>, _>>()?;
     let constraints_typed = if constraints.is_null() {
         Vec::new()
     } else {
@@ -118,7 +117,7 @@ pub fn capability_grant_actions_with_resources(
         issuer: actor_typed,
         subject: arkret_sdk::CapabilitySubject::Did(subject_typed),
         actions: actions.iter().map(|action| (*action).to_owned()).collect(),
-        resources: resources_typed,
+        resources,
         capability_action_registry_digest: registry_digest,
         constraints: constraints_typed,
         // Realm creation locks the v1 authority root to controller epoch 0 and
@@ -135,10 +134,9 @@ pub fn capability_grant_actions_with_resources(
         expires_at,
     };
     let payload = arkret_sdk::CapabilityGrantPayload { grant };
-    Ok(
-        OperationBuilder::new(&realm, actor, arkret_sdk::EventKind::CapabilityGrant)
-            .body(payload_value(&payload, "capability_grant payload")?),
-    )
+    Ok(TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::CapabilityGrant,
+    >(&realm, actor, payload))
 }
 
 #[cfg(test)]

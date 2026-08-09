@@ -15,6 +15,7 @@ use base64::engine::general_purpose::{STANDARD as BASE64_STANDARD, URL_SAFE_NO_P
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use hkdf::Hkdf;
+use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::Sha256;
 
@@ -31,6 +32,23 @@ const CONTENT_KEY_LEN: usize = 32;
 const XCHACHA_NONCE_LEN: usize = 24;
 const NAMESPACE_KEY_INFO: &[u8] = b"arkret-file-transfer-account-data-key-v1";
 const RECORD_WRAP_KEY_INFO: &[u8] = b"arkret-file-transfer-record-wrap-v1";
+
+#[derive(Serialize)]
+struct FileTransferRecordAad<'a> {
+    schema: &'static str,
+    purpose: &'static str,
+    transfer_key: &'a str,
+    actor_id: &'a str,
+}
+
+#[derive(Serialize)]
+struct FileTransferRecordEnvelope<'a> {
+    scheme: &'static str,
+    aead_profile: &'static str,
+    nonce: String,
+    aad: FileTransferRecordAad<'a>,
+    ciphertext: String,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileTransferCryptoContext {
@@ -87,9 +105,8 @@ pub struct FileTransferDeviceKeyDispatch {
     pub target_actor_id: String,
     pub target_device_id: String,
     pub txn_id: String,
-    pub kind: String,
     pub expires_at: String,
-    pub content: Value,
+    pub content: FileTransferKeyMessage,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -233,12 +250,13 @@ pub async fn upload_device_bound_file(
     let mut device_message_responses = Vec::with_capacity(dispatches.len());
     let http = api.sdk_http_client()?;
     for dispatch in dispatches {
-        let response = crate::transport::keys::send_device_message_envelope(
+        let response = crate::transport::keys::send_device_message::<
+            arkret_sdk::device_message_spec::FileTransferKey,
+        >(
             &http,
             &dispatch.txn_id,
             &dispatch.target_actor_id,
             &dispatch.target_device_id,
-            &dispatch.kind,
             &dispatch.expires_at,
             dispatch.content,
         )
@@ -683,8 +701,6 @@ fn build_file_transfer_device_key_dispatch(
     key_message
         .validate_record_binding(record)
         .map_err(|error| anyhow::anyhow!("file-transfer key message invalid: {error}"))?;
-    let content = serde_json::to_value(key_message)
-        .map_err(|error| anyhow::anyhow!("file-transfer key message JSON: {error}"))?;
     Ok(FileTransferDeviceKeyDispatch {
         target_actor_id: recipient.actor_id.clone(),
         target_device_id: recipient.device_id.clone(),
@@ -693,9 +709,8 @@ fn build_file_transfer_device_key_dispatch(
             &recipient.actor_id,
             &recipient.device_id,
         ),
-        kind: arkret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND.to_owned(),
         expires_at: expires_at.to_owned(),
-        content,
+        content: key_message,
     })
 }
 
@@ -834,12 +849,12 @@ fn seal_record_envelope(
     let mut nonce = [0u8; XCHACHA_NONCE_LEN];
     getrandom::fill(&mut nonce)
         .map_err(|error| anyhow::anyhow!("file-transfer record nonce rng: {error}"))?;
-    let aad = json!({
-        "schema": SchemaId::FILE_TRANSFER_V1,
-        "purpose": "file_transfer_record",
-        "transfer_key": account_data_key,
-        "actor_id": actor_id,
-    });
+    let aad = FileTransferRecordAad {
+        schema: SchemaId::FILE_TRANSFER_V1,
+        purpose: "file_transfer_record",
+        transfer_key: account_data_key,
+        actor_id,
+    };
     let aad_bytes = crate::canonical::canonical_json_bytes(&aad)?;
     let plaintext = crate::canonical::canonical_json_bytes(record)?;
     let cipher = XChaCha20Poly1305::new((&crypto.record_wrap_key).into());
@@ -852,13 +867,13 @@ fn seal_record_envelope(
             },
         )
         .map_err(|error| anyhow::anyhow!("file-transfer record seal failed: {error}"))?;
-    let inner_envelope = json!({
-        "scheme": FILE_TRANSFER_RECORD_ENVELOPE_SCHEME,
-        "aead_profile": AEAD_PROFILE_XCHACHA20_POLY1305_V1,
-        "nonce": URL_SAFE_NO_PAD.encode(nonce),
-        "aad": aad,
-        "ciphertext": URL_SAFE_NO_PAD.encode(ciphertext),
-    });
+    let inner_envelope = serde_json::to_value(FileTransferRecordEnvelope {
+        scheme: FILE_TRANSFER_RECORD_ENVELOPE_SCHEME,
+        aead_profile: AEAD_PROFILE_XCHACHA20_POLY1305_V1,
+        nonce: URL_SAFE_NO_PAD.encode(nonce),
+        aad,
+        ciphertext: URL_SAFE_NO_PAD.encode(ciphertext),
+    })?;
     let envelope = arkret_sdk::account_data_crypto::seal_account_data_value(
         &crypto.account_data_secret,
         actor_id,

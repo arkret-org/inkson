@@ -24,7 +24,7 @@ fn event(
 }
 
 fn account_data_event(payload: serde_json::Value) -> arkret_sdk::Event {
-    arkret_sdk::Event::new(
+    arkret_wire::test_support::raw_event(
         "ak.account_data.set",
         arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(

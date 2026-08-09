@@ -4,27 +4,20 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use arkret_models_collaboration::agent_operations::AgentPcrRecoveryState;
-use arkret_models_crypto::{KeyBackupContentItem, ManagedFrontierRef, ManagedPrincipalBinding};
-use arkret_wire::SchemaId;
+use arkret_models_collaboration::events_payloads::key_backup::{
+    ControllerBackupTrustAnchor, resolve_controller_backup_trust_anchor,
+};
+use arkret_models_crypto::{BackupKind, ManagedFrontierRef, ManagedPrincipalBinding};
+use arkret_wire::{BackupSeriesId, Base64UrlString, SchemaId};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
 use serde_json::{Value, json};
 
-use crate::operation::{EventKind, OperationBuilder, uuid_v7};
+use crate::operation::{TypedOperationBuilder, uuid_v7};
 use crate::state::LocalStateStore;
 
 const PCR_RECOVERY_PROJECTION_WAIT_ATTEMPTS: usize = 18;
-const ACTIVE_SERIES_SIGNED_FIELDS: &[&str] = &[
-    "schema",
-    "actor_id",
-    "backup_kind",
-    "active_series_id",
-    "series_pointer_version",
-    "previous_series_ids",
-    "frontier_ref",
-    "issued_at",
-];
 
 #[derive(Clone)]
 struct ManagedPcrBackupItem {
@@ -56,14 +49,6 @@ enum MlsHistoryRecoveryPlan {
     Write(MlsHistorySeriesTarget),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum ControllerBackupTrustAnchor {
-    DeviceGeneration {
-        authorize_event_id: String,
-        generation_ref: String,
-    },
-}
-
 async fn current_controller_backup_trust_anchor(
     http: &arkret_sdk::http_client::Client,
     controller_id: &str,
@@ -72,33 +57,8 @@ async fn current_controller_backup_trust_anchor(
     let controller = arkret_sdk::Did::new(controller_id.to_owned())?;
     let device = arkret_sdk::DeviceId::new(device_id.to_owned())?;
     let outcome = crate::transport::keys::query_keys(http, controller_id, device_id).await?;
-    let record = outcome
-        .device_keys
-        .get(&controller)
-        .and_then(|devices| devices.get(&device))
-        .ok_or_else(|| anyhow::anyhow!("active controller device is absent from keys/query"))?;
-    let generation = outcome.device_generations.get(&controller);
-    if !record.is_usable_in_generation(generation) {
-        anyhow::bail!("active controller device is not usable in the current trust generation");
-    }
-    match (
-        generation,
-        record.authorized_generation_ref.as_ref(),
-        record.device_authorize_event_id.as_ref(),
-    ) {
-        (Some(generation), Some(device_generation), Some(authorize_event_id))
-            if generation.device_generation_status
-                == arkret_sdk::DeviceGenerationStatus::Active
-                && device_generation.as_str()
-                    == generation.current_device_generation_ref.as_str() =>
-        {
-            Ok(ControllerBackupTrustAnchor::DeviceGeneration {
-                authorize_event_id: authorize_event_id.to_string(),
-                generation_ref: generation.current_device_generation_ref.to_string(),
-            })
-        }
-        _ => anyhow::bail!("active controller device generation is incomplete"),
-    }
+    resolve_controller_backup_trust_anchor(&outcome, &controller, &device)
+        .map_err(|error| anyhow::anyhow!("controller backup trust anchor unavailable: {error}"))
 }
 
 pub(crate) fn controller_signer_device_id(
@@ -473,50 +433,31 @@ fn build_managed_pcr_backup_body(
     series_seq: u64,
     previous_series_tail: Option<&Value>,
     trust_anchor: &ControllerBackupTrustAnchor,
-    signer: crate::key_backup::KeyBackupSigner<'_>,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<arkret_sdk::KeyBackup> {
     if items.is_empty() {
         anyhow::bail!("managed Agent PCR backup requires at least one current Agent item");
     }
     let plaintext_items = items
         .iter()
         .map(|item| {
-            let mut plaintext_item = json!({
-                "item_kind": "mls_group_state",
-                "secret_id": "inkson_managed_agent_pcr_snapshot",
-                "secret_b64u": B64.encode(&item.state_bytes),
-                "realm_id": item.snapshot.realm_id,
-                "mls_group_id": item.snapshot.group_id,
-                "epoch": item.snapshot.epoch
-            });
-            if let Some(binding) = &item.binding {
-                plaintext_item["managed_principal_binding"] = json!(binding);
-            }
-            plaintext_item
-        })
-        .collect::<Vec<_>>();
-    let plaintext = json!({
-        "schema": SchemaId::KEY_BACKUP_PLAINTEXT_V1,
-        "backup_id": backup_id,
-        "backup_kind": "mls_history",
-        "series_id": series_id,
-        "series_seq": series_seq,
-        "items": plaintext_items
-    });
-    let plaintext_bytes = crate::canonical::canonical_json_bytes(&plaintext)?;
-    let contents = items
-        .iter()
-        .map(|item| {
-            Ok(KeyBackupContentItem {
+            Ok(arkret_sdk::PlaintextItem {
                 item_kind: "mls_group_state".to_owned(),
+                secret_id: "inkson_managed_agent_pcr_snapshot".to_owned(),
+                secret_b64u: B64.encode(&item.state_bytes),
+                secret_generation: None,
                 realm_id: Some(arkret_sdk::RealmId::new(item.snapshot.realm_id.clone())?),
                 managed_principal_binding: item.binding.clone(),
                 mls_group_id: Some(item.snapshot.group_id.clone()),
                 epoch: Some(item.snapshot.epoch),
-                ..Default::default()
+                first_event_id: None,
+                last_event_id: None,
+                extra: Default::default(),
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
+    if previous_series_tail.is_none() && series_seq != 0 {
+        anyhow::bail!("managed Agent PCR genesis backup must use series_seq=0");
+    }
     let mut body = crate::key_backup::build_recovery_public_key_backup_body_for_items_in_series(
         backup_id,
         controller_id,
@@ -525,36 +466,18 @@ fn build_managed_pcr_backup_body(
         recovery_key_ref,
         crate::key_backup::BackupKind::MlsHistory,
         "managed_agent_pcr",
-        &contents,
-        &plaintext_bytes,
+        plaintext_items,
         Some(recovery_policy_ref),
         Some(series_id),
         previous_series_tail,
-        None,
     )?;
-    body["frontier_ref"] = json!({
-        "frontier_digest": envelope_frontier.frontier_digest,
-        "seal_ref": envelope_frontier.seal_ref
+    body.frontier_ref = Some(arkret_sdk::KeyBackupFrontierRef {
+        frontier_digest: envelope_frontier.frontier_digest.clone(),
+        seal_ref: envelope_frontier.seal_ref.clone(),
+        device_generation_ref: arkret_sdk::NonEmptyString::new(
+            trust_anchor.generation_ref.as_str().to_owned(),
+        )?,
     });
-    let auth_anchor = match trust_anchor {
-        ControllerBackupTrustAnchor::DeviceGeneration {
-            authorize_event_id,
-            generation_ref,
-        } => {
-            body["frontier_ref"]["device_generation_ref"] = json!(generation_ref);
-            crate::key_backup::KeyBackupDeviceTrustAnchor::DeviceAuthorizeEventId(
-                authorize_event_id.clone(),
-            )
-        }
-    };
-    crate::key_backup::validate_key_backup_plaintext_binding(&body, &plaintext)
-        .map_err(anyhow::Error::msg)?;
-    crate::key_backup::sign_key_backup_with_device_and_trust_anchor(
-        &mut body,
-        device_id,
-        signer,
-        Some(auth_anchor),
-    )?;
     Ok(body)
 }
 
@@ -620,65 +543,45 @@ fn build_active_mls_history_series_event(
         .ok_or_else(|| anyhow::anyhow!("active controller signer is required"))?;
     let verification_method =
         principal_bound_active_series_verification_method(controller_id, signer.as_ref())?;
-    let issued_at = arkret_sdk::canonical::format_timestamp_canonical(crate::clock::now_utc());
-    let mut payload = json!({
-        "schema": SchemaId::KEY_BACKUP_ACTIVE_SERIES_V1,
-        "actor_id": controller_id,
-        "backup_kind": "mls_history",
-        "active_series_id": series_id,
-        "series_pointer_version": pointer_version,
-        "previous_series_ids": previous_series_ids,
-        "frontier_ref": {
-            "frontier_digest": frontier.control_event_set_root,
-            "seal_ref": frontier.seal_id
-        },
-        "issued_at": issued_at,
-        "auth_data": {
-            "verification_method": verification_method,
-            "signature_algorithm": "Ed25519",
-            "signature": "pending",
-            "signed_fields": ACTIVE_SERIES_SIGNED_FIELDS
-        }
-    });
-    match trust_anchor {
-        ControllerBackupTrustAnchor::DeviceGeneration {
-            authorize_event_id,
-            generation_ref,
-        } => {
-            payload["frontier_ref"]["device_generation_ref"] = json!(generation_ref);
-            payload["auth_data"]["device_authorize_event_id"] = json!(authorize_event_id);
-        }
-    }
-    let mut unsigned = payload.clone();
-    unsigned["auth_data"]
-        .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!("active-series auth_data is not an object"))?
-        .remove("signature");
-    let signature = signer
-        .sign_raw(&crate::canonical::canonical_json_bytes(&unsigned)?)
-        .map_err(|error| anyhow::anyhow!("sign active mls_history series: {error}"))?;
-    payload["auth_data"]["signature"] = Value::String(B64.encode(signature));
-
     let controller = arkret_sdk::Did::new(controller_id.to_owned())?;
-    OperationBuilder::new(
+    let unsigned = arkret_sdk::UnsignedKeyBackupActiveSeries::new(
+        controller.clone(),
+        BackupKind::MlsHistory,
+        BackupSeriesId::new(series_id.to_owned())?,
+        pointer_version,
+        previous_series_ids
+            .iter()
+            .map(|series_id| BackupSeriesId::new(series_id.clone()))
+            .collect::<std::result::Result<Vec<_>, _>>()?,
+        frontier.control_event_set_root.clone(),
+        Some(frontier.seal_id.clone()),
+        crate::clock::now_utc(),
+        verification_method,
+        trust_anchor.clone(),
+    )?;
+    let signature = signer
+        .sign_raw(&unsigned.signing_payload_bytes()?)
+        .map_err(|error| anyhow::anyhow!("sign active mls_history series: {error}"))?;
+    let signature = Base64UrlString::new(B64.encode(signature)).map_err(anyhow::Error::msg)?;
+    let payload = unsigned.attach_signature(signature)?;
+
+    TypedOperationBuilder::new::<arkret_sdk::event_spec::KeyBackupActiveSeries>(
         arkret_sdk::principal_control_realm_id(&controller),
         controller_id,
-        EventKind::KeyBackupActiveSeries,
+        payload,
     )
-    .body(payload)
     .build_sdk_event("inkson")
 }
 
 fn principal_bound_active_series_verification_method(
     controller_id: &str,
     signer: &crate::event_signer::InksonEventSigner,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<arkret_sdk::DidUrl> {
     let device_id = signer
         .device_id()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| anyhow::anyhow!("active controller device id is unavailable"))?;
     arkret_sdk::DidUrl::new(format!("{controller_id}#{device_id}"))
-        .map(|method| method.to_string())
         .map_err(|error| anyhow::anyhow!(error))
 }
 
@@ -907,7 +810,7 @@ async fn collect_current_managed_pcr_backup_items(
 
 fn has_managed_agent_pcr_create(events: &[arkret_sdk::Event]) -> bool {
     events.iter().any(|event| {
-        event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE
+        event.kind == arkret_sdk::EventKind::RealmCreate
             && event.executed_by.is_some()
             && event
                 .payload
@@ -1014,7 +917,7 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
             let creates = accepted_events
                 .iter()
                 .filter(|event| {
-                    event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE
+                    event.kind == arkret_sdk::EventKind::RealmCreate
                         && event.realm_id.as_str() == realm_id
                 })
                 .collect::<Vec<_>>();
@@ -1149,7 +1052,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
             .events
             .into_iter()
             .find_map(|event| {
-                (event.kind == arkret_sdk::EventKind::AGENT_PROVISION)
+                (event.kind == arkret_sdk::EventKind::AgentProvision)
                     .then(|| {
                         arkret_sdk::AgentProvisionPayload::try_from(&event)
                             .ok()
@@ -1464,10 +1367,8 @@ pub(crate) async fn bootstrap_provisioned_agent(
         series_target.series_seq,
         series_target.previous_tail.as_ref(),
         &trust_anchor,
-        Some(&signer),
     )?;
-    api.put_key_backup(&backup_id, backup, Some(&signer))
-        .await?;
+    api.put_key_backup(&backup_id, backup, &signer).await?;
 
     if let Some((pointer_version, previous_series_ids)) = series_target.publish_pointer {
         let controller_realm_id = arkret_sdk::principal_control_realm_id(&controller_did);
@@ -1507,6 +1408,16 @@ mod tests {
     use super::*;
 
     const TEST_DEVICE_ID: &str = "ak:device:01964137-0000-7000-8000-000000000001";
+
+    fn controller_backup_trust_anchor() -> ControllerBackupTrustAnchor {
+        ControllerBackupTrustAnchor {
+            authorize_event_id: arkret_sdk::EventId::new(
+                "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e".to_owned(),
+            )
+            .unwrap(),
+            generation_ref: arkret_sdk::NonEmptyString::new("did-version-1".to_owned()).unwrap(),
+        }
+    }
 
     fn api_error(status: u16, code: &str) -> anyhow::Error {
         anyhow::Error::new(arkret_sdk::http_client::Error::Api {
@@ -1622,11 +1533,15 @@ mod tests {
         );
 
         assert_eq!(
-            principal_bound_active_series_verification_method(controller_id, &signer).unwrap(),
+            principal_bound_active_series_verification_method(controller_id, &signer)
+                .unwrap()
+                .as_str(),
             format!("{controller_id}#{TEST_DEVICE_ID}")
         );
         assert_ne!(
-            principal_bound_active_series_verification_method(controller_id, &signer).unwrap(),
+            principal_bound_active_series_verification_method(controller_id, &signer)
+                .unwrap()
+                .as_str(),
             signer.verification_method()
         );
     }
@@ -1896,40 +1811,31 @@ mod tests {
             series_id,
             0,
             None,
-            &ControllerBackupTrustAnchor::DeviceGeneration {
-                authorize_event_id: "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e"
-                    .to_owned(),
-                generation_ref: "did-version-1".to_owned(),
-            },
-            None,
+            &controller_backup_trust_anchor(),
         )
         .unwrap();
 
-        crate::key_backup::validate_key_backup_put_request(backup_id, &body).unwrap();
+        body.validate_envelope_fields().unwrap();
+        assert_eq!(body.backup_id.as_str(), backup_id);
+        let body_value = serde_json::to_value(&body).unwrap();
         let opened =
-            crate::key_backup::open_recovery_public_key_backup_body(&private_key, &body).unwrap();
-        let plaintext: Value = serde_json::from_slice(&opened).unwrap();
-        assert_eq!(plaintext["series_id"], series_id);
-        assert_eq!(plaintext["items"].as_array().unwrap().len(), 2);
+            crate::key_backup::open_recovery_public_key_backup_body(&private_key, &body_value)
+                .unwrap();
+        assert_eq!(opened.series_id.as_str(), series_id);
+        assert_eq!(opened.items.len(), 2);
         assert_eq!(
-            plaintext["items"][0]["managed_principal_binding"],
+            serde_json::to_value(&opened.items[0].managed_principal_binding).unwrap(),
             json!(binding)
         );
         assert_eq!(
-            plaintext["items"][1]["managed_principal_binding"],
+            serde_json::to_value(&opened.items[1].managed_principal_binding).unwrap(),
             json!(second_binding)
         );
         assert_eq!(
-            B64.decode(
-                plaintext["items"][0]["secret_b64u"]
-                    .as_str()
-                    .unwrap()
-                    .as_bytes()
-            )
-            .unwrap(),
+            B64.decode(opened.items[0].secret_b64u.as_bytes()).unwrap(),
             b"real MLS state record bytes"
         );
-        crate::key_backup::validate_key_backup_plaintext_binding(&body, &plaintext).unwrap();
+        opened.validate_for_envelope(&body).unwrap();
 
         let successor_id = "ak:backup:01964137-0000-7000-8000-000000000021";
         let successor = build_managed_pcr_backup_body(
@@ -1954,24 +1860,26 @@ mod tests {
             successor_id,
             series_id,
             1,
-            Some(&body),
-            &ControllerBackupTrustAnchor::DeviceGeneration {
-                authorize_event_id: "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e"
-                    .to_owned(),
-                generation_ref: "did-version-1".to_owned(),
-            },
-            None,
+            Some(&body_value),
+            &controller_backup_trust_anchor(),
         )
         .unwrap();
-        assert_eq!(successor["series_seq"], 1);
-        assert_eq!(successor["supersedes"], backup_id);
-        crate::key_backup::validate_key_backup_put_request(successor_id, &successor).unwrap();
+        assert_eq!(successor.series_seq, 1);
+        assert_eq!(
+            successor
+                .supersedes
+                .as_ref()
+                .map(arkret_sdk::BackupId::as_str),
+            Some(backup_id)
+        );
+        successor.validate_envelope_fields().unwrap();
+        assert_eq!(successor.backup_id.as_str(), successor_id);
+        let successor_value = serde_json::to_value(&successor).unwrap();
         let opened =
-            crate::key_backup::open_recovery_public_key_backup_body(&private_key, &successor)
+            crate::key_backup::open_recovery_public_key_backup_body(&private_key, &successor_value)
                 .unwrap();
-        let plaintext: Value = serde_json::from_slice(&opened).unwrap();
-        assert_eq!(plaintext["series_seq"], 1);
-        crate::key_backup::validate_key_backup_plaintext_binding(&successor, &plaintext).unwrap();
+        assert_eq!(opened.series_seq, 1);
+        opened.validate_for_envelope(&successor).unwrap();
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -2061,17 +1969,12 @@ mod tests {
             device_id,
             &recovery_public_key,
             "did:web:alice.example#backup-hpke-0",
-            ("ak:recovery_policy:01964137-0000-7000-8000-000000000095", 3),
+            ("ak:policy:01964137-0000-7000-8000-000000000095", 3),
             history_backup_id,
             history_series_id,
             0,
             None,
-            &ControllerBackupTrustAnchor::DeviceGeneration {
-                authorize_event_id: "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e"
-                    .to_owned(),
-                generation_ref: "did-version-1".to_owned(),
-            },
-            None,
+            &controller_backup_trust_anchor(),
         )
         .unwrap();
         let account =
@@ -2083,11 +1986,10 @@ mod tests {
                 "did:web:alice.example#recovery",
                 "restored controller account secret",
                 crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION,
-                ("ak:recovery_policy:01964137-0000-7000-8000-000000000095", 3),
-                None,
+                ("ak:policy:01964137-0000-7000-8000-000000000095", 3),
             )
             .unwrap();
-        let account_series_id = account["series_id"].as_str().unwrap();
+        let account_series_id = account.series_id.to_string();
         let payload = json!({
             "active_series": [
                 {
@@ -2117,7 +2019,7 @@ mod tests {
                 controller_id,
                 device_id,
                 &recovery_private_key,
-                ("ak:recovery_policy:01964137-0000-7000-8000-000000000095", 3),
+                ("ak:policy:01964137-0000-7000-8000-000000000095", 3),
             )
             .unwrap();
 

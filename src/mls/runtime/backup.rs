@@ -28,18 +28,11 @@ pub fn build_mls_history_backup_body(
     snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,
     actor_id: &str,
     device_id: &str,
-    signer: crate::key_backup::KeyBackupSigner<'_>,
-) -> Result<(String, Value), MlsRuntimeError> {
+) -> Result<(String, arkret_sdk::KeyBackup), MlsRuntimeError> {
     let store = crate::secure_key_store::default_secure_key_store("inkson");
     let account_secret = load_device_snapshot_secret(store.as_ref(), actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    build_mls_history_backup_body_with_secret(
-        snapshot,
-        actor_id,
-        device_id,
-        &account_secret,
-        signer,
-    )
+    build_mls_history_backup_body_with_secret(snapshot, actor_id, device_id, &account_secret)
 }
 
 pub fn build_mls_history_backup_body_with_secret(
@@ -47,12 +40,11 @@ pub fn build_mls_history_backup_body_with_secret(
     actor_id: &str,
     device_id: &str,
     account_secret: &str,
-    signer: crate::key_backup::KeyBackupSigner<'_>,
-) -> Result<(String, Value), MlsRuntimeError> {
+) -> Result<(String, arkret_sdk::KeyBackup), MlsRuntimeError> {
     let backup_id = format!("ak:backup:{}", crate::operation::uuid_v7());
     let wrap_key = derive_mls_history_backup_key(account_secret)?;
     let body = snapshot
-        .to_key_backup_body(&backup_id, actor_id, device_id, &wrap_key, signer)
+        .to_key_backup_body(&backup_id, actor_id, device_id, &wrap_key)
         .map_err(|error| MlsRuntimeError::Backup(error.to_string()))?;
     Ok((backup_id, body))
 }
@@ -63,24 +55,28 @@ pub async fn upload_mls_snapshot_backup(
     actor_id: &str,
     device_id: &str,
 ) -> Result<String, MlsRuntimeError> {
-    let signer = crate::event_signer::active_signer();
-    let (backup_id, body) =
-        build_mls_history_backup_body(snapshot, actor_id, device_id, signer.as_ref())?;
-    api.put_key_backup(&backup_id, body, signer.as_ref())
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| MlsRuntimeError::Backup("active device signer is required".to_owned()))?;
+    let (backup_id, body) = build_mls_history_backup_body(snapshot, actor_id, device_id)?;
+    api.put_key_backup(&backup_id, body, &signer)
         .await
         .map_err(|err| MlsRuntimeError::Backup(err.to_string()))?;
     Ok(backup_id)
 }
 
 pub fn parse_mls_history_backup(body: &Value) -> Result<arkret_sdk::KeyBackup, MlsRuntimeError> {
-    crate::key_backup::validate_key_backup_envelope(
-        body,
-        Some(crate::key_backup::BackupKind::MlsHistory),
-    )
-    .map_err(MlsRuntimeError::BackupDecode)?;
-    serde_json::from_value(body.clone()).map_err(|error| {
+    let backup: arkret_sdk::KeyBackup = serde_json::from_value(body.clone()).map_err(|error| {
         MlsRuntimeError::BackupDecode(format!("typed MLS-history backup: {error}"))
-    })
+    })?;
+    backup
+        .validate()
+        .map_err(|error| MlsRuntimeError::BackupDecode(error.to_string()))?;
+    if backup.backup_kind != arkret_sdk::BackupKind::MlsHistory {
+        return Err(MlsRuntimeError::BackupDecode(
+            "typed backup is not mls_history".to_owned(),
+        ));
+    }
+    Ok(backup)
 }
 
 pub fn decode_mls_history_backup_envelope(
@@ -101,16 +97,10 @@ pub fn decode_mls_history_backup_envelope(
     }
     let wrap_key = derive_mls_history_backup_key(account_secret)
         .map_err(|error| MlsRuntimeError::BackupDecode(error.user_message()))?;
-    let aead_aad = serde_json::from_value(
-        serde_json::to_value(&backup.domain_separation.aead_aad).map_err(|error| {
-            MlsRuntimeError::BackupDecode(format!("key-backup AAD encode: {error}"))
-        })?,
-    )
-    .map_err(|error| MlsRuntimeError::BackupDecode(format!("key-backup AAD: {error}")))?;
     let binding = arkret_crypto::backup::VaultBinding {
         backup_id: backup.backup_id.clone(),
         subdomain: backup.domain_separation.subdomain.clone(),
-        aead_aad,
+        aead_aad: backup.domain_separation.aead_aad.clone(),
     };
     let nonce = backup.encryption.aead.nonce.as_ref().ok_or_else(|| {
         MlsRuntimeError::BackupDecode(

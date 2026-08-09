@@ -113,16 +113,20 @@ pub(crate) fn overlay_card_projection_with_operations_and_decrypt(
     overlay_local_card_assignment_records(columns, &state.raw_operations)
 }
 
-pub(crate) fn strand_update_operations_from_events(events: &[Value]) -> Vec<RawOperationRecord> {
+pub(crate) fn strand_update_operations_from_events(
+    events: &[arkret_sdk::Event],
+) -> Vec<RawOperationRecord> {
     events
         .iter()
         .filter_map(strand_update_operation_from_event)
         .collect()
 }
 
-pub(crate) fn strand_update_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
+pub(crate) fn strand_update_operation_from_event(
+    event: &arkret_sdk::Event,
+) -> Option<RawOperationRecord> {
     // Single source in the projection layer (YGN-ARCH-01 step 3).
-    crate::state::projection::kanban_ops::raw_operation_from_event(event, "ak.strand.update")
+    crate::state::projection::kanban_ops::strand_update_operation_from_event(event)
 }
 
 pub(crate) fn sync_selected_card_from_columns(
@@ -390,13 +394,13 @@ pub(crate) fn local_card_update_from_raw_operation(
     let patch = body.get("patch")?.as_object()?;
 
     fn extract_set_unset(op: &Value) -> Option<Option<String>> {
-        let op_kind = op.get("$op").and_then(Value::as_str)?;
-        match op_kind {
-            "set" => op
-                .get("value")
+        let op: arkret_wire::patch::PatchOp = serde_json::from_value(op.clone()).ok()?;
+        match op.op() {
+            arkret_wire::patch::PatchOpKind::Set => op
+                .value()
                 .and_then(Value::as_str)
                 .map(|s| Some(s.to_owned())),
-            "unset" => Some(None),
+            arkret_wire::patch::PatchOpKind::Unset => Some(None),
             _ => None,
         }
     }
@@ -407,11 +411,11 @@ pub(crate) fn local_card_update_from_raw_operation(
         strand_id: &str,
         field_path: &str,
     ) -> Option<PrivateFieldOverlay> {
-        let op_kind = op.get("$op").and_then(Value::as_str)?;
-        match op_kind {
-            "unset" => Some(PrivateFieldOverlay::Unset),
-            "set" => {
-                let value = op.get("value")?;
+        let op: arkret_wire::patch::PatchOp = serde_json::from_value(op.clone()).ok()?;
+        match op.op() {
+            arkret_wire::patch::PatchOpKind::Unset => Some(PrivateFieldOverlay::Unset),
+            arkret_wire::patch::PatchOpKind::Set => {
+                let value = op.value()?;
                 if value_is_mls_envelope(value) {
                     let text =
                         private_strand_field_text(decrypt_ctx, strand_id, field_path, Some(value));
@@ -468,10 +472,12 @@ pub(crate) fn local_card_update_from_raw_operation(
         patch
             .get(&metadata_path)
             .or_else(|| patch.get(&field_path))
-            .and_then(|op| match op.get("$op").and_then(Value::as_str) {
-                Some("set") => op.get("value").cloned(),
-                Some("unset") => Some(Value::Null),
-                _ => None,
+            .and_then(|op| {
+                match serde_json::from_value::<arkret_wire::patch::PatchOp>(op.clone()).ok()? {
+                    op if op.op() == arkret_wire::patch::PatchOpKind::Set => op.value().cloned(),
+                    op if op.op() == arkret_wire::patch::PatchOpKind::Unset => Some(Value::Null),
+                    _ => None,
+                }
             })
     }
 
@@ -479,11 +485,10 @@ pub(crate) fn local_card_update_from_raw_operation(
         .get("metadata.fields")
         .or_else(|| patch.get("fields"))
         .and_then(|fields_op| {
-            if fields_op.get("$op").and_then(Value::as_str) == Some("set") {
-                fields_op.get("value").cloned()
-            } else {
-                None
-            }
+            let op: arkret_wire::patch::PatchOp = serde_json::from_value(fields_op.clone()).ok()?;
+            (op.op() == arkret_wire::patch::PatchOpKind::Set)
+                .then(|| op.value().cloned())
+                .flatten()
         });
     let mut direct_fields = Map::new();
     for field in [

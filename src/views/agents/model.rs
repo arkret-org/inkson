@@ -811,44 +811,6 @@ pub fn build_agent_key_authorize_event_for_pairing(
 /// `accountability` constraint (`controller_approval_required=true`) per
 /// §4.10 so the high-risk executor path cannot run without controller
 /// approval.
-pub fn expand_preset_grant(
-    preset: AgentGrantPreset,
-    agent_id: &str,
-    realm_id: Option<&str>,
-    expires_at: &str,
-) -> Value {
-    let actions: Vec<&str> = preset.actions().to_vec();
-    // Resource selector: scope every preset grant to the Realm when one
-    // is supplied; otherwise leave `resources` empty so the controller
-    // narrows it after provisioning (soland fail-closes an empty
-    // selector for write actions).
-    let resources: Vec<Value> = match realm_id {
-        Some(realm) if !realm.trim().is_empty() => vec![json!({
-            "kind": "realm",
-            "realm_id": realm.trim(),
-        })],
-        _ => Vec::new(),
-    };
-    let mut grant = json!({
-        "actions": actions,
-        "resources": resources,
-        "subject": agent_id,
-        "expires_at": expires_at,
-    });
-    if preset == AgentGrantPreset::ActOnBehalf {
-        grant["constraints"] = json!([
-            {
-                "constraint_kind": "claim_based",
-                "effect": "require_review",
-                "constraint_subkind": "accountability",
-                "applies_to_actions": ["ak.message.create"],
-                "controller_approval_required": true,
-            }
-        ]);
-    }
-    grant
-}
-
 /// R3 spec sync (b47ff6ec) — UI label for an agent FSM state.
 ///
 /// `ak.agent.{pause,resume,deactivate}` lattice is now `fsm` (terminal:
@@ -1069,7 +1031,7 @@ pub fn build_action_approve_payload(
     controller_id: &str,
     approved_at: &str,
     expires_at: &str,
-) -> Value {
+) -> anyhow::Result<arkret_sdk::AgentActionApprovePayload> {
     let draft_content_digest = request.get("content").and_then(canonical_digest);
     let approved_payload_digest = non_empty_field(request, "approved_payload_digest")
         .or_else(|| non_empty_field(request, "request_canonical_digest"))
@@ -1083,30 +1045,26 @@ pub fn build_action_approve_payload(
         .get("proposed_action")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let target = request.get("target").cloned().unwrap_or(Value::Null);
-    let mut payload = json!({
-        "approval_id": format!("ak:agent_approval:{}", crate::operation::uuid_v7()),
-        "agent_id": agent_id,
-        "controller_id": controller_id,
-        "proposed_action": proposed_action,
-        "target": target,
-        "approved_payload_digest": approved_payload_digest,
-        "approval_nonce": crate::operation::uuid_v7(),
-        "approved_at": approved_at,
-        "expires_at": expires_at,
-    });
-    if let Some(object) = payload.as_object_mut() {
-        if let Some(request_id) = non_empty_field(request, "request_id") {
-            object.insert("request_id".to_owned(), json!(request_id));
-        }
-        if let Some(draft_id) = non_empty_field(request, "draft_id") {
-            object.insert("draft_id".to_owned(), json!(draft_id));
-        }
-        if let Some(digest) = draft_content_digest {
-            object.insert("draft_content_digest".to_owned(), json!(digest));
-        }
-    }
-    payload
+    let target = request
+        .get("target")
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("agent action approval requires target"))?;
+    Ok(arkret_sdk::AgentActionApprovePayload {
+        approval_id: format!("ak:agent_approval:{}", crate::operation::uuid_v7()),
+        request_id: non_empty_field(request, "request_id"),
+        draft_id: non_empty_field(request, "draft_id"),
+        agent_id: arkret_sdk::Did::new(agent_id.to_owned())?,
+        controller_id: arkret_sdk::Did::new(controller_id.to_owned())?,
+        proposed_action: proposed_action.to_owned(),
+        target: serde_json::from_value(target)?,
+        approved_payload_digest: arkret_sdk::Hash::new(approved_payload_digest)?,
+        draft_content_digest: draft_content_digest
+            .map(arkret_sdk::Hash::new)
+            .transpose()?,
+        approval_nonce: crate::operation::uuid_v7(),
+        approved_at: chrono::DateTime::parse_from_rfc3339(approved_at)?.with_timezone(&chrono::Utc),
+        expires_at: chrono::DateTime::parse_from_rfc3339(expires_at)?.with_timezone(&chrono::Utc),
+    })
 }
 
 /// Build a `ak.agent.action_reject` payload for a draft or action
@@ -1116,28 +1074,25 @@ pub fn build_action_reject_payload(
     controller_id: &str,
     rejected_at: &str,
     reason: Option<&str>,
-) -> Value {
-    let mut payload = json!({
-        "rejection_id": format!("ak:agent_rejection:{}", crate::operation::uuid_v7()),
-        "agent_id": request
-            .get("agent_id")
-            .and_then(Value::as_str)
-            .unwrap_or(""),
-        "controller_id": controller_id,
-        "rejected_at": rejected_at,
-    });
-    if let Some(object) = payload.as_object_mut() {
-        if let Some(request_id) = non_empty_field(request, "request_id") {
-            object.insert("request_id".to_owned(), json!(request_id));
-        }
-        if let Some(draft_id) = non_empty_field(request, "draft_id") {
-            object.insert("draft_id".to_owned(), json!(draft_id));
-        }
-        if let Some(reason) = reason.map(str::trim).filter(|value| !value.is_empty()) {
-            object.insert("reason".to_owned(), json!(reason));
-        }
-    }
-    payload
+) -> anyhow::Result<arkret_sdk::AgentActionRejectPayload> {
+    Ok(arkret_sdk::AgentActionRejectPayload {
+        rejection_id: format!("ak:agent_rejection:{}", crate::operation::uuid_v7()),
+        request_id: non_empty_field(request, "request_id"),
+        draft_id: non_empty_field(request, "draft_id"),
+        agent_id: arkret_sdk::Did::new(
+            request
+                .get("agent_id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+        )?,
+        controller_id: arkret_sdk::Did::new(controller_id.to_owned())?,
+        reason: reason
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned),
+        rejected_at: chrono::DateTime::parse_from_rfc3339(rejected_at)?.with_timezone(&chrono::Utc),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1146,8 +1101,6 @@ pub fn build_act_on_behalf_message_operation(
     controller_id: &str,
     agent_id: &str,
     authorization_ref: &str,
-    approval_request_id: &str,
-    approval_nonce: &str,
     strand_id: &str,
     body: &str,
 ) -> anyhow::Result<arkret_sdk::Event> {
@@ -1155,21 +1108,20 @@ pub fn build_act_on_behalf_message_operation(
         .map_err(|error| anyhow::anyhow!("invalid strand id {strand_id:?}: {error:?}"))?;
     let content = arkret_sdk::ContentBlock::text(body);
     let mut payload =
-        arkret_sdk::MessageCreatePayload::with_content(strand_id_typed, "discussion", content)
-            .to_value()
-            .map_err(|error| anyhow::anyhow!("act-on-behalf message payload serialize: {error}"))?;
-    if let Some(object) = payload.as_object_mut() {
-        object.insert("approval_request_id".to_owned(), json!(approval_request_id));
-        object.insert("approval_nonce".to_owned(), json!(approval_nonce));
-    }
-    crate::operation::OperationBuilder::new(
+        arkret_sdk::MessageCreatePayload::with_content(strand_id_typed, "discussion", content);
+    payload.agent_context = Some(arkret_sdk::MessageAgentContext {
+        agent_id: arkret_sdk::Did::new(agent_id.to_owned())?,
+        operator_or_controller: controller_id.to_owned(),
+        execution_purpose: "act_on_behalf".to_owned(),
+        authorization_ref: authorization_ref.to_owned(),
+    });
+    crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageCreate>(
         realm_id,
         controller_id,
-        arkret_sdk::EventKind::MessageCreate,
+        payload,
     )
     .target_ref(strand_id)
     .executed_by(agent_id)
     .authorization_ref(authorization_ref)
-    .body(payload)
     .build_sdk_event("inkson")
 }

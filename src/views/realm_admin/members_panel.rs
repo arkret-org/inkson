@@ -1915,7 +1915,7 @@ fn realm_key_share_capability_ref_from_events(events: &[Value], actor_id: &str) 
             .get("kind")
             .or_else(|| event.get("event_kind"))
             .and_then(Value::as_str)?;
-        if kind != arkret_sdk::EventKind::CAPABILITY_GRANT {
+        if kind != arkret_sdk::EventKind::CapabilityGrant.as_str() {
             return None;
         }
         let payload = event.get("payload").unwrap_or(event);
@@ -2372,7 +2372,7 @@ fn provider_candidates_from_inbox(
         let is_history_bearing = matches!(
             kind,
             "ak.mls.welcome" | "ak.mls.commit" | "ak.realm_key.share"
-        ) || kind == arkret_sdk::EventKind::REALM_KEY_SHARE;
+        ) || kind == arkret_sdk::EventKind::RealmKeyShare.as_str();
         if !is_history_bearing {
             continue;
         }

@@ -1,6 +1,5 @@
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
-use serde_json::json;
 
 use super::media::{
     install_and_capture, join_and_build_transport, media_error_label, submit_call_state_participant,
@@ -213,19 +212,9 @@ pub fn CallPanel(
                 let payload = arkret_sdk::CallCreatePayload {
                     initial_state: arkret_sdk::CallLifecycleState::Ringing,
                 };
-                let payload = match serde_json::to_value(payload) {
-                    Ok(payload) => payload,
-                    Err(error) => {
-                        last_error.set(format!("call create payload failed: {error}"));
-                        return;
-                    }
-                };
-                let event = match crate::operation::OperationBuilder::new(
-                    &realm_id,
-                    &actor,
-                    arkret_sdk::EventKind::CallCreate,
-                )
-                .body(payload)
+                let event = match crate::operation::TypedOperationBuilder::new::<
+                    arkret_sdk::event_spec::CallCreate,
+                >(&realm_id, &actor, payload)
                 .build_sdk_event("inkson")
                 {
                     Ok(event) => event,
@@ -267,7 +256,6 @@ pub fn CallPanel(
             stage.set(CallStage::OutgoingRinging);
             status.set("placing call".to_owned());
             last_error.set(String::new());
-            let invite_peers = peers.clone();
             let signal_store = signal_store.clone();
 
             spawn(async move {
@@ -285,32 +273,10 @@ pub fn CallPanel(
                     return;
                 }
 
-                // 1) Invite signal opens the call (ephemeral `ak.call.signal`).
-                if matches!(mode, CallMode::P2p) {
-                    let invite_data = json!({
-                        "participants": invite_peers.clone(),
-                        "media": { "audio": true, "video": want_video, "screen": false }
-                    });
-                    if let Err(err) = emit_signal(
-                        &base,
-                        &api_token,
-                        &realm_id,
-                        &call,
-                        &actor,
-                        &device,
-                        "invite",
-                        1,
-                        invite_data,
-                        &signal_store,
-                    )
-                    .await
-                    {
-                        last_error.set(format!("invite failed: {err}"));
-                    }
-                    call_seq.set(1);
-                }
-
-                // 2) Join the media plane (token + ICE + SFrame key).
+                // Join the media plane (token + ICE + SFrame key). P2P emits
+                // its invite only after the transport produces the real SDP
+                // offer; the closed signal model intentionally forbids a
+                // placeholder invite without an offer.
                 let join = MediaJoinRequest {
                     realm_id: realm_id.clone(),
                     call_id: call.clone(),
@@ -354,8 +320,7 @@ pub fn CallPanel(
                                     &call,
                                     &actor,
                                     &device,
-                                    "connecting",
-                                    "sfu",
+                                    arkret_sdk::CallLifecycleState::Connecting,
                                     &session,
                                 )
                                 .await
@@ -364,25 +329,24 @@ pub fn CallPanel(
                                     stage.set(CallStage::Ended);
                                     return;
                                 }
-                                let invite_data = json!({
-                                    "participants": invite_peers.clone(),
-                                    "media": { "audio": true, "video": want_video, "screen": false }
-                                });
-                                if let Err(err) = emit_signal(
-                                    &base,
-                                    &api_token,
-                                    &realm_id,
-                                    &call,
-                                    &actor,
-                                    &device,
-                                    "invite",
-                                    1,
-                                    invite_data,
-                                    &signal_store,
-                                )
-                                .await
+                                if let Ok(focus_id) =
+                                    arkret_sdk::NonEmptyString::new(focus_id.clone())
+                                    && let Err(err) = emit_signal(
+                                        &base,
+                                        &api_token,
+                                        &realm_id,
+                                        &call,
+                                        &actor,
+                                        &device,
+                                        1,
+                                        arkret_sdk::CallSignalData::FocusJoin(
+                                            arkret_sdk::CallFocusSignalData { focus_id },
+                                        ),
+                                        &signal_store,
+                                    )
+                                    .await
                                 {
-                                    last_error.set(format!("invite failed: {err}"));
+                                    last_error.set(format!("focus join signal failed: {err}"));
                                 }
                                 call_seq.set(1);
                                 let expected = expected_participant_set(
@@ -407,8 +371,14 @@ pub fn CallPanel(
                                     return;
                                 }
                                 let _ = submit_call_state_participant(
-                                    &base, &api_token, &realm_id, &call, &actor, &device, "active",
-                                    "sfu", &session,
+                                    &base,
+                                    &api_token,
+                                    &realm_id,
+                                    &call,
+                                    &actor,
+                                    &device,
+                                    arkret_sdk::CallLifecycleState::Active,
+                                    &session,
                                 )
                                 .await;
                                 stage.set(CallStage::Active);
@@ -429,6 +399,11 @@ pub fn CallPanel(
                                     &actor,
                                     &device,
                                     call_seq,
+                                    Some(arkret_sdk::CallMediaSelection {
+                                        audio: true,
+                                        video: want_video,
+                                        screen: Some(false),
+                                    }),
                                     &signal_store,
                                 )
                                 .await;
@@ -760,8 +735,7 @@ pub fn CallPanel(
                                                         &call,
                                                         &actor,
                                                         &device,
-                                                        "connecting",
-                                                        "sfu",
+                                                        arkret_sdk::CallLifecycleState::Connecting,
                                                         &session,
                                                     )
                                                     .await
@@ -772,22 +746,22 @@ pub fn CallPanel(
                                                         stage.set(CallStage::Ended);
                                                         return;
                                                     }
-                                                    // Multi-device: the first device to
-                                                    // emit `answer` wins; the rest stop
-                                                    // ringing on `call_already_answered`.
-                                                    let _ = emit_signal(
-                                                        &base,
-                                                        &api_token,
-                                                        &realm_id,
-                                                        &call,
-                                                        &actor,
-                                                        &device,
-                                                        "answer",
-                                                        1,
-                                                        json!({ "accepted": true }),
-                                                        &signal_store,
-                                                    )
-                                                    .await;
+                                                    if let Ok(focus_id) = arkret_sdk::NonEmptyString::new(focus_id.clone()) {
+                                                        let _ = emit_signal(
+                                                            &base,
+                                                            &api_token,
+                                                            &realm_id,
+                                                            &call,
+                                                            &actor,
+                                                            &device,
+                                                            1,
+                                                            arkret_sdk::CallSignalData::FocusJoin(
+                                                                arkret_sdk::CallFocusSignalData { focus_id },
+                                                            ),
+                                                            &signal_store,
+                                                        )
+                                                        .await;
+                                                    }
                                                     let expected = expected_participant_set(
                                                         &known_participant_identities,
                                                         &session.participant_identity,
@@ -814,8 +788,7 @@ pub fn CallPanel(
                                                                 &call,
                                                                 &actor,
                                                                 &device,
-                                                                "active",
-                                                                "sfu",
+                                                                arkret_sdk::CallLifecycleState::Active,
                                                                 &session,
                                                             )
                                                             .await;
@@ -965,8 +938,16 @@ pub fn CallPanel(
                                         set_local_state(&mut participants, &actor, next, screen_sharing());
                                         emit_async(
                                             &base, &token(), &active_realm(), &active_call_id(),
-                                            &actor, &device, "mute_state",
-                                            json!({ "audio_muted": next, "video_muted": !camera_on(), "by": "self" }),
+                                            &actor, &device,
+                                            arkret_sdk::CallSignalData::MuteState(
+                                                arkret_sdk::CallMuteStateSignalData {
+                                                    audio_muted: next,
+                                                    video_muted: !camera_on(),
+                                                    changed_by: arkret_sdk::MuteChangedBy::SelfActor,
+                                                    target_actor_id: None,
+                                                    target_device_id: None,
+                                                },
+                                            ),
                                             call_seq,
                                             signal_store.clone(),
                                         );
@@ -1005,8 +986,16 @@ pub fn CallPanel(
                                         set_local_state(&mut participants, &actor, mic_muted(), next);
                                         emit_async(
                                             &base, &token(), &active_realm(), &active_call_id(),
-                                            &actor, &device, "media_state",
-                                            json!({ "screen": { "enabled": next } }),
+                                            &actor, &device,
+                                            arkret_sdk::CallSignalData::MediaState(
+                                                arkret_sdk::CallMediaStateSignalData {
+                                                    screen: Some(arkret_sdk::ScreenMediaState {
+                                                        enabled: next,
+                                                        source_id: None,
+                                                        with_audio: None,
+                                                    }),
+                                                },
+                                            ),
                                             call_seq,
                                             signal_store.clone(),
                                         );

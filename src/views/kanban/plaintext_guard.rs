@@ -1,3 +1,4 @@
+use arkret_sdk::EventPayloadExt as _;
 use serde_json::Value;
 
 use super::model::*;
@@ -28,16 +29,10 @@ pub(super) fn value_is_plaintext_private_content(value: &Value) -> bool {
     }
 }
 
-pub(super) fn patch_op_plaintext_value(value: &Value) -> bool {
-    if let Some(object) = value.as_object()
-        && object.get("$op").and_then(Value::as_str) == Some("unset")
-    {
-        return false;
-    }
-    value.get("value").map_or_else(
-        || value_is_plaintext_private_content(value),
-        value_is_plaintext_private_content,
-    )
+pub(super) fn patch_op_plaintext_value(operation: &arkret_sdk::PatchOp) -> bool {
+    operation
+        .value()
+        .is_some_and(value_is_plaintext_private_content)
 }
 
 pub(super) fn patch_value_contains_private_path(value: &Value, path: &str) -> bool {
@@ -50,46 +45,66 @@ pub(super) fn patch_value_contains_private_path(value: &Value, path: &str) -> bo
     value_is_plaintext_private_content(candidate)
 }
 
-pub(super) fn patch_touches_private_paths(payload: &Value, private_paths: &[&str]) -> bool {
-    payload
-        .get("patch")
-        .and_then(Value::as_object)
-        .is_some_and(|patch| {
-            patch.iter().any(|(key, value)| {
-                private_paths.iter().any(|private_path| {
-                    if key == private_path || key.starts_with(&format!("{private_path}.")) {
-                        patch_op_plaintext_value(value)
-                    } else if let Some(suffix) = private_path.strip_prefix(&format!("{key}.")) {
-                        patch_value_contains_private_path(value, suffix)
-                    } else {
-                        false
-                    }
-                })
-            })
+pub(super) fn patch_touches_private_paths(
+    patch: &arkret_sdk::Patch,
+    private_paths: &[&str],
+) -> bool {
+    patch.iter().any(|(key, operation)| {
+        private_paths.iter().any(|private_path| {
+            if key == private_path || key.starts_with(&format!("{private_path}.")) {
+                patch_op_plaintext_value(operation)
+            } else if let Some(suffix) = private_path.strip_prefix(&format!("{key}.")) {
+                operation
+                    .value()
+                    .is_some_and(|value| patch_value_contains_private_path(value, suffix))
+            } else {
+                false
+            }
         })
+    })
+}
+
+fn content_block_has_plaintext(block: &arkret_sdk::ContentBlock) -> bool {
+    !block.body.trim().is_empty() || !block.parts.is_empty() || !block.extra.is_empty()
+}
+
+fn strand_create_has_plaintext(payload: &arkret_sdk::StrandCreatePayload) -> bool {
+    if payload
+        .object
+        .body
+        .as_ref()
+        .is_some_and(content_block_has_plaintext)
+    {
+        return true;
+    }
+    let Some(metadata) = payload.object.metadata.as_ref() else {
+        return false;
+    };
+    ["body", "synthesis"].iter().any(|field| {
+        metadata
+            .fields
+            .get(*field)
+            .is_some_and(value_is_plaintext_private_content)
+    }) || metadata
+        .fields
+        .get("calendar")
+        .and_then(|calendar| calendar.get("location"))
+        .is_some_and(value_is_plaintext_private_content)
 }
 
 pub(super) fn kanban_event_carries_plaintext_private_content(event: &arkret_sdk::Event) -> bool {
-    let payload = serde_json::to_value(&event.payload).unwrap_or(Value::Null);
-    match event.kind.as_str() {
-        "ak.strand.create" => [
-            &["body"][..],
-            &["object", "body"][..],
-            &["synthesis"][..],
-            &["object", "synthesis"][..],
-            &["content"][..],
-            &["object", "content"][..],
-            &["attachments"][..],
-            &["object", "attachments"][..],
-            &["fields", "body"][..],
-            &["object", "fields", "body"][..],
-            &["fields", "synthesis"][..],
-            &["object", "fields", "synthesis"][..],
-        ]
-        .iter()
-        .any(|path| value_at_path(&payload, path).is_some_and(value_is_plaintext_private_content)),
-        "ak.strand.update" => {
-            patch_touches_private_paths(&payload, KANBAN_PRIVATE_STRAND_PATCH_PATHS)
+    match &event.kind {
+        arkret_sdk::EventKind::StrandCreate => {
+            let Ok(payload) = event.typed_payload::<arkret_wire::event_spec::StrandCreate>() else {
+                return true;
+            };
+            strand_create_has_plaintext(&payload)
+        }
+        arkret_sdk::EventKind::StrandUpdate => {
+            let Ok(payload) = event.typed_payload::<arkret_wire::event_spec::StrandUpdate>() else {
+                return true;
+            };
+            patch_touches_private_paths(&payload.patch, KANBAN_PRIVATE_STRAND_PATCH_PATHS)
         }
         _ => false,
     }
@@ -108,7 +123,10 @@ pub(super) fn kanban_event_carries_plaintext_private_content(event: &arkret_sdk:
 /// drop a container create/update, regardless of what
 /// `kanban_event_carries_plaintext_private_content` matches in the future. See
 /// _next.md X13.
-pub(super) const KANBAN_PLAINTEXT_METADATA_KINDS: &[&str] = &["ak.space.create", "ak.space.update"];
+pub(super) const KANBAN_PLAINTEXT_METADATA_KINDS: &[arkret_sdk::EventKind] = &[
+    arkret_sdk::EventKind::SpaceCreate,
+    arkret_sdk::EventKind::SpaceUpdate,
+];
 
 /// R4 fail-closed reason surfaced when the Realm security projection has not
 /// synced yet and we cannot prove the scope is plaintext. Mirrors the
@@ -139,7 +157,7 @@ pub(super) fn kanban_plaintext_block_reason(
             if !kanban_event_carries_plaintext_private_content(event) {
                 return None;
             }
-            if KANBAN_PLAINTEXT_METADATA_KINDS.contains(&event.kind.as_str()) {
+            if KANBAN_PLAINTEXT_METADATA_KINDS.contains(&event.kind) {
                 return None;
             }
             // NB: kept as a plain string (not `i18n::tr`) so this pure guard
@@ -156,7 +174,7 @@ pub(super) fn kanban_plaintext_block_reason(
             // Container scaffold writes (board/list title, kind, parent,
             // rank) are non-secret metadata and ALWAYS submit via the normal
             // plaintext event path even in an encrypted Realm. Never block.
-            if KANBAN_PLAINTEXT_METADATA_KINDS.contains(&event.kind.as_str()) {
+            if KANBAN_PLAINTEXT_METADATA_KINDS.contains(&event.kind) {
                 return None;
             }
             kanban_plaintext_block_reason_for_kind(true, event.kind.as_str())

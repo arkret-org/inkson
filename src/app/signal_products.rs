@@ -133,12 +133,15 @@ impl AppSignalProductSink {
         let Some(api) = self.authenticated_api() else {
             return false;
         };
+        let Ok(resource_realm_id) = arkret_sdk::RealmId::new(realm_id.to_owned()) else {
+            return false;
+        };
         let allowed = match api.sdk_http_client() {
             Ok(http) => crate::transport::realm_read::authz_check_resource(
                 &http,
                 plaintext.actor_id.as_str(),
                 action,
-                Some(serde_json::json!({"kind": "realm", "realm_id": realm_id})),
+                Some(arkret_sdk::WireResourceSelector::realm(resource_realm_id)),
             )
             .await
             .is_ok_and(|outcome| crate::transport::realm_read::authz_allowed(&outcome)),

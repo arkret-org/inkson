@@ -1156,7 +1156,7 @@ fn target_notary_value(
     let genesis_events = bundle
         .frontier_events
         .iter()
-        .filter(|event| event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE)
+        .filter(|event| event.kind == arkret_sdk::EventKind::RealmCreate)
         .collect::<Vec<_>>();
     if genesis_events.len() > 1 {
         return Err("MLS governance proof contains multiple Realm genesis Events".to_owned());
@@ -1195,7 +1195,7 @@ fn managed_agent_pcr_delegated_controller(
         .frontier_events
         .iter()
         .filter(|event| {
-            event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE
+            event.kind == arkret_sdk::EventKind::RealmCreate
                 && event.executed_by.is_some()
                 && event
                     .payload
@@ -1397,7 +1397,7 @@ mod tests {
     }
 
     fn frontier_event(actor: &str) -> arkret_sdk::Event {
-        arkret_sdk::Event::new(
+        arkret_wire::test_support::raw_event(
             "ak.member.state",
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(

@@ -284,7 +284,9 @@ pub fn prepare_genesis_draft(
         )?;
         unit.validate_ordered_envelopes()?;
         initial.validate()?;
-        let create_payload: arkret_sdk::RealmCreatePayload = unit.create().payload_as()?;
+        let create_payload = unit
+            .create()
+            .typed_payload::<arkret_sdk::event_spec::RealmCreate>()?;
         let descriptor = create_payload
             .object
             .founding_device_descriptor

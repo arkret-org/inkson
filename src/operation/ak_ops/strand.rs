@@ -3,9 +3,9 @@
 use serde_json::{Value, json};
 
 use super::{
-    OperationBuilder, object_lifecycle_payload_value, patch_from_value, strand_move_payload_value,
-    strand_object_patch_payload_value, strand_reorder_payload_value,
-    strand_tracks_update_payload_value, strand_watch_set_payload_value,
+    TypedOperationBuilder, patch_from_value, strand_id_value, strand_move_payload,
+    strand_object_patch_payload, strand_reorder_payload, strand_tracks_update_payload,
+    strand_watch_set_payload,
 };
 
 /// Build a `ak.strand.watch.set` operation. Spec:
@@ -30,18 +30,19 @@ pub fn strand_watch_set(
     strand_id: &str,
     level: Option<&str>,
     level_public: Option<bool>,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     // Strong type: strand_watch_set_payload (additionalProperties:false +
     // allOf forbidding level_public when level is null). The typed
     // constructors keep the clear path (level:null) free of level_public.
-    let payload = strand_watch_set_payload_value(strand_id, target_actor_id, level, level_public)?;
-    Ok(OperationBuilder::new(
-        realm_id,
-        sender_actor,
-        arkret_sdk::EventKind::StrandWatchSet,
+    let payload = strand_watch_set_payload(strand_id, target_actor_id, level, level_public)?;
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandWatchSet>(
+            realm_id,
+            sender_actor,
+            payload,
+        )
+        .target_ref(strand_id),
     )
-    .target_ref(strand_id)
-    .body(payload))
 }
 
 /// Build a `ak.strand.tracks.update` operation. Spec:
@@ -66,12 +67,15 @@ pub fn strand_tracks_update(
     actor: &str,
     strand_id: &str,
     patch: serde_json::Value,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let patch = patch_from_value(patch)?;
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::StrandTracksUpdate)
-            .target_ref(strand_id)
-            .body(strand_tracks_update_payload_value(strand_id, patch)?),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandTracksUpdate>(
+            realm_id,
+            actor,
+            strand_tracks_update_payload(strand_id, patch)?,
+        )
+        .target_ref(strand_id),
     )
 }
 
@@ -83,7 +87,7 @@ pub fn strand_tracks_update_enable(
     actor: &str,
     strand_id: &str,
     track: &str,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let key = format!("tracks.{track}.enabled");
     let patch = json!({ key: { "$op": "set", "value": true } });
     strand_tracks_update(realm_id, actor, strand_id, patch)
@@ -95,7 +99,7 @@ pub fn strand_tracks_update_disable(
     actor: &str,
     strand_id: &str,
     track: &str,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let key = format!("tracks.{track}.enabled");
     let patch = json!({ key: { "$op": "set", "value": false } });
     strand_tracks_update(realm_id, actor, strand_id, patch)
@@ -109,7 +113,7 @@ pub fn strand_tracks_update_disable_primary(
     strand_id: &str,
     current_primary: &str,
     replacement_primary: &str,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     if current_primary == replacement_primary {
         anyhow::bail!("replacement primary track must differ from the disabled track");
     }
@@ -138,7 +142,7 @@ pub fn strand_tracks_update_set_primary(
     actor: &str,
     strand_id: &str,
     track: &str,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let key = format!("tracks.{track}.is_primary");
     let patch = json!({ key: { "$op": "set", "value": true } });
     strand_tracks_update(realm_id, actor, strand_id, patch)
@@ -154,11 +158,14 @@ pub fn strand_archive(
     realm_id: &str,
     actor: &str,
     strand_id: &str,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::StrandArchive)
-            .target_ref(strand_id)
-            .body(object_lifecycle_payload_value(strand_id)?),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandArchive>(
+            realm_id,
+            actor,
+            arkret_sdk::ObjectLifecyclePayload::new(strand_id_value(strand_id)?.as_str()),
+        )
+        .target_ref(strand_id),
     )
 }
 
@@ -170,11 +177,14 @@ pub fn strand_restore(
     realm_id: &str,
     actor: &str,
     strand_id: &str,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::StrandRestore)
-            .target_ref(strand_id)
-            .body(object_lifecycle_payload_value(strand_id)?),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandRestore>(
+            realm_id,
+            actor,
+            arkret_sdk::ObjectLifecyclePayload::new(strand_id_value(strand_id)?.as_str()),
+        )
+        .target_ref(strand_id),
     )
 }
 
@@ -187,12 +197,15 @@ pub fn strand_update_patch(
     actor: &str,
     strand_id: &str,
     patch: serde_json::Value,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let patch = patch_from_value(patch)?;
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::StrandUpdate)
-            .target_ref(strand_id)
-            .body(strand_object_patch_payload_value(strand_id, patch)?),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandUpdate>(
+            realm_id,
+            actor,
+            strand_object_patch_payload(strand_id, patch)?,
+        )
+        .target_ref(strand_id),
     )
 }
 
@@ -203,7 +216,7 @@ pub fn strand_position_update(
     actor: &str,
     strand_id: &str,
     position_value: Value,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     strand_update_patch(
         realm_id,
         actor,
@@ -226,7 +239,7 @@ pub fn strand_position_cas_update(
     strand_id: &str,
     expected_position: Value,
     effect_position: Value,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let position_field = |value: &Value, field: &str| {
         value
             .get(field)
@@ -256,7 +269,7 @@ pub fn strand_position_cas_update(
     // optional from_space_id / expected_position CAS hints.
     match kind {
         "ak.strand.reorder" => {
-            let payload = strand_reorder_payload_value(
+            let payload = strand_reorder_payload(
                 board_space_id,
                 strand_id,
                 &effect_space,
@@ -264,9 +277,10 @@ pub fn strand_position_cas_update(
                 expected_rank.as_deref(),
             )?;
             Ok(
-                OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::StrandReorder)
-                    .target_ref(strand_id)
-                    .body(payload),
+                TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandReorder>(
+                    realm_id, actor, payload,
+                )
+                .target_ref(strand_id),
             )
         }
         _ => {
@@ -276,7 +290,7 @@ pub fn strand_position_cas_update(
                 (Some(space), Some(rank)) => Some((Some(space), Some(rank))),
                 _ => None,
             };
-            let payload = strand_move_payload_value(
+            let payload = strand_move_payload(
                 board_space_id,
                 strand_id,
                 &effect_space,
@@ -285,9 +299,10 @@ pub fn strand_position_cas_update(
                 expected,
             )?;
             Ok(
-                OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::StrandMove)
-                    .target_ref(strand_id)
-                    .body(payload),
+                TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandMove>(
+                    realm_id, actor, payload,
+                )
+                .target_ref(strand_id),
             )
         }
     }

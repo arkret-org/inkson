@@ -183,6 +183,7 @@ mod native {
 
 pub use native::LocalMlsDevice;
 
+#[cfg(test)]
 pub fn compose_local_encrypted_message(
     principal_id: &str,
     device_id: &str,
@@ -193,6 +194,7 @@ pub fn compose_local_encrypted_message(
     compose_local_encrypted_message_inner(principal_id, device_id, realm_id, message_id, body)
 }
 
+#[cfg(test)]
 fn compose_local_encrypted_message_inner(
     principal_id: &str,
     device_id: &str,

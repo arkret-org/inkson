@@ -661,7 +661,7 @@ pub fn collect_realm_key_share_messages_for_realm(
                 .get("kind")
                 .or_else(|| message.get("type"))
                 .and_then(|t| t.as_str())
-                == Some(arkret_sdk::EventKind::REALM_KEY_SHARE)
+                == Some(arkret_sdk::EventKind::RealmKeyShare.as_str())
         })
         .filter(|message| realm_key_share_message_realm_id(message).as_deref() == Some(realm_id))
         .cloned()

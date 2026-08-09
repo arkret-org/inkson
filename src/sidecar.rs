@@ -1308,7 +1308,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
             let arkret_wire::ScopeRef::Circle { circle_id, .. } = &event.scope_ref else {
                 continue;
             };
-            let kind = event.kind.as_str();
+            let kind = &event.kind;
             let Some(strand_id) = event
                 .payload
                 .get("strand_id")
@@ -1326,7 +1326,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
             let Ok(event_digest) = event.event_digest() else {
                 continue;
             };
-            if kind == arkret_sdk::EventKind::MESSAGE_CREATE {
+            if kind == &arkret_sdk::EventKind::MessageCreate {
                 // The accepted request Event's complete envelope carries the
                 // canonical digest, actor_seq, and top-level HLC. The authoring
                 // device may be unable to decrypt its own metadata, so upgrade
@@ -1409,7 +1409,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                         );
                     }
                 }
-            } else if kind == arkret_sdk::EventKind::AGENT_SIDECAR_EXCHANGE_CONTROL {
+            } else if kind == &arkret_sdk::EventKind::AgentSidecarExchangeControl {
                 let Some(encrypted_payload) = event.payload.get("encrypted_payload") else {
                     continue;
                 };
@@ -2218,8 +2218,8 @@ mod tests {
         .unwrap();
         let mut metadata = arkret_sdk::MessageMetadata::default();
         metadata.set_sidecar_exchange_binding(&binding).unwrap();
-        let mut event = arkret_sdk::Event::new(
-            arkret_sdk::EventKind::MESSAGE_CREATE,
+        let mut event = arkret_wire::test_support::raw_event(
+            arkret_sdk::EventKind::MessageCreate,
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
@@ -2407,8 +2407,8 @@ mod tests {
         .unwrap();
         let mut metadata = arkret_sdk::MessageMetadata::default();
         metadata.set_sidecar_exchange_binding(&binding).unwrap();
-        let mut event = arkret_sdk::Event::new(
-            arkret_sdk::EventKind::MESSAGE_CREATE,
+        let mut event = arkret_wire::test_support::raw_event(
+            arkret_sdk::EventKind::MessageCreate,
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
@@ -2520,8 +2520,8 @@ mod tests {
             arkret_sdk::AgentSidecarExchangeStatus::Responding
         );
 
-        let mut control_event = arkret_sdk::Event::new(
-            arkret_sdk::EventKind::AGENT_SIDECAR_EXCHANGE_CONTROL,
+        let mut control_event = arkret_wire::test_support::raw_event(
+            arkret_sdk::EventKind::AgentSidecarExchangeControl,
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
@@ -2611,8 +2611,8 @@ mod tests {
         .unwrap();
         let mut metadata = arkret_sdk::MessageMetadata::default();
         metadata.set_sidecar_exchange_binding(&binding).unwrap();
-        let mut event = arkret_sdk::Event::new(
-            arkret_sdk::EventKind::MESSAGE_CREATE,
+        let mut event = arkret_wire::test_support::raw_event(
+            arkret_sdk::EventKind::MessageCreate,
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
@@ -2677,8 +2677,8 @@ mod tests {
         record_accepted_sidecar_exchange_request(&mut store, &pending, EXCHANGE_REQUEST_EVENT)
             .unwrap();
 
-        let mut event = arkret_sdk::Event::new(
-            arkret_sdk::EventKind::MESSAGE_CREATE,
+        let mut event = arkret_wire::test_support::raw_event(
+            arkret_sdk::EventKind::MessageCreate,
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },

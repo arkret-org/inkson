@@ -142,43 +142,46 @@ fn approved_actions_from_plan(
     Ok(approved.into_iter().collect())
 }
 
-fn operation_builder_for_scope(
+fn operation_builder_for_scope<K: arkret_sdk::EventSpec>(
     scope: &ScopeRef,
     actor_id: &str,
-    kind: arkret_sdk::events::kinds::EventKind,
-) -> crate::operation::OperationBuilder {
+    payload: K::Payload,
+) -> crate::operation::TypedOperationBuilder {
     match scope {
-        ScopeRef::Realm { realm_id } => {
-            crate::operation::OperationBuilder::new(realm_id.to_string(), actor_id, kind)
-        }
+        ScopeRef::Realm { realm_id } => crate::operation::TypedOperationBuilder::new::<K>(
+            realm_id.to_string(),
+            actor_id,
+            payload,
+        ),
         ScopeRef::Circle {
             realm_id,
             circle_id,
-        } => crate::operation::OperationBuilder::new(realm_id.to_string(), actor_id, kind)
-            .circle_id(circle_id.to_string()),
+        } => crate::operation::TypedOperationBuilder::new::<K>(
+            realm_id.to_string(),
+            actor_id,
+            payload,
+        )
+        .circle_id(circle_id.to_string()),
         _ => unreachable!("Applet install schema only permits Realm and Circle scopes"),
     }
 }
 
 fn applet_install_resource(scope: &ScopeRef) -> anyhow::Result<arkret_sdk::WireResourceSelector> {
-    let value = match scope {
-        ScopeRef::Realm { realm_id } => serde_json::json!({
-            "kind": "realm",
-            "realm_id": realm_id,
-        }),
+    let selector = match scope {
+        ScopeRef::Realm { realm_id } => arkret_sdk::WireResourceSelector::realm(realm_id.clone()),
         ScopeRef::Circle {
             realm_id,
             circle_id,
-        } => serde_json::json!({
-            "kind": "circle",
-            "realm_id": realm_id,
-            "circle_id": circle_id,
-            "match_scope": "exact",
-        }),
+        } => {
+            let mut selector =
+                arkret_sdk::WireResourceSelector::circle(realm_id.clone(), circle_id.clone());
+            selector.match_scope = Some(arkret_sdk::ResourceMatchScope::Exact);
+            selector
+        }
         _ => anyhow::bail!("Applet install schema only permits Realm and Circle scopes"),
     };
-    serde_json::from_value(value)
-        .map_err(|error| anyhow::anyhow!("encode Applet grant resource selector: {error}"))
+    selector.validate()?;
+    Ok(selector)
 }
 
 fn build_formal_applet_install_events(
@@ -198,18 +201,19 @@ fn build_formal_applet_install_events(
         }
         _ => anyhow::bail!("preview must contain exactly one Applet registration payload"),
     };
-    let registration = operation_builder_for_scope(
+    let registration_payload =
+        serde_json::from_value::<arkret_sdk::AppletRegistrationPayload>(Value::Object(
+            registration_submission
+                .payload
+                .clone()
+                .into_iter()
+                .collect(),
+        ))?;
+    let registration = operation_builder_for_scope::<arkret_sdk::event_spec::AppletRegistration>(
         &snapshot.effective_scope,
         actor_id,
-        arkret_sdk::EventKind::AppletRegistration,
+        registration_payload,
     )
-    .body(Value::Object(
-        registration_submission
-            .payload
-            .clone()
-            .into_iter()
-            .collect(),
-    ))
     .build_sdk_event("inkson")?;
 
     let actions = approved_actions_from_plan(&snapshot.plan, &snapshot.package)?;
@@ -253,12 +257,11 @@ fn build_formal_applet_install_events(
         };
         let payload = arkret_sdk::CapabilityGrantPayload { grant };
         grant_events.push(
-            operation_builder_for_scope(
+            operation_builder_for_scope::<arkret_sdk::event_spec::CapabilityGrant>(
                 &snapshot.effective_scope,
                 actor_id,
-                arkret_sdk::EventKind::CapabilityGrant,
+                payload,
             )
-            .body(serde_json::to_value(payload)?)
             .build_sdk_event("inkson")?,
         );
     }

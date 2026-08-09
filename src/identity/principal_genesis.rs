@@ -25,31 +25,28 @@ pub fn build_founding_authorize_payload(
     created_at: DateTime<Utc>,
     signer: &crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<arkret_sdk::DeviceAuthorizePayload> {
-    let mut payload = arkret_sdk::DeviceAuthorizePayload {
-        principal_id: principal_id.clone(),
+    let payload = arkret_sdk::UnsignedDeviceAuthorizePayload::new(
+        principal_id.clone(),
         device_id,
-        device_public_key: non_empty(device_public_key)?,
-        hpke_key: non_empty(hpke_key)?,
-        algorithms: algorithms()?,
-        device_key_algorithm: Some(non_empty("Ed25519".to_owned())?),
-        authorized_by: arkret_sdk::DeviceOrPrincipalRef::Did(principal_id),
-        scopes: None,
-        not_before: created_at,
-        expires_at: None,
-        authorization_binding_kind: arkret_sdk::DeviceAuthorizationBindingKind::RootAnchored,
-        // The signature is excluded from its own canonical possession input.
-        device_signature: arkret_sdk::SignatureMaterial::NonEmptyString(non_empty(
-            "pending".to_owned(),
-        )?),
-        recovery_session_id: None,
-    };
+        non_empty(device_public_key)?,
+        non_empty(hpke_key)?,
+        algorithms()?,
+        Some(non_empty("Ed25519".to_owned())?),
+        arkret_sdk::DeviceOrPrincipalRef::Did(principal_id),
+        None,
+        created_at,
+        None,
+        arkret_sdk::DeviceAuthorizationBindingKind::RootAnchored,
+        None,
+    )?;
     let signature = signer
         .sign_raw(&payload.device_possession_signature_input()?)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    payload.device_signature = arkret_sdk::SignatureMaterial::NonEmptyString(non_empty(
-        URL_SAFE_NO_PAD.encode(signature),
-    )?);
-    Ok(payload)
+    payload
+        .attach_signature(arkret_sdk::Base64UrlString::new(
+            URL_SAFE_NO_PAD.encode(signature),
+        )?)
+        .map_err(anyhow::Error::from)
 }
 
 pub fn founding_descriptor(
@@ -138,17 +135,14 @@ pub fn build_genesis_unit(
         arkret_sdk::signatures::SignEventOptions::new().with_created_at(created_at),
     )?;
 
-    let mut authorize = arkret_sdk::Event::new_at(
-        arkret_sdk::EventKind::DEVICE_AUTHORIZE,
-        arkret_sdk::ScopeRef::Realm { realm_id },
-        principal_id,
-        1,
-        authorize_hlc,
-        serde_json::to_value(payload)?,
-        created_at,
-    )?;
-    authorize.prev_refs = vec![create.event_id.clone()];
-    authorize.refresh_content_bound_identity()?;
+    let mut authorize =
+        arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::DeviceAuthorize>::new(
+            arkret_sdk::ScopeRef::Realm { realm_id },
+            principal_id,
+            payload,
+        )?
+        .with_prev_refs(vec![create.event_id.clone()])
+        .author(1, authorize_hlc, created_at)?;
     device_signer
         .sign_sdk_event_with_context(
             &mut authorize,

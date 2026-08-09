@@ -115,10 +115,9 @@ impl InviteTerminalState {
 /// Assemble a `ak.invite.claim` event body carrying the verification-service
 /// `binding_proof` and subject-signed SDK [`arkret_sdk::InviteSubjectProof`].
 ///
-/// Returns the raw JSON body for the caller to wrap with
-/// [`crate::operation::OperationBuilder::build_sdk_event`] and submit through
-/// [`crate::transport::TransportClient::submit_sdk_event`].
-pub fn build_invite_claim_body(
+/// Returns the SDK payload bound to `ak.invite.claim`; callers author it with
+/// `TypedOperationBuilder::new::<event_spec::InviteClaim>`.
+pub fn build_invite_claim_payload(
     invite_id: &str,
     realm_id: &str,
     subject_id: &str,
@@ -128,7 +127,7 @@ pub fn build_invite_claim_body(
     verification_service_id: &str,
     subject_signing_key: &SigningKey,
     subject_verification_method: &str,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<arkret_sdk::InviteClaimPayload> {
     let binding_proof_digest = arkret_sdk::canonical::canonical_sha256(binding_proof)?;
     let proof_body = arkret_sdk::InviteSubjectProofBody::from_wire_parts(
         subject_id,
@@ -147,14 +146,17 @@ pub fn build_invite_claim_body(
         proof_body.transcript_digest()?,
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sig.to_bytes()),
     );
-    Ok(json!({
-        "invite_id": invite_id,
-        "subject_id": subject_id,
-        "token_commitment": token_commitment,
-        "claim_nonce": claim_nonce,
-        "subject_proof": subject_proof,
-        "binding_proof": binding_proof,
-    }))
+    let payload = arkret_sdk::InviteClaimPayload {
+        invite_id: arkret_sdk::InviteId::new(invite_id.to_owned())?,
+        subject_id: arkret_sdk::Did::new(subject_id.to_owned())?,
+        token_commitment: arkret_sdk::Hash::new(token_commitment.to_owned())?,
+        claim_nonce: claim_nonce.to_owned(),
+        binding_proof: serde_json::from_value(binding_proof.clone())?,
+        subject_proof,
+        extensions: Default::default(),
+    };
+    payload.validate()?;
+    Ok(payload)
 }
 
 #[cfg(test)]
@@ -205,7 +207,7 @@ mod tests {
     }
 
     #[test]
-    fn build_invite_claim_body_round_trips_proof() {
+    fn build_invite_claim_payload_round_trips_proof() {
         let signing_key = deterministic_signing_key(7);
         let binding_proof = json!({
             "verification_service_id": "did:web:verify.example",
@@ -217,7 +219,7 @@ mod tests {
             "expires_at": "2099-01-01T00:00:00.000Z",
             "signature": "binding-signature"
         });
-        let body = build_invite_claim_body(
+        let body = build_invite_claim_payload(
             "ak:invite:AfUeGRE3CFApB-5spxARHjovex9S5j5RWL8mAUSkpOMS",
             "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
             "did:web:alice.example",
@@ -242,20 +244,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            body["subject_proof"]["verification_method"],
+            body.subject_proof.verification_method.as_str(),
             "did:web:alice.example#device-0001"
         );
-        assert_eq!(body["subject_proof"]["signature_algorithm"], "Ed25519");
+        assert_eq!(body.subject_proof.signature_algorithm, "Ed25519");
         assert_eq!(
-            body["subject_proof"]["transcript_digest"],
-            expected_transcript_digest.as_str()
+            body.subject_proof.transcript_digest,
+            expected_transcript_digest
         );
-        assert!(
-            body["subject_proof"]["signature"]
-                .as_str()
-                .map(|s| !s.is_empty())
-                .unwrap_or(false)
-        );
-        assert_eq!(body["binding_proof"]["audience"], "arkret.invite.claim");
+        assert!(!body.subject_proof.signature.is_empty());
+        assert_eq!(body.binding_proof.audience, "arkret.invite.claim");
     }
 }

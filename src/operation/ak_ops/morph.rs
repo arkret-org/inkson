@@ -5,7 +5,7 @@
 //! `ak.morph.update` patch builder is retained for the Morph patch payload
 //! family.
 
-use super::{OperationBuilder, morph_update_payload_value, patch_from_value};
+use super::{TypedOperationBuilder, morph_id_value, patch_from_value};
 
 /// Build a `ak.morph.update` patch operation. Mirrors
 /// [`strand_update_patch`](super::strand_update_patch) for Morph objects;
@@ -16,11 +16,11 @@ pub fn morph_update_patch(
     actor: &str,
     morph_id: &str,
     patch: serde_json::Value,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let patch = patch_from_value(patch)?;
+    let payload = arkret_sdk::MorphUpdatePayload::for_morph(morph_id_value(morph_id)?, patch)?;
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MorphUpdate)
-            .target_ref(morph_id)
-            .body(morph_update_payload_value(morph_id, patch)?),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::MorphUpdate>(realm_id, actor, payload)
+            .target_ref(morph_id),
     )
 }

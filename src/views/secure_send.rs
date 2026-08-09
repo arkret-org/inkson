@@ -24,7 +24,7 @@
 
 use dioxus::prelude::*;
 
-use crate::operation::{OperationBuilder, sdk_event_local_operation_id};
+use crate::operation::sdk_event_local_operation_id;
 use crate::state::{LocalSealView, LocalStateStore, MoveSubmissionState};
 
 /// The structured MLS payload + the canonical AAD it was bound to.
@@ -93,7 +93,7 @@ pub(crate) fn run_local_mls_encrypt(
         principal_id,
         device_id,
         arkret_sdk::MESSAGE_CONTENT_BLOCK_MLS_CONTENT_TYPE,
-        arkret_sdk::EventKind::MESSAGE_CREATE,
+        arkret_sdk::EventKind::MessageCreate,
         plaintext_bytes,
         metadata_plaintext_bytes.map(|_| arkret_sdk::MESSAGE_METADATA_MLS_CONTENT_TYPE),
         metadata_plaintext_bytes,
@@ -348,13 +348,10 @@ pub(crate) fn build_secure_send(
     if let Some(expiry) = expiry {
         message_payload = message_payload.with_expiry(expiry);
     }
-    let msg_payload_value = message_payload
-        .to_value()
-        .map_err(|err| format!("Send Secure payload encode failed: {err}"))?;
-    let message_envelope =
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MessageCreate)
-            .body(msg_payload_value)
-            .build_sdk_event("inkson");
+    let message_envelope = crate::operation::TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::MessageCreate,
+    >(realm_id, actor, message_payload)
+    .build_sdk_event("inkson");
 
     let commit_event = commit_envelope;
     let mut message_event = message_envelope
@@ -411,7 +408,7 @@ pub(crate) fn build_sidecar_exchange_control_send(
         actor,
         device_id,
         "application/vnd.arkret.agent-sidecar-exchange-control+json",
-        arkret_sdk::EventKind::AGENT_SIDECAR_EXCHANGE_CONTROL,
+        arkret_sdk::EventKind::AgentSidecarExchangeControl,
         &plaintext,
         None,
         None,
@@ -485,17 +482,11 @@ pub(crate) fn build_sidecar_exchange_control_send(
         .iter()
         .map(|event_id| arkret_sdk::EventRef::new(event_id.to_string(), "after"))
         .collect();
-    let mut control_event = OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::EventKind::AgentSidecarExchangeControl,
-    )
+    let mut control_event = crate::operation::TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::AgentSidecarExchangeControl,
+    >(realm_id, actor, payload)
     .circle_id(circle_id)
     .refs(refs)
-    .body(
-        serde_json::to_value(payload)
-            .map_err(|error| format!("Sidecar close payload encode failed: {error}"))?,
-    )
     .build_sdk_event("inkson")
     .map_err(|error| format!("Sidecar close SDK Event conversion failed: {error}"))?;
     control_event.scope_ref = circle_effective_scope(realm_id, circle_id)?;

@@ -57,7 +57,7 @@ fn golden_event(
     created_at: &str,
     payload: serde_json::Value,
 ) -> arkret_sdk::Event {
-    let mut event = arkret_sdk::Event::new(
+    let mut event = arkret_wire::test_support::raw_event(
         kind,
         arkret_sdk::ScopeRef::Realm {
             realm_id: golden_realm_id(),
@@ -77,7 +77,7 @@ fn golden_event(
 fn client_core_message_decode_golden_matches_inkson_ingest() {
     let create = golden_event(
         "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z",
-        arkret_sdk::EventKind::MESSAGE_CREATE,
+        arkret_sdk::EventKind::MessageCreate,
         1,
         "2026-07-08T00:00:00.000Z",
         serde_json::json!({
@@ -88,7 +88,7 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
     );
     let reaction = golden_event(
         "ak:event:AbHexNOxiiU334tA-ZHyM5pRxJxbMY0jvwlMVDY3Xjrz",
-        arkret_sdk::EventKind::REACTION_ADD,
+        arkret_sdk::EventKind::ReactionAdd,
         2,
         "2026-07-08T00:00:01.000Z",
         serde_json::json!({

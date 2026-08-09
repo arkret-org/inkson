@@ -2,7 +2,7 @@
 
 use serde_json::json;
 
-use super::OperationBuilder;
+use super::TypedOperationBuilder;
 
 pub fn invite_create_structured(
     realm_id: &str,
@@ -11,7 +11,7 @@ pub fn invite_create_structured(
     role: Option<&str>,
     invite_delivery_target: arkret_sdk::InviteDeliveryTarget,
     introduction_evidence_digest: &str,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     // Strong `invite_payload` (directed-create anyOf branch). The id /
     // digest strings are parsed into SDK newtypes so malformed wire is a
     // build-time error, and `x_role` is carried via the typed extension
@@ -32,17 +32,16 @@ pub fn invite_create_structured(
             .with_extension("role", json!(role))
             .map_err(|err| anyhow::anyhow!("invalid invite extension: {err}"))?;
     }
-    let body = payload
-        .to_value()
-        .map_err(|err| anyhow::anyhow!("invite create payload: {err}"))?;
-    Ok(OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::InviteCreate).body(body))
+    Ok(TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::InviteCreate,
+    >(realm_id, actor, payload))
 }
 
 pub fn invite_accept(
     realm_id: &str,
     actor: &str,
     invite_id: &str,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let invite_id_typed = arkret_sdk::InviteId::new(invite_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invite_id not canonical {invite_id:?}: {err}"))?;
     let payload = arkret_sdk::InviteAcceptPayload {
@@ -52,11 +51,11 @@ pub fn invite_accept(
         extensions: Default::default(),
     };
     payload.validate()?;
-    let body = serde_json::to_value(payload)?;
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::InviteAccept)
-            .target_ref(invite_id.to_string())
-            .body(body),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::InviteAccept>(
+            realm_id, actor, payload,
+        )
+        .target_ref(invite_id.to_string()),
     )
 }
 
@@ -75,7 +74,7 @@ pub fn invite_cancel(
     invitee: &str,
     target_state: &str,
     reason: Option<&str>,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     if !matches!(target_state, "rejected" | "revoked") {
         anyhow::bail!(
             "ak.invite.cancel target_state must be rejected or revoked, got {target_state:?}"
@@ -95,11 +94,11 @@ pub fn invite_cancel(
     if let Some(reason) = reason {
         payload = payload.with_reason(reason);
     }
-    let body = payload.to_value()?;
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::InviteCancel)
-            .target_ref(invite_id_ref)
-            .body(body),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::InviteCancel>(
+            realm_id, actor, payload,
+        )
+        .target_ref(invite_id_ref),
     )
 }
 
@@ -113,7 +112,7 @@ pub fn invite_revoke(
     invitee: Option<&str>,
     target_state: &str,
     reason_code: &str,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     if !matches!(
         target_state,
         "revoked"
@@ -150,10 +149,10 @@ pub fn invite_revoke(
         target_state,
         reason: Some(reason_code.to_owned()),
     };
-    let body = serde_json::to_value(payload)?;
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::InviteRevoke)
-            .target_ref(invite_id_ref)
-            .body(body),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::InviteRevoke>(
+            realm_id, actor, payload,
+        )
+        .target_ref(invite_id_ref),
     )
 }

@@ -83,12 +83,10 @@ fn restore_managed_agent_pcr_history_with_recovery_key(
     {
         return Err(anyhow!("managed Agent PCR backup recovery policy mismatch"));
     }
-    let opened =
+    let typed_plaintext =
         crate::key_backup::open_recovery_public_key_backup_body(recovery_private_key, &body)?;
-    let plaintext: Value = serde_json::from_slice(&opened)
-        .map_err(|error| anyhow!("decode managed Agent PCR plaintext keybag: {error}"))?;
-    crate::key_backup::validate_key_backup_plaintext_binding(&body, &plaintext)
-        .map_err(anyhow::Error::msg)?;
+    let typed_envelope = serde_json::from_value::<arkret_sdk::KeyBackup>(body.clone())?;
+    typed_plaintext.validate_for_envelope(&typed_envelope)?;
 
     struct RestoredState {
         realm_id: String,
@@ -99,35 +97,25 @@ fn restore_managed_agent_pcr_history_with_recovery_key(
         salt: [u8; 16],
     }
     let mut decoded = Vec::new();
-    for item in plaintext
-        .get("items")
-        .and_then(Value::as_array)
-        .ok_or_else(|| anyhow!("managed Agent PCR plaintext items are missing"))?
-    {
-        if item.get("item_kind").and_then(Value::as_str) != Some("mls_group_state") {
+    for item in &typed_plaintext.items {
+        if item.item_kind != "mls_group_state" {
             continue;
         }
         let realm_id = item
-            .get("realm_id")
-            .and_then(Value::as_str)
+            .realm_id
+            .as_ref()
             .ok_or_else(|| anyhow!("managed recovery MLS item has no realm_id"))?
-            .to_owned();
+            .to_string();
         let group_id = item
-            .get("mls_group_id")
-            .and_then(Value::as_str)
+            .mls_group_id
+            .as_ref()
             .ok_or_else(|| anyhow!("managed recovery MLS item has no mls_group_id"))?
-            .to_owned();
+            .clone();
         let epoch = item
-            .get("epoch")
-            .and_then(Value::as_u64)
+            .epoch
             .ok_or_else(|| anyhow!("managed recovery MLS item has no epoch"))?;
         let state_bytes = B64
-            .decode(
-                item.get("secret_b64u")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow!("managed recovery MLS item has no secret_b64u"))?
-                    .as_bytes(),
-            )
+            .decode(item.secret_b64u.as_bytes())
             .map_err(|error| anyhow!("decode managed recovery MLS state: {error}"))?;
         let record =
             crate::mls::persistence::MlsSnapshotEnvelope::restore_state_record(&state_bytes)
@@ -137,22 +125,15 @@ fn restore_managed_agent_pcr_history_with_recovery_key(
                 "managed recovery MLS state record metadata does not match its keybag item"
             ));
         }
-        let owner_id = if let Some(binding) = item.get("managed_principal_binding") {
-            if binding.get("controller_id").and_then(Value::as_str) != Some(actor_id)
-                || binding
-                    .get("principal_control_realm_id")
-                    .and_then(Value::as_str)
-                    != Some(realm_id.as_str())
+        let owner_id = if let Some(binding) = &item.managed_principal_binding {
+            if binding.controller_id.as_str() != actor_id
+                || binding.principal_control_realm_id.as_str() != realm_id
             {
                 return Err(anyhow!(
                     "managed recovery binding does not match controller or PCR"
                 ));
             }
-            binding
-                .get("managed_principal_id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("managed recovery binding has no principal id"))?
-                .to_owned()
+            binding.managed_principal_id.to_string()
         } else {
             actor_id.to_owned()
         };
@@ -767,16 +748,17 @@ async fn verify_active_series_range_completeness(
             });
             continue;
         }
-        let payload =
-            match attestation_event.payload_as::<arkret_sdk::RangeCompletenessAttestation>() {
-                Ok(payload) => payload,
-                Err(error) => {
-                    first_error.get_or_insert_with(|| {
-                        format!("decode active-series range-completeness payload: {error}")
-                    });
-                    continue;
-                }
-            };
+        let payload = match attestation_event
+            .typed_payload::<arkret_sdk::event_spec::AttestationRangeCompleteness>()
+        {
+            Ok(payload) => payload,
+            Err(error) => {
+                first_error.get_or_insert_with(|| {
+                    format!("decode active-series range-completeness payload: {error}")
+                });
+                continue;
+            }
+        };
         if payload.issuer != describe.service_id
             || attestation_event.actor_id != describe.service_id
         {
@@ -815,12 +797,7 @@ async fn verify_active_series_range_completeness(
             });
             continue;
         }
-        let mut unsigned_payload = serde_json::to_value(&payload)?;
-        unsigned_payload
-            .as_object_mut()
-            .ok_or_else(|| anyhow!("range-completeness payload is not an object"))?
-            .remove("proofs");
-        let canonical_payload = crate::canonical::canonical_json_bytes(&unsigned_payload)?;
+        let canonical_payload = payload.proof_payload_bytes()?;
         let payload_verified = payload.proofs.iter().all(|proof| {
             let mut context = arkret_sdk::signatures::ProofVerificationContext::new(
                 payload.issuer.clone(),
@@ -922,12 +899,7 @@ fn verify_active_series_record_signature(
             "active-series record uses an unsupported signature algorithm"
         ));
     }
-    let mut unsigned = serde_json::to_value(record)?;
-    unsigned["auth_data"]
-        .as_object_mut()
-        .ok_or_else(|| anyhow!("active-series auth_data is not an object"))?
-        .remove("signature");
-    let message = crate::canonical::canonical_json_bytes(&unsigned)?;
+    let message = record.signing_payload_bytes()?;
     let signature = ed25519_dalek::Signature::from_slice(
         &B64.decode(record.auth_data.signature.as_str())
             .map_err(|error| anyhow!("decode active-series signature: {error}"))?,

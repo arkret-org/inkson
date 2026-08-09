@@ -1,7 +1,9 @@
 //! Build, decrypt, and classify the on-wire account-recovery backup envelopes.
 
 use anyhow::{Result, anyhow};
-use arkret_models_crypto::KeyBackupContentItem;
+use arkret_models_crypto::{KeyBackup, KeyBackupContentItem};
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde_json::Value;
 
 use super::selection::mls_account_secret_backup_version;
@@ -62,8 +64,7 @@ pub fn build_mls_account_secret_backup_body_with_kek(
     device_id: &str,
     kek: &VaultKek,
     account_secret: &str,
-    signer: crate::key_backup::KeyBackupSigner<'_>,
-) -> Result<Value> {
+) -> Result<KeyBackup> {
     build_mls_account_secret_backup_body_with_kek_and_version(
         backup_id,
         actor_id,
@@ -71,7 +72,6 @@ pub fn build_mls_account_secret_backup_body_with_kek(
         kek,
         account_secret,
         crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION,
-        signer,
     )
 }
 
@@ -84,8 +84,7 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
     kek: &VaultKek,
     account_secret: &str,
     account_secret_version: u32,
-    signer: crate::key_backup::KeyBackupSigner<'_>,
-) -> Result<Value> {
+) -> Result<KeyBackup> {
     // Spec §7.5: the item identifiers are set BEFORE sealing so the AEAD AAD
     // (`domain_separation.aead_aad.item_kinds`) binds the real
     // `mls_account_secret` item — no post-seal relabel (which would desync the
@@ -104,7 +103,6 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
             secret_version: Some(account_secret_version),
             ..Default::default()
         },
-        signer,
     )
 }
 
@@ -115,7 +113,7 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
 /// `key_commitment`, recomputes the spec §7.5 deterministic nonce, binds the
 /// AEAD AAD, then decrypts.
 pub fn decrypt_mls_account_secret_backup(passphrase: &[u8], body: &Value) -> Result<Vec<u8>> {
-    open_passphrase_kdf_backup_body(passphrase, body)
+    opened_single_secret(passphrase, body)
 }
 
 /// True when `body` is an MLS account-secret backup (ANY recipient method).
@@ -170,8 +168,7 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
     device_id: &str,
     kek: &VaultKek,
     sidecar_json: &[u8],
-    signer: crate::key_backup::KeyBackupSigner<'_>,
-) -> Result<Value> {
+) -> Result<KeyBackup> {
     build_passphrase_kdf_backup_body(
         backup_id,
         actor_id,
@@ -185,7 +182,6 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
             secret_id: Some(MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned()),
             ..Default::default()
         },
-        signer,
     )
 }
 
@@ -201,7 +197,18 @@ pub fn decrypt_mls_private_plaintext_backup(
     account_secret: &[u8],
     body: &Value,
 ) -> Result<Vec<u8>> {
-    open_passphrase_kdf_backup_body(account_secret, body)
+    opened_single_secret(account_secret, body)
+}
+
+fn opened_single_secret(unlock_key: &[u8], body: &Value) -> Result<Vec<u8>> {
+    let plaintext = open_passphrase_kdf_backup_body(unlock_key, body)?;
+    let [item] = plaintext.items.as_slice() else {
+        return Err(anyhow!(
+            "single-secret key backup must decrypt to exactly one plaintext item"
+        ));
+    };
+    B64.decode(item.secret_b64u.as_bytes())
+        .map_err(|error| anyhow!("key backup plaintext secret is not base64url: {error}"))
 }
 
 /// True when `body` is an MLS private-plaintext sidecar backup. Matched on the
@@ -235,8 +242,7 @@ pub fn build_mls_account_secret_recovery_public_key_backup(
     // compromised server can't replay an old-policy / non-frontier account-secret
     // backup sealed to the same recovery public key.
     recovery_policy_ref: (&str, u64),
-    signer: crate::key_backup::KeyBackupSigner<'_>,
-) -> Result<Value> {
+) -> Result<KeyBackup> {
     build_mls_account_secret_recovery_public_key_backup_in_series(
         backup_id,
         actor_id,
@@ -247,7 +253,6 @@ pub fn build_mls_account_secret_recovery_public_key_backup(
         account_secret_version,
         recovery_policy_ref,
         None,
-        signer,
     )
 }
 
@@ -267,8 +272,7 @@ pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
     account_secret_version: u32,
     recovery_policy_ref: (&str, u64),
     previous_series_tail: Option<&Value>,
-    signer: crate::key_backup::KeyBackupSigner<'_>,
-) -> Result<Value> {
+) -> Result<KeyBackup> {
     crate::key_backup::build_recovery_public_key_backup_body_in_series(
         backup_id,
         actor_id,
@@ -287,7 +291,6 @@ pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
         Some(recovery_policy_ref),
         None,
         previous_series_tail,
-        signer,
     )
 }
 
@@ -334,9 +337,17 @@ pub fn open_mls_account_secret_recovery_public_key_backup(
     expected_recovery_policy_ref: (&str, u64),
 ) -> Result<(String, u32)> {
     ensure_recovery_public_key_backup_policy_matches(body, expected_recovery_policy_ref)?;
-    let bytes =
+    let plaintext =
         crate::key_backup::open_recovery_public_key_backup_body(recovery_private_key, body)?;
-    let secret = String::from_utf8(bytes)
-        .map_err(|err| anyhow!("account secret is not valid UTF-8: {err}"))?;
+    let [item] = plaintext.items.as_slice() else {
+        return Err(anyhow!(
+            "account-secret backup must decrypt to exactly one plaintext item"
+        ));
+    };
+    let secret = String::from_utf8(
+        B64.decode(item.secret_b64u.as_bytes())
+            .map_err(|error| anyhow!("account secret is not base64url: {error}"))?,
+    )
+    .map_err(|err| anyhow!("account secret is not valid UTF-8: {err}"))?;
     Ok((secret, mls_account_secret_backup_version(body)))
 }

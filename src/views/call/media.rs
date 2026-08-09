@@ -1,8 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use serde_json::json;
-
 use super::types::SharedTransport;
 use crate::media::rtc::{JoinedMediaSession, MediaJoinRequest, PerSenderFrameKeys, RtcClientError};
 use crate::rtc_transport::new_transport;
@@ -84,7 +82,7 @@ async fn join_via_api(
     let per_sender_keys = PerSenderFrameKeys::new(
         exporter,
         realm_id,
-        call_id,
+        call_id.clone(),
         session.focus_id.clone(),
         session.epoch_id,
     );
@@ -121,39 +119,76 @@ pub(super) async fn submit_call_state_participant(
     call_id: &str,
     actor: &str,
     device: &str,
-    state: &str,
-    mode: &str,
+    target_state: arkret_sdk::CallLifecycleState,
     session: &JoinedMediaSession,
 ) -> Result<(), String> {
-    let participant_binding = serde_json::to_value(&session.participant_binding)
-        .map_err(|err| format!("participant_binding serialize failed: {err}"))?;
-    let desired = session.desired_media;
-    let participant = json!({
-        "actor_id": actor,
-        "device_id": device,
-        "joined_at": crate::clock::now_timestamp(),
-        "foci_preferred": [session.focus_id.clone()],
-        "participant_identity": session.participant_identity.clone(),
-        "participant_binding": participant_binding,
-        "media": {
-            "audio": desired.audio,
-            "video": desired.video,
-            "screen": desired.screen,
+    let call_id = arkret_sdk::CallId::new(call_id.to_owned()).map_err(|err| err.to_string())?;
+    let state_transition = arkret_sdk::CallStateTransition {
+        from: match target_state {
+            arkret_sdk::CallLifecycleState::Connecting => arkret_sdk::CallLifecycleState::Ringing,
+            arkret_sdk::CallLifecycleState::Active => arkret_sdk::CallLifecycleState::Connecting,
+            _ => return Err("call participant submission requires connecting or active".to_owned()),
         },
-    });
-    let body = json!({
-        "call_id": call_id,
-        "state": state,
-        "mode": mode,
-        "session_focus": session.focus_id.clone(),
-        "participants": [participant],
-    });
-    let op =
-        crate::operation::OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::CallState)
-            .target_ref(call_id)
-            .body(body)
-            .build_sdk_event("inkson")
-            .map_err(|err| err.to_string())?;
+        to: target_state,
+    };
+    let (focus, roster_delta) = if target_state == arkret_sdk::CallLifecycleState::Connecting {
+        let binding = &session.participant_binding;
+        let participant_binding = arkret_sdk::ParticipantBinding {
+            scheme: binding.scheme.clone(),
+            realm_id: binding.realm_id.clone(),
+            call_id: binding.call_id.as_str().to_owned(),
+            focus_id: binding.focus_id.clone(),
+            actor_id: binding.actor_id.clone(),
+            device_id: binding.device_id.as_str().to_owned(),
+            participant_identity: binding.participant_identity.clone(),
+            issued_at: binding.issued_at,
+            expires_at: binding.expires_at,
+            issuer_kid: binding.issuer_kid.clone(),
+            sig: binding.sig.clone(),
+        };
+        let participant = arkret_sdk::CallParticipant {
+            actor_id: arkret_sdk::Did::new(actor.to_owned()).map_err(|err| err.to_string())?,
+            device_id: device.to_owned(),
+            joined_at: None,
+            foci_preferred: Some(vec![session.focus_id.clone()]),
+            participant_identity: session.participant_identity.clone(),
+            participant_binding,
+            media: Some(arkret_sdk::CallParticipantMedia {
+                audio: Some(session.desired_media.audio),
+                video: Some(session.desired_media.video),
+                screen: Some(session.desired_media.screen),
+            }),
+        };
+        (
+            Some(arkret_sdk::CallFocus {
+                mode: arkret_sdk::CallMode::Sfu,
+                session_focus: Some(
+                    arkret_sdk::NonEmptyString::new(session.focus_id.clone())
+                        .map_err(|err| err.to_string())?,
+                ),
+            }),
+            Some(arkret_sdk::CallRosterDelta::Join { participant }),
+        )
+    } else {
+        (None, None)
+    };
+    let payload = arkret_sdk::CallStatePayload {
+        call_id,
+        state_transition: Some(state_transition),
+        focus,
+        recording_transition: None,
+        transcript_transition: None,
+        roster_delta,
+        moderation_delta: None,
+        mute_override: None,
+    };
+    payload.validate().map_err(str::to_owned)?;
+    let op = crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::CallState>(
+        realm_id, actor, payload,
+    )
+    .target_ref(call_id.as_str())
+    .build_sdk_event("inkson")
+    .map_err(|err| err.to_string())?;
     with_authed_api(base, api_token.to_owned(), move |api| async move {
         api.event_submitter()?.submit_sdk_event(&op).await?;
         Ok(())

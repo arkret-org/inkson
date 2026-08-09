@@ -2,7 +2,7 @@ use super::*;
 use crate::api_error::{
     is_auth_expired_error, is_plaintext_visibility_policy_error, is_space_membership_denied_error,
 };
-use crate::payload::{sdk_payload_value, strand_id_value};
+use crate::payload::strand_id_value;
 
 pub(crate) const CHAT_PRIVATE_SAVED_COLLECTION_TITLE: &str = "Saved";
 
@@ -77,12 +77,11 @@ pub(crate) fn shared_message_pin_add_operation(
         rank: rank.to_owned(),
         note: None,
     };
-    let payload = serde_json::to_value(payload)?;
-    validate_pin_payload("ak.pin.add", &payload)?;
-    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::PinAdd)
-        .target_ref(target_ref)
-        .body(payload)
-        .build_sdk_event("inkson")
+    crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::PinAdd>(
+        realm_id, actor, payload,
+    )
+    .target_ref(target_ref)
+    .build_sdk_event("inkson")
 }
 
 pub(crate) fn shared_message_pin_remove_operation(
@@ -96,19 +95,11 @@ pub(crate) fn shared_message_pin_remove_operation(
         target_ref: target_ref.to_owned(),
         expected_rank: None,
     };
-    let payload = serde_json::to_value(payload)?;
-    validate_pin_payload("ak.pin.remove", &payload)?;
-    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::PinRemove)
-        .target_ref(target_ref)
-        .body(payload)
-        .build_sdk_event("inkson")
-}
-
-fn validate_pin_payload(kind: &str, payload: &Value) -> anyhow::Result<()> {
-    arkret_sdk::schema::event_payload_validator_catalog()
-        .map_err(|error| anyhow::anyhow!("{kind} payload validator catalog: {error}"))?
-        .validate_payload(kind, payload)
-        .map_err(|error| anyhow::anyhow!("{kind} payload is not schema-valid: {error}"))
+    crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::PinRemove>(
+        realm_id, actor, payload,
+    )
+    .target_ref(target_ref)
+    .build_sdk_event("inkson")
 }
 
 pub(crate) fn load_chat_productivity_namespace_key(
@@ -201,13 +192,11 @@ pub(crate) fn chat_message_redact_operation(
     } else {
         payload.target_ref = Some(target_id.to_owned());
     }
-    let body = serde_json::to_value(payload)
-        .map_err(|err| anyhow::anyhow!("serialize message redaction payload: {err}"))?;
-
-    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MessageRedact)
-        .target_ref(target_id)
-        .body(body)
-        .build_sdk_event("inkson")
+    crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageRedact>(
+        realm_id, actor, payload,
+    )
+    .target_ref(target_id)
+    .build_sdk_event("inkson")
 }
 
 pub(crate) fn chat_reaction_add_operation(
@@ -216,13 +205,17 @@ pub(crate) fn chat_reaction_add_operation(
     event_id: &str,
     key: &str,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::ReactionAdd)
-        .target_ref(event_id)
-        .body(json!({
-            "target_ref": event_id,
-            "key": key,
-        }))
-        .build_sdk_event("inkson")
+    let payload = arkret_sdk::ReactionPayload {
+        target_ref: event_id.into(),
+        key: key.to_owned(),
+        annotation: None,
+        encrypted_payload: None,
+    };
+    crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::ReactionAdd>(
+        realm_id, actor, payload,
+    )
+    .target_ref(event_id)
+    .build_sdk_event("inkson")
 }
 
 /// E2EE reaction (encryption-and-audit.md §2.9): the plaintext `key` carries
@@ -236,16 +229,17 @@ pub(crate) fn chat_reaction_add_operation_encrypted(
     routing_tag: &str,
     encrypted_payload: &arkret_sdk::EncryptedPayload,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    let encrypted_payload_json =
-        serde_json::to_value(encrypted_payload).unwrap_or(serde_json::Value::Null);
-    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::ReactionAdd)
-        .target_ref(event_id)
-        .body(json!({
-            "target_ref": event_id,
-            "key": routing_tag,
-            "encrypted_payload": encrypted_payload_json,
-        }))
-        .build_sdk_event("inkson")
+    let payload = arkret_sdk::ReactionPayload {
+        target_ref: event_id.into(),
+        key: routing_tag.to_owned(),
+        annotation: None,
+        encrypted_payload: Some(encrypted_payload.clone()),
+    };
+    crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::ReactionAdd>(
+        realm_id, actor, payload,
+    )
+    .target_ref(event_id)
+    .build_sdk_event("inkson")
 }
 
 /// Build the `ak.reaction.add` operation for a tapped emoji, choosing the
@@ -474,11 +468,11 @@ fn chat_message_create_operation_with_content_and_expiry(
         .iter()
         .filter_map(|mention| mention.as_audience_mention().cloned())
         .collect::<Vec<_>>();
-    if content.kind == arkret_sdk::CONTENT_KIND_LONG_TEXT
+    if content.kind == arkret_sdk::ContentBlockKind::LongText
         && (!actor_mentions.is_empty() || !audience_mentions.is_empty())
     {
         let fallback = content.body.clone();
-        content = arkret_sdk::ContentBlock::new(arkret_sdk::CONTENT_KIND_COMPOSITE, fallback)
+        content = arkret_sdk::ContentBlock::new(arkret_sdk::ContentBlockKind::Composite, fallback)
             .with_part(content);
     }
     if !actor_mentions.is_empty() {
@@ -507,13 +501,11 @@ fn chat_message_create_operation_with_content_and_expiry(
     if let Some(expiry) = expiry {
         payload = payload.with_expiry(expiry);
     }
-    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MessageCreate)
-        .target_ref(strand_id)
-        .body(sdk_payload_value(
-            payload.to_value(),
-            "chat ak.message.create payload serialize",
-        )?)
-        .build_sdk_event("inkson")
+    crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageCreate>(
+        realm_id, actor, payload,
+    )
+    .target_ref(strand_id)
+    .build_sdk_event("inkson")
 }
 
 pub(crate) fn chat_send_error_message(error: &anyhow::Error) -> String {

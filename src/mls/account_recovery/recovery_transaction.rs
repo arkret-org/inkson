@@ -5,10 +5,9 @@
 //! signs its own `ak.device.authorize`. No service or second person is an
 //! identity authority in this path.
 
-use arkret_models_collaboration::events_payloads::SignatureMaterial;
 use arkret_models_collaboration::events_payloads::device_identity::{
-    DeviceAuthorizationBindingKind, DeviceAuthorizePayload, DeviceOrPrincipalRef,
-    DeviceReanchorPayload, device_authorize_payload_digest,
+    DeviceAuthorizationBindingKind, DeviceOrPrincipalRef, DeviceReanchorPayload,
+    UnsignedDeviceAuthorizePayload, device_authorize_payload_digest,
 };
 use arkret_wire::{
     CanonicalPublicMaterial, Event, EventInitialSubmission, EventRef, EventsSubmitBatchRequestBody,
@@ -166,26 +165,25 @@ pub(crate) async fn prepare_root_anchored_recovery(
         .iter()
         .map(|value| non_empty((*value).to_owned()))
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let mut authorize_payload = DeviceAuthorizePayload {
-        principal_id: verified_session.principal_id.clone(),
-        device_id: verified_session.requesting_device_id.clone(),
-        device_public_key: non_empty(device_public_key)?,
-        hpke_key: non_empty(hpke_key)?,
+    let authorize_payload = UnsignedDeviceAuthorizePayload::new(
+        verified_session.principal_id.clone(),
+        verified_session.requesting_device_id.clone(),
+        non_empty(device_public_key)?,
+        non_empty(hpke_key)?,
         algorithms,
-        device_key_algorithm: Some(non_empty("Ed25519".to_owned())?),
-        authorized_by: DeviceOrPrincipalRef::Did(verified_session.principal_id.clone()),
-        scopes: None,
-        not_before: created_at,
-        expires_at: None,
-        authorization_binding_kind: DeviceAuthorizationBindingKind::RootAnchored,
-        device_signature: SignatureMaterial::NonEmptyString(non_empty("pending".to_owned())?),
-        recovery_session_id: Some(verified_session.recovery_session_id.clone()),
-    };
-    authorize_payload.device_signature =
-        SignatureMaterial::NonEmptyString(non_empty(arkret_sdk::base64url_encode(
-            device_signer.sign_raw(&authorize_payload.device_possession_signature_input()?)?,
-        ))?);
-    let authorize_payload_wire = serde_json::to_value(authorize_payload)?;
+        Some(non_empty("Ed25519".to_owned())?),
+        DeviceOrPrincipalRef::Did(verified_session.principal_id.clone()),
+        None,
+        created_at,
+        None,
+        DeviceAuthorizationBindingKind::RootAnchored,
+        Some(verified_session.recovery_session_id.clone()),
+    )?;
+    let authorize_signature = arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
+        device_signer.sign_raw(&authorize_payload.device_possession_signature_input()?)?,
+    ))?;
+    let authorize_payload = authorize_payload.attach_signature(authorize_signature)?;
+    let authorize_payload_wire = serde_json::to_value(&authorize_payload)?;
     let digest_suite = arkret_sdk::canonical::DigestSuite::Sha256;
     let reanchor_payload = DeviceReanchorPayload {
         principal_id: verified_session.principal_id.clone(),
@@ -207,21 +205,17 @@ pub(crate) async fn prepare_root_anchored_recovery(
         verified_session.principal_id.as_str(),
         scope_ref.realm_id().as_str(),
     )?;
-    let mut reanchor = Event::new_with_derived_id_at(
-        arkret_wire::EventKind::DEVICE_REANCHOR,
+    let mut reanchor = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::DeviceReanchor>::new(
         scope_ref.clone(),
         verified_session.principal_id.clone(),
-        frontier.next_actor_seq,
-        reanchor_hlc,
-        serde_json::to_value(reanchor_payload)?,
-        created_at,
-    )?;
-    reanchor.prev_refs = frontier.frontier_event_ids;
-    reanchor.refs.push(EventRef::new(
+        reanchor_payload,
+    )?
+    .with_prev_refs(frontier.frontier_event_ids)
+    .with_ref(EventRef::new(
         rotation.version_id.clone(),
         "did_recovery_anchor",
-    ));
-    reanchor.event_id = reanchor.derive_event_id_with_digest_suite(digest_suite)?;
+    ))
+    .author(frontier.next_actor_seq, reanchor_hlc, created_at)?;
     let root_did = arkret_sdk::Did::new(
         rotation
             .current_root_verification_method
@@ -248,17 +242,14 @@ pub(crate) async fn prepare_root_anchored_recovery(
     )?;
     let reanchor_event_id = reanchor.event_id.clone();
 
-    let mut authorize = Event::new_with_derived_id_at(
-        arkret_wire::EventKind::DEVICE_AUTHORIZE,
-        scope_ref,
-        verified_session.principal_id.clone(),
-        authorize_actor_seq,
-        authorize_hlc,
-        authorize_payload_wire,
-        created_at,
-    )?;
-    authorize.prev_refs = vec![reanchor_event_id.clone()];
-    authorize.event_id = authorize.derive_event_id_with_digest_suite(digest_suite)?;
+    let mut authorize =
+        arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::DeviceAuthorize>::new(
+            scope_ref,
+            verified_session.principal_id.clone(),
+            authorize_payload,
+        )?
+        .with_prev_refs(vec![reanchor_event_id.clone()])
+        .author(authorize_actor_seq, authorize_hlc, created_at)?;
     device_signer.sign_sdk_event_with_context(
         &mut authorize,
         crate::event_signer::EventProofContext::default().with_digest_suite(digest_suite),

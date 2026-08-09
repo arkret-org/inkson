@@ -199,7 +199,7 @@ fn strand_view_from_create_op(
         schema_refs: Vec::new(),
         rsvps: Vec::new(),
         schedule_revision_heads: Vec::new(),
-        state: "active".to_owned(),
+        state: arkret_sdk::ProjectionObjectState::Active,
         created_by,
         created_at,
         updated_by: None,
@@ -297,14 +297,14 @@ pub(crate) fn strand_views_from_ops(
                 if let Some(id) = op_strand_target_id(record)
                     && let Some(view) = by_id.get_mut(&id)
                 {
-                    view.state = "archived".to_owned();
+                    view.state = arkret_sdk::ProjectionSpaceState::Archived;
                 }
             }
             "ak.strand.restore" => {
                 if let Some(id) = op_strand_target_id(record)
                     && let Some(view) = by_id.get_mut(&id)
                 {
-                    view.state = "active".to_owned();
+                    view.state = arkret_sdk::ProjectionSpaceState::Active;
                 }
             }
             _ => {}
@@ -351,7 +351,7 @@ pub(crate) fn space_container_views_from_ops(
                     realm_id: local.realm_id.unwrap_or_else(|| trim_realm_id(realm_id)),
                     kind: local.kind,
                     title: local.title,
-                    state: "active".to_owned(),
+                    state: arkret_sdk::ProjectionSpaceState::Active,
                     rank: local.rank,
                     parent_space_id: local.parent_space_id,
                 },
@@ -373,14 +373,14 @@ pub(crate) fn space_container_views_from_ops(
                 if let Some(id) = op_space_target_id(record)
                     && let Some(view) = by_id.get_mut(&id)
                 {
-                    view.state = "archived".to_owned();
+                    view.state = arkret_sdk::ProjectionSpaceState::Archived;
                 }
             }
             "ak.space.restore" => {
                 if let Some(id) = op_space_target_id(record)
                     && let Some(view) = by_id.get_mut(&id)
                 {
-                    view.state = "active".to_owned();
+                    view.state = arkret_sdk::ProjectionSpaceState::Active;
                 }
             }
             _ => {}
@@ -424,7 +424,12 @@ mod tests {
     /// `object.id`, and the Space is `retype(event_id)`. The fixture therefore
     /// names the Space by retyping `id` into the envelope's `event_id`, exactly
     /// as an authored create does.
-    fn space_create_event(id: &str, kind: &str, title: &str, parent: Option<&str>) -> Value {
+    fn space_create_event(
+        id: &str,
+        kind: &str,
+        title: &str,
+        parent: Option<&str>,
+    ) -> arkret_sdk::Event {
         let mut object = json!({
             "kind": kind,
             "title": title,
@@ -433,14 +438,13 @@ mod tests {
         if let Some(parent) = parent {
             object["parent_space_id"] = json!(parent);
         }
-        json!({
-            "event_id": event_id_naming(id, "ak:space:"),
-            "kind": "ak.space.create",
-            "realm_id": REALM,
-            "actor_id": "did:web:creator.example",
-            "created_at": "2026-06-28T00:00:00.000Z",
-            "payload": { "object": object },
-        })
+        sdk_event(
+            &event_id_naming(id, "ak:space:"),
+            arkret_sdk::EventKind::SpaceCreate.as_str(),
+            1,
+            "2026-06-28T00:00:00.000Z",
+            json!({ "object": object }),
+        )
     }
 
     /// The `event_id` a create must carry for the receiver to derive `object_id`.
@@ -463,14 +467,14 @@ mod tests {
         list: &str,
         rank: &str,
         created_at: &str,
-    ) -> Value {
-        json!({
-            "event_id": event_id_naming(id, "ak:strand:"),
-            "kind": "ak.strand.create",
-            "realm_id": REALM,
-            "actor_id": actor,
-            "created_at": created_at,
-            "payload": {
+    ) -> arkret_sdk::Event {
+        let _ = actor;
+        sdk_event(
+            &event_id_naming(id, "ak:strand:"),
+            arkret_sdk::EventKind::StrandCreate.as_str(),
+            2,
+            created_at,
+            json!({
                 "object": {
                     "schema": "ak.schema.strand.v1",
                     "realm_id": REALM,
@@ -486,35 +490,38 @@ mod tests {
                         }
                     }
                 }
-            }
-        })
+            }),
+        )
     }
 
-    fn strand_move_event(id: &str, board: &str, target_list: &str, rank: &str) -> Value {
-        json!({
-            "event_id": format!("ak:event:move-{id}"),
-            "kind": "ak.strand.move",
-            "realm_id": REALM,
-            "actor_id": "did:web:mover.example",
-            "created_at": "2026-06-28T01:00:00.000Z",
-            "payload": {
+    fn strand_move_event(
+        id: &str,
+        board: &str,
+        target_list: &str,
+        rank: &str,
+    ) -> arkret_sdk::Event {
+        sdk_event(
+            &event_id_naming(id, "ak:strand:"),
+            arkret_sdk::EventKind::StrandMove.as_str(),
+            3,
+            "2026-06-28T01:00:00.000Z",
+            json!({
                 "board_space_id": board,
                 "strand_id": id,
                 "target_space_id": target_list,
                 "rank": rank,
-            }
-        })
+            }),
+        )
     }
 
-    fn strand_archive_event(id: &str) -> Value {
-        json!({
-            "event_id": format!("ak:event:archive-{id}"),
-            "kind": "ak.strand.archive",
-            "realm_id": REALM,
-            "actor_id": "did:web:archiver.example",
-            "created_at": "2026-06-28T02:00:00.000Z",
-            "payload": { "target_ref": id },
-        })
+    fn strand_archive_event(id: &str) -> arkret_sdk::Event {
+        sdk_event(
+            &event_id_naming(id, "ak:strand:"),
+            arkret_sdk::EventKind::StrandArchive.as_str(),
+            4,
+            "2026-06-28T02:00:00.000Z",
+            json!({ "target_ref": id }),
+        )
     }
 
     fn card_titles(columns: &[KanbanColumn]) -> Vec<(String, Vec<String>)> {
@@ -544,7 +551,7 @@ mod tests {
         created_at: &str,
         payload: Value,
     ) -> arkret_sdk::Event {
-        let mut event = arkret_sdk::Event::new(
+        let mut event = arkret_wire::test_support::raw_event(
             kind,
             arkret_sdk::ScopeRef::Realm {
                 realm_id: sdk_realm_id(),
@@ -571,12 +578,8 @@ mod tests {
             _realm_id: &arkret_sdk::RealmId,
             events: &[arkret_sdk::Event],
         ) -> garth::Result<()> {
-            let values: Vec<_> = events
-                .iter()
-                .map(|event| serde_json::to_value(event).unwrap())
-                .collect();
             self.raw_operations
-                .extend(kanban_operations_from_events(&values));
+                .extend(kanban_operations_from_events(events));
             Ok(())
         }
     }
@@ -638,11 +641,7 @@ mod tests {
                 }),
             ),
         ];
-        let direct_values: Vec<_> = events
-            .iter()
-            .map(|event| serde_json::to_value(event).unwrap())
-            .collect();
-        let direct_ops = kanban_operations_from_events(&direct_values);
+        let direct_ops = kanban_operations_from_events(&events);
         let (direct_columns, ..) = project_board(&direct_ops, BOARD, REALM, None);
 
         let mut projector = ClientCoreKanbanProjector::default();
@@ -1095,8 +1094,20 @@ mod tests {
     fn ingest_funnel_only_accepts_kanban_kinds() {
         let events = vec![
             space_create_event(BOARD, "board", "Board1", None),
-            json!({ "kind": "ak.message.create", "realm_id": REALM, "payload": {} }),
-            json!({ "kind": "ak.mls.commit", "realm_id": REALM, "payload": {} }),
+            sdk_event(
+                "ak:event:AZDc1EwPcJZuThaCiR4FHq4V7rQ4I9QBR1YmEVB4xroH",
+                arkret_sdk::EventKind::MessageCreate.as_str(),
+                8,
+                "2026-06-28T03:00:00.000Z",
+                json!({}),
+            ),
+            sdk_event(
+                "ak:event:AXDc1EwPcJZuThaCiR4FHq4V7rQ4I9QBR1YmEVB4xroH",
+                arkret_sdk::EventKind::MlsCommit.as_str(),
+                9,
+                "2026-06-28T03:00:01.000Z",
+                json!({}),
+            ),
         ];
         let ops = kanban_operations_from_events(&events);
         assert_eq!(ops.len(), 1, "non-kanban kinds are dropped by the funnel");

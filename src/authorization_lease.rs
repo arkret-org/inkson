@@ -478,8 +478,7 @@ fn is_managed_agent_pcr_control(event: &arkret_sdk::Event) -> bool {
 }
 
 pub(crate) fn is_managed_agent_pcr_genesis(event: &arkret_sdk::Event) -> bool {
-    event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE
-        && is_managed_agent_pcr_control(event)
+    event.kind == arkret_sdk::EventKind::RealmCreate && is_managed_agent_pcr_control(event)
 }
 
 /// The three authority routes a Control Move can take, decided from the Event
@@ -573,7 +572,7 @@ fn managed_agent_pcr_authority_set_ref_from_events(
     accepted_events: &[arkret_sdk::Event],
 ) -> anyhow::Result<arkret_sdk::Hash> {
     let mut creates = accepted_events.iter().filter(|candidate| {
-        candidate.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE
+        candidate.kind == arkret_sdk::EventKind::RealmCreate
             && candidate.realm_id == event.realm_id
             && candidate.actor_id == event.actor_id
             && candidate.executed_by == event.executed_by
@@ -757,7 +756,7 @@ mod tests {
     }
 
     fn event() -> arkret_sdk::Event {
-        arkret_sdk::Event::new(
+        arkret_wire::test_support::raw_event(
             "ak.member.state",
             scope(),
             arkret_sdk::Did::new("did:web:alice.example").unwrap(),

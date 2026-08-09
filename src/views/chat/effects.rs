@@ -702,11 +702,13 @@ pub(super) fn ChatEffects(
                         Some(&state_store.read()),
                         decrypt_identity,
                     ));
-                    loaded_moderation_appeal_prompts.extend(moderation_appeal_prompts_from_events(
-                        &selected_realm_for_load,
-                        &backfill_events,
-                        &account_did_for_load,
-                    ));
+                    loaded_moderation_appeal_prompts.extend(
+                        moderation_appeal_prompts_from_sdk_events(
+                            &selected_realm_for_load,
+                            &backfill.events,
+                            &account_did_for_load,
+                        ),
+                    );
                 }
 
                 event_sink.emit(ChatProjectionEvent::MergeChannels(
@@ -787,7 +789,7 @@ pub(super) fn ChatEffects(
                     Some(&store),
                     decrypt_identity,
                 );
-                let prompts = moderation_appeal_prompts_from_events(
+                let prompts = moderation_appeal_prompts_from_local_records(
                     &realm,
                     &realm_events,
                     &account_did_for_local_timeline,

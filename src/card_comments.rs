@@ -105,8 +105,9 @@ pub fn build_card_comment_payload(comment: &CardComment) -> anyhow::Result<Value
         })
         .collect::<anyhow::Result<Vec<Value>>>()?;
 
-    let mut content = arkret_sdk::ContentBlock::new("ak.content.text", comment.body.clone())
-        .with_field("format", json!("markdown"));
+    let mut content =
+        arkret_sdk::ContentBlock::new(arkret_sdk::ContentBlockKind::Text, comment.body.clone())
+            .with_field("format", json!("markdown"));
     if !mentions.is_empty() {
         content = content.with_field("mentions", Value::Array(mentions));
     }

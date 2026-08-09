@@ -151,8 +151,7 @@ pub(crate) struct ModerationAppealPrompt {
     pub(crate) realm_id: String,
     pub(crate) decision_ref: String,
     pub(crate) target_ref: String,
-    pub(crate) state: String,
-    pub(crate) verdict: Option<String>,
+    pub(crate) state: crate::views::moderation_appeal::AppealState,
 }
 
 impl ChatMessage {

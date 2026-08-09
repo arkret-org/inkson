@@ -1,6 +1,6 @@
 //! Device revoke Control Move and MLS epoch builders.
 
-use super::OperationBuilder;
+use super::TypedOperationBuilder;
 
 /// Durable `ak.device.revoke` Control Move on the principal control
 /// stream (`crypto-media/device-lifecycle.md` §2.2, SPEC-SOL-003
@@ -19,7 +19,7 @@ pub fn device_revoke(
     target_device_id: &str,
     revoked_by_device_id: &str,
     reason: &str,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let payload = arkret_sdk::DeviceRevokePayload {
         principal_id: arkret_sdk::Did::new(actor.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid principal DID {actor:?}: {err}"))?,
@@ -34,12 +34,11 @@ pub fn device_revoke(
             .map_err(|err| anyhow::anyhow!("invalid device revocation reason: {err}"))?,
         proof: None,
     };
-    let body = serde_json::to_value(payload)
-        .map_err(|err| anyhow::anyhow!("device_revoke_payload serialize: {err}"))?;
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::DeviceRevoke)
-            .target_ref(target_device_id)
-            .body(body),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::DeviceRevoke>(
+            realm_id, actor, payload,
+        )
+        .target_ref(target_device_id),
     )
 }
 
@@ -52,13 +51,15 @@ pub fn mls_commit_with_governance(
     realm_id: &str,
     actor: &str,
     payload: &arkret_sdk::MlsCommitPayload,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let group_id = payload.mls_group_id().to_owned();
-    let body = serde_json::to_value(payload)?;
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MlsCommit)
-            .target_ref(group_id)
-            .body(body),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::MlsCommit>(
+            realm_id,
+            actor,
+            payload.clone(),
+        )
+        .target_ref(group_id),
     )
 }
 
@@ -68,12 +69,14 @@ pub fn mls_proposal_with_governance(
     actor: &str,
     group_id: &str,
     payload: &arkret_sdk::MlsProposalPayload,
-) -> anyhow::Result<OperationBuilder> {
-    let body = serde_json::to_value(payload)?;
+) -> anyhow::Result<TypedOperationBuilder> {
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MlsProposal)
-            .target_ref(group_id.to_owned())
-            .body(body),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::MlsProposal>(
+            realm_id,
+            actor,
+            payload.clone(),
+        )
+        .target_ref(group_id.to_owned()),
     )
 }
 
@@ -90,12 +93,14 @@ pub fn mls_genesis_with_governance(
     actor: &str,
     group_id: &str,
     payload: &arkret_sdk::MlsGenesisPayload,
-) -> anyhow::Result<OperationBuilder> {
-    let body = serde_json::to_value(payload)?;
+) -> anyhow::Result<TypedOperationBuilder> {
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MlsGenesis)
-            .target_ref(group_id.to_owned())
-            .body(body),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::MlsGenesis>(
+            realm_id,
+            actor,
+            payload.clone(),
+        )
+        .target_ref(group_id.to_owned()),
     )
 }
 
@@ -108,11 +113,13 @@ pub fn mls_welcome_with_governance(
     actor: &str,
     group_id: &str,
     payload: &arkret_sdk::MlsWelcomePayload,
-) -> anyhow::Result<OperationBuilder> {
-    let body = serde_json::to_value(payload)?;
+) -> anyhow::Result<TypedOperationBuilder> {
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MlsWelcome)
-            .target_ref(group_id.to_owned())
-            .body(body),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::MlsWelcome>(
+            realm_id,
+            actor,
+            payload.clone(),
+        )
+        .target_ref(group_id.to_owned()),
     )
 }

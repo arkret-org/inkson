@@ -1110,13 +1110,29 @@ mod tests {
 
     use super::*;
     use crate::canonical::canonical_json_bytes;
-    use crate::operation::{EventProofAudience, OperationBuilder, set_proof_mode};
+    use crate::operation::{EventProofAudience, TypedOperationBuilder, set_proof_mode};
 
     const TEST_REALM_ID: &str = "ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5";
     const TEST_DEVICE_ID: &str = "ak:device:01964137-0000-7000-8000-000000000001";
 
     fn reset() -> impl Drop {
         ActiveSignerTestGuard::replace(None)
+    }
+
+    fn message_event(actor_id: &str, body: &str) -> arkret_sdk::Event {
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageCreate>(
+            TEST_REALM_ID,
+            actor_id,
+            arkret_sdk::MessageCreatePayload::with_content(
+                arkret_sdk::StrandId::new(
+                    "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df".to_owned(),
+                )
+                .unwrap(),
+                "discussion",
+                arkret_sdk::ContentBlock::text(body),
+            ),
+        )
+        .build("test_node")
     }
 
     #[test]
@@ -1264,17 +1280,7 @@ mod tests {
 
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
-        let mut event = OperationBuilder::new(
-            TEST_REALM_ID,
-            "did:web:bob.example",
-            arkret_sdk::EventKind::MessageCreate,
-        )
-        .body(json!({
-            "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
-            "track_name": "discussion",
-            "content": {"kind": "ak.content.text", "body": "hi"}
-        }))
-        .build("test_node");
+        let mut event = message_event("did:web:bob.example", "hi");
         set_proof_mode(prior_mode);
 
         // RealEd25519 mode skips placeholder attach.
@@ -1310,17 +1316,7 @@ mod tests {
 
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
-        let mut event = OperationBuilder::new(
-            TEST_REALM_ID,
-            "did:web:alice.example",
-            arkret_sdk::EventKind::MessageCreate,
-        )
-        .body(json!({
-            "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
-            "track_name": "discussion",
-            "content": {"kind": "ak.content.text", "body": "actor-rooted"}
-        }))
-        .build("test_node");
+        let mut event = message_event("did:web:alice.example", "actor-rooted");
         set_proof_mode(prior_mode);
 
         signer.sign_envelope(&mut event).expect("sign");
@@ -1353,17 +1349,7 @@ mod tests {
 
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
-        let mut event = OperationBuilder::new(
-            TEST_REALM_ID,
-            "did:web:carol.example",
-            arkret_sdk::EventKind::MessageCreate,
-        )
-        .body(json!({
-            "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
-            "track_name": "discussion",
-            "content": {"kind": "ak.content.text", "body": "verifiable"}
-        }))
-        .build("test_node");
+        let mut event = message_event("did:web:carol.example", "verifiable");
         set_proof_mode(prior_mode);
 
         signer.sign_envelope(&mut event).expect("sign");
@@ -1413,17 +1399,7 @@ mod tests {
 
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
-        let mut event = OperationBuilder::new(
-            TEST_REALM_ID,
-            "did:web:carol.example",
-            arkret_sdk::EventKind::MessageCreate,
-        )
-        .body(json!({
-            "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
-            "track_name": "discussion",
-            "content": {"kind": "ak.content.text", "body": "bound"}
-        }))
-        .build("test_node");
+        let mut event = message_event("did:web:carol.example", "bound");
         set_proof_mode(prior_mode);
 
         let context = EventProofContext::new()
@@ -1668,17 +1644,7 @@ mod tests {
 
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
-        let mut event = OperationBuilder::new(
-            TEST_REALM_ID,
-            "did:web:dave.example",
-            arkret_sdk::EventKind::MessageCreate,
-        )
-        .body(json!({
-            "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
-            "track_name": "discussion",
-            "content": {"kind": "ak.content.text", "body": "auto"}
-        }))
-        .build("test_node");
+        let mut event = message_event("did:web:dave.example", "auto");
         sign_with_active(&mut event).expect("auto sign");
         set_proof_mode(prior_mode);
 
@@ -1696,17 +1662,7 @@ mod tests {
     #[test]
     fn sign_with_active_returns_missing_signer_when_none_installed() {
         let _g = reset();
-        let mut event = OperationBuilder::new(
-            TEST_REALM_ID,
-            "did:web:eve.example",
-            arkret_sdk::EventKind::MessageCreate,
-        )
-        .body(json!({
-            "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
-            "track_name": "discussion",
-            "content": {"kind": "ak.content.text", "body": "no"}
-        }))
-        .build("test_node");
+        let mut event = message_event("did:web:eve.example", "no");
         let err = sign_with_active(&mut event).unwrap_err();
         assert!(matches!(err, EventSignerError::MissingSigner { .. }));
     }

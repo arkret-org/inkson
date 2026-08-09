@@ -354,6 +354,8 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
             }
         }),
     ];
+    let history_events =
+        crate::state::projection::kanban_ops::sdk_events_from_values(&history_events);
     let local_ops = kanban_operations_from_events(&history_events);
     assert_eq!(
         local_ops.len(),
@@ -409,13 +411,11 @@ fn engine_ingest_dedupes_resent_strand_update_by_operation_id() {
     });
 
     let mut store = LocalStateStore::default();
+    let events =
+        crate::state::projection::kanban_ops::sdk_events_from_values(std::slice::from_ref(&event));
     // Fold the same event twice, as a resubscribe would.
-    crate::sync_engine::ingest_kanban_projection_events(
-        &mut store,
-        "ak:realm:r1",
-        std::slice::from_ref(&event),
-    );
-    crate::sync_engine::ingest_kanban_projection_events(&mut store, "ak:realm:r1", &[event]);
+    crate::sync_engine::ingest_kanban_projection_events(&mut store, "ak:realm:r1", &events);
+    crate::sync_engine::ingest_kanban_projection_events(&mut store, "ak:realm:r1", &events);
 
     let raw_ops = store.load().raw_operations;
     assert_eq!(raw_ops.len(), 1, "resent update deduped by operation_id");

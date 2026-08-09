@@ -187,13 +187,9 @@ pub(crate) enum StrandLifecycleState {
     #[default]
     Active,
     Archived,
-    /// Irreversible terminal per the wire enum (`strand.schema.json` state =
-    /// {`active`,`archived`,`redacted`}). `redacted` clears content but
-    /// retains the envelope/audit trail, so the UI renders a
-    /// withdrawn-message placeholder rather than hiding the Strand. There is NO
-    /// `deleted` terminal in the spec; `strand_lifecycle_from_wire` downgrades
-    /// any stray `"deleted"` wire value (logging a warning) instead of
-    /// treating it as terminal.
+    /// Irreversible terminal per the projection enum. `redacted` clears
+    /// content but retains the envelope and audit trail, so the UI renders a
+    /// withdrawn-message placeholder rather than hiding the Strand.
     Redacted,
 }
 

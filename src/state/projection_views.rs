@@ -1,6 +1,6 @@
 //! Projection view models for the self-API client.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 
 /// Server-side Space-container projection row.
@@ -15,9 +15,7 @@ pub struct SpaceContainerProjectionView {
     pub kind: String,
     #[serde(default)]
     pub title: String,
-    /// `active` / `archived` / `tombstoned` per spec
-    /// `common-fields.md §5.1`.
-    pub state: String,
+    pub state: arkret_sdk::ProjectionSpaceState,
     #[serde(default)]
     pub rank: Option<String>,
     #[serde(default)]
@@ -57,6 +55,9 @@ pub struct StrandProjectionView {
     #[serde(default)]
     pub summary: Option<String>,
     #[serde(default)]
+    /// Locally materialized profile content. Its shape is selected by
+    /// `schema_refs`, not by the independent lifecycle `state`; standard Event
+    /// payloads are decoded before they are folded into this read model.
     pub body: Option<Value>,
     #[serde(default)]
     pub board_space_id: Option<String>,
@@ -69,6 +70,8 @@ pub struct StrandProjectionView {
     #[serde(default)]
     pub assigned_to_relations: Vec<AssignedToRelationProjectionView>,
     #[serde(default)]
+    /// Open profile field projection keyed by profile-defined field name.
+    /// Lifecycle `state` does not discriminate this map's value shapes.
     pub fields: serde_json::Map<String, serde_json::Value>,
     /// Profile activation axis; its calendar entry and the
     /// `metadata.fields.calendar` subtree co-occur in both directions.
@@ -84,10 +87,8 @@ pub struct StrandProjectionView {
     /// silently choosing one.
     #[serde(default)]
     pub rsvps: Vec<RsvpCellProjectionView>,
-    /// `active` / `archived` / `redacted` per spec
-    /// `common-fields.md §5.1`. `redacted` is the only irreversible
-    /// terminal state; the reducer no longer accepts `deleted`.
-    pub state: String,
+    /// Object lifecycle from the authoritative projection contract.
+    pub state: arkret_sdk::ProjectionObjectState,
     #[serde(default)]
     pub created_by: Option<String>,
     #[serde(default)]
@@ -120,16 +121,6 @@ pub fn projection_row_position_rank(item: &ProjectionRow) -> Option<String> {
     }
 }
 
-/// Serialize a small `serde`-snake_case enum (e.g. the SDK projection state
-/// enums) into its canonical wire string. Falls back to an empty string only
-/// if serialization unexpectedly fails (never for the unit enums here).
-fn projection_state_wire_string<T: Serialize>(state: &T) -> String {
-    serde_json::to_value(state)
-        .ok()
-        .and_then(|value| value.as_str().map(ToOwned::to_owned))
-        .unwrap_or_default()
-}
-
 impl From<arkret_sdk::ProjectionSpaceRow> for SpaceContainerProjectionView {
     fn from(row: arkret_sdk::ProjectionSpaceRow) -> Self {
         Self {
@@ -137,7 +128,7 @@ impl From<arkret_sdk::ProjectionSpaceRow> for SpaceContainerProjectionView {
             realm_id: row.realm_id.as_str().to_owned(),
             kind: row.kind,
             title: row.title,
-            state: projection_state_wire_string(&row.state),
+            state: row.state,
             rank: row.rank,
             parent_space_id: row
                 .parent_space_id
@@ -191,7 +182,7 @@ impl From<arkret_sdk::ProjectionStrandRow> for StrandProjectionView {
                 .map(Into::into)
                 .collect(),
             fields: serde_json::Map::new(),
-            state: projection_state_wire_string(&row.state),
+            state: row.state,
             created_by: row.created_by.map(|did| did.as_str().to_owned()),
             created_at: row
                 .created_at

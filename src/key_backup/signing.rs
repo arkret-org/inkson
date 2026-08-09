@@ -1,16 +1,14 @@
 use std::cell::RefCell;
 use std::fmt;
 
-use arkret_wire::SchemaId;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 
-use super::{
-    KEY_BACKUP_RAW_SIGNATURE_ALGORITHM, KEY_BACKUP_SIGNED_FIELDS,
-    KEY_BACKUP_SIGNED_FIELDS_MANDATORY, required_str_anyhow,
-};
+use super::required_str_anyhow;
 
 const UNLOCKED_KEY_BACKUP_CACHE_MAX_ENTRIES: usize = 64;
 const KEY_BACKUP_UNLOCK_BACKOFF_MAX_ENTRIES: usize = 32;
@@ -48,193 +46,35 @@ impl fmt::Display for KeyBackupUnlockBackoff {
 
 impl std::error::Error for KeyBackupUnlockBackoff {}
 
-#[derive(Clone, Debug)]
-pub enum KeyBackupDeviceTrustAnchor {
-    DeviceAuthorizeEventId(String),
-}
-
-/// Phase 2 (key-management.md §7.4.1, AKP-0013): sign a key-backup envelope with
-/// the device Ed25519 key. The signature covers
-/// `canonical_json(envelope without auth_data.signature)` — i.e. the rest of
-/// `auth_data` is bound too, so it cannot be tampered. The trust anchor seals
-/// the envelope to the accepted device authorization event when supplied.
-pub fn sign_key_backup_auth_data(
-    body: &mut Value,
-    signing_key: &SigningKey,
-    device_id: &str,
-    verification_method: &str,
-    trust_anchor: Option<KeyBackupDeviceTrustAnchor>,
-) -> anyhow::Result<()> {
-    if let Some(object) = body.as_object_mut() {
-        object.remove("auth_data");
-    }
-    let signed_fields = key_backup_signed_fields_for_body(body);
-    let mut auth = json!({
-        "device_id": device_id,
-        "verification_method": verification_method,
-        "signature_algorithm": KEY_BACKUP_RAW_SIGNATURE_ALGORITHM,
-        "signed_fields": signed_fields,
-    });
-    apply_key_backup_trust_anchor(&mut auth, trust_anchor)?;
-    body["auth_data"] = auth;
-    // Sign over the envelope WITH auth_data present but WITHOUT the signature.
-    let payload = crate::canonical::canonical_json_bytes(body)?;
-    let signature = signing_key.sign(&payload);
-    body["auth_data"]["signature"] = Value::String(B64.encode(signature.to_bytes()));
-    Ok(())
-}
-
-/// The device signer a key-backup body is signed with.
-///
-/// Passed explicitly rather than read from the process-wide active-signer slot.
-/// Every builder below used to consult that slot, which made the *shape of a
-/// built body* depend on whether some unrelated concurrently-running code had
-/// installed a signer: with one installed the body gained `auth_data`, without
-/// one it did not. In `cargo test --lib`, where the whole binary shares one
-/// process, that turned body-shape assertions into a race whose failing set
-/// changed from run to run — and the process-global mutex added to serialize it
-/// only moved the race, because a second builder in the same payload still read
-/// the same slot. A parameter has no such coupling.
-pub type KeyBackupSigner<'a> = Option<&'a std::sync::Arc<crate::event_signer::InksonEventSigner>>;
-
-/// Sign `body`'s `auth_data` with `signer`. This requires a signer that can
-/// produce raw Ed25519 signatures over canonical JSON bytes.
-///
-/// Returns `Ok(true)` when signed, `Ok(false)` when `signer` is `None` (the
-/// legitimate unsigned case — e.g. tests, or pre-bootstrap), and `Err` when a
-/// signer IS present but signing failed. Crucially this does not silently
-/// downgrade a present-but-unsuitable signer to unsigned: a present signer
-/// always signs or errors, so callers never ship an unsigned backup by accident.
-pub fn sign_key_backup_with_device(
-    body: &mut Value,
-    device_id: &str,
-    signer: KeyBackupSigner<'_>,
-) -> anyhow::Result<bool> {
-    sign_key_backup_with_device_and_trust_anchor(body, device_id, signer, None)
-}
-
-pub fn sign_key_backup_with_device_and_trust_anchor(
-    body: &mut Value,
-    device_id: &str,
-    signer: KeyBackupSigner<'_>,
-    trust_anchor: Option<KeyBackupDeviceTrustAnchor>,
-) -> anyhow::Result<bool> {
-    let Some(signer) = signer else {
-        return Ok(false);
-    };
-    // Build auth_data WITHOUT the signature, then sign canonical(body) over it.
-    if let Some(object) = body.as_object_mut() {
-        object.remove("auth_data");
-    }
-    let signed_fields = key_backup_signed_fields_for_body(body);
-    let verification_method = body
-        .get("actor_id")
-        .and_then(Value::as_str)
-        .map(|actor_id| arkret_sdk::Did::new(actor_id.to_owned()))
-        .transpose()?
-        .map(|principal| signer.verification_method_for_principal(&principal))
-        .transpose()
-        .map_err(|error| anyhow::anyhow!("key backup principal binding: {error}"))?
-        .map(Ok)
-        .unwrap_or_else(|| {
-            arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
-                .map_err(|error| anyhow::anyhow!("key backup verification method: {error}"))
-        })?;
-    let mut auth = json!({
-        "device_id": device_id,
-        "verification_method": verification_method,
-        "signature_algorithm": KEY_BACKUP_RAW_SIGNATURE_ALGORITHM,
-        "signed_fields": signed_fields,
-    });
-    apply_key_backup_trust_anchor(&mut auth, trust_anchor)?;
-    body["auth_data"] = auth;
-    let payload = crate::canonical::canonical_json_bytes(body)?;
-    let signature = signer
-        .sign_raw(&payload)
-        .map_err(|err| anyhow::anyhow!("key backup auth_data sign: {err:?}"))?;
-    body["auth_data"]["signature"] = Value::String(B64.encode(signature));
-    Ok(true)
-}
-
 /// Phase 2 verify: check a key-backup envelope's `auth_data.signature` against
 /// `verifying_key`, recomputing `canonical_json(envelope without
-/// auth_data.signature)`, and confirm `signed_fields` covers the mandatory set.
+/// auth_data.signature)`. SDK validation first enforces the exact canonical
+/// `signed_fields` set and all envelope cross-field invariants.
 /// Returns `Err` (caller maps to `untrusted_backup_signature`) on any mismatch.
 pub fn verify_key_backup_auth_data(
-    body: &Value,
+    backup: &arkret_sdk::KeyBackup,
     verifying_key: &VerifyingKey,
 ) -> Result<(), String> {
-    let auth = body
-        .get("auth_data")
-        .and_then(Value::as_object)
+    backup.validate().map_err(|error| error.to_string())?;
+    let auth = backup
+        .auth_data
+        .as_ref()
         .ok_or_else(|| "auth_data is required".to_owned())?;
-    if auth.get("signature_algorithm").and_then(Value::as_str)
-        != Some(KEY_BACKUP_RAW_SIGNATURE_ALGORITHM)
-    {
+    if auth.signature_algorithm != arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519 {
         return Err("auth_data.signature_algorithm must be Ed25519".to_owned());
     }
-    let device_authorize_event_id = auth
-        .get("device_authorize_event_id")
-        .and_then(Value::as_str)
-        .filter(|event_id| !event_id.trim().is_empty());
-    if auth.get("device_authorize_event_id").is_some() && device_authorize_event_id.is_none() {
-        return Err("auth_data.device_authorize_event_id must be a non-empty string".to_owned());
-    }
-    let sig_b64 = auth
-        .get("signature")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "auth_data.signature is required".to_owned())?;
     let sig_bytes: [u8; 64] = B64
-        .decode(sig_b64)
+        .decode(auth.signature.as_str())
         .ok()
         .and_then(|bytes| bytes.try_into().ok())
         .ok_or_else(|| "auth_data.signature must be 64-byte base64url".to_owned())?;
     let signature = Signature::from_bytes(&sig_bytes);
-
-    let signed_fields: Vec<&str> = auth
-        .get("signed_fields")
-        .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(Value::as_str).collect())
-        .unwrap_or_default();
-    for field in KEY_BACKUP_SIGNED_FIELDS_MANDATORY {
-        if !signed_fields.contains(field) {
-            return Err(format!("auth_data.signed_fields must cover `{field}`"));
-        }
-    }
-
-    let mut unsigned = body.clone();
-    if let Some(object) = unsigned.get_mut("auth_data").and_then(Value::as_object_mut) {
-        object.remove("signature");
-    }
-    let payload =
-        crate::canonical::canonical_json_bytes(&unsigned).map_err(|err| err.to_string())?;
+    let payload = backup
+        .signing_payload_bytes()
+        .map_err(|error| error.to_string())?;
     verifying_key
         .verify(&payload, &signature)
         .map_err(|_| "untrusted_backup_signature: signature does not verify".to_owned())
-}
-
-fn key_backup_signed_fields_for_body(body: &Value) -> Vec<Value> {
-    KEY_BACKUP_SIGNED_FIELDS
-        .iter()
-        .filter(|field| body.get(**field).is_some())
-        .map(|field| Value::String((*field).to_owned()))
-        .collect()
-}
-
-fn apply_key_backup_trust_anchor(
-    auth: &mut Value,
-    trust_anchor: Option<KeyBackupDeviceTrustAnchor>,
-) -> anyhow::Result<()> {
-    match trust_anchor {
-        Some(KeyBackupDeviceTrustAnchor::DeviceAuthorizeEventId(event_id)) => {
-            if event_id.trim().is_empty() {
-                anyhow::bail!("auth_data.device_authorize_event_id must be a non-empty string");
-            }
-            auth["device_authorize_event_id"] = Value::String(event_id);
-        }
-        None => {}
-    }
-    Ok(())
 }
 
 // Invariant assertions: each `expect` message names the check that
@@ -242,13 +82,13 @@ fn apply_key_backup_trust_anchor(
 // error paths no caller can reach.
 #[allow(clippy::expect_used)]
 pub fn build_key_backup_unlock_proof(
-    backup: &Value,
+    backup: &arkret_sdk::KeyBackupSummary,
     principal_id: &str,
     requesting_device_id: &str,
-    recovery_session: Option<&Value>,
+    recovery_session: Option<&arkret_sdk::RecoverySessionState>,
     recovery_key: Option<(&[u8; 32], &str)>,
-    signer: KeyBackupSigner<'_>,
-) -> anyhow::Result<Value> {
+    signer: Option<&std::sync::Arc<crate::event_signer::InksonEventSigner>>,
+) -> anyhow::Result<arkret_sdk::KeyBackupUnlockProof> {
     let active_signer = if recovery_key.is_none() {
         Some(signer.ok_or_else(|| {
             anyhow::anyhow!("device signer is required for key backup unlock proof")
@@ -256,48 +96,66 @@ pub fn build_key_backup_unlock_proof(
     } else {
         None
     };
-    let backup_id = required_str_anyhow(backup, "backup_id")?;
-    let backup_kind = required_str_anyhow(backup, "backup_kind")?;
-    let series_id = required_str_anyhow(backup, "series_id")?;
-    let ciphertext_digest = required_str_anyhow(backup, "ciphertext_digest")?;
-    let issued_at = arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now());
+    let issued_at = chrono::Utc::now();
     let (recovery_session_id, proof_kind, proof_digest) = if let Some(session) = recovery_session {
-        let session_id = required_str_anyhow(session, "recovery_session_id")?.to_owned();
         let summary = session
-            .get("proof_summary")
+            .proof_summary
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("verified recovery session missing proof_summary"))?;
-        let kind = required_str_anyhow(summary, "kind")?.to_owned();
-        let digest = required_str_anyhow(summary, "proof_digest")?.to_owned();
-        (session_id, kind, digest)
+        let kind = match summary.kind {
+            arkret_sdk::RecoveryProofKind::PrincipalSigning => {
+                arkret_sdk::ProofKind::PrincipalSigning
+            }
+            arkret_sdk::RecoveryProofKind::RecoveryUnlock => arkret_sdk::ProofKind::RecoveryUnlock,
+            arkret_sdk::RecoveryProofKind::DeviceQuorum => arkret_sdk::ProofKind::DeviceQuorum,
+            arkret_sdk::RecoveryProofKind::TrustedRecoveryService => {
+                arkret_sdk::ProofKind::TrustedRecoveryService
+            }
+            arkret_sdk::RecoveryProofKind::ThresholdRecovery => {
+                arkret_sdk::ProofKind::ThresholdRecovery
+            }
+        };
+        (
+            session.recovery_session_id.clone(),
+            kind,
+            summary.proof_digest.clone(),
+        )
     } else {
         // Ordinary already-authorized-device restores use the only proof kind
         // that does not require a durable recovery session.
-        let session_id = format!("ak:recovery_session:{}", crate::operation::uuid_v7());
-        let local_digest = crate::canonical::canonical_sha256(&json!({
-            "type": "ak.key_backup.local_unlock_proof.v1",
-            "principal_id": principal_id,
-            "requesting_device_id": requesting_device_id,
-            "backup_id": backup_id,
-            "backup_kind": backup_kind,
-            "series_id": series_id,
-            "ciphertext_digest": ciphertext_digest,
-            "issued_at": issued_at,
-        }))?;
-        (session_id, "principal_signing".to_owned(), local_digest)
+        let session_id = arkret_sdk::RecoverySessionId::new(format!(
+            "ak:recovery_session:{}",
+            crate::operation::uuid_v7()
+        ))?;
+        #[derive(serde::Serialize)]
+        struct LocalUnlockProofDigest<'a> {
+            #[serde(rename = "type")]
+            record_type: &'static str,
+            principal_id: &'a str,
+            requesting_device_id: &'a str,
+            backup_id: &'a arkret_sdk::BackupId,
+            backup_kind: arkret_sdk::BackupKind,
+            series_id: &'a arkret_sdk::BackupSeriesId,
+            ciphertext_digest: &'a str,
+            issued_at: String,
+        }
+
+        let local_digest = crate::canonical::canonical_sha256(&LocalUnlockProofDigest {
+            record_type: "ak.key_backup.local_unlock_proof.v1",
+            principal_id,
+            requesting_device_id,
+            backup_id: &backup.backup_id,
+            backup_kind: backup.backup_kind,
+            series_id: &backup.series_id,
+            ciphertext_digest: backup.ciphertext_digest.as_str(),
+            issued_at: arkret_sdk::canonical::format_timestamp_canonical(issued_at),
+        })?;
+        (
+            session_id,
+            arkret_sdk::ProofKind::PrincipalSigning,
+            arkret_sdk::Hash::new(local_digest)?,
+        )
     };
-    let signed_fields = vec![
-        "schema",
-        "recovery_session_id",
-        "principal_id",
-        "requesting_device_id",
-        "backup_id",
-        "backup_kind",
-        "series_id",
-        "ciphertext_digest",
-        "proof_kind",
-        "proof_digest",
-        "issued_at",
-    ];
     let verification_method = recovery_key
         .map(|(_, method)| method.to_owned())
         .unwrap_or_else(|| {
@@ -307,25 +165,25 @@ pub fn build_key_backup_unlock_proof(
                 .verification_method()
                 .to_owned()
         });
-    let mut proof = json!({
-        "schema": SchemaId::KEY_BACKUP_UNLOCK_PROOF_V1,
-        "recovery_session_id": recovery_session_id,
-        "principal_id": principal_id,
-        "requesting_device_id": requesting_device_id,
-        "backup_id": backup_id,
-        "backup_kind": backup_kind,
-        "series_id": series_id,
-        "ciphertext_digest": ciphertext_digest,
-        "proof_kind": proof_kind,
-        "proof_digest": proof_digest,
-        "issued_at": issued_at,
-        "auth_data": {
-            "verification_method": verification_method,
-            "signature_algorithm": KEY_BACKUP_RAW_SIGNATURE_ALGORITHM,
-            "signed_fields": signed_fields,
-        }
-    });
-    let payload = crate::canonical::canonical_json_bytes(&proof)?;
+    let auth = arkret_sdk::UnsignedKeyBackupUnlockProofAuthData::new(
+        arkret_sdk::DidUrl::new(verification_method)?,
+        arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
+    )?;
+    let unsigned = arkret_sdk::UnsignedKeyBackupUnlockProof::new(
+        recovery_session_id,
+        arkret_sdk::Did::new(principal_id.to_owned())?,
+        arkret_sdk::DeviceId::new(requesting_device_id.to_owned())?,
+        backup.backup_id.clone(),
+        backup.backup_kind,
+        backup.series_id.clone(),
+        arkret_sdk::Hash::new(backup.ciphertext_digest.clone())?,
+        proof_kind,
+        proof_digest,
+        None,
+        issued_at,
+        auth,
+    )?;
+    let payload = unsigned.signing_payload_bytes()?;
     let signature = if let Some((seed, _)) = recovery_key {
         SigningKey::from_bytes(seed)
             .sign(&payload)
@@ -337,8 +195,9 @@ pub fn build_key_backup_unlock_proof(
             .sign_raw(&payload)
             .map_err(|err| anyhow::anyhow!("key backup unlock proof sign: {err:?}"))?
     };
-    proof["auth_data"]["signature"] = Value::String(B64.encode(signature));
-    Ok(proof)
+    unsigned
+        .attach_signature(arkret_sdk::Base64UrlString::new(B64.encode(signature))?)
+        .map_err(anyhow::Error::from)
 }
 
 pub async fn fetch_key_backup_with_device_unlock_proof(
@@ -346,7 +205,7 @@ pub async fn fetch_key_backup_with_device_unlock_proof(
     backup_metadata: &Value,
     principal_id: &str,
     requesting_device_id: &str,
-    signer: KeyBackupSigner<'_>,
+    signer: Option<&std::sync::Arc<crate::event_signer::InksonEventSigner>>,
 ) -> anyhow::Result<Value> {
     fetch_key_backup_with_unlock_proof(
         api,
@@ -378,13 +237,12 @@ pub async fn fetch_key_backup_with_recovery_session_unlock_proof(
     {
         anyhow::bail!("key backup unlock recovery session binding mismatch");
     }
-    let session = serde_json::to_value(recovery_session)?;
     fetch_key_backup_with_unlock_proof(
         api,
         backup_metadata,
         principal_id,
         requesting_device_id,
-        Some(&session),
+        Some(recovery_session),
         Some((
             &recovery_key_material.recovery_proof_seed,
             recovery_session
@@ -408,9 +266,9 @@ async fn fetch_key_backup_with_unlock_proof(
     backup_metadata: &Value,
     principal_id: &str,
     requesting_device_id: &str,
-    recovery_session: Option<&Value>,
+    recovery_session: Option<&arkret_sdk::RecoverySessionState>,
     recovery_key: Option<(&[u8; 32], &str)>,
-    signer: KeyBackupSigner<'_>,
+    signer: Option<&std::sync::Arc<crate::event_signer::InksonEventSigner>>,
 ) -> anyhow::Result<Value> {
     let backoff_scope = key_backup_unlock_backoff_scope(api, principal_id)?;
     if let Some(retry_after_ms) = key_backup_unlock_backoff_remaining_ms(&backoff_scope) {
@@ -421,16 +279,15 @@ async fn fetch_key_backup_with_unlock_proof(
         backup_metadata,
         principal_id,
         requesting_device_id,
-        recovery_session
-            .and_then(|session| session.get("recovery_session_id"))
-            .and_then(Value::as_str),
+        recovery_session.map(|session| session.recovery_session_id.as_str()),
     )?;
     if let Some(cached) = unlocked_key_backup_cache_get(&cache_key) {
         return Ok(cached);
     }
-    let backup_id = required_str_anyhow(backup_metadata, "backup_id")?.to_owned();
+    let summary = serde_json::from_value::<arkret_sdk::KeyBackupSummary>(backup_metadata.clone())?;
+    let backup_id = summary.backup_id.to_string();
     let proof = build_key_backup_unlock_proof(
-        backup_metadata,
+        &summary,
         principal_id,
         requesting_device_id,
         recovery_session,
@@ -460,19 +317,19 @@ pub async fn fetch_key_backup_for_verified_recovery_session(
     api: &crate::transport::TransportClient,
     backup_metadata: &Value,
     session: &arkret_models_crypto::RecoverySessionState,
-    signer: KeyBackupSigner<'_>,
+    signer: Option<&std::sync::Arc<crate::event_signer::InksonEventSigner>>,
 ) -> anyhow::Result<Value> {
     session.validate()?;
     if session.state != arkret_models_crypto::SessionState::Verified {
         anyhow::bail!("key backup recovery requires a verified recovery session");
     }
-    let session_value = serde_json::to_value(session)?;
-    let backup_id = required_str_anyhow(backup_metadata, "backup_id")?.to_owned();
+    let summary = serde_json::from_value::<arkret_sdk::KeyBackupSummary>(backup_metadata.clone())?;
+    let backup_id = summary.backup_id.to_string();
     let proof = build_key_backup_unlock_proof(
-        backup_metadata,
+        &summary,
         session.principal_id.as_str(),
         session.requesting_device_id.as_str(),
-        Some(&session_value),
+        Some(session),
         None,
         signer,
     )?;
@@ -573,12 +430,30 @@ mod tests {
     #[test]
     fn unlock_proof_auth_data_matches_sdk_schema() {
         let signer = Arc::new(build_ed25519_signer([11u8; 32], "did:web:alice.example"));
-        let backup = json!({
-            "backup_id": "ak:backup:0196419b-0000-7000-8000-000000000001",
-            "backup_kind": "mls_history",
-            "series_id": "ak:backup_series:0196419b-0000-7000-8000-000000000002",
-            "ciphertext_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        });
+        let backup = arkret_sdk::KeyBackupSummary {
+            backup_id: arkret_sdk::BackupId::new("ak:backup:0196419b-0000-7000-8000-000000000001")
+                .unwrap(),
+            actor_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+            device_id: None,
+            backup_kind: arkret_sdk::BackupKind::MlsHistory,
+            backup_version: "kb_1".to_owned(),
+            created_at: chrono::Utc::now(),
+            updated_at: None,
+            expires_at: None,
+            ciphertext_digest:
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+            encryption: arkret_sdk::KeyBackupSummaryEncryption {
+                recipient_method: arkret_sdk::KeyBackupRecipientMethod::SecretStorageKey,
+                recipient_key_ref: Some("mls_group_secrets_backup_key".to_owned()),
+            },
+            series_id: arkret_sdk::BackupSeriesId::new(
+                "ak:backup_series:0196419b-0000-7000-8000-000000000002",
+            )
+            .unwrap(),
+            series_seq: 0,
+            recovery_policy_ref: None,
+            contents: Vec::new(),
+        };
 
         let proof = build_key_backup_unlock_proof(
             &backup,
@@ -589,16 +464,19 @@ mod tests {
             Some(&signer),
         )
         .expect("unlock proof builds");
+        proof.validate().expect("unlock proof validates");
 
-        assert!(proof["auth_data"].get("device_id").is_none());
+        let proof_value = serde_json::to_value(&proof).unwrap();
+        assert!(proof_value["auth_data"].get("device_id").is_none());
         // The device-signed path (no recovery session) MUST declare
         // `principal_signing`: it is the only proof_kind the server exempts from
         // requiring a durable recovery-session record. Declaring a recovery-
         // ceremony kind (e.g. `recovery_unlock`) makes the server fail closed with
         // `recovery_evidence_unbound` and permanently locks shared-history cards.
-        assert_eq!(proof["proof_kind"], "principal_signing");
-        serde_json::from_value::<arkret_sdk::KeyBackupUnlockProof>(proof)
-            .expect("unlock proof matches SDK schema");
+        assert_eq!(
+            proof.proof_kind,
+            arkret_models_crypto::ProofKind::PrincipalSigning
+        );
     }
 
     #[test]

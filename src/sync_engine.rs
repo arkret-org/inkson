@@ -41,6 +41,7 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
+use arkret_sdk::EventPayloadExt as _;
 use garth::{
     AccountCommitOutcome, AccountPostCommitHook, AccountPostCommitOutcome, AccountStepCommitter,
     AccountStepHandlers, AccountStreamStep, RunOptions, SyncLoopControl, TransportProvider,
@@ -49,6 +50,7 @@ use garth::{
 use garth::{ClientEvent, ClientProjector};
 #[cfg(test)]
 use garth::{DecodedInbound, InboundDecoder};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::api_error::{is_auth_expired_error, is_terminal_session_grant_error};
@@ -838,7 +840,7 @@ fn realm_membership_removal_basis(
                 .get("kind")
                 .or_else(|| event.get("event_kind"))
                 .and_then(Value::as_str)
-                == Some("ak.member.state")
+                == Some(arkret_sdk::EventKind::MemberState.as_str())
         })
         .filter(|event| {
             let payload = event
@@ -2008,11 +2010,17 @@ pub fn apply_response(
                 }
                 store.merge_realm_seal_view_from_sync_body(id, &projection);
                 store.ingest_move_event_states(id, &projection);
-                let _ = ingest_kanban_state_events_from_projection(store, id, &projection)
+                let state_events = update
+                    .entry
+                    .state
+                    .as_ref()
+                    .map(|state| state.events.as_slice())
+                    .unwrap_or_default();
+                let _ = ingest_kanban_projection_events(store, id, state_events)
                     + ingest_discussion_state_events_from_projection(store, id, &projection)
                     + ingest_message_events_from_projection(store, id, &projection)
-                    + ingest_moderation_events_from_projection(store, id, &projection);
-                ingest_membership_events_from_projection(store, id, &projection);
+                    + ingest_moderation_projection_events(store, id, state_events);
+                ingest_membership_projection_events(store, id, state_events);
                 // Fold the discussion timeline into `raw_operations` too so the
                 // card-detail Discussion tab renders local-first instead of
                 // refetching + redecrypting the realm on every open.
@@ -2258,15 +2266,6 @@ fn response_revokes_local_device(
     })
 }
 
-fn ingest_kanban_state_events_from_projection(
-    store: &mut LocalStateStore,
-    realm_id: &str,
-    body: &Value,
-) -> usize {
-    let events = sync_realm_state_events(body);
-    ingest_kanban_projection_events(store, realm_id, &events)
-}
-
 /// Discussion message events ride a SEPARATE projection array from the kanban
 /// state log: `timeline.events[]` (see `chat_messages_from_sync_realms_*`).
 fn sync_realm_timeline_events(body: &Value) -> Vec<Value> {
@@ -2279,7 +2278,7 @@ fn sync_realm_timeline_events(body: &Value) -> Vec<Value> {
 
 /// Fold the realm's discussion timeline into the shared `raw_operations` log so
 /// the Discussion tab projects local-first — no per-open realm backfill /
-/// redecrypt — mirroring [`ingest_kanban_state_events_from_projection`].
+/// redecrypt — mirroring [`ingest_kanban_projection_events`].
 /// Returns the number of newly inserted / changed records. Stores only
 /// ciphertext envelopes / tombstones (never decrypted plaintext); dedup is by
 /// the message event id via `upsert_raw_operation`.
@@ -2291,18 +2290,10 @@ fn ingest_message_events_from_projection(
     ingest_message_projection_events(store, realm_id, &sync_realm_timeline_events(body))
 }
 
-fn ingest_moderation_events_from_projection(
-    store: &mut LocalStateStore,
-    realm_id: &str,
-    body: &Value,
-) -> usize {
-    ingest_moderation_projection_events(store, realm_id, &sync_realm_state_events(body))
-}
-
 pub(crate) fn ingest_moderation_projection_events(
     store: &mut LocalStateStore,
     realm_id: &str,
-    events: &[Value],
+    events: &[arkret_sdk::Event],
 ) -> usize {
     let records = crate::state::projection::moderation_ops::moderation_operations_from_events(
         realm_id, events,
@@ -2420,7 +2411,7 @@ pub(crate) fn ingest_message_events(
 pub(crate) fn ingest_kanban_projection_events(
     store: &mut LocalStateStore,
     realm_id: &str,
-    events: &[Value],
+    events: &[arkret_sdk::Event],
 ) -> usize {
     if events.is_empty() {
         return 0;
@@ -2473,54 +2464,84 @@ fn sync_event_string(value: Option<&Value>, path: &[&str]) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn membership_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
-    let kind = sync_event_string(Some(event), &["event_kind"])
-        .or_else(|| sync_event_string(Some(event), &["kind"]))?;
-    if !matches!(kind.as_str(), "ak.member.state" | "ak.invite.accept") {
-        return None;
-    }
-    let body = event
-        .get("payload")
-        .or_else(|| event.get("content"))
-        .cloned()
-        .unwrap_or(Value::Null);
-    let event_id = sync_event_string(Some(event), &["event_id"])?;
-    let operation_id =
-        sync_event_string(Some(event), &["operation_id"]).unwrap_or_else(|| event_id.clone());
-    let actor_id = sync_event_string(Some(event), &["actor_id"])
-        .or_else(|| sync_event_string(Some(event), &["sender_actor_id"]))
-        .or_else(|| sync_event_string(Some(&body), &["actor_id"]))
-        .or_else(|| sync_event_string(Some(&body), &["sender_actor_id"]))
-        .or_else(|| sync_event_string(Some(&body), &["sender"]))
-        .unwrap_or_default();
-    let created_at = sync_event_string(Some(event), &["created_at"])
-        .or_else(|| sync_event_string(Some(&body), &["created_at"]))
-        .unwrap_or_default();
-    let received_at = chrono::DateTime::parse_from_rfc3339(&created_at)
-        .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
-        .unwrap_or_else(|_| chrono::Utc::now());
-    let mut payload = json!({
-        "kind": kind,
-        "operation_id": operation_id,
-        "actor_id": actor_id,
-        "created_at": created_at,
-        "write_state": "synced",
-        "body": body,
-    });
-    if let Some(object) = payload.as_object_mut() {
-        object.insert("event_id".to_owned(), Value::String(event_id));
+#[derive(Clone, Debug)]
+enum LocalMembershipEvent {
+    MemberState(arkret_sdk::MembershipPayload),
+    InviteAccept(arkret_sdk::InviteAcceptPayload),
+}
+
+impl LocalMembershipEvent {
+    fn from_sdk_event(event: &arkret_sdk::Event) -> Option<Self> {
+        Some(match &event.kind {
+            arkret_sdk::EventKind::MemberState => Self::MemberState(
+                event
+                    .typed_payload::<arkret_wire::event_spec::MemberState>()
+                    .ok()?,
+            ),
+            arkret_sdk::EventKind::InviteAccept => Self::InviteAccept(
+                event
+                    .typed_payload::<arkret_wire::event_spec::InviteAccept>()
+                    .ok()?,
+            ),
+            _ => return None,
+        })
     }
 
+    fn record_value(&self, metadata: &LocalMembershipMetadata) -> Option<Value> {
+        macro_rules! serialize_record {
+            ($kind:ident, $payload:expr) => {
+                serde_json::to_value(LocalMembershipRecord {
+                    kind: arkret_sdk::EventKind::$kind,
+                    operation_id: &metadata.operation_id,
+                    event_id: &metadata.event_id,
+                    actor_id: &metadata.actor_id,
+                    created_at: &metadata.created_at,
+                    write_state: "synced",
+                    body: $payload,
+                })
+                .ok()
+            };
+        }
+        match self {
+            Self::MemberState(payload) => serialize_record!(MemberState, payload),
+            Self::InviteAccept(payload) => serialize_record!(InviteAccept, payload),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct LocalMembershipRecord<'a, T> {
+    kind: arkret_sdk::EventKind,
+    operation_id: &'a str,
+    event_id: &'a str,
+    actor_id: &'a str,
+    created_at: &'a str,
+    write_state: &'static str,
+    body: &'a T,
+}
+
+struct LocalMembershipMetadata {
+    operation_id: String,
+    event_id: String,
+    actor_id: String,
+    created_at: String,
+}
+
+fn membership_operation_from_event(event: &arkret_sdk::Event) -> Option<RawOperationRecord> {
+    let local_event = LocalMembershipEvent::from_sdk_event(event)?;
+    let operation_id = event.event_id.as_str().to_owned();
+    let metadata = LocalMembershipMetadata {
+        operation_id: operation_id.clone(),
+        event_id: operation_id.clone(),
+        actor_id: event.actor_id.as_str().to_owned(),
+        created_at: arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
+    };
+    let payload = local_event.record_value(&metadata)?;
+
     Some(RawOperationRecord {
-        operation_id: payload
-            .get("operation_id")
-            .and_then(Value::as_str)
-            .unwrap_or("remote-membership")
-            .to_owned(),
-        realm_id: sync_event_string(Some(event), &["realm_id"])
-            .or_else(|| sync_event_string(payload.get("body"), &["realm_id"]))
-            .or_else(|| sync_event_string(payload.get("body"), &["object", "realm_id"])),
-        received_at,
+        operation_id,
+        realm_id: Some(event.realm_id.as_str().to_owned()),
+        received_at: event.created_at,
         payload,
     })
 }
@@ -2528,7 +2549,7 @@ fn membership_operation_from_event(event: &Value) -> Option<RawOperationRecord> 
 pub(crate) fn ingest_membership_projection_events(
     store: &mut LocalStateStore,
     realm_id: &str,
-    events: &[Value],
+    events: &[arkret_sdk::Event],
 ) -> usize {
     if events.is_empty() {
         return 0;
@@ -2552,24 +2573,20 @@ fn membership_operation_from_client_event(
         garth::ClientEvent::Event(event) => event,
         _ => return None,
     };
-    let kind = event.kind.as_str();
-    if !matches!(kind, "ak.member.state" | "ak.invite.accept") {
-        return None;
-    }
+    let local_event = LocalMembershipEvent::from_sdk_event(event)?;
     let operation_id = event.event_id.as_str().to_owned();
+    let metadata = LocalMembershipMetadata {
+        operation_id: operation_id.clone(),
+        event_id: event.event_id.as_str().to_owned(),
+        actor_id: event.actor_id.as_str().to_owned(),
+        created_at: arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
+    };
+    let payload = local_event.record_value(&metadata)?;
     Some(RawOperationRecord {
         operation_id: operation_id.clone(),
         realm_id: Some(event.realm_id.as_str().to_owned()),
         received_at: event.created_at,
-        payload: json!({
-            "kind": kind,
-            "operation_id": operation_id,
-            "event_id": event.event_id.as_str(),
-            "actor_id": event.actor_id.as_str(),
-            "created_at": arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
-            "write_state": "synced",
-            "body": event.payload,
-        }),
+        payload,
     })
 }
 
@@ -2590,14 +2607,6 @@ pub(crate) fn ingest_membership_events(
         }
     }
     changed
-}
-
-fn ingest_membership_events_from_projection(
-    store: &mut LocalStateStore,
-    realm_id: &str,
-    body: &Value,
-) -> usize {
-    ingest_membership_projection_events(store, realm_id, &sync_realm_state_events(body))
 }
 
 fn ingest_member_identity_events_from_projection(
@@ -3396,7 +3405,7 @@ mod tests {
     }
 
     fn sdk_event(kind: &str, payload: Value) -> arkret_sdk::Event {
-        arkret_sdk::Event::new(
+        arkret_wire::test_support::raw_event(
             kind,
             arkret_sdk::ScopeRef::Realm {
                 realm_id: sdk_realm_id(),
@@ -3462,7 +3471,7 @@ mod tests {
     #[tokio::test]
     async fn account_response_projects_client_events_and_decodes_realm_payloads() {
         let message_event = sdk_event(
-            arkret_sdk::EventKind::MESSAGE_CREATE,
+            arkret_sdk::EventKind::MessageCreate,
             json!({
                 "strand_id": "ak:strand:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg",
                 "track_name": "discussion",
@@ -3537,6 +3546,18 @@ mod tests {
 
         let realm_id = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
         let board_id = "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+        let space_create = sdk_event(
+            arkret_sdk::EventKind::SpaceCreate.as_str(),
+            json!({
+                "object": {
+                    "id": board_id,
+                    "schema": "ak.schema.space.v1",
+                    "realm_id": realm_id,
+                    "kind": "board",
+                    "title": "Cross-member board"
+                }
+            }),
+        );
         // Mirrors the server's `events/subscribe` framing: one `event` frame
         // carrying the projection-event JSON, a `catchup_complete`, a heartbeat.
         let ndjson = format!(
@@ -3545,23 +3566,7 @@ mod tests {
                 "kind": "event",
                 "seq": 1,
                 "cursor": "ak:cursor:realmframe1",
-                "payload": {
-                    "event_id": "ak:event:AUftf_3k2fRKMG0NFlHe5iEMBOUpxMwYMRu-yhMJl-yz",
-                    "event_kind": "ak.space.create",
-                    "realm_id": realm_id,
-                    "actor_id": "did:web:bob.example",
-                    "created_at": "2026-06-29T00:00:00.000Z",
-                    "operation_id": "sha256:remote-board-create",
-                    "payload": {
-                        "object": {
-                            "id": board_id,
-                            "schema": "ak.schema.space.v1",
-                            "realm_id": realm_id,
-                            "kind": "board",
-                            "title": "Cross-member board"
-                        }
-                    }
-                }
+                "payload": space_create
             }),
             json!({ "kind": "catchup_complete", "cursor": "ak:cursor:realmframe1" }),
             json!({ "kind": "heartbeat", "ts": "2026-06-29T00:00:01.000Z" }),
@@ -3578,11 +3583,13 @@ mod tests {
         // event + catchup_complete + heartbeat.
         assert_eq!(frames.len(), 3);
 
-        let event_payloads: Vec<Value> = frames
+        let event_payloads: Vec<arkret_sdk::Event> = frames
             .iter()
             .filter(|frame| frame.kind == EventsSubscribeFrameKind::Event)
             .filter_map(|frame| frame.payload.as_ref())
-            .map(|payload| serde_json::to_value(payload).expect("frame payload serializes"))
+            .filter_map(|payload| {
+                serde_json::from_value(Value::Object(payload.clone().into_iter().collect())).ok()
+            })
             .collect();
         assert_eq!(event_payloads.len(), 1);
 
@@ -3602,49 +3609,24 @@ mod tests {
     fn membership_events_ingest_into_raw_operations() {
         let realm_id = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
         let mut store = temp_store("membership-events");
-        let changed = ingest_membership_projection_events(
-            &mut store,
-            realm_id,
-            &[
+        let events = [
+            sdk_event(
+                arkret_sdk::EventKind::MemberState.as_str(),
                 json!({
-                    "event_id": "ak:event:AVBgYTmzSkzTSd1dlFH4ZADaQRkVcx_iTAvXdxlTfxrg",
-                    "event_kind": "ak.member.state",
-                    "realm_id": realm_id,
-                    "actor_id": "did:web:alice.example",
-                    "created_at": "2026-06-29T00:00:00.000Z",
-                    "payload": {
-                        "actor_id": "did:web:bob.example",
-                        "membership": "join"
-                    }
+                    "actor_id": "did:web:bob.example",
+                    "membership": "join"
                 }),
+            ),
+            sdk_event(
+                arkret_sdk::EventKind::InviteAccept.as_str(),
                 json!({
-                    "event_id": "ak:event:AUiTFJVo328Rc7lc2Le2mjzL_ELZ-uQUn1Fq-C1QNAbh",
-                    "kind": "ak.invite.accept",
-                    "realm_id": realm_id,
-                    "actor_id": "did:web:carol.example",
-                    "created_at": "2026-06-29T00:00:01.000Z",
-                    "payload": {
-                        "invite_ref": "ak:invite:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610"
-                    }
+                    "invite_id": "ak:invite:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610",
+                    "delivery_status": "unroutable"
                 }),
-                json!({
-                    "event_id": "ak:event:AVKDZWS92w01isZDuPKuX-DiJymAf0Qcvf0A6qz8Gy-0",
-                    "kind": "ak.mls.commit",
-                    "realm_id": realm_id,
-                    "payload": {}
-                }),
-                json!({
-                    "kind": "ak.member.state",
-                    "realm_id": realm_id,
-                    "actor_id": "did:web:dave.example",
-                    "created_at": "2026-06-29T00:00:02.000Z",
-                    "payload": {
-                        "actor_id": "did:web:dave.example",
-                        "membership": "join"
-                    }
-                }),
-            ],
-        );
+            ),
+            sdk_event(arkret_sdk::EventKind::MlsCommit.as_str(), json!({})),
+        ];
+        let changed = ingest_membership_projection_events(&mut store, realm_id, &events);
 
         assert_eq!(changed, 2);
         let state = store.load();
@@ -3656,7 +3638,7 @@ mod tests {
         );
         assert_eq!(state.raw_operations[1].payload["kind"], "ak.invite.accept");
         assert_eq!(
-            state.raw_operations[1].payload["body"]["invite_ref"],
+            state.raw_operations[1].payload["body"]["invite_id"],
             "ak:invite:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610"
         );
     }
@@ -3720,28 +3702,18 @@ mod tests {
             crate::operation::uuid_v7()
         ));
         let mut store = LocalStateStore::with_path(temp);
-        let body = json!({
-            "state": { "events": [{
-                    "event_id": "ak:event:AYqEzQ3jW02EHkMjxFQTlyeowxPQXJE4fI6JGOnzi23t",
-                    "operation_id": "ak:operation:01904100-0000-7000-8000-0000000000a1",
-                    "event_kind": "ak.strand.update",
-                    "actor_id": "did:web:bob.example",
-                    "created_at": "2026-06-24T10:00:00.000Z",
-                    "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-                    "payload": {
-                        "strand_id": "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
-                        "patch": {
-                            "synthesis": {"$op": "set", "value": "bob synthesis"}
-                        }
-                    }
-                }] }
-        });
-
-        let changed = ingest_kanban_state_events_from_projection(
-            &mut store,
-            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-            &body,
+        let event = sdk_event(
+            arkret_sdk::EventKind::StrandUpdate.as_str(),
+            json!({
+                "target_ref": "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
+                "patch": {
+                    "synthesis": {"$op": "set", "value": "bob synthesis"}
+                }
+            }),
         );
+
+        let changed =
+            ingest_kanban_projection_events(&mut store, sdk_realm_id().as_str(), &[event]);
 
         assert_eq!(changed, 1);
         let state = store.load();

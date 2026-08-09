@@ -227,30 +227,61 @@ fn build_pairing_verification_content(
     requesting_device_id: &str,
     gate_audience: &str,
     expires_at: &str,
-) -> Value {
+) -> anyhow::Result<arkret_sdk::KeyVerificationContent> {
     let canonical = arkret_sdk::canonical::canonical_json_bytes(request_payload)
         .unwrap_or_else(|_| request_payload.to_string().into_bytes());
-    json!({
-        "transaction_id": uuid_v7(),
-        "from_device": requesting_device_id,
-        "timestamp": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
-        "expires_at": expires_at,
-        "methods": ["ak.sas.v1", "ak.qr.v1"],
-        "purpose": "same_principal_device_authorization",
-        "pairing_code": request_payload.get("pairing_code").cloned().unwrap_or(Value::Null),
-        "new_device_pubkey": request_payload.get("new_device_pubkey").cloned().unwrap_or(Value::Null),
-        "challenge_proof": request_payload.get("challenge_proof").cloned().unwrap_or(Value::Null),
-        "gate_audience": gate_audience,
-        "request_canonical_digest": arkret_sdk::canonical::sha256_digest(&canonical),
-        "device_metadata": request_payload
-            .get("device_metadata")
-            .cloned()
-            .unwrap_or_else(|| json!({})),
-        "device_pairing_request_id": request_payload
-            .get("device_pairing_request_id")
-            .cloned()
-            .unwrap_or(Value::Null),
-    })
+    let mut content = arkret_sdk::KeyVerificationContent::new(
+        arkret_sdk::DeviceMessageTransactionId::new(uuid_v7())?,
+        arkret_sdk::DeviceId::new(requesting_device_id.to_owned())?,
+    );
+    content.methods = Some(arkret_sdk::ProtocolKindList::new(vec![
+        arkret_sdk::ProtocolKind::new("ak.sas.v1")?,
+        arkret_sdk::ProtocolKind::new("ak.qr.v1")?,
+    ])?);
+    content.timestamp = Some(chrono::Utc::now());
+    content.expires_at =
+        Some(chrono::DateTime::parse_from_rfc3339(expires_at)?.with_timezone(&chrono::Utc));
+    content.purpose = Some(arkret_sdk::KeyVerificationPurpose::SamePrincipalDeviceAuthorization);
+    content.pairing_code = request_payload
+        .get("pairing_code")
+        .and_then(Value::as_str)
+        .map(arkret_sdk::KeyVerificationPairingCode::new)
+        .transpose()?;
+    if let Some(key) = request_payload.get("new_device_pubkey") {
+        content.new_device_pubkey = Some(arkret_sdk::KeyVerificationContentNewDevicePubkey {
+            kid: key
+                .get("kid")
+                .and_then(Value::as_str)
+                .map(|value| arkret_sdk::DeviceId::new(value.to_owned()))
+                .transpose()?,
+            algorithm: key
+                .get("algorithm")
+                .and_then(Value::as_str)
+                .map(|value| arkret_sdk::NonEmptyString::new(value.to_owned()))
+                .transpose()?,
+            public_key: key
+                .get("public_key")
+                .or_else(|| key.get("key"))
+                .and_then(Value::as_str)
+                .map(|value| arkret_sdk::NonEmptyString::new(value.to_owned()))
+                .transpose()?,
+            extra: std::collections::BTreeMap::new(),
+        });
+    }
+    content.gate_audience = Some(arkret_sdk::NonEmptyString::new(gate_audience.to_owned())?);
+    content.request_canonical_digest = Some(arkret_sdk::Hash::new(
+        arkret_sdk::canonical::sha256_digest(&canonical),
+    )?);
+    content.device_metadata = request_payload
+        .get("device_metadata")
+        .and_then(Value::as_object)
+        .map(|metadata| metadata.clone().into_iter().collect());
+    for field in ["challenge_proof", "device_pairing_request_id"] {
+        if let Some(value) = request_payload.get(field) {
+            content.extra.insert(field.to_owned(), value.clone());
+        }
+    }
+    Ok(content)
 }
 
 #[component]
@@ -1291,17 +1322,13 @@ fn render_pair_strand(
                                         &requesting_device_id,
                                         &gate_audience,
                                         &expires_at,
-                                    );
+                                    )?;
                                     // Per-request idempotency seed keyed on the fresh
                                     // `transaction_id` (deduplicates a true retry of
                                     // the same content while keeping distinct presses
                                     // distinct — the old deterministic key collided on
                                     // repeat presses and drew 409 `duplicate_conflict`).
-                                    let request_txn = content
-                                        .get("transaction_id")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or("")
-                                        .to_owned();
+                                    let request_txn = content.transaction_id.as_str().to_owned();
                                     let http = api.sdk_http_client()?;
                                     for row in rows {
                                         if row.device_id == requesting_device_id
@@ -1312,12 +1339,13 @@ fn render_pair_strand(
                                         let txn_id =
                                             format!("ak.device.pair:{request_txn}:{}", row.device_id);
                                         if let Err(error) =
-                                            crate::transport::keys::send_device_message_envelope(
+                                            crate::transport::keys::send_device_message::<
+                                                arkret_sdk::device_message_spec::KeyVerificationRequest,
+                                            >(
                                                 &http,
                                                 &txn_id,
                                                 &actor,
                                                 &row.device_id,
-                                                "ak.key.verification.request",
                                                 &expires_at,
                                                 content.clone(),
                                             )
@@ -1773,7 +1801,7 @@ mod tests {
         let request_payload = json!({
             "pairing_code": "7H2K9M4Q",
             "new_device_pubkey": {
-                "kid": "ak:device:new",
+                "kid": "ak:device:01964137-0000-7000-8000-0000000000c2",
                 "algorithm": "Ed25519",
                 "public_key": "abc-123"
             },
@@ -1790,12 +1818,17 @@ mod tests {
         });
         let content = build_pairing_verification_content(
             &request_payload,
-            "ak:device:new",
+            "ak:device:01964137-0000-7000-8000-0000000000c2",
             "https://server.example",
             "2026-06-12T12:00:00.000Z",
-        );
+        )
+        .unwrap();
+        let content = serde_json::to_value(content).unwrap();
         assert_eq!(content["purpose"], "same_principal_device_authorization");
-        assert_eq!(content["from_device"], "ak:device:new");
+        assert_eq!(
+            content["from_device"],
+            "ak:device:01964137-0000-7000-8000-0000000000c2"
+        );
         assert_eq!(content["pairing_code"], "7H2K9M4Q");
         assert_eq!(
             content["challenge_proof"]["transcript"],

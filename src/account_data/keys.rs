@@ -4,7 +4,7 @@
 use serde_json::Value;
 
 use super::AccountDataKey;
-use crate::operation::OperationBuilder;
+use crate::operation::TypedOperationBuilder;
 
 /// Build a `ak.account_data.set` operation envelope for `key` -> `value`.
 ///
@@ -16,20 +16,36 @@ pub fn build_account_data_set(
     key: &AccountDataKey,
     value: Value,
     expected_revision: u64,
-) -> OperationBuilder {
+) -> anyhow::Result<TypedOperationBuilder> {
     let value_field = if private_account_data_key_prefix(key.as_wire()).is_some() {
         "encrypted_payload"
     } else {
         "body"
     };
-    let mut payload = serde_json::json!({
-        "key": key.as_wire(),
-        "owner": actor,
-        "expected_revision": expected_revision,
-        "updated_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
-    });
-    payload[value_field] = value;
-    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::AccountDataSet).body(payload)
+    let (body, encrypted_payload) = if value_field == "encrypted_payload" {
+        let Value::Object(value) = value else {
+            anyhow::bail!("private account_data encrypted_payload must be an object");
+        };
+        (
+            arkret_sdk::AccountDataBody::Absent,
+            Some(value.into_iter().collect()),
+        )
+    } else {
+        (arkret_sdk::AccountDataBody::Value(value), None)
+    };
+    let payload = arkret_sdk::AccountDataSetPayload {
+        key: arkret_sdk::NonEmptyString::new(key.as_wire())?,
+        owner: Some(arkret_sdk::Did::new(actor.to_owned())?),
+        expected_revision,
+        body,
+        encrypted_payload,
+        body_digest: None,
+        tombstone: false,
+        updated_at: Some(crate::clock::now_utc_millis()),
+    };
+    Ok(TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::AccountDataSet,
+    >(realm_id, actor, payload))
 }
 
 pub fn build_account_data_tombstone(
@@ -37,16 +53,20 @@ pub fn build_account_data_tombstone(
     actor: &str,
     key: &AccountDataKey,
     expected_revision: u64,
-) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::AccountDataSet).body(
-        serde_json::json!({
-            "key": key.as_wire(),
-            "owner": actor,
-            "expected_revision": expected_revision,
-            "tombstone": true,
-            "updated_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
-        }),
-    )
+) -> anyhow::Result<TypedOperationBuilder> {
+    let payload = arkret_sdk::AccountDataSetPayload {
+        key: arkret_sdk::NonEmptyString::new(key.as_wire())?,
+        owner: Some(arkret_sdk::Did::new(actor.to_owned())?),
+        expected_revision,
+        body: arkret_sdk::AccountDataBody::Absent,
+        encrypted_payload: None,
+        body_digest: None,
+        tombstone: true,
+        updated_at: Some(crate::clock::now_utc_millis()),
+    };
+    Ok(TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::AccountDataSet,
+    >(realm_id, actor, payload))
 }
 
 pub fn private_account_data_key_prefix(key: &str) -> Option<&'static str> {
@@ -159,16 +179,24 @@ pub fn build_private_account_data_set(
     key: &str,
     encrypted_payload: Value,
     expected_revision: u64,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     validate_private_account_data_key(key)?;
-    let payload = serde_json::json!({
-        "key": key,
-        "owner": actor,
-        "expected_revision": expected_revision,
-        "encrypted_payload": encrypted_payload,
-        "updated_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
-    });
-    Ok(OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::AccountDataSet).body(payload))
+    let Value::Object(encrypted_payload) = encrypted_payload else {
+        anyhow::bail!("private account_data encrypted_payload must be an object");
+    };
+    let payload = arkret_sdk::AccountDataSetPayload {
+        key: arkret_sdk::NonEmptyString::new(key)?,
+        owner: Some(arkret_sdk::Did::new(actor.to_owned())?),
+        expected_revision,
+        body: arkret_sdk::AccountDataBody::Absent,
+        encrypted_payload: Some(encrypted_payload.into_iter().collect()),
+        body_digest: None,
+        tombstone: false,
+        updated_at: Some(crate::clock::now_utc_millis()),
+    };
+    Ok(TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::AccountDataSet,
+    >(realm_id, actor, payload))
 }
 
 pub fn build_private_account_data_tombstone(
@@ -176,17 +204,19 @@ pub fn build_private_account_data_tombstone(
     actor: &str,
     key: &str,
     expected_revision: u64,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     validate_private_account_data_key(key)?;
-    Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::AccountDataSet).body(
-            serde_json::json!({
-                "key": key,
-                "owner": actor,
-                "expected_revision": expected_revision,
-                "tombstone": true,
-                "updated_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
-            }),
-        ),
-    )
+    let payload = arkret_sdk::AccountDataSetPayload {
+        key: arkret_sdk::NonEmptyString::new(key)?,
+        owner: Some(arkret_sdk::Did::new(actor.to_owned())?),
+        expected_revision,
+        body: arkret_sdk::AccountDataBody::Absent,
+        encrypted_payload: None,
+        body_digest: None,
+        tombstone: true,
+        updated_at: Some(crate::clock::now_utc_millis()),
+    };
+    Ok(TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::AccountDataSet,
+    >(realm_id, actor, payload))
 }

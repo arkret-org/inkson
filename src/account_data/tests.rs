@@ -821,7 +821,12 @@ fn draft_sync_value_requires_origin_device_id_and_current_slot_shape() {
         "2026-06-07T00:00:00.000Z",
     )
     .map(|mut value| {
-        value.draft_slot = "main".to_owned();
+        match &mut value {
+            arkret_sdk::DraftSyncValue::Message { draft_slot, .. }
+            | arkret_sdk::DraftSyncValue::StrandField { draft_slot, .. } => {
+                *draft_slot = "main".to_owned();
+            }
+        }
         value
     })
     .unwrap();
@@ -853,8 +858,8 @@ fn draft_merge_uses_hlc_then_origin_device_tiebreaker() {
     .unwrap();
     let merged = merge_draft_values(Some(&local), newer_remote).unwrap();
     assert_eq!(merged.choice, AccountDataMergeChoice::Remote);
-    assert_eq!(merged.winner.content["body"], "remote");
-    assert_eq!(merged.conflict_copy.unwrap().content["body"], "local");
+    assert_eq!(merged.winner.content()["body"], "remote");
+    assert_eq!(merged.conflict_copy.unwrap().content()["body"], "local");
 
     let same_hlc_higher_device = build_message_draft_sync_value(
         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
@@ -866,7 +871,7 @@ fn draft_merge_uses_hlc_then_origin_device_tiebreaker() {
     .unwrap();
     let merged = merge_draft_values(Some(&local), same_hlc_higher_device).unwrap();
     assert_eq!(merged.choice, AccountDataMergeChoice::Remote);
-    assert_eq!(merged.winner.content["body"], "device wins");
+    assert_eq!(merged.winner.content()["body"], "device wins");
 }
 
 #[test]

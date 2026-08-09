@@ -10,10 +10,10 @@ use serde_json::Value;
 
 // Structural split: the topic files (`discussion`, `strand`, ...) reach the
 // envelope builder and realm-id normalizer through `super::*` (= this module).
-// Re-export them from the parent `operation` module so those `use
-// super::OperationBuilder` / `super::trim_realm_id` paths resolve unchanged.
-pub(super) use super::{OperationBuilder, trim_realm_id};
-pub(super) use crate::payload::{payload_value, sdk_payload_value, strand_id_value};
+// Re-export them from the parent `operation` module so topic modules share the
+// same typed envelope boundary and Realm-id normalizer.
+pub(super) use super::{TypedOperationBuilder, trim_realm_id};
+pub(super) use crate::payload::strand_id_value;
 
 // YOU-02-001: every fallible helper below returns `anyhow::Result`
 // instead of panicking. The ids these helpers parse ultimately come from
@@ -78,75 +78,41 @@ pub(super) fn morph_id_value(value: &str) -> anyhow::Result<arkret_sdk::MorphId>
         .map_err(|err| anyhow::anyhow!("invalid morph id {value:?}: {err:?}"))
 }
 
-/// Serialize a create-event `{object}` envelope.
-///
-/// `T` is bounded by [`arkret_sdk::ProtocolCreateObject`], not by bare
-/// `Serialize`: the envelope must never be reachable with a hand-built
-/// `serde_json::Value` object, which would let any member past the closed
-/// object schema until the receiver rejected the whole Event.
-pub(super) fn object_create_payload_value<T: arkret_sdk::ProtocolCreateObject>(
-    object: T,
-    context: &str,
-) -> anyhow::Result<Value> {
-    sdk_payload_value(
-        arkret_sdk::ObjectCreatePayload::new(object).to_value(),
-        context,
-    )
+pub(super) fn strand_create_payload(
+    object: arkret_sdk::StrandCreateObject,
+) -> arkret_sdk::StrandCreatePayload {
+    arkret_sdk::StrandCreatePayload {
+        object: arkret_sdk::Strand {
+            id: object.id,
+            schema: object.schema,
+            realm_id: object.realm_id,
+            scope_circle_id: object.scope_circle_id,
+            schema_refs: None,
+            agent_participation: object.agent_participation,
+            metadata: object.metadata,
+            encrypted_metadata: object.encrypted_metadata,
+            body: object.content,
+            encrypted_content: object.encrypted_content,
+            tracks: object.tracks,
+            state: object.state,
+            state_changed_at: None,
+            stage: Some(object.stage),
+            stage_changed_at: None,
+            created_by: object.created_by,
+            created_at: object.created_at,
+            updated_by: object.updated_by,
+            updated_at: object.updated_at,
+        },
+        initial_relations: None,
+    }
 }
 
-pub(super) fn object_patch_payload_value(
-    object_ref: &str,
-    patch: arkret_sdk::Patch,
-) -> anyhow::Result<Value> {
-    arkret_sdk::ObjectPatchPayload::for_target(object_ref, patch)
-        .and_then(|payload| payload.to_value())
-        .map_err(|err| anyhow::anyhow!("invalid object_patch_payload for {object_ref}: {err}"))
-}
-
-pub(super) fn morph_update_payload_value(
-    morph_id: &str,
-    patch: arkret_sdk::Patch,
-) -> anyhow::Result<Value> {
-    arkret_sdk::MorphUpdatePayload::for_morph(morph_id_value(morph_id)?, patch)
-        .and_then(|payload| payload.to_value())
-        .map_err(|err| anyhow::anyhow!("invalid morph_update_payload for {morph_id}: {err}"))
-}
-
-pub(super) fn space_patch_payload_value(
-    space_id: &str,
-    patch: arkret_sdk::Patch,
-) -> anyhow::Result<Value> {
-    let payload = arkret_sdk::SpacePatchPayload {
-        space_id: space_id_value(space_id)?,
-        patch,
-        expected_state_digest: None,
-    };
-    payload_value(
-        &payload,
-        &format!("invalid space_patch_payload for {space_id}"),
-    )
-}
-
-pub(super) fn space_state_transition_payload_value(
-    space_id: &str,
-    _new_state: arkret_sdk::ObjectState,
-) -> anyhow::Result<Value> {
-    let payload = arkret_sdk::SpaceStateTransitionPayload {
-        space_id: space_id_value(space_id)?,
-        reason: None,
-        effective_at: None,
-    };
-    payload_value(
-        &payload,
-        &format!("invalid space_state_transition_payload for {space_id}"),
-    )
-}
-
-pub(super) fn strand_object_patch_payload_value(
+pub(super) fn strand_object_patch_payload(
     strand_id: &str,
     patch: arkret_sdk::Patch,
-) -> anyhow::Result<Value> {
-    object_patch_payload_value(strand_id, patch)
+) -> anyhow::Result<arkret_sdk::StrandPatchPayload> {
+    arkret_sdk::StrandPatchPayload::for_strand(strand_id_value(strand_id)?, patch)
+        .map_err(anyhow::Error::from)
 }
 
 /// `ak.strand.tracks.update` body.
@@ -156,15 +122,11 @@ pub(super) fn strand_object_patch_payload_value(
 /// the `object_patch_payload` shape, not the SDK
 /// `StrandTracksUpdatePayload`'s `{strand_id, patch}` — a `strand_id`-keyed
 /// body has no derivable cell write and would be rejected at admission.
-pub(super) fn strand_tracks_update_payload_value(
+pub(super) fn strand_tracks_update_payload(
     strand_id: &str,
     patch: arkret_sdk::Patch,
-) -> anyhow::Result<Value> {
-    // Validate the id even though the wire member is `target_ref`: an
-    // `object_ref` that is not a canonical Strand id would still fail closed at
-    // the receiver, and failing here names the actual problem.
-    let strand_id = strand_id_value(strand_id)?;
-    object_patch_payload_value(strand_id.as_str(), patch)
+) -> anyhow::Result<arkret_sdk::StrandPatchPayload> {
+    strand_object_patch_payload(strand_id, patch)
 }
 
 pub(super) fn strand_watch_level_value(
@@ -184,12 +146,12 @@ pub(super) fn strand_watch_level_value(
 /// Build the canonical `strand_watch_set_payload` body via the SDK strong
 /// type. `level=None` clears the cell (`level:null`); per the schema
 /// `allOf`, the typed constructor forces `level_public` off on that path.
-pub(super) fn strand_watch_set_payload_value(
+pub(super) fn strand_watch_set_payload(
     strand_id: &str,
     watcher_actor_id: &str,
     level: Option<&str>,
     level_public: Option<bool>,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<arkret_sdk::StrandWatchSetPayload> {
     let payload = match level {
         Some(level) => arkret_sdk::StrandWatchSetPayload::set(
             strand_id_value(strand_id)?,
@@ -202,23 +164,21 @@ pub(super) fn strand_watch_set_payload_value(
             did_id(watcher_actor_id)?,
         ),
     };
-    payload
-        .to_value()
-        .map_err(|err| anyhow::anyhow!("invalid strand_watch_set_payload for {strand_id}: {err}"))
+    Ok(payload)
 }
 
 /// Build the canonical `strand_move_payload` body via the SDK strong type.
 /// `additionalProperties:false` — the destination is single-sourced by
 /// `target_space_id`; the optional `from_space_id` / `expected_position`
 /// (space_id + rank) are CAS hints.
-pub(super) fn strand_move_payload_value(
+pub(super) fn strand_move_payload(
     board_space_id: &str,
     strand_id: &str,
     target_space_id: &str,
     rank: &str,
     from_space_id: Option<&str>,
     expected: Option<(Option<&str>, Option<&str>)>,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<arkret_sdk::StrandMovePayload> {
     let mut payload = arkret_sdk::StrandMovePayload::new(
         space_id_value(board_space_id)?,
         strand_id_value(strand_id)?,
@@ -235,21 +195,19 @@ pub(super) fn strand_move_payload_value(
             relation_id: None,
         });
     }
-    payload
-        .to_value()
-        .map_err(|err| anyhow::anyhow!("invalid strand_move_payload for {strand_id}: {err}"))
+    Ok(payload)
 }
 
 /// Build the canonical `strand_reorder_payload` body via the SDK strong
 /// type. Re-ranks within a single List Space (`space_id`); the optional
 /// `expected_position` carries only a rank (no space_id field).
-pub(super) fn strand_reorder_payload_value(
+pub(super) fn strand_reorder_payload(
     board_space_id: &str,
     strand_id: &str,
     space_id: &str,
     rank: &str,
     expected_rank: Option<&str>,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<arkret_sdk::StrandReorderPayload> {
     let mut payload = arkret_sdk::StrandReorderPayload::new(
         space_id_value(board_space_id)?,
         strand_id_value(strand_id)?,
@@ -262,72 +220,7 @@ pub(super) fn strand_reorder_payload_value(
             relation_id: None,
         });
     }
-    payload
-        .to_value()
-        .map_err(|err| anyhow::anyhow!("invalid strand_reorder_payload for {strand_id}: {err}"))
-}
-
-/// Build the canonical `object_lifecycle_payload` body via the SDK strong
-/// type. Single truth source `target_ref` (`additionalProperties:false`).
-pub(super) fn object_lifecycle_payload_value(target_ref: &str) -> anyhow::Result<Value> {
-    arkret_sdk::ObjectLifecyclePayload::new(target_ref.to_owned())
-        .to_value()
-        .map_err(|err| anyhow::anyhow!("invalid object_lifecycle_payload for {target_ref}: {err}"))
-}
-
-/// Build the canonical `relation_create_payload` body via the SDK strong type.
-///
-/// `relation_create_payload` is a `oneOf` over two branches: the object branch
-/// `{relation}` and the flat branch `{relation_id, kind, from_ref, to_ref}`.
-/// Only the object branch is authored here, because the registered
-/// `ak.relation.create` contract projects
-/// `set value = {"field": "payload.relation"}` — a flat-branch Event is
-/// schema-valid but has no derivable cell write, so a receiver could not apply
-/// it. The `cell_subject` coalesce still reads either branch.
-pub(super) fn relation_create_payload_value(
-    realm_id: &str,
-    actor: &str,
-    kind: &str,
-    from_ref: &str,
-    to_ref: &str,
-    scope_circle_id: Option<&str>,
-) -> anyhow::Result<Value> {
-    let relation = arkret_sdk::Relation {
-        schema: arkret_wire::SchemaId::RELATION_V1.to_owned(),
-        // R3.1: a create payload carries no object id — the Relation id is
-        // derived from this create Event.
-        id: None,
-        realm_id: arkret_sdk::RealmId::new(trim_realm_id(realm_id))
-            .map_err(|err| anyhow::anyhow!("invalid relation realm_id {realm_id:?}: {err}"))?,
-        scope_circle_id: scope_circle_id
-            .map(|circle_id| {
-                arkret_sdk::CircleId::new(circle_id.to_owned()).map_err(|err| {
-                    anyhow::anyhow!("invalid relation scope_circle_id {circle_id:?}: {err}")
-                })
-            })
-            .transpose()?,
-        // `effective_scope` on a Relation is the object's own scope member and
-        // survives v1; it is not the deleted Event envelope field.
-        effective_scope: None,
-        relation_kind: serde_json::from_value(Value::String(kind.to_owned()))
-            .map_err(|err| anyhow::anyhow!("invalid relation_kind {kind:?}: {err}"))?,
-        from_ref: from_ref.to_owned(),
-        to_ref: to_ref.to_owned(),
-        rank: None,
-        fields: std::collections::BTreeMap::new(),
-        state: Some(arkret_sdk::RelationState::Active),
-        state_changed_at: None,
-        created_by: arkret_sdk::Did::new(actor.to_owned())
-            .map_err(|err| anyhow::anyhow!("invalid relation created_by {actor:?}: {err}"))?,
-        created_at: crate::clock::now_utc(),
-        updated_by: None,
-        updated_at: None,
-    };
-    Ok(serde_json::json!({
-        "relation": serde_json::to_value(&relation).map_err(|err| {
-            anyhow::anyhow!("invalid relation_create_payload ({kind} {from_ref}->{to_ref}): {err}")
-        })?
-    }))
+    Ok(payload)
 }
 
 pub(super) fn patch_from_value(patch: Value) -> anyhow::Result<arkret_sdk::Patch> {

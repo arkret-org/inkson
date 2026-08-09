@@ -290,11 +290,8 @@ pub async fn update_realm_metadata(
         optional_profile_string(fields.get("avatar_blob_ref"), "avatar_blob_ref")?
             .map(arkret_sdk::BlobRef::new)
             .transpose()?;
-    let mut event = build_realm_state_event(
-        realm_id,
-        actor_id,
-        EventKind::RealmProfile,
-        profile.to_value()?,
+    let mut event = build_realm_state_event::<arkret_sdk::event_spec::RealmProfile>(
+        realm_id, actor_id, profile,
     )?;
     // The bootstrap builder uses a null-head guard. A later replacement is
     // authorized against the current Realm Seal frontier instead.
@@ -385,17 +382,17 @@ pub async fn set_realm_policy_events(
     }
     let join_rule = validate_join_rule_v1(join_rule)?;
     let mut events = vec![
-        build_realm_state_event(
+        build_realm_state_event::<arkret_sdk::event_spec::RealmJoinRule>(
             realm_id,
             actor_id,
-            EventKind::RealmJoinRule,
-            json!(join_rule),
+            arkret_sdk::RealmJoinRulePayload::new(serde_json::from_value(json!(join_rule))?),
         )?,
-        build_realm_state_event(
+        build_realm_state_event::<arkret_sdk::event_spec::RealmHistoryVisibility>(
             realm_id,
             actor_id,
-            EventKind::RealmHistoryVisibility,
-            json!(history_visibility),
+            arkret_sdk::HistoryVisibilityPayload::new(serde_json::from_value(json!(
+                history_visibility
+            ))?),
         )?,
     ];
     if let Some(policy) = recommended_history_sharing_policy_for_visibility(history_visibility) {
@@ -426,12 +423,9 @@ pub async fn set_realm_policy_events(
             serde_json::from_value(join_policy)
                 .map_err(|error| anyhow::anyhow!("invalid Realm join_policy: {error}"))?,
         );
-        events.push(build_realm_state_event(
-            realm_id,
-            actor_id,
-            EventKind::RealmPolicyBundle,
-            policy_bundle.to_value()?,
-        )?);
+        events.push(build_realm_state_event::<
+            arkret_sdk::event_spec::RealmPolicyBundle,
+        >(realm_id, actor_id, policy_bundle)?);
     }
     for event in events {
         submitter.submit_sdk_event(&event).await?;
@@ -480,11 +474,10 @@ pub async fn set_realm_durability_policy(
     let mut policy_bundle = recommended_realm_policy_bundle_value(None);
     policy_bundle.policy_revision = policy_revision;
     policy_bundle.durability_policy = Some(policy.clone());
-    let event = build_realm_state_event(
+    let event = build_realm_state_event::<arkret_sdk::event_spec::RealmPolicyBundle>(
         realm_id,
         actor_id,
-        EventKind::RealmPolicyBundle,
-        policy_bundle.to_value()?,
+        policy_bundle,
     )?;
     submitter.submit_sdk_event(&event).await?;
     Ok(())
@@ -729,7 +722,7 @@ pub async fn appeal_review(
     appeal_id: &str,
     notes_ref: Option<&str>,
 ) -> anyhow::Result<SubmitEventResult> {
-    let event = ak_ops::moderation_appeal_review(realm_id, actor_id, appeal_id, notes_ref)
+    let event = ak_ops::moderation_appeal_review(realm_id, actor_id, appeal_id, notes_ref)?
         .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }
@@ -756,7 +749,7 @@ pub async fn appeal_decide(
         verdict,
         reason_text_ref,
         modify_decision_ref,
-    )
+    )?
     .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }
@@ -786,7 +779,7 @@ pub async fn appeal_overturn_atomic(
         "overturn",
         reason_text_ref,
         None,
-    )
+    )?
     .build_sdk_event("inkson")?;
     let lift_event = ak_ops::moderation_decision_lift(
         realm_id,
@@ -832,7 +825,7 @@ pub async fn appeal_modify_atomic(
         "modify",
         appeal_reason_text_ref,
         Some(&new_decision_id),
-    )
+    )?
     .build_sdk_event("inkson")?;
     let lift_event = ak_ops::moderation_decision_lift(
         realm_id,
@@ -876,7 +869,7 @@ pub async fn appeal_close(
     appeal_id: &str,
     close_reason: Option<&str>,
 ) -> anyhow::Result<SubmitEventResult> {
-    let event = ak_ops::moderation_appeal_close(realm_id, actor_id, appeal_id, close_reason)
+    let event = ak_ops::moderation_appeal_close(realm_id, actor_id, appeal_id, close_reason)?
         .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }

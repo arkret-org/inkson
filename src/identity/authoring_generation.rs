@@ -9,48 +9,8 @@
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock, PoisonError};
 
+pub(crate) use garth::{AuthoringAuthorityModel, AuthoringGeneration};
 use garth::{OutboundGenerationFence, OutboundGenerationFenceDecision};
-use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum AuthoringAuthorityModel {
-    AcceptedDevice,
-    ManagedAgent,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AuthoringGeneration {
-    pub(crate) authority_model: AuthoringAuthorityModel,
-    pub(crate) authority_principal_id: String,
-    pub(crate) generation_ref: String,
-}
-
-impl AuthoringGeneration {
-    fn managed_agent(
-        controller: &str,
-        controller_generation: &Self,
-        authorization_ref: &str,
-    ) -> arkret_sdk::Result<Self> {
-        let authorization_ref = authorization_ref.trim();
-        if authorization_ref.is_empty() {
-            return Err(arkret_sdk::Error::Protocol(
-                "managed Agent authoring requires authorization_ref".to_owned(),
-            ));
-        }
-        let generation_ref = arkret_sdk::canonical::canonical_sha256(&serde_json::json!({
-            "controller_authority_model": controller_generation.authority_model,
-            "controller_generation_ref": controller_generation.generation_ref,
-            "authorization_ref": authorization_ref,
-        }))?;
-        Ok(Self {
-            authority_model: AuthoringAuthorityModel::ManagedAgent,
-            authority_principal_id: controller.to_owned(),
-            generation_ref,
-        })
-    }
-}
 
 fn verified_generation_cache() -> &'static Mutex<BTreeMap<String, AuthoringGeneration>> {
     static CACHE: OnceLock<Mutex<BTreeMap<String, AuthoringGeneration>>> = OnceLock::new();
@@ -276,12 +236,9 @@ impl OutboundGenerationFence for ResolvedQueueGenerationFence {
         &self,
         item: &garth::SendQueueItem,
     ) -> garth::Result<OutboundGenerationFenceDecision> {
-        let queued: super::super::event_submit::QueuedSdkEvent =
-            serde_json::from_value(item.content.clone()).map_err(|error| {
-                garth::Error::Protocol(format!(
-                    "decode generation-fenced Inkson SDK event: {error}"
-                ))
-            })?;
+        let garth::QueuedRecord::SdkEvent(queued) = &item.record else {
+            return Ok(OutboundGenerationFenceDecision::Current);
+        };
         let decision = self.decisions.get(&item.transaction_id).ok_or_else(|| {
             garth::Error::Protocol(format!(
                 "generation fence omitted transaction {}",

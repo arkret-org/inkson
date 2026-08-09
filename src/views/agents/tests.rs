@@ -270,44 +270,6 @@ mod personal_agent_tests {
     }
 
     #[test]
-    fn expand_preset_grant_emits_registered_actions() {
-        let grant = expand_preset_grant(
-            AgentGrantPreset::ReplyAsAgent,
-            "did:web:agents.example:summary",
-            Some("ak:realm:01"),
-            "2026-06-26T00:00:00.000Z",
-        );
-        assert_eq!(
-            grant["actions"],
-            serde_json::json!(["ak.message.create", "ak.reaction.add"])
-        );
-        assert_eq!(grant["subject"], "did:web:agents.example:summary");
-        assert_eq!(grant["resources"][0]["kind"], "realm");
-        assert_eq!(grant["resources"][0]["realm_id"], "ak:realm:01");
-        assert_eq!(grant["expires_at"], "2026-06-26T00:00:00.000Z");
-        // Non-aob presets carry no controller-approval constraint.
-        assert!(grant.get("constraints").is_none());
-    }
-
-    #[test]
-    fn expand_preset_grant_act_on_behalf_carries_controller_approval() {
-        let grant = expand_preset_grant(
-            AgentGrantPreset::ActOnBehalf,
-            "did:web:agents.example:summary",
-            None,
-            "2026-06-26T00:00:00.000Z",
-        );
-        // No realm supplied -> empty selector (controller narrows later).
-        assert_eq!(grant["resources"], serde_json::json!([]));
-        let constraint = &grant["constraints"][0];
-        assert_eq!(constraint["constraint_kind"], "claim_based");
-        assert_eq!(constraint["effect"], "require_review");
-        assert_eq!(constraint["constraint_subkind"], "accountability");
-        assert_eq!(constraint["applies_to_actions"][0], "ak.message.create");
-        assert_eq!(constraint["controller_approval_required"], true);
-    }
-
-    #[test]
     fn pairing_request_expiry_parses_rfc3339_offsets() {
         assert!(is_pairing_request_expired(
             "2026-06-26T00:00:00+00:00",
@@ -607,7 +569,7 @@ mod personal_agent_tests {
 
         assert_eq!(
             event.kind.as_str(),
-            arkret_sdk::EventKind::AGENT_KEY_AUTHORIZE
+            arkret_sdk::EventKind::AgentKeyAuthorize
         );
         assert_eq!(event.payload["agent_id"], agent);
         assert_eq!(
@@ -797,7 +759,7 @@ mod personal_agent_tests {
             "draft_id": "0197-draft",
             "agent_id": "did:web:agents.example:summary",
             "proposed_action": "ak.message.create",
-            "target": {"kind": "realm", "realm_id": "ak:realm:01"},
+            "target": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
             "content": {"body": "draft text"},
         });
         let payload = build_action_approve_payload(
@@ -805,7 +767,9 @@ mod personal_agent_tests {
             "did:web:alice.example",
             "2026-06-26T00:00:00.000Z",
             "2026-06-26T01:00:00.000Z",
-        );
+        )
+        .and_then(|payload| serde_json::to_value(payload).map_err(anyhow::Error::from))
+        .unwrap();
         assert_eq!(payload["draft_id"], "0197-draft");
         assert_eq!(payload["controller_id"], "did:web:alice.example");
         assert_eq!(payload["proposed_action"], "ak.message.create");
@@ -829,7 +793,7 @@ mod personal_agent_tests {
             "request_id": "ak:agent-action-request:0197",
             "agent_id": "did:web:agents.example:summary",
             "proposed_action": "ak.message.create",
-            "target": {"kind": "realm", "realm_id": "ak:realm:01"},
+            "target": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
             "request_canonical_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         });
         let payload = build_action_approve_payload(
@@ -837,12 +801,16 @@ mod personal_agent_tests {
             "did:web:alice.example",
             "2026-06-26T00:00:00.000Z",
             "2026-06-26T01:00:00.000Z",
-        );
+        )
+        .and_then(|payload| serde_json::to_value(payload).map_err(anyhow::Error::from))
+        .unwrap();
         assert_eq!(payload["request_id"], "ak:agent-action-request:0197");
         assert_eq!(
             payload["approved_payload_digest"],
             "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        );
+        )
+        .and_then(|payload| serde_json::to_value(payload).map_err(anyhow::Error::from))
+        .unwrap();
         assert!(payload.get("draft_content_digest").is_none());
     }
 
@@ -866,14 +834,12 @@ mod personal_agent_tests {
     }
 
     #[test]
-    fn act_on_behalf_message_operation_carries_dual_identity_and_approval() {
+    fn act_on_behalf_message_operation_carries_dual_identity_and_authorization_context() {
         let operation = build_act_on_behalf_message_operation(
             "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "did:web:alice.example",
             "did:web:agents.example:summary",
             "ak:grant:Ae5vV8Lwlft2Dp8x2y6Dv4NysvsHJwrADG-6PXdUz1Sl",
-            "ak:agent-action-request:01904100-0000-7000-8000-000000000003",
-            "nonce-01904100",
             "ak:strand:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM",
             "approved message",
         )
@@ -890,10 +856,13 @@ mod personal_agent_tests {
             Some("ak:grant:Ae5vV8Lwlft2Dp8x2y6Dv4NysvsHJwrADG-6PXdUz1Sl")
         );
         assert_eq!(
-            operation.payload["approval_request_id"],
-            "ak:agent-action-request:01904100-0000-7000-8000-000000000003"
+            operation.payload["agent_context"]["agent_id"],
+            "did:web:agents.example:summary"
         );
-        assert_eq!(operation.payload["approval_nonce"], "nonce-01904100");
+        assert_eq!(
+            operation.payload["agent_context"]["authorization_ref"],
+            "ak:grant:Ae5vV8Lwlft2Dp8x2y6Dv4NysvsHJwrADG-6PXdUz1Sl"
+        );
     }
 
     #[test]

@@ -14,7 +14,7 @@
 //! The realm create / mutate methods build + submit signed events via the event
 //! submitter and remain inherent `TransportClient` methods.
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::models::{AuthzCheckOutcome, GrantList};
 use crate::operation::trim_realm_id;
@@ -24,12 +24,12 @@ pub async fn authz_check_resource(
     http: &arkret_sdk::http_client::Client,
     actor: &str,
     action: &str,
-    resource: Option<Value>,
+    resource: Option<arkret_sdk::WireResourceSelector>,
 ) -> anyhow::Result<AuthzCheckOutcome> {
     let body = arkret_models_collaboration::governance::authorization::AuthzCheckRequestBody {
         actor_id: arkret_sdk::Did::new(actor.trim().to_owned())?,
         action: action.trim().to_owned(),
-        resource: resource.map(serde_json::from_value).transpose()?,
+        resource,
         context: None,
     };
     http.authz_check(&body).await.map_err(anyhow::Error::from)
@@ -45,7 +45,9 @@ pub async fn authz_check(
         http,
         actor,
         action,
-        Some(json!({"kind": "realm", "realm_id": realm_id.trim()})),
+        Some(arkret_sdk::WireResourceSelector::realm(
+            arkret_sdk::RealmId::new(realm_id.trim().to_owned())?,
+        )),
     )
     .await
 }

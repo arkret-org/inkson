@@ -1,8 +1,8 @@
 //! Discussion Strand / Circle builders.
 
 use super::{
-    OperationBuilder, circle_id_value, did_id, object_create_payload_value, realm_id_value,
-    relation_create_payload_value, trim_realm_id,
+    TypedOperationBuilder, circle_id_value, did_id, realm_id_value, strand_create_payload,
+    trim_realm_id,
 };
 
 /// Build a canonical `ak.strand.create` discussion operation with the full
@@ -16,13 +16,13 @@ pub fn discussion_strand_create(
     realm_id: &str,
     actor: &str,
     title: &str,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let typed_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
     let did = arkret_sdk::Did::new(actor.to_owned())
         .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
     // No caller-supplied Strand id: the object is derived from this create
-    // Event, and `OperationBuilder` stamps that derived id as the client-local
+    // Event, and `TypedOperationBuilder` stamps that derived id as the client-local
     // handle in `unsigned.local_target_ref`.
     let strand = arkret_sdk::StrandCreateObject::new(typed_realm_id, did)
         .with_metadata_title(title)
@@ -30,10 +30,9 @@ pub fn discussion_strand_create(
             "discussion",
             arkret_sdk::StrandTrackConfig::discussion_primary(),
         );
-    let payload = arkret_sdk::ObjectCreatePayload::new(strand)
-        .to_value()
-        .map_err(|e| anyhow::anyhow!("ak.strand.create payload serialize: {e}"))?;
-    Ok(OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::StrandCreate).body(payload))
+    Ok(TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::StrandCreate,
+    >(realm_id, actor, strand_create_payload(strand)))
 }
 
 /// Build a canonical `ak.circle.create` operation for a private
@@ -42,7 +41,7 @@ pub fn discussion_circle_create(
     realm_id: &str,
     actor: &str,
     title: &str,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let display = arkret_sdk::CircleDisplay {
         short_name: title.trim().chars().take(16).collect::<String>(),
         color_token: arkret_sdk::CircleColorToken::Indigo,
@@ -56,8 +55,13 @@ pub fn discussion_circle_create(
         display,
         did_id(actor)?,
     );
-    let body = object_create_payload_value(circle, "ak.circle.create payload serialize")?;
-    Ok(OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::CircleCreate).body(body))
+    Ok(TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::CircleCreate,
+    >(
+        realm_id,
+        actor,
+        arkret_sdk::CircleCreatePayload { object: circle },
+    ))
 }
 
 /// Build a `ak.strand.create` operation whose full Strand scope is a
@@ -67,7 +71,7 @@ pub fn scoped_discussion_strand_create(
     actor: &str,
     circle_id: &str,
     title: &str,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let typed_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
     let did = arkret_sdk::Did::new(actor.to_owned())
@@ -79,10 +83,14 @@ pub fn scoped_discussion_strand_create(
             arkret_sdk::StrandTrackConfig::discussion_primary(),
         );
     strand.scope_circle_id = Some(circle_id_value(circle_id)?);
-    let payload = arkret_sdk::ObjectCreatePayload::new(strand)
-        .to_value()
-        .map_err(|e| anyhow::anyhow!("ak.strand.create payload serialize: {e}"))?;
-    Ok(OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::StrandCreate).body(payload))
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandCreate>(
+            realm_id,
+            actor,
+            strand_create_payload(strand),
+        )
+        .circle_id(circle_id),
+    )
 }
 
 /// Build the private-side relation from a Circle-scoped discussion Strand
@@ -93,21 +101,19 @@ pub fn confidential_discussion_relation_create(
     private_strand_id: &str,
     public_seal_ref: &str,
     circle_id: &str,
-) -> anyhow::Result<OperationBuilder> {
-    // No relation id is minted here: `OperationBuilder` stamps the derived one
+) -> anyhow::Result<TypedOperationBuilder> {
+    // No relation id is minted here: `TypedOperationBuilder` stamps the derived one
     // as `unsigned.local_target_ref` once the envelope exists.
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::RelationCreate).body(
-            relation_create_payload_value(
-                realm_id,
-                actor,
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::RelationCreate>(
+            realm_id,
+            actor,
+            arkret_sdk::RelationCreatePayload::new(
                 "confidential_discussion_of",
                 private_strand_id,
                 public_seal_ref,
-                // The object branch carries the private side's Circle scope, which the
-                // flat branch had nowhere to put.
-                Some(circle_id),
-            )?,
-        ),
+            ),
+        )
+        .circle_id(circle_id),
     )
 }

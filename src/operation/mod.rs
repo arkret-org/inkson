@@ -10,7 +10,6 @@
 //! locally with `no active signer configured` rather than shipped to the
 //! wire in any form.
 
-use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 pub use arkret_sdk::events::kinds::EventKind;
@@ -145,57 +144,59 @@ pub(crate) fn trim_realm_id(value: &str) -> String {
     value.trim().to_owned()
 }
 
-/// Builder for creating typed event envelopes. Callers attach
-/// preconditions / seal_ref / requirements after `new()` and before
-/// `build_sdk_event()`; the SDK event submit path requires an active signer to
-/// attach the detached JWS proof before going on the wire.
+/// Standard Event builder whose kind is fixed by the SDK payload marker.
 ///
-/// There is no `effects` setter: the Event wire has no producer-written cell
-/// writes in v1. Everything this Event writes is derived by the receiver from
-/// `kind + payload` through the registered reducer contract, and the builder
-/// only pre-checks that the contract is evaluable.
+/// This boundary never accepts a runtime `EventKind` or an erased JSON
+/// payload. The only constructor requires the
+/// payload associated with `K`, and erasure happens inside
+/// [`arkret_sdk::TypedEventDraft`] after its marker-specific validation.
 #[derive(Debug)]
-pub struct OperationBuilder {
-    realm_id: String,
-    circle_id: Option<String>,
-    actor: String,
-    op_type: EventKind,
+pub struct TypedOperationBuilder {
+    event: anyhow::Result<Event>,
     target_ref: Option<String>,
-    body: Value,
-    authz_ref: Option<String>,
-    executed_by: Option<String>,
-    authorization_ref: Option<String>,
-    preconditions: Vec<Precondition>,
-    causal_refs: Vec<arkret_sdk::Hash>,
-    refs: Vec<SemanticRef>,
-    seal_ref: Option<String>,
-    seal_basis: Option<SealBasis>,
-    requirements: Option<EventRequirements>,
-    redacts: Option<arkret_sdk::EventId>,
-    created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-impl OperationBuilder {
-    pub fn new(realm_id: impl Into<String>, actor: impl Into<String>, op_type: EventKind) -> Self {
+impl TypedOperationBuilder {
+    pub fn new<K>(
+        realm_id: impl Into<String>,
+        actor: impl Into<String>,
+        payload: K::Payload,
+    ) -> Self
+    where
+        K: arkret_sdk::EventSpec,
+    {
+        let event = (|| {
+            let realm_id = arkret_sdk::RealmId::new(trim_realm_id(&realm_id.into()))
+                .map_err(|err| anyhow::anyhow!("invalid realm_id: {err}"))?;
+            let scope_ref = if K::KIND == EventKind::RealmCreate {
+                ScopeRef::RealmGenesis
+            } else {
+                ScopeRef::Realm {
+                    realm_id: realm_id.clone(),
+                }
+            };
+            let actor_id = arkret_sdk::Did::new(actor.into())
+                .map_err(|err| anyhow::anyhow!("invalid actor_id DID: {err}"))?;
+            let hlc = arkret_sdk::Hlc::new("000000000000-0000-00000000")
+                .map_err(|err| anyhow::anyhow!("placeholder HLC is invalid: {err}"))?;
+            arkret_sdk::TypedEventDraft::<K>::new(scope_ref, actor_id, payload)
+                .map_err(|err| anyhow::anyhow!("typed Event draft construction failed: {err}"))?
+                .author(1, hlc, crate::clock::now_utc_millis())
+                .map_err(|err| anyhow::anyhow!("typed Event authoring failed: {err}"))
+        })();
         Self {
-            realm_id: realm_id.into(),
-            circle_id: None,
-            actor: actor.into(),
-            op_type,
+            event,
             target_ref: None,
-            body: Value::Null,
-            authz_ref: None,
-            executed_by: None,
-            authorization_ref: None,
-            preconditions: Vec::new(),
-            causal_refs: Vec::new(),
-            refs: Vec::new(),
-            seal_ref: None,
-            seal_basis: None,
-            requirements: None,
-            redacts: None,
-            created_at: None,
         }
+    }
+
+    fn map_event(mut self, update: impl FnOnce(&mut Event) -> anyhow::Result<()>) -> Self {
+        if let Ok(event) = &mut self.event
+            && let Err(error) = update(event)
+        {
+            self.event = Err(error);
+        }
+        self
     }
 
     pub fn target_ref(mut self, target_ref: impl Into<String>) -> Self {
@@ -203,203 +204,134 @@ impl OperationBuilder {
         self
     }
 
-    pub fn body(mut self, body: Value) -> Self {
-        self.body = body;
-        self
+    pub fn executed_by(self, executed_by: impl Into<String>) -> Self {
+        self.map_event(|event| {
+            event.executed_by = Some(
+                arkret_sdk::Did::new(executed_by.into())
+                    .map_err(|err| anyhow::anyhow!("invalid executed_by DID: {err}"))?,
+            );
+            Ok(())
+        })
     }
 
-    pub fn authz_ref(mut self, authz_ref: impl Into<String>) -> Self {
-        self.authz_ref = Some(authz_ref.into());
-        self
+    pub fn authorization_ref(self, authorization_ref: impl Into<String>) -> Self {
+        self.map_event(|event| {
+            event.authorization_ref = Some(
+                arkret_sdk::AuthorizationRef::new(authorization_ref.into())
+                    .map_err(|err| anyhow::anyhow!("invalid authorization_ref: {err}"))?,
+            );
+            Ok(())
+        })
     }
 
-    pub fn executed_by(mut self, executed_by: impl Into<String>) -> Self {
-        self.executed_by = Some(executed_by.into());
-        self
+    pub fn preconditions(self, preconditions: Vec<Precondition>) -> Self {
+        self.map_event(|event| {
+            event.preconditions = preconditions;
+            Ok(())
+        })
     }
 
-    pub fn authorization_ref(mut self, authorization_ref: impl Into<String>) -> Self {
-        self.authorization_ref = Some(authorization_ref.into());
-        self
+    pub fn circle_id(self, circle_id: impl Into<String>) -> Self {
+        self.map_event(|event| {
+            if event.kind == EventKind::RealmCreate {
+                return Err(anyhow::anyhow!(
+                    "ak.realm.create cannot be narrowed to a Circle scope"
+                ));
+            }
+            event.scope_ref = ScopeRef::Circle {
+                realm_id: event.realm_id.clone(),
+                circle_id: arkret_sdk::CircleId::new(circle_id.into())
+                    .map_err(|err| anyhow::anyhow!("invalid circle_id: {err}"))?,
+            };
+            Ok(())
+        })
     }
 
-    pub fn preconditions(mut self, preconditions: Vec<Precondition>) -> Self {
-        self.preconditions = preconditions;
-        self
+    pub fn refs(self, refs: Vec<SemanticRef>) -> Self {
+        self.map_event(|event| {
+            event.refs = refs;
+            Ok(())
+        })
     }
 
-    /// Narrow the signed `scope_ref` from the Realm default to a Circle.
-    ///
-    /// `scope_ref` is producer-signed and part of the canonical digest, so this
-    /// must come from the target's accepted projection — never from
-    /// user-supplied payload text.
-    pub fn circle_id(mut self, circle_id: impl Into<String>) -> Self {
-        self.circle_id = Some(circle_id.into());
-        self
+    pub fn causal_refs(self, causal_refs: Vec<arkret_sdk::Hash>) -> Self {
+        self.map_event(|event| {
+            event.causal_refs = causal_refs;
+            Ok(())
+        })
     }
 
-    pub fn refs(mut self, refs: Vec<SemanticRef>) -> Self {
-        self.refs = refs;
-        self
+    pub fn seal_ref(self, seal_ref: impl Into<String>) -> Self {
+        self.map_event(|event| {
+            event.seal_ref = Some(
+                arkret_sdk::SealId::new(seal_ref.into())
+                    .map_err(|err| anyhow::anyhow!("invalid seal_ref: {err}"))?,
+            );
+            Ok(())
+        })
     }
 
-    /// Semantic causal predecessors. RSVP carries the observed schedule
-    /// revision frontier here: the entry basis MUST be a subset of it, and a
-    /// receiver uses the same edges to decide which earlier heads this response
-    /// dominates.
-    pub fn causal_refs(mut self, causal_refs: Vec<arkret_sdk::Hash>) -> Self {
-        self.causal_refs = causal_refs;
-        self
+    pub fn seal_basis(self, seal_basis: SealBasis) -> Self {
+        self.map_event(|event| {
+            event.seal_basis = Some(seal_basis);
+            Ok(())
+        })
     }
 
-    pub fn seal_ref(mut self, seal_ref: impl Into<String>) -> Self {
-        self.seal_ref = Some(seal_ref.into());
-        self
+    pub fn requirements(self, requirements: EventRequirements) -> Self {
+        self.map_event(|event| {
+            event.requirements = requirements;
+            Ok(())
+        })
     }
 
-    /// Control Move only — attach the signed `seal_basis` (mutually
-    /// exclusive with `seal_ref` per the spec envelope schema).
-    pub fn seal_basis(mut self, seal_basis: SealBasis) -> Self {
-        self.seal_basis = Some(seal_basis);
-        self
+    pub fn created_at(self, created_at: chrono::DateTime<chrono::Utc>) -> Self {
+        self.map_event(|event| {
+            event.created_at = arkret_sdk::canonical::normalize_timestamp_canonical(created_at);
+            Ok(())
+        })
     }
 
-    pub fn requirements(mut self, requirements: EventRequirements) -> Self {
-        self.requirements = Some(requirements);
-        self
-    }
-
-    /// Pin the Event to an exact authoring instant.
-    ///
-    /// The SDK constructor normalizes this value to the protocol's fixed
-    /// millisecond Event profile. Callers use this when a payload object and
-    /// its containing Event must carry the same timestamp.
-    pub fn created_at(mut self, created_at: chrono::DateTime<chrono::Utc>) -> Self {
-        self.created_at = Some(created_at);
-        self
-    }
-
-    #[allow(clippy::expect_used)]
-    pub fn redacts(mut self, redacts: impl Into<String>) -> Self {
-        let redacts = redacts.into();
-        self.redacts = Some(
-            arkret_sdk::EventId::new(redacts).expect("redacts must be a canonical ak:event id"),
-        );
-        self
+    pub fn redacts(self, redacts: impl Into<String>) -> Self {
+        self.map_event(|event| {
+            event.redacts = Some(
+                arkret_sdk::EventId::new(redacts.into())
+                    .map_err(|err| anyhow::anyhow!("invalid redacts Event id: {err}"))?,
+            );
+            Ok(())
+        })
     }
 
     #[allow(clippy::expect_used)]
     pub fn build(self, node_id: &str) -> Event {
         self.build_sdk_event(node_id)
-            .expect("OperationBuilder emitted an invalid SDK Event")
+            .expect("TypedOperationBuilder emitted an invalid SDK Event")
     }
 
-    pub fn build_sdk_event(self, node_id: &str) -> anyhow::Result<arkret_sdk::Event> {
+    pub fn build_sdk_event(self, node_id: &str) -> anyhow::Result<Event> {
         let _ = node_id;
+        let mut event = self.event?;
         let operation_id =
             arkret_sdk::OperationId::new_v7_at(crate::clock::now_unix_ms()).into_string();
-        let mut unsigned = BTreeMap::new();
-        unsigned.insert(
+        event.unsigned.insert(
             "local_operation_idempotency_alias".to_owned(),
             Value::String(operation_id),
         );
         if let Some(target_ref) = self.target_ref {
-            unsigned.insert("local_target_ref".to_owned(), Value::String(target_ref));
+            event
+                .unsigned
+                .insert("local_target_ref".to_owned(), Value::String(target_ref));
         }
-        if let Some(authz_ref) = self.authz_ref {
-            unsigned.insert("local_authz_ref".to_owned(), Value::String(authz_ref));
-        }
-        let realm_id = trim_realm_id(&self.realm_id);
-        let realm_id = arkret_sdk::RealmId::new(realm_id)
-            .map_err(|err| anyhow::anyhow!("invalid realm_id: {err}"))?;
-        // Spec realm-and-space.md section 2.5.0: a Realm genesis carries the
-        // closed `realm_genesis` scope and no realm_id — the Realm's id is
-        // derived from the genesis Event itself.
-        let scope_ref = if self.op_type == EventKind::RealmCreate {
-            if self.circle_id.is_some() {
-                return Err(anyhow::anyhow!(
-                    "ak.realm.create cannot be narrowed to a Circle scope"
-                ));
-            }
-            ScopeRef::RealmGenesis
-        } else {
-            match self.circle_id {
-                Some(circle_id) => ScopeRef::Circle {
-                    realm_id,
-                    circle_id: arkret_sdk::CircleId::new(circle_id)
-                        .map_err(|err| anyhow::anyhow!("invalid circle_id: {err}"))?,
-                },
-                None => ScopeRef::Realm { realm_id },
-            }
-        };
-        let actor_id = arkret_sdk::Did::new(self.actor)
-            .map_err(|err| anyhow::anyhow!("invalid actor_id DID: {err}"))?;
-        let hlc = arkret_sdk::Hlc::new("000000000000-0000-00000000")
-            .map_err(|err| anyhow::anyhow!("placeholder HLC is invalid: {err}"))?;
-        let created_at = self.created_at.unwrap_or_else(crate::clock::now_utc_millis);
-        let mut event = arkret_sdk::Event::new_at(
-            self.op_type.as_str(),
-            scope_ref,
-            actor_id,
-            1,
-            hlc,
-            self.body,
-            created_at,
-        )
-        .map_err(|err| anyhow::anyhow!("SDK Event construction failed: {err}"))?;
-        event.refs = self.refs;
-        event.causal_refs = self.causal_refs;
-        event.preconditions = self.preconditions;
-        event.seal_ref = self
-            .seal_ref
-            .map(arkret_sdk::SealId::new)
-            .transpose()
-            .map_err(|err| anyhow::anyhow!("invalid seal_ref: {err}"))?;
-        event.seal_basis = self.seal_basis;
-        event.requirements = self.requirements.unwrap_or_default();
-        event.redacts = self.redacts;
-        event.executed_by = self
-            .executed_by
-            .map(arkret_sdk::Did::new)
-            .transpose()
-            .map_err(|err| anyhow::anyhow!("invalid executed_by DID: {err}"))?;
-        event.authorization_ref = self
-            .authorization_ref
-            .map(arkret_sdk::AuthorizationRef::new)
-            .transpose()
-            .map_err(|err| anyhow::anyhow!("invalid authorization_ref: {err}"))?;
-        event.unsigned = unsigned;
         event
             .refresh_content_bound_identity()
             .map_err(|err| anyhow::anyhow!("derive final event_id: {err}"))?;
-        // A create whose object id is `event_derived` has exactly one legal
-        // local handle: the id the receiver will derive. Stamp it here so no
-        // caller has to invent one — inventing was the whole class of bug the
-        // content-bound id form removes (spec `zh/models/common-fields.md`
-        // section 6.0).
         if let Some(object_id) = arkret_sdk::schema::derived_object_id(&event) {
             event
                 .unsigned
                 .insert("local_target_ref".to_owned(), Value::String(object_id));
         }
-        // Authoring pre-check. All 163 active reducer-input kinds carry a
-        // complete `cell_writes[]` contract, so the receiver can always derive
-        // this Event's writes from `kind + payload`. A projection that does not
-        // evaluate here would be rejected at admission, and shipping it anyway
-        // is exactly the effect-less-Event defect the old producer `effects[]`
-        // path kept re-creating. The CBA plane check is deliberately NOT run:
-        // `seal_basis` / `seal_ref` / `auth_context` are attached after
-        // authoring, so it belongs to the submit gate.
-        //
-        // Non-reducer-input kinds project no writes and pass trivially.
         match project_registered_cell_writes(&event) {
-            Ok(_) => {}
-            // Some registered contracts deliberately compare a signed operand
-            // with accepted frozen pre-state (for example a direct invite
-            // cancel's invitee binding). The authoring layer has no accepted
-            // snapshot to supply, so leave only this requirement unresolved;
-            // admission must evaluate it atomically with the real pre-state.
-            Err(EventCellProjectionError::PreStateRequirement { .. }) => {}
+            Ok(_) | Err(EventCellProjectionError::PreStateRequirement { .. }) => {}
             Err(error) => {
                 return Err(anyhow::anyhow!(
                     "{} has no evaluable registered cell-write contract: {error}",

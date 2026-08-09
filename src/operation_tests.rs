@@ -2,6 +2,21 @@ use serde_json::{Value, json};
 
 use super::*;
 
+fn message_builder(realm_id: &str, actor_id: &str, body: &str) -> TypedOperationBuilder {
+    TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageCreate>(
+        realm_id,
+        actor_id,
+        arkret_sdk::MessageCreatePayload::with_content(
+            arkret_sdk::StrandId::new(
+                "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df".to_owned(),
+            )
+            .unwrap(),
+            "discussion",
+            arkret_sdk::ContentBlock::text(body),
+        ),
+    )
+}
+
 fn assert_registered_payload_valid(event: &Event) {
     let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
     let payload = serde_json::to_value(&event.payload).unwrap();
@@ -71,16 +86,11 @@ fn proof_mode_labels_are_distinct() {
 
 #[test]
 fn operation_builder_generates_valid_envelope() {
-    let op = OperationBuilder::new(
+    let op = message_builder(
         "ak:realm:AXKJvMpMFIFTD9GYNEzOeImU-2ytvLCtsCq3Mrq9-Ci8",
         "did:web:alice",
-        arkret_sdk::EventKind::MessageCreate,
+        "hello",
     )
-    .body(json!({
-        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
-        "track_name": "discussion",
-        "content": {"kind": "ak.content.text", "body": "hello"}
-    }))
     .build("test_node");
 
     assert!(!op.local_operation_id().is_empty());
@@ -105,16 +115,11 @@ fn operation_builder_generates_valid_envelope() {
 
 #[test]
 fn operation_builder_delegates_event_time_normalization_to_the_sdk() {
-    let op = OperationBuilder::new(
+    let op = message_builder(
         "ak:realm:AXKJvMpMFIFTD9GYNEzOeImU-2ytvLCtsCq3Mrq9-Ci8",
         "did:web:alice",
-        arkret_sdk::EventKind::MessageCreate,
+        "hello",
     )
-    .body(json!({
-        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
-        "track_name": "discussion",
-        "content": {"kind": "ak.content.text", "body": "hello"}
-    }))
     .created_at("2026-07-18T10:20:30.987654Z".parse().unwrap())
     .build_sdk_event("test_node")
     .unwrap();
@@ -127,16 +132,11 @@ fn operation_builder_delegates_event_time_normalization_to_the_sdk() {
 
 #[test]
 fn operation_round_trip_serde() {
-    let op = OperationBuilder::new(
+    let op = message_builder(
         "ak:realm:Ac3EwB_awdKZ0dXZDsjIRnTX_zdhqT84eUG5NXqUbg0f",
         "did:web:bob",
-        arkret_sdk::EventKind::MessageCreate,
+        "hello world",
     )
-    .body(json!({
-        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
-        "track_name": "discussion",
-        "content": {"kind": "ak.content.text", "body": "hello world"}
-    }))
     .build("node");
     let json = serde_json::to_string(&op).unwrap();
     let parsed: Event = serde_json::from_str(&json).unwrap();
@@ -145,16 +145,11 @@ fn operation_round_trip_serde() {
 
 #[test]
 fn operation_builder_can_emit_signed_authorization_binding() {
-    let op = OperationBuilder::new(
+    let op = message_builder(
         "ak:realm:Ac3EwB_awdKZ0dXZDsjIRnTX_zdhqT84eUG5NXqUbg0f",
         "did:web:bob",
-        arkret_sdk::EventKind::MessageCreate,
+        "hello world",
     )
-    .body(json!({
-        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
-        "track_name": "discussion",
-        "content": {"kind": "ak.content.text", "body": "hello world"}
-    }))
     .executed_by("did:web:agent.example")
     .authorization_ref("ak:grant:AfUeGRE3CFApB-5spxARHjovex9S5j5RWL8mAUSkpOMS")
     .build("node");
@@ -183,16 +178,11 @@ fn operation_builder_can_emit_signed_authorization_binding() {
 
 #[test]
 fn event_envelope_accepts_current_optional_top_level_fields() {
-    let op = OperationBuilder::new(
+    let op = message_builder(
         "ak:realm:Ac3EwB_awdKZ0dXZDsjIRnTX_zdhqT84eUG5NXqUbg0f",
         "did:web:bob",
-        arkret_sdk::EventKind::MessageCreate,
+        "hello world",
     )
-    .body(json!({
-        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
-        "track_name": "discussion",
-        "content": {"kind": "ak.content.text", "body": "hello world"}
-    }))
     .build("node");
     let mut value = serde_json::to_value(&op).unwrap();
     // The top-level `effective_scope` field is deleted in v1; a wire object
@@ -240,16 +230,11 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
 
 #[test]
 fn event_envelope_rejects_unknown_top_level_fields() {
-    let op = OperationBuilder::new(
+    let op = message_builder(
         "ak:realm:Ac3EwB_awdKZ0dXZDsjIRnTX_zdhqT84eUG5NXqUbg0f",
         "did:web:bob",
-        arkret_sdk::EventKind::MessageCreate,
+        "hello world",
     )
-    .body(json!({
-        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
-        "track_name": "discussion",
-        "content": {"kind": "ak.content.text", "body": "hello world"}
-    }))
     .build("node");
     let mut value = serde_json::to_value(&op).unwrap();
     value
@@ -674,16 +659,11 @@ fn space_create_emits_canonical_space_object() {
 
 #[test]
 fn canonical_digest_is_stable_across_key_order() {
-    let mut op_a = OperationBuilder::new(
+    let mut op_a = message_builder(
         "ak:realm:Ac3EwB_awdKZ0dXZDsjIRnTX_zdhqT84eUG5NXqUbg0f",
         "did:web:alice",
-        arkret_sdk::EventKind::MessageCreate,
+        "hello",
     )
-    .body(json!({
-        "track_name": "discussion",
-        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
-        "content": {"kind": "ak.content.text", "body": "hello"}
-    }))
     .build("node");
     op_a.event_id =
         arkret_sdk::EventId::new("ak:event:AUD01bF1nvRNX9DV18CzK2rYYQ_JlSJq2mzqGMlz12Yf").unwrap();
@@ -708,16 +688,11 @@ fn canonical_digest_is_stable_across_key_order() {
 #[test]
 fn sign_ed25519_attaches_typed_proof() {
     use ed25519_dalek::SigningKey;
-    let mut op = OperationBuilder::new(
+    let mut op = message_builder(
         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "did:web:alice",
-        arkret_sdk::EventKind::MessageCreate,
+        "hi",
     )
-    .body(json!({
-        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
-        "track_name": "discussion",
-        "content": {"kind": "ak.content.text", "body": "hi"}
-    }))
     .build("node");
     let signing_key = SigningKey::from_bytes(&[7u8; 32]);
     op.sign_ed25519("did:web:alice", "did:web:alice#k1", &signing_key)
@@ -732,16 +707,11 @@ fn sign_ed25519_attaches_typed_proof() {
 
 #[test]
 fn sdk_event_conversion_accepts_unsigned_builder_for_signing() {
-    let op = OperationBuilder::new(
+    let op = message_builder(
         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "did:web:alice.example",
-        arkret_sdk::EventKind::MessageCreate,
+        "hi",
     )
-    .body(json!({
-        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
-        "track_name": "discussion",
-        "content": {"kind": "ak.content.text", "body": "hi"}
-    }))
     .build("node");
 
     let sdk_event = op.clone();
@@ -755,16 +725,11 @@ fn sdk_event_conversion_accepts_unsigned_builder_for_signing() {
 fn sdk_submit_event_conversion_preserves_signed_digest() {
     use ed25519_dalek::SigningKey;
 
-    let mut op = OperationBuilder::new(
+    let mut op = message_builder(
         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "did:web:alice.example",
-        arkret_sdk::EventKind::MessageCreate,
+        "hi",
     )
-    .body(json!({
-        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
-        "track_name": "discussion",
-        "content": {"kind": "ak.content.text", "body": "hi"}
-    }))
     .build("node");
     let signing_key = SigningKey::from_bytes(&[7u8; 32]);
     op.sign_ed25519(
@@ -783,16 +748,11 @@ fn sdk_submit_event_conversion_preserves_signed_digest() {
 
 #[test]
 fn require_proof_fails_when_unsigned() {
-    let mut op = OperationBuilder::new(
+    let mut op = message_builder(
         "ak:realm:Ac3EwB_awdKZ0dXZDsjIRnTX_zdhqT84eUG5NXqUbg0f",
         "did:web:alice",
-        arkret_sdk::EventKind::MessageCreate,
+        "hi",
     )
-    .body(json!({
-        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
-        "track_name": "discussion",
-        "content": {"kind": "ak.content.text", "body": "hi"}
-    }))
     .build("node");
     op.proofs.clear();
     assert!(op.require_proof().is_err());
@@ -1024,8 +984,9 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
     let realm = "ak:realm:AXKJvMpMFIFTD9GYNEzOeImU-2ytvLCtsCq3Mrq9-Ci8";
     let actor = "did:web:alice.example";
 
-    let disc =
-        ak_ops::applet_discovery(realm, actor, service_id, json!({"version": 1})).build("node");
+    let disc = ak_ops::applet_discovery(realm, actor, service_id, json!({"version": 1}))
+        .unwrap()
+        .build("node");
     assert_eq!(disc.kind.as_str(), "ak.applet.discovery");
     // The manifest is discovery *state* inside `value`; `resource_id` is what
     // the registry turns into the cell subject.

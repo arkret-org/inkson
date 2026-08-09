@@ -19,7 +19,6 @@
 
 use std::collections::BTreeMap;
 
-use crate::event_builders::build_device_message_envelope;
 use crate::models::{DeviceMessagesSendOutcome, KeysQueryOutcome};
 
 pub async fn query_keys(
@@ -57,25 +56,20 @@ pub async fn list_devices(
 /// The caller prepares `content` (which may itself be a signed proof); this
 /// wraps it in the typed `DeviceMessagesSendRequestBody` and POSTs it — the
 /// envelope carries no additional signing.
-pub async fn send_device_message_envelope(
+pub async fn send_device_message<K: arkret_sdk::DeviceMessageSpec>(
     http: &arkret_sdk::http_client::Client,
     txn_id: &str,
     target_actor: &str,
     target_device_id: &str,
-    kind: &str,
     expires_at: &str,
-    content: serde_json::Value,
+    content: K::Content,
 ) -> anyhow::Result<DeviceMessagesSendOutcome> {
-    let message_id =
-        arkret_sdk::DeviceMessageId::new_v7_at(crate::clock::now_unix_ms()).into_string();
-    let payload = build_device_message_envelope(
-        &message_id,
-        target_actor,
-        target_device_id,
-        kind,
-        expires_at,
-        content,
-    )?;
+    let message_id = arkret_sdk::DeviceMessageId::new_v7_at(crate::clock::now_unix_ms());
+    let target_actor = arkret_sdk::Did::new(target_actor.to_owned())?;
+    let target_device_id = arkret_sdk::DeviceId::new(target_device_id.to_owned())?;
+    let expires_at = chrono::DateTime::parse_from_rfc3339(expires_at)?.with_timezone(&chrono::Utc);
+    let payload = arkret_sdk::TypedDeviceMessageTarget::<K>::new(message_id, expires_at, content)?
+        .single_recipient(target_actor, target_device_id)?;
     http.send_device_messages(txn_id, &payload)
         .await
         .map_err(anyhow::Error::from)
@@ -134,14 +128,13 @@ pub async fn submit_realm_key_request(
         crate::clock::now_utc() + chrono::Duration::minutes(4),
     );
     let txn_id = format!("realm-key-request-{}", crate::operation::uuid_v7());
-    send_device_message_envelope(
+    send_device_message::<arkret_sdk::device_message_spec::RealmKeyRequest>(
         http,
         &txn_id,
         provider_principal_id,
         provider_device_ref,
-        "ak.realm_key.request",
         &expires_at,
-        serde_json::to_value(payload)?,
+        payload,
     )
     .await
 }

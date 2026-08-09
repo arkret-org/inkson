@@ -20,11 +20,11 @@
 //! scope and lives in `realm_admin.rs` once wired. See
 //! `// TODO(moderation-appeal-blob-upload)` markers below for deferred pieces.
 
+use arkret_sdk::AppealVerdict;
 use chrono::Utc;
 use dioxus::prelude::*;
-use serde_json::Value;
 
-use crate::operation::{OperationBuilder, trim_realm_id};
+use crate::operation::trim_realm_id;
 use crate::transport::auth::with_authed_api;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::textarea::Textarea;
@@ -37,33 +37,16 @@ use crate::views::helpers::short_protocol_id;
 /// - `ak.moderation.appeal.review`   → [`AppealState::UnderReview`]
 /// - `ak.moderation.appeal.decision` → [`AppealState::Decided { .. }`]
 /// - `ak.moderation.appeal.close`    → [`AppealState::Closed`]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum AppealState {
     None,
     Submitted,
     UnderReview,
-    Decided { verdict: String },
+    Decided { verdict: AppealVerdict },
     Closed,
 }
 
 impl AppealState {
-    pub fn from_latest_event_kind(kind: &str, payload: &Value) -> Self {
-        match kind {
-            "ak.moderation.appeal.submit" => Self::Submitted,
-            "ak.moderation.appeal.review" => Self::UnderReview,
-            "ak.moderation.appeal.decision" => {
-                let verdict = payload
-                    .get("verdict")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
-                    .to_owned();
-                Self::Decided { verdict }
-            }
-            "ak.moderation.appeal.close" => Self::Closed,
-            _ => Self::None,
-        }
-    }
-
     pub fn label(&self) -> &'static str {
         match self {
             AppealState::None => "moderation.appeal.state.none",
@@ -76,7 +59,7 @@ impl AppealState {
 }
 
 /// Construct the canonical `ak.moderation.appeal.submit` event payload as
-/// an [`OperationBuilder`]. The wire shape matches
+/// a typed Event builder. The wire shape matches
 /// [`arkret_sdk::AppealSubmitPayload`] / `ak.schema.moderation_appeal.v1`.
 ///
 /// Inputs:
@@ -92,7 +75,7 @@ pub fn build_appeal_submit_op(
     decision_event_id: &str,
     target_ref: &str,
     reason_text_ref: &str,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<crate::operation::TypedOperationBuilder> {
     let realm_id = trim_realm_id(realm_id);
     let payload = arkret_sdk::AppealSubmitPayload {
         realm_id: arkret_sdk::RealmId::new(realm_id.clone())
@@ -112,14 +95,12 @@ pub fn build_appeal_submit_op(
     // modify_decision_ref, etc.) can't slip past.
     arkret_sdk::ModerationAppealPayload::Submit(payload.clone()).validate_minimal()?;
 
-    let body = serde_json::to_value(&payload)?;
-    Ok(OperationBuilder::new(
-        &realm_id,
-        appellant,
-        arkret_sdk::EventKind::ModerationAppealSubmit,
+    Ok(
+        crate::operation::TypedOperationBuilder::new::<
+            arkret_sdk::event_spec::ModerationAppealSubmit,
+        >(&realm_id, appellant, payload)
+        .target_ref(decision_event_id),
     )
-    .target_ref(decision_event_id)
-    .body(body))
 }
 
 /// Component: "Appeal this moderation decision" entrypoint. Renders near
@@ -257,34 +238,7 @@ pub fn AppealEntrypoint(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::*;
-
-    #[test]
-    fn appeal_state_from_kind_recognises_all_four_wire_kinds() {
-        assert_eq!(
-            AppealState::from_latest_event_kind("ak.moderation.appeal.submit", &json!({})),
-            AppealState::Submitted
-        );
-        assert_eq!(
-            AppealState::from_latest_event_kind("ak.moderation.appeal.review", &json!({})),
-            AppealState::UnderReview
-        );
-        assert_eq!(
-            AppealState::from_latest_event_kind(
-                "ak.moderation.appeal.decision",
-                &json!({"verdict": "uphold"}),
-            ),
-            AppealState::Decided {
-                verdict: "uphold".to_owned()
-            }
-        );
-        assert_eq!(
-            AppealState::from_latest_event_kind("ak.moderation.appeal.close", &json!({})),
-            AppealState::Closed
-        );
-    }
 
     #[test]
     fn build_appeal_submit_op_emits_canonical_kind() {

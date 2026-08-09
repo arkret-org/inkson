@@ -11,7 +11,7 @@ use inkson::models::{
     missing_event_envelope_write_requirements, missing_v1_principal_server_requirements,
     service_is_v1_principal_server_ready, service_supports_event_envelope_write_plane,
 };
-use inkson::operation::OperationBuilder;
+use inkson::operation::TypedOperationBuilder;
 use inkson::push::validate_blind_wakeup_payload;
 use inkson::service_parse::parse_server_description;
 use reqwest::StatusCode;
@@ -748,21 +748,18 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     );
     realm_remark.local_name = secret.to_owned();
 
-    let event = OperationBuilder::new(
+    let event = TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageCreate>(
         realm_id,
         "did:web:local.example",
-        arkret_sdk::EventKind::MessageCreate,
+        arkret_sdk::MessageCreatePayload::with_content(
+            arkret_sdk::StrandId::new(
+                "ak:strand:ATNFZ7OyO1sA-yc6npfN39mg4TRii1-srFlAECgEuwdk".to_owned(),
+            )
+            .unwrap(),
+            "discussion",
+            arkret_sdk::ContentBlock::text("hello"),
+        ),
     )
-    .body(json!({
-        "strand_id": "ak:strand:ATNFZ7OyO1sA-yc6npfN39mg4TRii1-srFlAECgEuwdk",
-        "track_name": "discussion",
-        "content": {"kind": "ak.content.text", "body": "hello"},
-        "mentions": [{
-            "kind": "mention",
-            "subject_id": contact_remark.subject.did,
-            "mention_text_original": "@alice"
-        }]
-    }))
     .build("contract-test");
     assert_no_secret("event", &event, secret);
 

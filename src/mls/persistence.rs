@@ -138,6 +138,42 @@ pub struct MlsSnapshotEnvelope {
     pub aead_version: u8,
 }
 
+impl MlsSnapshotEnvelope {
+    pub(crate) fn into_queued(self) -> garth::QueuedMlsSnapshot {
+        garth::QueuedMlsSnapshot {
+            realm_id: self.realm_id,
+            group_id: self.group_id,
+            epoch: self.epoch,
+            group_state_event_id: self.group_state_event_id,
+            salt_hex: self.salt_hex,
+            ciphertext_hex: self.ciphertext_hex,
+            mac_hex: self.mac_hex,
+            recorded_at: self.recorded_at,
+            epoch_started_at: self.epoch_started_at,
+            app_messages_observed: self.app_messages_observed,
+            aead_version: self.aead_version,
+        }
+    }
+}
+
+impl From<garth::QueuedMlsSnapshot> for MlsSnapshotEnvelope {
+    fn from(snapshot: garth::QueuedMlsSnapshot) -> Self {
+        Self {
+            realm_id: snapshot.realm_id,
+            group_id: snapshot.group_id,
+            epoch: snapshot.epoch,
+            group_state_event_id: snapshot.group_state_event_id,
+            salt_hex: snapshot.salt_hex,
+            ciphertext_hex: snapshot.ciphertext_hex,
+            mac_hex: snapshot.mac_hex,
+            recorded_at: snapshot.recorded_at,
+            epoch_started_at: snapshot.epoch_started_at,
+            app_messages_observed: snapshot.app_messages_observed,
+            aead_version: snapshot.aead_version,
+        }
+    }
+}
+
 /// Errors produced while encrypting / decrypting / verifying an MLS
 /// snapshot envelope. Each variant maps onto a UI-visible error
 /// message + a typed test assertion.
@@ -338,66 +374,86 @@ impl MlsSnapshotEnvelope {
         actor_id: &str,
         device_id: &str,
         secret_storage_key: &[u8; 32],
-        signer: crate::key_backup::KeyBackupSigner<'_>,
-    ) -> anyhow::Result<Value> {
+    ) -> anyhow::Result<arkret_sdk::KeyBackup> {
         let envelope_bytes = serde_json::to_vec(self).unwrap_or_default();
-        let mut body = json!({
-            "backup_id": backup_id,
-            "actor_id": actor_id,
-            "backup_kind": "mls_history",
-            "backup_version": "kb_mls_snapshot_v1",
-            "created_at": arkret_sdk::canonical::format_timestamp_canonical(self.recorded_at),
-            "encryption": {
-                // Spec key-management.md §7.5.3 / device-lifecycle.md §12:
-                // mls_history is wrapped under a `secret_storage` key
-                // (`mls_group_secrets_backup_key`), recovered after the account
-                // secret is unlocked.
-                "recipient_method": "secret_storage_key",
-                "recipient_key_ref": "mls_group_secrets_backup_key",
-                "aead": {
-                    "name": "xchacha20_poly1305",
-                    "aead_profile": "ak.aead.xchacha20_poly1305.v1",
-                    "nonce": ""
-                }
+        let actor_id = arkret_sdk::Did::new(actor_id.to_owned())?;
+        let device_id = arkret_sdk::DeviceId::new(device_id.to_owned()).ok();
+        let backup_kind = arkret_sdk::BackupKind::MlsHistory;
+        let backup_version = "kb_mls_snapshot_v1".to_owned();
+        let contents = vec![arkret_sdk::KeyBackupContentItem {
+            item_kind: "mls_group_state".to_owned(),
+            realm_id: Some(arkret_sdk::RealmId::new(self.realm_id.clone())?),
+            mls_group_id: Some(self.group_id.clone()),
+            epoch: Some(self.epoch),
+            secret_id: Some("inkson_mls_snapshot".to_owned()),
+            last_event_id: self.group_state_event_id.clone(),
+            ..Default::default()
+        }];
+        let aead_aad = arkret_sdk::KeyBackupDomainSeparationAad {
+            schema: arkret_sdk::SchemaId::KEY_BACKUP_V1.to_owned(),
+            actor_id: actor_id.clone(),
+            device_id: device_id.as_ref().map(ToString::to_string),
+            backup_kind,
+            backup_version: backup_version.clone(),
+            created_at: self.recorded_at,
+            item_kinds: vec!["mls_group_state".to_owned()],
+            managed_principal_bindings: Vec::new(),
+            recipient_method: Some(arkret_sdk::KeyBackupRecipientMethod::SecretStorageKey),
+            recipient_key_ref: Some("mls_group_secrets_backup_key".to_owned()),
+            extra: Default::default(),
+        };
+        let mut body = arkret_sdk::KeyBackup {
+            backup_id: arkret_sdk::BackupId::new(backup_id.to_owned())?,
+            actor_id,
+            device_id,
+            backup_kind,
+            mixed_secret_storage: false,
+            backup_version,
+            created_at: self.recorded_at,
+            updated_at: None,
+            expires_at: None,
+            encryption: arkret_sdk::KeyBackupEncryption {
+                recipient_method: arkret_sdk::KeyBackupRecipientMethod::SecretStorageKey,
+                recipient_key_ref: Some("mls_group_secrets_backup_key".to_owned()),
+                kdf: None,
+                aead: arkret_sdk::KeyBackupAead {
+                    name: arkret_sdk::KeyBackupAeadName::Xchacha20Poly1305,
+                    aead_profile: Some(arkret_wire::AEAD_PROFILE_XCHACHA20_POLY1305_V1.to_owned()),
+                    nonce_salt: None,
+                    nonce: None,
+                    enc: None,
+                    extra: Default::default(),
+                },
+                key_commitment: None,
+                hpke_suite: None,
+                extra: Default::default(),
             },
-            "contents": [{
-                "item_kind": "mls_group_state",
-                "mls_group_id": self.group_id,
-                "epoch": self.epoch,
-                "secret_id": "inkson_mls_snapshot",
-                "realm_id": self.realm_id
-            }],
-            "ciphertext": "",
-            "ciphertext_digest": ""
-        });
-        if let Some(group_state_event_id) = &self.group_state_event_id {
-            body["contents"][0]["last_event_id"] = Value::String(group_state_event_id.to_string());
-        }
-        if is_protocol_device_id(device_id)
-            && let Some(object) = body.as_object_mut()
-        {
-            object.insert("device_id".to_owned(), Value::String(device_id.to_owned()));
-        }
-        crate::key_backup::attach_key_backup_genesis_series(&mut body);
-        crate::key_backup::attach_key_backup_domain_separation(
-            &mut body,
-            crate::key_backup::BackupKind::MlsHistory,
-            "mls_snapshot",
-        );
-        let aead_aad = serde_json::from_value(
-            body.pointer("/domain_separation/aead_aad")
-                .cloned()
-                .ok_or_else(|| anyhow::anyhow!("domain_separation.aead_aad missing"))?,
-        )
-        .map_err(|error| anyhow::anyhow!("key-backup AAD: {error}"))?;
+            domain_separation: arkret_sdk::KeyBackupDomainSeparation {
+                hkdf_info: backup_kind.hkdf_info("mls_snapshot"),
+                subdomain: "mls_snapshot".to_owned(),
+                aead_aad: aead_aad.clone(),
+                extra: Default::default(),
+            },
+            contents,
+            ciphertext: String::new(),
+            ciphertext_digest: String::new(),
+            plaintext_commitment: None,
+            auth_data: None,
+            retention: None,
+            series_id: arkret_sdk::BackupSeriesId::new(format!(
+                "ak:backup_series:{}",
+                crate::operation::uuid_v7()
+            ))?,
+            series_seq: 0,
+            supersedes: None,
+            supersedes_digest: None,
+            frontier_ref: None,
+            recovery_policy_ref: None,
+            extra: Default::default(),
+        };
         let binding = arkret_crypto::backup::VaultBinding {
-            backup_id: arkret_sdk::BackupId::new(backup_id.to_owned())
-                .map_err(|error| anyhow::anyhow!("backup_id: {error}"))?,
-            subdomain: body
-                .pointer("/domain_separation/subdomain")
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow::anyhow!("domain_separation.subdomain missing"))?
-                .to_owned(),
+            backup_id: body.backup_id.clone(),
+            subdomain: body.domain_separation.subdomain.clone(),
             aead_aad,
         };
         let sealed = arkret_crypto::backup::encrypt_with_secret_storage_key(
@@ -406,10 +462,11 @@ impl MlsSnapshotEnvelope {
             &envelope_bytes,
         )
         .map_err(|error| anyhow::anyhow!("encrypt mls_history backup: {error}"))?;
-        body["encryption"]["aead"]["nonce"] = Value::String(sealed.nonce_b64);
-        body["ciphertext"] = Value::String(sealed.ciphertext_b64);
-        body["ciphertext_digest"] = Value::String(sealed.digest_sha256);
-        crate::key_backup::sign_key_backup_with_device(&mut body, device_id, signer)?;
+        body.encryption.aead.nonce = Some(arkret_sdk::Base64UrlString::new(sealed.nonce_b64)?);
+        body.ciphertext = sealed.ciphertext_b64;
+        body.ciphertext_digest = sealed.digest_sha256;
+        body.validate_envelope_fields()
+            .map_err(|error| anyhow::anyhow!("validate mls_history key backup: {error}"))?;
         Ok(body)
     }
 
@@ -489,19 +546,6 @@ fn derive_key(snapshot_secret: &str, salt: &[u8]) -> [u8; 32] {
     hkdf.expand(MLS_ENVELOPE_MAGIC, &mut out)
         .expect("HKDF output length is fixed at 32 bytes");
     out
-}
-
-fn is_protocol_device_id(value: &str) -> bool {
-    let Some(rest) = value.strip_prefix("ak:device:") else {
-        return false;
-    };
-    rest.len() == 36
-        && rest.chars().enumerate().all(|(idx, ch)| match idx {
-            8 | 13 | 18 | 23 => ch == '-',
-            14 => ch == '7',
-            19 => matches!(ch, '8' | '9' | 'a' | 'b'),
-            _ => ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase(),
-        })
 }
 
 // YOU-05-007: shared lowercase-hex codec lives in `crate::canonical`.
@@ -637,47 +681,46 @@ mod tests {
                 "did:web:alice.example",
                 "ak:device:01964137-0000-7000-8000-000000000001",
                 &crate::mls::runtime::derive_mls_history_backup_key("passw").unwrap(),
-                None,
             )
             .unwrap();
         assert_eq!(
-            body["backup_id"],
+            body.backup_id.as_str(),
             "ak:backup:01964137-0000-7000-8000-000000000000"
         );
         assert_eq!(
-            body["device_id"],
-            "ak:device:01964137-0000-7000-8000-000000000001"
+            body.device_id.as_ref().map(arkret_sdk::DeviceId::as_str),
+            Some("ak:device:01964137-0000-7000-8000-000000000001")
         );
-        assert_eq!(body["backup_kind"], "mls_history");
-        assert_eq!(body["backup_version"], "kb_mls_snapshot_v1");
-        assert!(
-            body["series_id"]
-                .as_str()
-                .is_some_and(|value| value.starts_with("ak:backup_series:"))
-        );
-        assert_eq!(body["series_seq"], 0);
-        assert_eq!(body["encryption"]["recipient_method"], "secret_storage_key");
+        assert_eq!(body.backup_kind, arkret_sdk::BackupKind::MlsHistory);
+        assert_eq!(body.backup_version, "kb_mls_snapshot_v1");
+        assert!(body.series_id.as_str().starts_with("ak:backup_series:"));
+        assert_eq!(body.series_seq, 0);
         assert_eq!(
-            body["encryption"]["recipient_key_ref"],
-            "mls_group_secrets_backup_key"
+            body.encryption.recipient_method,
+            arkret_sdk::KeyBackupRecipientMethod::SecretStorageKey
         );
-        assert!(body["encryption"].get("kdf").is_none());
-        assert_eq!(body["contents"][0]["item_kind"], "mls_group_state");
         assert_eq!(
-            body["contents"][0]["realm_id"],
-            "ak:realm:AaMEOXZMosCc7hvMzXuceDOBTDkSvFz1SpIwlCE_GMGd"
+            body.encryption.recipient_key_ref.as_deref(),
+            Some("mls_group_secrets_backup_key")
         );
-        assert_eq!(body["contents"][0]["mls_group_id"], "aaaa");
-        assert_eq!(body["contents"][0]["epoch"], 42);
+        assert!(body.encryption.kdf.is_none());
+        assert_eq!(body.contents[0].item_kind, "mls_group_state");
         assert_eq!(
-            body["domain_separation"]["hkdf_info"],
+            body.contents[0]
+                .realm_id
+                .as_ref()
+                .map(arkret_sdk::RealmId::as_str),
+            Some("ak:realm:AaMEOXZMosCc7hvMzXuceDOBTDkSvFz1SpIwlCE_GMGd")
+        );
+        assert_eq!(body.contents[0].mls_group_id.as_deref(), Some("aaaa"));
+        assert_eq!(body.contents[0].epoch, Some(42));
+        assert_eq!(
+            body.domain_separation.hkdf_info,
             "arkret-key-backup/mls_history/mls_snapshot/v1"
         );
-        crate::key_backup::validate_key_backup_envelope(
-            &body,
-            Some(crate::key_backup::BackupKind::MlsHistory),
-        )
-        .expect("MLS history backup envelope should validate");
+        body.validate_envelope_fields()
+            .expect("MLS history backup envelope should validate");
+        let body = serde_json::to_value(&body).unwrap();
         assert!(body.get("envelope_meta").is_none());
         // The outer key-backup ciphertext is authenticated encryption, and the
         // runtime owner can open it back to the original snapshot envelope.

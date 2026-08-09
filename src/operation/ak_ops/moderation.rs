@@ -10,7 +10,7 @@
 
 use serde_json::json;
 
-use super::{OperationBuilder, did_id, payload_value, trim_realm_id};
+use super::{TypedOperationBuilder, did_id, trim_realm_id};
 
 /// Derive the `request_canonical_digest` the `moderation_decision_payload`
 /// schema mandates (JCS SHA-256, `sha256:<64hex>`). inkson's reviewer
@@ -40,7 +40,7 @@ pub fn moderation_decision(
     target_ref: &str,
     decision: &str,
     reason_code: &str,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let realm = trim_realm_id(realm_id);
     let payload = arkret_sdk::ModerationDecisionPayload {
         target_ref: target_ref.to_owned(),
@@ -56,9 +56,10 @@ pub fn moderation_decision(
         expires_at: None,
     };
     Ok(
-        OperationBuilder::new(&realm, actor, arkret_sdk::EventKind::ModerationDecision)
-            .target_ref(target_ref)
-            .body(payload_value(&payload, "moderation_decision payload")?),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::ModerationDecision>(
+            &realm, actor, payload,
+        )
+        .target_ref(target_ref),
     )
 }
 
@@ -74,7 +75,7 @@ pub fn moderation_decision_lift(
     target_ref: &str,
     decision_ref: &str,
     reason_code: &str,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let realm = trim_realm_id(realm_id);
     let payload = arkret_sdk::ModerationDecisionLiftPayload {
         target_ref: target_ref.to_owned(),
@@ -84,9 +85,10 @@ pub fn moderation_decision_lift(
         effective_at: None,
     };
     Ok(
-        OperationBuilder::new(&realm, actor, arkret_sdk::EventKind::ModerationDecisionLift)
-            .target_ref(target_ref)
-            .body(payload_value(&payload, "moderation_decision_lift payload")?),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::ModerationDecisionLift>(
+            &realm, actor, payload,
+        )
+        .target_ref(target_ref),
     )
 }
 
@@ -99,20 +101,21 @@ pub fn moderation_appeal_review(
     actor: &str,
     appeal_id: &str,
     notes_ref: Option<&str>,
-) -> OperationBuilder {
+) -> anyhow::Result<TypedOperationBuilder> {
     let realm = trim_realm_id(realm_id);
-    let mut body = json!({
-        "appeal_id": appeal_id,
-        "realm_id": realm,
-        "reviewer": actor,
-        "reviewed_at": crate::clock::now_timestamp(),
-    });
-    if let Some(notes_ref) = notes_ref {
-        body["notes_ref"] = json!(notes_ref);
-    }
-    OperationBuilder::new(&realm, actor, arkret_sdk::EventKind::ModerationAppealReview)
-        .target_ref(appeal_id)
-        .body(body)
+    let payload = arkret_sdk::AppealReviewPayload {
+        appeal_id: arkret_sdk::TypedAppealId::new(appeal_id.to_owned())?,
+        realm_id: arkret_sdk::RealmId::new(realm.clone())?,
+        reviewer: did_id(actor)?,
+        reviewed_at: crate::clock::now_utc_millis(),
+        notes_ref: notes_ref.map(ToOwned::to_owned),
+    };
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::ModerationAppealReview>(
+            &realm, actor, payload,
+        )
+        .target_ref(appeal_id),
+    )
 }
 
 /// `ak.moderation.appeal.decision` — reviewer verdict
@@ -129,26 +132,31 @@ pub fn moderation_appeal_decision(
     verdict: &str,
     reason_text_ref: &str,
     modify_decision_ref: Option<&str>,
-) -> OperationBuilder {
+) -> anyhow::Result<TypedOperationBuilder> {
     let realm = trim_realm_id(realm_id);
-    let mut body = json!({
-        "appeal_id": appeal_id,
-        "realm_id": realm,
-        "reviewer": actor,
-        "verdict": verdict,
-        "reason_text_ref": reason_text_ref,
-        "decided_at": crate::clock::now_timestamp(),
-    });
-    if let Some(modify_decision_ref) = modify_decision_ref {
-        body["modify_decision_ref"] = json!(modify_decision_ref);
-    }
-    OperationBuilder::new(
-        &realm,
-        actor,
-        arkret_sdk::EventKind::ModerationAppealDecision,
+    let verdict = match verdict {
+        "uphold" => arkret_sdk::AppealVerdict::Uphold,
+        "overturn" => arkret_sdk::AppealVerdict::Overturn,
+        "modify" => arkret_sdk::AppealVerdict::Modify,
+        other => anyhow::bail!("invalid moderation appeal verdict {other:?}"),
+    };
+    let payload = arkret_sdk::AppealDecisionPayload {
+        appeal_id: arkret_sdk::TypedAppealId::new(appeal_id.to_owned())?,
+        realm_id: arkret_sdk::RealmId::new(realm.clone())?,
+        reviewer: did_id(actor)?,
+        verdict,
+        reason_text_ref: reason_text_ref.to_owned(),
+        modify_decision_ref: modify_decision_ref
+            .map(|event_id| arkret_sdk::EventId::new(event_id.to_owned()))
+            .transpose()?,
+        decided_at: crate::clock::now_utc_millis(),
+    };
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::ModerationAppealDecision>(
+            &realm, actor, payload,
+        )
+        .target_ref(appeal_id),
     )
-    .target_ref(appeal_id)
-    .body(body)
 }
 
 /// `ak.moderation.appeal.close` — terminal close of an appeal from
@@ -160,18 +168,20 @@ pub fn moderation_appeal_close(
     actor: &str,
     appeal_id: &str,
     close_reason: Option<&str>,
-) -> OperationBuilder {
+) -> anyhow::Result<TypedOperationBuilder> {
     let realm = trim_realm_id(realm_id);
-    let mut body = json!({
-        "appeal_id": appeal_id,
-        "realm_id": realm,
-        "closer": actor,
-        "closed_at": crate::clock::now_timestamp(),
-    });
-    if let Some(close_reason) = close_reason {
-        body["close_reason"] = json!(close_reason);
-    }
-    OperationBuilder::new(&realm, actor, arkret_sdk::EventKind::ModerationAppealClose)
-        .target_ref(appeal_id)
-        .body(body)
+    let payload = arkret_sdk::AppealClosePayload {
+        appeal_id: arkret_sdk::TypedAppealId::new(appeal_id.to_owned())?,
+        realm_id: arkret_sdk::RealmId::new(realm.clone())?,
+        closer: did_id(actor)?,
+        closed_at: crate::clock::now_utc_millis(),
+        auto_closed: false,
+        close_reason: close_reason.map(ToOwned::to_owned),
+    };
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::ModerationAppealClose>(
+            &realm, actor, payload,
+        )
+        .target_ref(appeal_id),
+    )
 }

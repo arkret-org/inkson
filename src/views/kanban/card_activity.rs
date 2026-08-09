@@ -193,13 +193,22 @@ pub(super) fn activity_title_from_operation(
     _card: &KanbanCard,
     actor_label: &impl Fn(&str) -> String,
 ) -> String {
-    match kind {
-        "ak.relation.create" => {
-            let relation_kind = json_path_string(Some(payload), &["body", "kind"])
-                .or_else(|| json_path_string(Some(payload), &["body", "relation_kind"]));
-            if relation_kind.as_deref() == Some("assigned_to") {
+    let body = payload.get("body").or_else(|| payload.get("payload"));
+    match arkret_sdk::EventKind::from_wire(kind) {
+        arkret_sdk::EventKind::RelationCreate => {
+            let relation = body.cloned().and_then(|body| {
+                serde_json::from_value::<arkret_sdk::RelationCreatePayload>(body).ok()
+            });
+            if relation
+                .as_ref()
+                .is_some_and(|payload| payload.relation.kind == "assigned_to")
+            {
                 let actor = json_path_string(Some(payload), &["assignment_actor_id"])
-                    .or_else(|| json_path_string(Some(payload), &["body", "to_ref"]))
+                    .or_else(|| {
+                        relation
+                            .as_ref()
+                            .map(|payload| payload.relation.to_ref.as_str().to_owned())
+                    })
                     .map(|actor| actor_label(&actor))
                     .unwrap_or_else(|| "actor".to_owned());
                 format!("Assignee added: {actor}")
@@ -207,35 +216,38 @@ pub(super) fn activity_title_from_operation(
                 "Relation added".to_owned()
             }
         }
-        "ak.relation.tombstone" => {
+        arkret_sdk::EventKind::RelationTombstone => {
             if let Some(actor) = json_path_string(Some(payload), &["assignment_actor_id"]) {
                 format!("Assignee removed: {}", actor_label(&actor))
             } else {
                 "Relation removed".to_owned()
             }
         }
-        "ak.strand.update" => strand_update_activity_title(payload),
-        "ak.strand.move" => "Card moved".to_owned(),
-        "ak.strand.reorder" => "Card reordered".to_owned(),
-        "ak.strand.create" => "Card created".to_owned(),
+        arkret_sdk::EventKind::StrandUpdate => body
+            .cloned()
+            .and_then(|body| serde_json::from_value::<arkret_sdk::StrandPatchPayload>(body).ok())
+            .map_or_else(
+                || "Card updated".to_owned(),
+                |payload| strand_update_activity_title(&payload),
+            ),
+        arkret_sdk::EventKind::StrandMove => "Card moved".to_owned(),
+        arkret_sdk::EventKind::StrandReorder => "Card reordered".to_owned(),
+        arkret_sdk::EventKind::StrandCreate => "Card created".to_owned(),
         _ => kind.to_owned(),
     }
 }
 
-pub(super) fn strand_update_activity_title(payload: &Value) -> String {
-    let patch = payload
-        .get("body")
-        .and_then(|body| body.get("patch"))
-        .or_else(|| payload.get("payload").and_then(|body| body.get("patch")));
-    if let Some(patch) = patch.and_then(Value::as_object) {
-        let fields = patch
-            .get("metadata.fields")
-            .or_else(|| patch.get("fields"))
-            .and_then(|op| {
-                (op.get("$op").and_then(Value::as_str) == Some("set"))
-                    .then(|| op.get("value"))
-                    .flatten()
-            })
+pub(super) fn strand_update_activity_title(payload: &arkret_sdk::StrandPatchPayload) -> String {
+    let operation_at = |expected: &str| {
+        payload
+            .patch
+            .iter()
+            .find_map(|(path, operation)| (path == expected).then_some(operation))
+    };
+    {
+        let fields = operation_at("metadata.fields")
+            .or_else(|| operation_at("fields"))
+            .and_then(|op| op.value())
             .and_then(Value::as_object);
         if let Some(fields) = fields {
             if let Some(due) = fields
@@ -248,13 +260,13 @@ pub(super) fn strand_update_activity_title(payload: &Value) -> String {
             }
             return "Card fields updated".to_owned();
         }
-        if patch.contains_key("metadata.title") || patch.contains_key("title") {
+        if operation_at("metadata.title").is_some() || operation_at("title").is_some() {
             return "Title updated".to_owned();
         }
-        if patch.contains_key("metadata.summary") || patch.contains_key("summary") {
+        if operation_at("metadata.summary").is_some() || operation_at("summary").is_some() {
             return "Summary updated".to_owned();
         }
-        if patch.contains_key("body") || patch.contains_key("synthesis") {
+        if operation_at("body").is_some() || operation_at("synthesis").is_some() {
             return "Card content updated".to_owned();
         }
     }

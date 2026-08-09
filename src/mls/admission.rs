@@ -63,8 +63,6 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
         serde_json::from_value::<arkret_sdk::MlsGovernanceBindingPayload>(governance_binding)
             .map_err(|err| format!("MLS commit governance_binding is invalid: {err}"))?;
     let welcome_payload = build_mls_welcome_payload(
-        state_store,
-        secure_store,
         realm_id,
         actor_id,
         device_id,
@@ -208,8 +206,6 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
         .zip(member_key_packages.iter().zip(add.welcomes.iter()))
     {
         let welcome_payload = build_mls_welcome_payload(
-            state_store,
-            secure_store,
             realm_id,
             actor_id,
             device_id,
@@ -339,17 +335,13 @@ pub(crate) fn build_realm_key_share_event(
     // fail closed and retry after device signing is ready.
     payload.sender_device_signature = sign_realm_key_share_sender_signature(&payload)
         .ok_or_else(|| "ak.realm_key.share requires an active sender device signer".to_owned())?;
-    let body = serde_json::to_value(&payload)
-        .map_err(|err| format!("serialize ak.realm_key.share payload: {err}"))?;
-    let event = crate::operation::OperationBuilder::new(
-        realm_id,
-        actor_id,
-        arkret_sdk::EventKind::RealmKeyShare,
-    )
-    .body(body)
-    .authorization_ref(authorization_grant_ref.as_str())
-    .build_sdk_event("inkson")
-    .map_err(|err| format!("ak.realm_key.share SDK Event conversion failed: {err}"))?;
+    let event =
+        crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmKeyShare>(
+            realm_id, actor_id, payload,
+        )
+        .authorization_ref(authorization_grant_ref.as_str())
+        .build_sdk_event("inkson")
+        .map_err(|err| format!("ak.realm_key.share SDK Event conversion failed: {err}"))?;
     // The delivery-log append is derived from the registered contract, so the
     // producer no longer stamps it. `digest_suite` still has to be the one the
     // key scope's policy digest names, because the projection hashes the
@@ -390,17 +382,13 @@ pub(crate) fn wrap_realm_key_share_payload_event(
             .map_err(|err| format!("invalid realm_key.share authorization grant ref: {err:?}"))?;
     payload.sender_device_signature = sign_realm_key_share_sender_signature(&payload)
         .ok_or_else(|| "ak.realm_key.share requires an active sender device signer".to_owned())?;
-    let body = serde_json::to_value(&payload)
-        .map_err(|err| format!("serialize ak.realm_key.share payload: {err}"))?;
-    let event = crate::operation::OperationBuilder::new(
-        realm_id,
-        actor_id,
-        arkret_sdk::EventKind::RealmKeyShare,
-    )
-    .body(body)
-    .authorization_ref(authorization_grant_ref.as_str())
-    .build_sdk_event("inkson")
-    .map_err(|err| format!("ak.realm_key.share SDK Event conversion failed: {err}"))?;
+    let event =
+        crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmKeyShare>(
+            realm_id, actor_id, payload,
+        )
+        .authorization_ref(authorization_grant_ref.as_str())
+        .build_sdk_event("inkson")
+        .map_err(|err| format!("ak.realm_key.share SDK Event conversion failed: {err}"))?;
     // The delivery-log append is derived from the registered contract, so the
     // producer no longer stamps it. `digest_suite` still has to be the one the
     // key scope's policy digest names, because the projection hashes the
@@ -446,8 +434,6 @@ pub(crate) fn sign_realm_key_share_sender_signature(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_mls_welcome_payload(
-    state_store: &LocalStateStore,
-    secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     actor_id: &str,
     sender_device_id: &str,
@@ -465,38 +451,24 @@ pub(crate) fn build_mls_welcome_payload(
         .map_err(|err| format!("invalid MLS Welcome requester DID: {err:?}"))?;
     let sender_device_id = arkret_sdk::DeviceId::new(sender_device_id.trim().to_owned())
         .map_err(|err| format!("invalid MLS Welcome sender device id: {err:?}"))?;
-    let mut envelope = arkret_sdk::MlsWelcomeClaimEnvelope {
-        keypackage_ref: claim.keypackage_ref.clone(),
-        keypackage_digest: claim.keypackage_digest.clone(),
-        intended_realm_id,
-        claim_id: arkret_sdk::NonEmptyString::new(claim.claim_id.clone())
-            .map_err(|err| format!("invalid MLS Welcome claim id: {err}"))?,
-        requester_did,
-        trust_binding: arkret_sdk::MlsRequesterTrustBinding::RequesterDeviceId(
-            sender_device_id.clone(),
-        ),
-        nonce: arkret_sdk::NonEmptyString::new(claim_nonce.trim())
-            .map_err(|err| format!("invalid MLS Welcome claim nonce: {err}"))?,
-        welcome_digest: welcome.welcome_hash.clone(),
-        created_at: crate::clock::now_utc_canonical(),
-        signature: arkret_sdk::KeyOperationSignature {
-            kid: arkret_sdk::NonEmptyString::new("pending")
-                .map_err(|err| format!("MLS Welcome placeholder kid: {err}"))?,
-            signature_algorithm: Some(
-                arkret_sdk::NonEmptyString::new("Ed25519")
-                    .map_err(|err| format!("MLS Welcome signature algorithm: {err}"))?,
+    let envelope = arkret_sdk::UnsignedMlsWelcomeClaimEnvelope::new(
+        arkret_sdk::MlsWelcomeClaimEnvelopeSigningInput {
+            keypackage_ref: claim.keypackage_ref.clone(),
+            keypackage_digest: claim.keypackage_digest.clone(),
+            intended_realm_id,
+            claim_id: arkret_sdk::NonEmptyString::new(claim.claim_id.clone())
+                .map_err(|err| format!("invalid MLS Welcome claim id: {err}"))?,
+            requester_did,
+            trust_binding: arkret_sdk::MlsRequesterTrustBinding::RequesterDeviceId(
+                sender_device_id.clone(),
             ),
-            sig: arkret_sdk::Base64UrlString::new("cGVuZGluZw")
-                .map_err(|err| format!("MLS Welcome placeholder signature: {err}"))?,
+            nonce: arkret_sdk::NonEmptyString::new(claim_nonce.trim())
+                .map_err(|err| format!("invalid MLS Welcome claim nonce: {err}"))?,
+            welcome_digest: welcome.welcome_hash.clone(),
+            created_at: crate::clock::now_utc_canonical(),
         },
-    };
-    sign_welcome_claim_envelope(
-        state_store,
-        secure_store,
-        actor_id,
-        sender_device_id.as_str(),
-        &mut envelope,
-    )?;
+    );
+    let envelope = sign_welcome_claim_envelope(actor_id, sender_device_id.as_str(), envelope)?;
     let claim_trust_binding = match (
         claim.device_authorize_event_id.as_deref(),
         claim.agent_key_authorize_event_id.as_deref(),
@@ -554,20 +526,14 @@ pub(crate) fn build_mls_welcome_payload(
 }
 
 fn sign_welcome_claim_envelope(
-    _state_store: &LocalStateStore,
-    _secure_store: &dyn SecureKeyStore,
     actor_id: &str,
     sender_device_id: &str,
-    envelope: &mut arkret_sdk::MlsWelcomeClaimEnvelope,
-) -> Result<(), String> {
+    envelope: arkret_sdk::UnsignedMlsWelcomeClaimEnvelope,
+) -> Result<arkret_sdk::MlsWelcomeClaimEnvelope, String> {
     let sender_device_id = sender_device_id.trim();
     if sender_device_id.is_empty() {
         return Err("MLS Welcome device signature requires sender_device_id".to_owned());
     }
-    envelope.trust_binding = arkret_sdk::MlsRequesterTrustBinding::RequesterDeviceId(
-        arkret_sdk::DeviceId::new(sender_device_id.to_owned())
-            .map_err(|err| format!("invalid MLS Welcome requester device id: {err:?}"))?,
-    );
     let signer = match crate::event_signer::active_signer() {
         Some(signer) => signer,
         None => crate::event_signer::bootstrap_default_signer("inkson")
@@ -578,18 +544,19 @@ fn sign_welcome_claim_envelope(
     // the Event proof, while the underlying local key remains unchanged.
     // Advertising the signer's local did:key method here prevents a remote
     // Principal Server from matching the signature to requester_device_id.
-    envelope.signature.kid =
-        arkret_sdk::NonEmptyString::new(format!("{actor_id}#{sender_device_id}"))
-            .map_err(|err| format!("MLS Welcome device signing kid: {err}"))?;
+    let kid = arkret_sdk::NonEmptyString::new(format!("{actor_id}#{sender_device_id}"))
+        .map_err(|err| format!("MLS Welcome device signing kid: {err}"))?;
     let signing_bytes = envelope
         .canonical_signing_bytes()
         .map_err(|err| format!("MLS Welcome claim canonical bytes: {err}"))?;
     let signature = signer
         .sign_raw(&signing_bytes)
         .map_err(|err| format!("MLS Welcome device signature: {err}"))?;
-    envelope.signature.sig = arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(signature))
+    let signature = arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(signature))
         .map_err(|err| format!("MLS Welcome device signature encoding: {err}"))?;
-    Ok(())
+    envelope
+        .attach_signature(kid, signature)
+        .map_err(|err| format!("MLS Welcome signed envelope: {err}"))
 }
 #[cfg(test)]
 mod tests {

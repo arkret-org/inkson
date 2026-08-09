@@ -280,14 +280,14 @@ impl SignalSink for InksonSignalSink {
                     // would make every call signal fail to decode. The router
                     // already receives the envelope alongside it.
                     self.products
-                        .call_signal(envelope, decrypted_body_value(&plaintext))
+                        .call_signal(envelope, decrypted_body_value(&plaintext)?)
                         .await;
                 }
                 garth::MESSAGE_STREAM_KIND => {
                     self.products.message_stream(&plaintext).await;
                 }
                 garth::SIGNAL_PLAINTEXT_KIND_PRESENCE | SIGNAL_PLAINTEXT_KIND_TYPING => {
-                    self.apply_live_body(&plaintext);
+                    self.apply_live_body(&plaintext)?;
                 }
                 SIGNAL_PLAINTEXT_KIND_READ_RECEIPT => {
                     // Not a live body: presence and typing are TTL projections
@@ -393,20 +393,24 @@ impl InksonSignalSink {
         policy
     }
 
-    fn apply_live_body(&self, plaintext: &garth::SignalPlaintext) {
-        let body = live_body_value(plaintext);
-        let target = plaintext
-            .body
-            .get("strand_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
+    fn apply_live_body(&self, plaintext: &garth::SignalPlaintext) -> garth::Result<()> {
+        let body = live_body_value(plaintext)?;
+        let target = match &plaintext.payload {
+            garth::SdkSignalPlaintext::Presence(_) => "",
+            garth::SdkSignalPlaintext::Typing(typing) => typing.strand_id.as_str(),
+            _ => {
+                return Err(garth::Error::Protocol(
+                    "live Signal projection requires a presence or typing payload".to_owned(),
+                ));
+            }
+        };
         let key = format!(
             "{}|{}|{}|{target}",
             plaintext.kind, plaintext.actor_id, plaintext.sender_device_id
         );
         let now = crate::clock::now_utc();
         let Ok(mut live) = self.live.lock() else {
-            return;
+            return Ok(());
         };
         if !live.apply(
             key,
@@ -415,18 +419,29 @@ impl InksonSignalSink {
             body,
             now,
         ) {
-            return;
+            return Ok(());
         }
         let bodies = live.bodies();
         drop(live);
         self.state_store
             .write(|store| store.save_presence_projection(&bodies));
+        Ok(())
     }
 }
 
-/// The decrypted body exactly as the sender canonicalized it.
-fn decrypted_body_value(plaintext: &garth::SignalPlaintext) -> Value {
-    Value::Object(serde_json::Map::from_iter(plaintext.body.clone()))
+/// Serialize the already-admitted SDK profile for product adapters that still
+/// consume JSON. Dispatch remains on the typed union; no raw body is retained.
+fn decrypted_body_value(plaintext: &garth::SignalPlaintext) -> garth::Result<Value> {
+    let body = match &plaintext.payload {
+        garth::SdkSignalPlaintext::Presence(payload) => serde_json::to_value(payload),
+        garth::SdkSignalPlaintext::Typing(payload) => serde_json::to_value(payload),
+        garth::SdkSignalPlaintext::ReadReceipt(payload) => serde_json::to_value(payload),
+        garth::SdkSignalPlaintext::CallSignal(payload) => serde_json::to_value(payload),
+        garth::SdkSignalPlaintext::MessageStream(payload) => serde_json::to_value(payload),
+    };
+    body.map_err(|error| {
+        garth::Error::Protocol(format!("serialize admitted Signal plaintext: {error}"))
+    })
 }
 
 /// The decrypted body plus the envelope-derived fields the chat projections
@@ -437,8 +452,12 @@ fn decrypted_body_value(plaintext: &garth::SignalPlaintext) -> Value {
 /// Only for payload profiles whose consumer accepts an open object. A closed
 /// `deny_unknown_fields` plaintext (call signalling) must get
 /// [`decrypted_body_value`] instead.
-fn live_body_value(plaintext: &garth::SignalPlaintext) -> Value {
-    let mut body = serde_json::Map::from_iter(plaintext.body.clone());
+fn live_body_value(plaintext: &garth::SignalPlaintext) -> garth::Result<Value> {
+    let Value::Object(mut body) = decrypted_body_value(plaintext)? else {
+        return Err(garth::Error::Protocol(
+            "admitted Signal plaintext must serialize as an object".to_owned(),
+        ));
+    };
     body.insert(
         "actor_id".to_owned(),
         Value::String(plaintext.actor_id.as_str().to_owned()),
@@ -459,7 +478,7 @@ fn live_body_value(plaintext: &garth::SignalPlaintext) -> Value {
             plaintext.expires_at,
         )),
     );
-    Value::Object(body)
+    Ok(Value::Object(body))
 }
 
 #[derive(Clone, Copy, Default)]
@@ -592,28 +611,28 @@ mod tests {
     }
 
     fn plaintext_of(kind: &str, body: Value) -> garth::SignalPlaintext {
-        let Value::Object(body) = body else {
+        let Value::Object(mut body) = body else {
             unreachable!("test body must be an object");
         };
         // The registered closed profile the receiver dispatches on. The tests
-        // below assert how each route reshapes `body`, so the parsed profile is
-        // built from the same body rather than hand-written beside it.
-        let payload = garth::SdkSignalPlaintext::Presence(
-            arkret_sdk::PresencePlaintext::new(
-                7,
-                arkret_sdk::Did::new("did:web:alice.example").unwrap(),
-                arkret_sdk::PresenceState::Online,
-                30_000,
-            )
-            .expect("a minimal presence plaintext is valid"),
-        );
+        // below assert how each route reshapes the typed profile, so admission
+        // parses the same object rather than keeping a parallel raw body.
+        body.entry("payload_sequence").or_insert(json!(7));
+        if kind == garth::SIGNAL_PLAINTEXT_KIND_PRESENCE {
+            body.entry("actor_id")
+                .or_insert(json!("did:web:alice.example"));
+            body.entry("ttl_ms").or_insert(json!(30_000));
+        }
+        let payload_bytes = arkret_sdk::canonical::canonical_json_bytes(&Value::Object(body))
+            .expect("test plaintext is canonicalizable");
+        let payload = garth::open_signal_plaintext(&payload_bytes)
+            .expect("test plaintext matches its registered closed profile");
         garth::SignalPlaintext {
             payload,
             kind: kind.to_owned(),
             actor_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
             payload_sequence: 7,
             ttl_ms: Some(30_000),
-            body: body.into_iter().collect(),
             sent_at: at(0),
             expires_at: at(30),
             scope_ref: arkret_sdk::ScopeRef::Realm {
@@ -652,13 +671,15 @@ mod tests {
             }),
         );
 
-        let body = decrypted_body_value(&plaintext);
+        let body = decrypted_body_value(&plaintext).unwrap();
         serde_json::from_value::<arkret_sdk::CallSignalPlaintext>(body)
             .expect("the call route must not add fields to the closed plaintext");
 
         assert!(
-            serde_json::from_value::<arkret_sdk::CallSignalPlaintext>(live_body_value(&plaintext))
-                .is_err(),
+            serde_json::from_value::<arkret_sdk::CallSignalPlaintext>(
+                live_body_value(&plaintext).unwrap()
+            )
+            .is_err(),
             "the presence-shaped body is deliberately not the call shape"
         );
     }
@@ -670,7 +691,7 @@ mod tests {
             json!({"kind": "ak.presence", "state": "online"}),
         );
 
-        let body = live_body_value(&plaintext);
+        let body = live_body_value(&plaintext).unwrap();
         assert_eq!(body["actor_id"], json!("did:web:alice.example"));
         assert_eq!(
             body["device_id"],

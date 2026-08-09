@@ -2,13 +2,12 @@ use serde_json::json;
 
 use crate::ephemeral::validate_outgoing_registered_event_payload;
 use crate::event_builders::{
-    build_device_message_envelope, build_member_state_transition_event,
-    build_realm_bootstrap_events, build_realm_create_event, build_realm_state_event,
-    build_sas_key_verification_content, build_signed_device_verification_proof,
-    build_space_create_event, ensure_device_verification_proof_is_signed,
-    recommended_history_sharing_policy_for_visibility,
+    build_member_state_transition_event, build_realm_bootstrap_events, build_realm_create_event,
+    build_realm_state_event, build_sas_key_verification_content,
+    build_signed_device_verification_proof, build_space_create_event,
+    ensure_device_verification_proof_is_signed, recommended_history_sharing_policy_for_visibility,
 };
-use crate::operation::{EventKind, OperationBuilder};
+use crate::operation::{EventKind, TypedOperationBuilder};
 use crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR;
 use crate::realm_helpers::validate_join_rule_v1;
 
@@ -485,17 +484,13 @@ fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
             arkret_sdk::PatchOp::set(json!({ "blocks": [] })),
         )
         .unwrap();
-    let payload = arkret_sdk::ObjectPatchPayload::for_target(strand_id, patch)
-        .unwrap()
-        .to_value()
-        .unwrap();
-    let event = OperationBuilder::new(
+    let payload = arkret_sdk::ObjectPatchPayload::for_target(strand_id, patch).unwrap();
+    let event = TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandUpdate>(
         "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
         "did:web:alice.example",
-        arkret_sdk::EventKind::StrandUpdate,
+        payload,
     )
     .target_ref(strand_id)
-    .body(payload)
     .build("inkson");
 
     validate_outgoing_registered_event_payload(event.kind.as_str(), &event.payload).unwrap();
@@ -603,110 +598,27 @@ fn realm_join_and_discovery_authoring_rejects_values_outside_spec_enums() {
     let actor_id = "did:web:alice.example";
 
     assert!(
-        build_realm_state_event(
-            realm_id,
-            actor_id,
-            EventKind::RealmJoinRule,
-            json!("members_only")
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("invalid Realm join_rule")
+        serde_json::from_value::<arkret_sdk::RealmJoinRuleValue>(json!("members_only")).is_err()
     );
     assert!(
-        build_realm_state_event(
-            realm_id,
-            actor_id,
-            EventKind::RealmDiscovery,
-            json!("discoverable")
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("invalid Realm discovery")
+        serde_json::from_value::<arkret_sdk::RealmDiscoveryValue>(json!("discoverable")).is_err()
     );
-    build_realm_state_event(
+    build_realm_state_event::<arkret_sdk::event_spec::RealmJoinRule>(
         realm_id,
         actor_id,
-        EventKind::RealmJoinRule,
-        json!("knock_restricted"),
+        arkret_sdk::RealmJoinRulePayload::new(
+            serde_json::from_value(json!("knock_restricted")).unwrap(),
+        ),
     )
     .unwrap();
-    build_realm_state_event(
+    build_realm_state_event::<arkret_sdk::event_spec::RealmDiscovery>(
         realm_id,
         actor_id,
-        EventKind::RealmDiscovery,
-        json!("invite_only"),
+        arkret_sdk::RealmDiscoveryPayload::new(
+            serde_json::from_value(json!("invite_only")).unwrap(),
+        ),
     )
     .unwrap();
-}
-
-/// R3 — `build_device_message_envelope` MUST emit the canonical
-/// `ak.schema.device_message.v1` send shape:
-/// `{messages: {<actor>: {<device_id>: {kind, expires_at, content}}}}`.
-/// This matches the SDK `DeviceMessageTarget` and `device-lifecycle.md`
-/// §7, which both make `kind` and `expires_at` required. If the wire
-/// shape drifts (mislabelled `type`, missing `expires_at`, etc.) soland
-/// has to fall back to defaults. This test pins the bytes so a refactor
-/// cannot change them by accident.
-#[test]
-fn device_message_envelope_matches_schema_v1() {
-    let envelope = build_device_message_envelope(
-        "ak:device_message:01904100-0000-7000-8000-000000000001",
-        "did:web:alice.example",
-        "ak:device:01904100-0000-7000-8000-0000000000aa",
-        "ak.key.verification.request",
-        "2026-04-26T00:10:00.000Z",
-        json!({
-            "method": "sas",
-            "transaction_id": "verify-001"
-        }),
-    )
-    .expect("device message envelope builds");
-    let envelope = serde_json::to_value(envelope).expect("device message envelope serializes");
-    assert_eq!(
-        envelope,
-        json!({
-            "messages": {
-                "did:web:alice.example": {
-                    "ak:device:01904100-0000-7000-8000-0000000000aa": {
-                        "message_id": "ak:device_message:01904100-0000-7000-8000-000000000001",
-                        "kind": "ak.key.verification.request",
-                        "expires_at": "2026-04-26T00:10:00.000Z",
-                        "content": {
-                            "method": "sas",
-                            "transaction_id": "verify-001"
-                        }
-                    }
-                }
-            }
-        }),
-        "wire shape must remain `messages → actor → device_id → {{kind, expires_at, content}}`",
-    );
-}
-
-/// R3 — empty content is still a valid envelope. `ak.key.verification.done`
-/// for example carries only a transaction id; the test ensures we don't
-/// require a populated content map.
-#[test]
-fn device_message_envelope_accepts_minimal_content() {
-    let envelope = build_device_message_envelope(
-        "ak:device_message:01904100-0000-7000-8000-000000000002",
-        "did:web:bob.example",
-        "ak:device:01904100-0000-7000-8000-0000000000bb",
-        "ak.key.verification.done",
-        "2026-04-26T00:10:00.000Z",
-        json!({"transaction_id": "verify-done-001"}),
-    )
-    .expect("device message envelope builds");
-    let envelope = serde_json::to_value(envelope).expect("device message envelope serializes");
-    let inner = &envelope["messages"]["did:web:bob.example"]["ak:device:01904100-0000-7000-8000-0000000000bb"];
-    assert_eq!(
-        inner["message_id"],
-        "ak:device_message:01904100-0000-7000-8000-000000000002"
-    );
-    assert_eq!(inner["kind"], "ak.key.verification.done");
-    assert_eq!(inner["expires_at"], "2026-04-26T00:10:00.000Z");
-    assert_eq!(inner["content"]["transaction_id"], "verify-done-001");
 }
 
 #[test]
@@ -841,6 +753,7 @@ fn sas_key_verification_content_carries_the_required_members() {
         proof,
     )
     .unwrap();
+    let content = serde_json::to_value(content).unwrap();
     assert_eq!(
         content["transaction_id"].as_str(),
         Some("019041000000700080000000000c")

@@ -12,34 +12,14 @@
 //! - `ak.call.state` — durable call state transitions (start / answer / end).
 //! - `ak.call.recording.start` — durable opt-in recording marker.
 
-use serde_json::json;
-
-use crate::operation::OperationBuilder;
+use crate::operation::TypedOperationBuilder;
 
 // NOTE: `ak.call.signal` MUST route through the encrypted Signal rail
 // (`crate::signal::SignalPayload::CallSignal` -> `POST /_arkret/self/signal`),
 // NOT through `ak.self.events.command.submit`. The signal kind is one of the
-// canonical values (`invite`, `answer`, `candidate`, `renegotiate`, `hangup`,
-// `ack`, `reject`, `mute_state`, `media_state`, `speaking`, `focus_join`,
-// `focus_leave`, `moderation`, `error`) and lives in the ciphertext. Do NOT
-// re-introduce a durable `OperationBuilder`-based helper, a plaintext
-// envelope, or a parallel `CallSignalKind` enum here.
-pub const CALL_SIGNAL_KINDS: &[&str] = &[
-    "invite",
-    "answer",
-    "candidate",
-    "renegotiate",
-    "hangup",
-    "ack",
-    "reject",
-    "mute_state",
-    "media_state",
-    "speaking",
-    "focus_join",
-    "focus_leave",
-    "moderation",
-    "error",
-];
+// canonical values represented by `arkret_sdk::CallSignalData` and lives in
+// the ciphertext. Do NOT re-introduce a durable `OperationBuilder`-based
+// helper, a plaintext envelope, or a parallel kind list here.
 
 /// Call lifecycle state for `ak.call.state`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,6 +47,19 @@ impl CallState {
             Self::Cancelled => "cancelled",
         }
     }
+
+    fn typed(self) -> arkret_sdk::CallLifecycleState {
+        match self {
+            Self::Scheduled => arkret_sdk::CallLifecycleState::Scheduled,
+            Self::Ringing => arkret_sdk::CallLifecycleState::Ringing,
+            Self::Connecting => arkret_sdk::CallLifecycleState::Connecting,
+            Self::Active => arkret_sdk::CallLifecycleState::Active,
+            Self::Ended => arkret_sdk::CallLifecycleState::Ended,
+            Self::Missed => arkret_sdk::CallLifecycleState::Missed,
+            Self::Failed => arkret_sdk::CallLifecycleState::Failed,
+            Self::Cancelled => arkret_sdk::CallLifecycleState::Cancelled,
+        }
+    }
 }
 
 /// Build a `ak.call.state` event — durable call lifecycle transition.
@@ -76,16 +69,25 @@ pub fn build_call_state(
     call_id: &str,
     from: Option<CallState>,
     to: CallState,
-) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::CallState)
-        .target_ref(call_id)
-        .body(json!({
-            "call_id": call_id,
-            "state_transition": {
-                "from": from.map(CallState::as_wire),
-                "to": to.as_wire()
-            }
-        }))
+) -> anyhow::Result<TypedOperationBuilder> {
+    let from = from.ok_or_else(|| anyhow::anyhow!("call state transition requires from state"))?;
+    let payload = arkret_sdk::CallStatePayload {
+        call_id: arkret_sdk::CallId::new(call_id.to_owned())?,
+        state_transition: Some(arkret_sdk::CallStateTransition {
+            from: from.typed(),
+            to: to.typed(),
+        }),
+        focus: None,
+        recording_transition: None,
+        transcript_transition: None,
+        roster_delta: None,
+        moderation_delta: None,
+        mute_override: None,
+    };
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::CallState>(realm_id, actor, payload)
+            .target_ref(call_id),
+    )
 }
 
 /// Outcome of feeding a decrypted `ak.call.signal` body through the receiver.
@@ -187,22 +189,32 @@ pub fn build_call_recording_start(
     capture_kind: arkret_sdk::RecordingCaptureKind,
     mode: arkret_sdk::RecordingMode,
     visible_notice: bool,
-) -> OperationBuilder {
-    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::CallRecordingStart)
-        .target_ref(call_id)
-        .body(json!({
-            "call_id": call_id,
-            "recording_id": recording_id,
-            "recording_agent": actor,
-            "capture_kind": capture_kind,
-            "mode": mode,
-            "visible_notice": visible_notice,
-            "result": {
-                "retention": {
-                    "consent_confirmed": true
-                }
-            }
-        }))
+) -> anyhow::Result<TypedOperationBuilder> {
+    if !visible_notice {
+        anyhow::bail!("call recording start requires visible_notice=true");
+    }
+    let payload = arkret_sdk::CallRecordingStartPayload {
+        call_id: arkret_sdk::CallId::new(call_id.to_owned())?,
+        recording_id: arkret_sdk::CallRecordingId::new(recording_id.to_owned())?,
+        recording_agent: arkret_sdk::Did::new(actor.to_owned())?,
+        capture_kind,
+        mode,
+        visible_notice: arkret_sdk::VisibleCaptureNotice,
+        result: arkret_sdk::RecordingStartResult {
+            retention: arkret_sdk::CallRecordingRetention {
+                retention_expires_at: None,
+                deletion_trigger: None,
+                audit_lock: None,
+                consent_confirmed: Some(true),
+            },
+        },
+    };
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::CallRecordingStart>(
+            realm_id, actor, payload,
+        )
+        .target_ref(call_id),
+    )
 }
 
 #[cfg(test)]
@@ -222,7 +234,10 @@ mod tests {
             arkret_sdk::events::kinds::event_wire_scope("ak.call.signal"),
             arkret_sdk::events::kinds::EventWireScope::Custom
         );
-        assert!(CALL_SIGNAL_KINDS.contains(&"invite"));
+        assert_eq!(
+            serde_json::to_value(arkret_sdk::CallSignalKind::Invite).unwrap(),
+            serde_json::json!("invite")
+        );
     }
 
     #[test]
@@ -242,6 +257,7 @@ mod tests {
             Some(CallState::Connecting),
             CallState::Active,
         )
+        .unwrap()
         .build("node");
         assert_eq!(op.kind, "ak.call.state");
         assert_eq!(op.payload["state_transition"]["from"], "connecting");
@@ -259,6 +275,7 @@ mod tests {
             arkret_sdk::RecordingMode::AudioVideo,
             true,
         )
+        .unwrap()
         .build("node");
         assert_eq!(op.kind, "ak.call.recording.start");
         assert_eq!(op.payload["recording_agent"], "did:web:alice");
@@ -290,6 +307,7 @@ mod tests {
             arkret_sdk::RecordingMode::AudioOnly,
             true,
         )
+        .unwrap()
         .build("node");
         assert_eq!(op.kind, "ak.call.recording.start");
         assert_eq!(op.payload["capture_kind"], "transcript");
@@ -316,12 +334,11 @@ mod tests {
     /// there is no such object: the body only exists as the AEAD plaintext the
     /// sender encodes, so the fixture goes through the real sender encoder and
     /// the receiver parses what would actually come out of the AEAD.
-    fn call_signal_body(seq: u64, signal_kind: &str) -> serde_json::Value {
+    fn call_signal_body(seq: u64, signal: arkret_sdk::CallSignalData) -> serde_json::Value {
         let bytes = crate::signal::SignalPayload::CallSignal {
             call_id: arkret_sdk::CallId::new(TEST_CALL).unwrap(),
-            signal_kind: signal_kind.to_owned(),
             seq,
-            data: Some(serde_json::json!({})),
+            signal,
         }
         .to_plaintext(
             &arkret_sdk::Did::new(TEST_ACTOR).unwrap(),
@@ -329,6 +346,12 @@ mod tests {
         )
         .expect("call signal plaintext must encode");
         serde_json::from_slice(&bytes).unwrap()
+    }
+
+    fn ack_signal() -> arkret_sdk::CallSignalData {
+        arkret_sdk::CallSignalData::Ack(arkret_sdk::CallAckSignalData {
+            acknowledged_seq: 0,
+        })
     }
 
     fn seq_key() -> CallSignalSeqKey {
@@ -341,39 +364,20 @@ mod tests {
     }
 
     #[test]
-    fn every_canonical_signal_kind_round_trips_sender_to_receiver() {
-        for kind in CALL_SIGNAL_KINDS {
-            let body: arkret_sdk::CallSignalPlaintext =
-                serde_json::from_value(call_signal_body(1, kind))
-                    .expect("canonical signal_kind must parse");
-            assert_eq!(
-                serde_json::to_value(body.signal_kind).unwrap(),
-                serde_json::json!(kind)
-            );
-            assert_eq!(body.call_id.as_str(), TEST_CALL);
-            assert_eq!(body.seq, 1);
-        }
+    fn typed_signal_round_trips_sender_to_receiver() {
+        let body: arkret_sdk::CallSignalPlaintext =
+            serde_json::from_value(call_signal_body(1, ack_signal()))
+                .expect("typed signal must parse");
+        assert_eq!(body.signal.kind(), arkret_sdk::CallSignalKind::Ack);
+        assert_eq!(body.call_id.as_str(), TEST_CALL);
+        assert_eq!(body.seq, 1);
     }
 
     #[test]
     fn non_canonical_signal_kind_is_rejected_on_both_sides() {
-        // Sender side: the encoder refuses to seal it.
-        let sender_error = crate::signal::SignalPayload::CallSignal {
-            call_id: arkret_sdk::CallId::new(TEST_CALL).unwrap(),
-            signal_kind: "sdp_offer".to_owned(),
-            seq: 1,
-            data: None,
-        }
-        .to_plaintext(
-            &arkret_sdk::Did::new(TEST_ACTOR).unwrap(),
-            crate::signal::SignalSequence::new(1),
-        )
-        .expect_err("non-canonical signal_kind must be rejected");
-        assert!(sender_error.to_string().contains("signal_kind"));
-
-        // Receiver side: a peer that sealed it anyway is still refused, since
-        // the ciphertext is authenticated but not trusted.
-        let mut hostile = call_signal_body(1, "invite");
+        // A peer that sealed an unknown discriminator anyway is still refused,
+        // since authenticated ciphertext is not automatically valid protocol.
+        let mut hostile = call_signal_body(1, ack_signal());
         hostile["signal_kind"] = serde_json::json!("sdp_offer");
         assert!(serde_json::from_value::<arkret_sdk::CallSignalPlaintext>(hostile).is_err());
     }
@@ -381,13 +385,13 @@ mod tests {
     #[test]
     fn receiver_accepts_then_rejects_seq_rollback() {
         let mut rx = CallSignalReceiver::new();
-        let outcome = rx.ingest(seq_key(), &call_signal_body(1, "invite"));
+        let outcome = rx.ingest(seq_key(), &call_signal_body(1, ack_signal()));
         assert!(matches!(outcome, CallSignalIngestOutcome::Accepted { .. }));
 
-        let outcome = rx.ingest(seq_key(), &call_signal_body(2, "answer"));
+        let outcome = rx.ingest(seq_key(), &call_signal_body(2, ack_signal()));
         assert!(matches!(outcome, CallSignalIngestOutcome::Accepted { .. }));
 
-        let outcome = rx.ingest(seq_key(), &call_signal_body(2, "candidate"));
+        let outcome = rx.ingest(seq_key(), &call_signal_body(2, ack_signal()));
         match outcome {
             CallSignalIngestOutcome::SeqRollback { seq, .. } => assert_eq!(seq, 2),
             other => panic!("expected SeqRollback, got {other:?}"),
@@ -405,7 +409,7 @@ mod tests {
     /// sequence, or that is not a call signal at all, must not reach the FSM.
     #[test]
     fn plaintext_missing_the_dedupe_sequence_is_rejected() {
-        let mut without_sequence = call_signal_body(1, "invite");
+        let mut without_sequence = call_signal_body(1, ack_signal());
         without_sequence.as_object_mut().unwrap().remove("seq");
         assert!(
             serde_json::from_value::<arkret_sdk::CallSignalPlaintext>(without_sequence.clone())
@@ -415,7 +419,7 @@ mod tests {
         // `payload_sequence` was the pre-`bcf57efa` field name. The closed
         // `CallSignalPlaintext` schema must reject it as an unknown field rather
         // than accept it as an alias for `seq`.
-        let mut legacy_sequence = call_signal_body(1, "invite");
+        let mut legacy_sequence = call_signal_body(1, ack_signal());
         {
             let object = legacy_sequence.as_object_mut().unwrap();
             let seq = object.remove("seq").expect("encoder emits seq");
@@ -425,7 +429,7 @@ mod tests {
             serde_json::from_value::<arkret_sdk::CallSignalPlaintext>(legacy_sequence).is_err()
         );
 
-        let mut wrong_kind = call_signal_body(1, "invite");
+        let mut wrong_kind = call_signal_body(1, ack_signal());
         wrong_kind["kind"] = serde_json::json!("ak.typing");
         assert!(serde_json::from_value::<arkret_sdk::CallSignalPlaintext>(wrong_kind).is_err());
 

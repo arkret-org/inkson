@@ -36,51 +36,33 @@ fn try_load_api_columns_returns_none_in_sync_init_context() {
     );
 }
 
-/// Wire state strings emitted by soland's
-/// `/_arkret/self/realms/{realm_id}/{spaces|strands}` round-trip into the
-/// renderer enums. Unknown values stay at the safe `Active` default.
+/// SDK projection lifecycle values map exhaustively into renderer enums.
 #[test]
-fn lifecycle_wire_strings_decode_to_enums() {
+fn projection_lifecycle_values_map_to_renderer_enums() {
     assert_eq!(
-        space_container_state_from_wire("active"),
+        space_container_state_from_projection(&arkret_sdk::ProjectionSpaceState::Active),
         SpaceContainerLifecycleState::Active
     );
     assert_eq!(
-        space_container_state_from_wire("archived"),
+        space_container_state_from_projection(&arkret_sdk::ProjectionSpaceState::Archived),
         SpaceContainerLifecycleState::Archived
     );
     assert_eq!(
-        space_container_state_from_wire("tombstoned"),
+        space_container_state_from_projection(&arkret_sdk::ProjectionSpaceState::Tombstoned),
         SpaceContainerLifecycleState::Tombstoned
-    );
-    assert_eq!(
-        space_container_state_from_wire("garbage"),
-        SpaceContainerLifecycleState::Active
     );
 
     assert_eq!(
-        strand_lifecycle_from_wire("active"),
+        strand_lifecycle_from_projection(&arkret_sdk::ProjectionObjectState::Active),
         StrandLifecycleState::Active
     );
     assert_eq!(
-        strand_lifecycle_from_wire("archived"),
+        strand_lifecycle_from_projection(&arkret_sdk::ProjectionObjectState::Archived),
         StrandLifecycleState::Archived
     );
-    // R11: `redacted` is the only spec terminal (strand.schema.json).
     assert_eq!(
-        strand_lifecycle_from_wire("redacted"),
+        strand_lifecycle_from_projection(&arkret_sdk::ProjectionObjectState::Redacted),
         StrandLifecycleState::Redacted
-    );
-    // `deleted` is NOT in the spec enum; it degrades to the safe
-    // non-terminal `Active` default (and logs a warning) rather than
-    // being treated as a terminal.
-    assert_eq!(
-        strand_lifecycle_from_wire("deleted"),
-        StrandLifecycleState::Active
-    );
-    assert_eq!(
-        strand_lifecycle_from_wire("garbage"),
-        StrandLifecycleState::Active
     );
 }
 

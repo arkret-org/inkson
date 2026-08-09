@@ -9,9 +9,7 @@
 //! Both kinds are already in the SDK event-kind registry; this module provides
 //! typed builders so call sites don't hand-roll the body shape.
 
-use serde_json::{Value, json};
-
-use crate::operation::OperationBuilder;
+use crate::operation::TypedOperationBuilder;
 
 /// Spec-aligned audit policy mode for a Realm.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,21 +42,34 @@ pub fn build_audit_accessed(
     actor: &str,
     target_event_id: &str,
     device_id: &str,
-) -> OperationBuilder {
+) -> anyhow::Result<TypedOperationBuilder> {
     // The registered `audit_payload` schema (ak.schema.event_payload.v1
     // #/$defs/audit_payload) is strict `additionalProperties:false` and only
     // permits `target_ref`, `actor_id`, `purpose`, `accessed_at`. The reader
     // device is carried inside `purpose` (a free-form string) rather than as an
     // illegal top-level `reader_device` field, which the server rejects with
     // schema_violation.
-    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::AuditAccessed)
-        .target_ref(target_event_id)
-        .body(json!({
-            "target_ref": target_event_id,
-            "actor_id": actor,
-            "purpose": format!("e2ee_read;reader_device={device_id}"),
-            "accessed_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
-        }))
+    let payload = arkret_sdk::AuditAccessedPayload {
+        access_kind: arkret_sdk::AuditAccessedKind::Other,
+        writer_actor_id: arkret_sdk::Did::new(actor.to_owned())?,
+        target_actor_id: None,
+        target_ref: target_event_id.into(),
+        target_cell_id: None,
+        paired_event_id: None,
+        paired_event_digest: None,
+        late_recovery_original_event_id: None,
+        cell_head_before: None,
+        cell_head_after: None,
+        purpose: arkret_sdk::NonEmptyString::new(format!("e2ee_read;reader_device={device_id}"))?,
+        accessed_at: crate::clock::now_utc_millis(),
+        ryw_required: None,
+    };
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::AuditAccessed>(
+            realm_id, actor, payload,
+        )
+        .target_ref(target_event_id),
+    )
 }
 
 /// Build the durable Event form of an `ak.audit.ryw_receipt` for a trusted
@@ -70,7 +81,7 @@ pub fn build_audit_ryw_receipt(
     actor: &str,
     source_event_id: &str,
     delivered_to_devices: Vec<String>,
-) -> OperationBuilder {
+) -> anyhow::Result<TypedOperationBuilder> {
     // The registered `audit_payload` schema is strict `additionalProperties:false`
     // and only permits `target_ref`, `actor_id`, `purpose`, `accessed_at`. The
     // source event is carried as `target_ref`; the delivered-device set is folded
@@ -85,29 +96,18 @@ pub fn build_audit_ryw_receipt(
             delivered_to_devices.join(",")
         )
     };
-    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::AuditRywReceipt)
-        .target_ref(source_event_id)
-        .body(json!({
-            "target_ref": source_event_id,
-            "actor_id": actor,
-            "purpose": purpose,
-            "accessed_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
-        }))
-}
-
-/// Build a `ak.identity.disclosure_policy` event — declares what a connection
-/// holder may disclose about the principal. Spec: `identity-handles.md` §16.
-///
-/// `policy` is the structured policy document; the reducer enforces shape.
-pub fn build_disclosure_policy(realm_id: &str, actor: &str, policy: Value) -> OperationBuilder {
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::EventKind::IdentityDisclosurePolicy,
+    let payload = arkret_sdk::AuditPayload {
+        target_ref: Some(source_event_id.into()),
+        actor_id: Some(arkret_sdk::Did::new(actor.to_owned())?),
+        purpose: Some(purpose),
+        accessed_at: Some(crate::clock::now_utc_millis()),
+    };
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::AuditRywReceipt>(
+            realm_id, actor, payload,
+        )
+        .target_ref(source_event_id),
     )
-    .body(json!({
-        "policy": policy,
-    }))
 }
 
 /// Build a `ak.identity.presentation_request` event — request a verifiable
@@ -125,40 +125,22 @@ pub fn build_presentation_request(
     request_id: &str,
     target: &str,
     requested_claims: Vec<String>,
-) -> OperationBuilder {
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::EventKind::IdentityPresentationRequest,
-    )
-    .target_ref(request_id)
-    .body(json!({
-        "request_id": request_id,
-        "value": {
+) -> anyhow::Result<TypedOperationBuilder> {
+    let payload = arkret_sdk::IdentityPresentationRequestStatePayload {
+        request_id: arkret_sdk::NonEmptyString::new(request_id)?,
+        value: Some(serde_json::json!({
             "target": target,
             "requested_claims": requested_claims,
-        },
-    }))
-}
-
-/// Build a `ak.identity.presentation_response` event — reply with a signed
-/// verifiable presentation.
-pub fn build_presentation_response(
-    realm_id: &str,
-    actor: &str,
-    request_id: &str,
-    presentation: Value,
-) -> OperationBuilder {
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::EventKind::IdentityPresentationResponse,
+        })),
+        state: None,
+        reason: None,
+    };
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::IdentityPresentationRequest>(
+            realm_id, actor, payload,
+        )
+        .target_ref(request_id),
     )
-    .target_ref(request_id)
-    .body(json!({
-        "request_id": request_id,
-        "value": {"presentation": presentation},
-    }))
 }
 
 /// Build a `ak.identity.disclosure_receipt` event — actor-private record of
@@ -174,21 +156,23 @@ pub fn build_disclosure_receipt(
     request_id: &str,
     counterparty: &str,
     disclosed_claims: Vec<String>,
-) -> OperationBuilder {
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::EventKind::IdentityDisclosureReceipt,
-    )
-    .target_ref(request_id)
-    .body(json!({
-        "holder_did": holder_did,
-        "value": {
+) -> anyhow::Result<TypedOperationBuilder> {
+    let payload = arkret_sdk::IdentityDisclosureReceiptStatePayload {
+        holder_did: arkret_sdk::Did::new(holder_did.to_owned())?,
+        value: Some(serde_json::json!({
             "request_id": request_id,
             "counterparty": counterparty,
             "disclosed_claims": disclosed_claims,
-        },
-    }))
+        })),
+        state: None,
+        reason: None,
+    };
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::IdentityDisclosureReceipt>(
+            realm_id, actor, payload,
+        )
+        .target_ref(request_id),
+    )
 }
 
 #[cfg(test)]
@@ -203,10 +187,11 @@ mod tests {
             "ak:event:abc",
             "did:key:zDevice",
         )
+        .unwrap()
         .build("node");
         assert_eq!(op.kind, "ak.audit.accessed");
         assert_eq!(op.payload["target_ref"], "ak:event:abc");
-        assert_eq!(op.payload["actor_id"], "did:web:alice");
+        assert_eq!(op.payload["writer_actor_id"], "did:web:alice");
         assert!(
             op.payload["purpose"]
                 .as_str()
@@ -226,6 +211,7 @@ mod tests {
             "ak:event:abc",
             vec!["did:key:zA".into(), "did:key:zB".into()],
         )
+        .unwrap()
         .build("node");
         assert_eq!(op.kind, "ak.audit.ryw_receipt");
         assert_eq!(op.payload["target_ref"], "ak:event:abc");
@@ -263,6 +249,7 @@ mod tests {
             "did:web:bob",
             vec!["display_name".into(), "avatar".into()],
         )
+        .unwrap()
         .build("node");
         assert_eq!(op.kind, "ak.identity.presentation_request");
         assert_eq!(
@@ -289,6 +276,7 @@ mod tests {
             "did:web:bob",
             vec!["email".into()],
         )
+        .unwrap()
         .build("node");
         assert_eq!(op.kind, "ak.identity.disclosure_receipt");
         assert_eq!(op.payload["holder_did"], "did:web:alice");

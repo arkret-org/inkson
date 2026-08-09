@@ -87,7 +87,7 @@ pub(crate) fn board_space_options_from_projection(
             } else {
                 view.title.clone()
             },
-            state: space_container_state_from_wire(&view.state),
+            state: space_container_state_from_projection(&view.state),
         })
         .collect::<Vec<_>>();
     let mut seen = options
@@ -421,7 +421,7 @@ pub(crate) fn columns_from_lifecycle_projection(
             },
             rank: view.rank.clone().unwrap_or_default(),
             cards: Vec::new(),
-            state: space_container_state_from_wire(&view.state),
+            state: space_container_state_from_projection(&view.state),
         })
         .collect::<Vec<_>>();
     cols.sort_by(|left, right| {

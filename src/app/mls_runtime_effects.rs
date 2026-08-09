@@ -543,7 +543,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         .or_else(|| message.get("type"))
                         .and_then(serde_json::Value::as_str)
                         .unwrap_or_default();
-                    if kind != arkret_sdk::EventKind::REALM_KEY_SHARE {
+                    if kind != arkret_sdk::EventKind::RealmKeyShare.as_str() {
                         continue;
                     }
                     if let Some(share_realm_id) =

@@ -622,8 +622,6 @@ pub async fn revoke_consent(
         &arkret_sdk::principal_control_realm_id(&did_for_request_field("holder", holder)?),
         holder.trim(),
         &consent_id,
-        peer,
-        scope,
         &cell.active_grant_dots,
     )?
     .build_sdk_event("inkson")?;
@@ -777,7 +775,7 @@ async fn account_data_set_submission(
             &key,
             expected_revision,
         ),
-    };
+    }?;
     let event = builder.build_sdk_event("inkson")?;
     submitter
         .prepare_initial_submissions(vec![event])
@@ -869,22 +867,19 @@ pub async fn submit_read_cursor_advance(
     submitter: &EventSubmitter,
     marker: &crate::state::ReadMarkerRecord,
 ) -> anyhow::Result<arkret_sdk::ReadMarkerOutcome> {
-    let payload = serde_json::json!({
-        "id": marker.body.id,
-        "schema": marker.body.schema,
-        "actor_id": marker.actor,
-        "device_id": marker.device_id,
-        "realm_id": marker.body.realm_id,
-        "read_scope": marker.body.read_scope,
-        "position": marker.body.position,
-        "updated_at": arkret_sdk::canonical::format_timestamp_canonical(marker.updated_at),
-    });
-    let event = crate::operation::OperationBuilder::new(
-        marker.body.realm_id.clone(),
-        marker.actor.clone(),
-        arkret_sdk::EventKind::ReadCursorAdvance,
-    )
-    .body(payload)
+    let payload = arkret_sdk::ReadCursor {
+        id: arkret_sdk::ReadCursorId::new(marker.body.id.clone())?,
+        schema: marker.body.schema.clone(),
+        actor_id: arkret_sdk::Did::new(marker.actor.clone())?,
+        device_id: arkret_sdk::DeviceId::new(marker.device_id.clone())?,
+        realm_id: arkret_sdk::RealmId::new(marker.body.realm_id.clone())?,
+        read_scope: marker.body.read_scope.clone(),
+        position: marker.body.position.clone(),
+        updated_at: marker.updated_at,
+    };
+    let event = crate::operation::TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::ReadCursorAdvance,
+    >(marker.body.realm_id.clone(), marker.actor.clone(), payload)
     .created_at(marker.updated_at)
     .build_sdk_event("inkson")?;
     let advance_event = submitter

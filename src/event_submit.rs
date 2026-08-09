@@ -15,11 +15,13 @@ use arkret_sdk::events::{CbaEffectPlane, cba_cell_family_plane};
 use garth::outbound::BoxOutboundFuture;
 use garth::{
     OutboundEngine, OutboundEngineOutcome, OutboundGenerationFenceDecision, OutboundPostAcceptHook,
-    OutboundSubmitOutcome, OutboundSubmitter,
+    OutboundSubmitOutcome, OutboundSubmitter, QueuedAuthoredEventAttempt as AuthoredEventAttempt,
+    QueuedEventIntent as EventIntent, QueuedPostAcceptAction as PostAcceptAction,
+    QueuedRealmBootstrap, QueuedRecord, QueuedSdkEvent, ScheduledSendDispatchRecord,
+    ScheduledSendSubmissionState,
 };
 #[cfg(test)]
 use reqwest::StatusCode;
-use serde::Deserialize as _;
 use serde_json::Value;
 use tokio::sync::OnceCell;
 
@@ -52,530 +54,6 @@ pub(crate) struct DurablyQueuedError {
     pub(crate) event_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct EventIntent {
-    pub(crate) event_id: arkret_sdk::EventId,
-    pub(crate) kind: arkret_sdk::events::EventKind,
-    pub(crate) realm_id: arkret_sdk::RealmId,
-    pub(crate) scope_ref: arkret_sdk::ScopeRef,
-    pub(crate) actor_id: arkret_sdk::Did,
-    pub(crate) executed_by: Option<arkret_sdk::Did>,
-    pub(crate) authorization_ref: Option<arkret_sdk::AuthorizationRef>,
-    pub(crate) applet_id: Option<arkret_sdk::AppletId>,
-    pub(crate) external_ref: Option<BTreeMap<String, Value>>,
-    pub(crate) actor_kind: Option<arkret_sdk::EnvelopeActorKind>,
-    pub(crate) created_at: chrono::DateTime<chrono::Utc>,
-    pub(crate) refs: Vec<arkret_sdk::EventRef>,
-    pub(crate) causal_refs: Vec<arkret_sdk::Hash>,
-    pub(crate) preconditions: Vec<arkret_sdk::Precondition>,
-    pub(crate) seal_basis: Option<arkret_sdk::SealBasis>,
-    pub(crate) payload: BTreeMap<String, Value>,
-    pub(crate) redacts: Option<arkret_sdk::EventId>,
-    pub(crate) unsigned: BTreeMap<String, Value>,
-    pub(crate) requirements: arkret_sdk::EventRequirements,
-}
-
-impl EventIntent {
-    fn from_event(event: arkret_sdk::Event) -> Self {
-        let arkret_sdk::Event {
-            event_id,
-            kind,
-            realm_id,
-            scope_ref,
-            actor_id,
-            executed_by,
-            authorization_ref,
-            applet_id,
-            external_ref,
-            actor_kind,
-            actor_seq: _,
-            created_at,
-            hlc: _,
-            prev_refs: _,
-            refs,
-            causal_refs,
-            preconditions,
-            seal_ref: _,
-            auth_context: _,
-            seal_basis,
-            payload,
-            redacts,
-            mut unsigned,
-            proofs: _,
-            requirements,
-        } = event;
-        unsigned.remove("local_operation_idempotency_alias");
-        let seal_basis = (kind.as_str() == "ak.invite.accept")
-            .then_some(seal_basis)
-            .flatten();
-        Self {
-            event_id,
-            kind,
-            realm_id,
-            scope_ref,
-            actor_id,
-            executed_by,
-            authorization_ref,
-            applet_id,
-            external_ref,
-            actor_kind,
-            created_at,
-            refs,
-            causal_refs,
-            preconditions,
-            seal_basis,
-            payload,
-            redacts,
-            unsigned,
-            requirements,
-        }
-    }
-
-    fn to_unauthored_event(&self) -> arkret_sdk::Event {
-        arkret_sdk::Event {
-            event_id: self.event_id.clone(),
-            kind: self.kind.clone(),
-            realm_id: self.realm_id.clone(),
-            scope_ref: self.scope_ref.clone(),
-            actor_id: self.actor_id.clone(),
-            executed_by: self.executed_by.clone(),
-            authorization_ref: self.authorization_ref.clone(),
-            applet_id: self.applet_id.clone(),
-            external_ref: self.external_ref.clone(),
-            actor_kind: self.actor_kind,
-            actor_seq: 0,
-            created_at: self.created_at,
-            hlc: None,
-            prev_refs: Vec::new(),
-            refs: self.refs.clone(),
-            causal_refs: self.causal_refs.clone(),
-            preconditions: self.preconditions.clone(),
-            seal_ref: None,
-            auth_context: None,
-            seal_basis: self.seal_basis.clone(),
-            payload: self.payload.clone(),
-            redacts: self.redacts.clone(),
-            unsigned: self.unsigned.clone(),
-            proofs: Vec::new(),
-            requirements: self.requirements.clone(),
-        }
-    }
-
-    fn digest(&self) -> arkret_sdk::Result<arkret_sdk::Hash> {
-        Ok(arkret_sdk::Hash::new(
-            arkret_sdk::canonical::canonical_sha256(self)?,
-        )?)
-    }
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AuthoredEventAttempt {
-    pub(crate) intent_digest: arkret_sdk::Hash,
-    pub(crate) envelope: arkret_sdk::Event,
-    pub(crate) transport_idempotency_key: String,
-    pub(crate) canonical_body_bytes: Vec<u8>,
-}
-
-/// Durable, all-or-nothing Realm bootstrap authoring record.
-///
-/// The first form is persisted before any HLC/frontier allocation or signing.
-/// Its create payload already contains the one CSPRNG `genesis_salt` owned by
-/// this intent. The prepared form freezes the complete signed unit and its
-/// canonical bytes before the first HTTP request, so recovery never rebuilds
-/// a bootstrap or generates another salt.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
-enum QueuedRealmBootstrap {
-    Intent {
-        local_operation_id: String,
-        transport_idempotency_key: String,
-        intent_digest: arkret_sdk::Hash,
-        events: Vec<arkret_sdk::Event>,
-    },
-    Prepared {
-        local_operation_id: String,
-        transport_idempotency_key: String,
-        intent_digest: arkret_sdk::Hash,
-        events: Vec<arkret_sdk::Event>,
-        canonical_signed_unit_bytes: Vec<u8>,
-    },
-}
-
-impl QueuedRealmBootstrap {
-    fn intent(
-        local_operation_id: String,
-        transport_idempotency_key: String,
-        events: Vec<arkret_sdk::Event>,
-    ) -> arkret_sdk::Result<Self> {
-        validate_realm_bootstrap_intent(&events)?;
-        let intent_digest =
-            arkret_sdk::Hash::new(arkret_sdk::canonical::canonical_sha256(&events)?)?;
-        Ok(Self::Intent {
-            local_operation_id,
-            transport_idempotency_key,
-            intent_digest,
-            events,
-        })
-    }
-
-    fn authority_context_event(&self) -> &arkret_sdk::Event {
-        match self {
-            Self::Intent { events, .. } | Self::Prepared { events, .. } => &events[0],
-        }
-    }
-}
-
-fn validate_realm_bootstrap_intent(events: &[arkret_sdk::Event]) -> arkret_sdk::Result<()> {
-    let create = events.first().ok_or_else(|| {
-        arkret_sdk::Error::Protocol("queued Realm bootstrap unit is empty".to_owned())
-    })?;
-    if create.kind.as_str() != arkret_sdk::EventKind::REALM_CREATE {
-        return Err(arkret_sdk::Error::Protocol(
-            "queued Realm bootstrap must begin with ak.realm.create".to_owned(),
-        ));
-    }
-    let payload: arkret_sdk::RealmCreatePayload = serde_json::from_value(
-        serde_json::to_value(&create.payload)
-            .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?,
-    )
-    .map_err(|error| arkret_sdk::Error::Protocol(format!("decode Realm genesis: {error}")))?;
-    payload.object.validate()?;
-    if payload.object.genesis_salt.is_none() {
-        return Err(arkret_sdk::Error::Protocol(
-            "event-derived Realm bootstrap intent must persist genesis_salt".to_owned(),
-        ));
-    }
-    arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(events)
-        .map_err(|error| arkret_sdk::Error::Protocol(error.reason_code().to_owned()))?;
-    Ok(())
-}
-
-fn decode_queued_realm_bootstrap(content: Value) -> arkret_sdk::Result<QueuedRealmBootstrap> {
-    let queued: QueuedRealmBootstrap = serde_json::from_value(content).map_err(|error| {
-        arkret_sdk::Error::Protocol(format!("decode queued Realm bootstrap: {error}"))
-    })?;
-    let (intent_digest, events) = match &queued {
-        QueuedRealmBootstrap::Intent {
-            intent_digest,
-            events,
-            ..
-        }
-        | QueuedRealmBootstrap::Prepared {
-            intent_digest,
-            events,
-            ..
-        } => (intent_digest, events),
-    };
-    validate_realm_bootstrap_intent(events)?;
-    match &queued {
-        QueuedRealmBootstrap::Intent { .. } => {
-            let computed = arkret_sdk::Hash::new(arkret_sdk::canonical::canonical_sha256(events)?)?;
-            if &computed != intent_digest {
-                return Err(arkret_sdk::Error::Protocol(
-                    "queued Realm bootstrap intent digest mismatch".to_owned(),
-                ));
-            }
-        }
-        QueuedRealmBootstrap::Prepared {
-            canonical_signed_unit_bytes,
-            ..
-        } => {
-            if events.iter().any(|event| event.proofs.is_empty()) {
-                return Err(arkret_sdk::Error::Protocol(
-                    "prepared Realm bootstrap contains an unsigned Event".to_owned(),
-                ));
-            }
-            let canonical = arkret_sdk::canonical::canonical_json_bytes(events)?;
-            if &canonical != canonical_signed_unit_bytes {
-                return Err(arkret_sdk::Error::Protocol(
-                    "prepared Realm bootstrap canonical bytes mismatch".to_owned(),
-                ));
-            }
-        }
-    }
-    Ok(queued)
-}
-
-/// Frozen scheduler-to-transport handoff persisted inside the durable outbound
-/// queue. Once this record exists, retries are driven exclusively from these
-/// bytes; the editable account-data plan is no longer an authoring source.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ScheduledSendSubmissionState {
-    Ready,
-    SubmissionUncertain,
-}
-
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ScheduledSendDispatchRecord {
-    pub(crate) scheduled_send_id: arkret_identifiers::ScheduledSendId,
-    pub(crate) event_id: arkret_sdk::EventId,
-    pub(crate) message_id: arkret_sdk::MessageId,
-    pub(crate) canonical_signed_event_bytes: Vec<u8>,
-    pub(crate) submission_state: ScheduledSendSubmissionState,
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct QueuedSdkEvent {
-    pub(crate) intent: EventIntent,
-    pub(crate) intent_digest: arkret_sdk::Hash,
-    pub(crate) local_operation_id: String,
-    pub(crate) authoring_idempotency_key: String,
-    #[serde(deserialize_with = "deserialize_required_nullable")]
-    pub(crate) authored_attempt: Option<AuthoredEventAttempt>,
-    #[serde(deserialize_with = "deserialize_required_nullable")]
-    pub(crate) supersedes_event_id: Option<arkret_sdk::EventId>,
-    pub(crate) authoring_generation: crate::identity::authoring_generation::AuthoringGeneration,
-    #[serde(deserialize_with = "deserialize_required_nullable")]
-    pub(crate) post_accept: Option<PostAcceptAction>,
-    #[serde(deserialize_with = "deserialize_required_nullable")]
-    pub(crate) scheduled_dispatch: Option<ScheduledSendDispatchRecord>,
-}
-
-impl QueuedSdkEvent {
-    fn unauthored(
-        event: arkret_sdk::Event,
-        local_operation_id: String,
-        authoring_idempotency_key: String,
-        supersedes_event_id: Option<arkret_sdk::EventId>,
-        authoring_generation: crate::identity::authoring_generation::AuthoringGeneration,
-        post_accept: Option<PostAcceptAction>,
-    ) -> arkret_sdk::Result<Self> {
-        let intent = EventIntent::from_event(event);
-        let intent_digest = intent.digest()?;
-        Ok(Self {
-            intent,
-            intent_digest,
-            local_operation_id,
-            authoring_idempotency_key,
-            authored_attempt: None,
-            supersedes_event_id,
-            authoring_generation,
-            post_accept,
-            scheduled_dispatch: None,
-        })
-    }
-
-    fn authored(
-        envelope: arkret_sdk::Event,
-        local_operation_id: String,
-        transport_idempotency_key: String,
-        canonical_body_bytes: Vec<u8>,
-        supersedes_event_id: Option<arkret_sdk::EventId>,
-        authoring_generation: crate::identity::authoring_generation::AuthoringGeneration,
-        post_accept: Option<PostAcceptAction>,
-    ) -> arkret_sdk::Result<Self> {
-        let intent = EventIntent::from_event(envelope.clone());
-        let intent_digest = intent.digest()?;
-        Ok(Self {
-            intent,
-            intent_digest: intent_digest.clone(),
-            local_operation_id,
-            authoring_idempotency_key: transport_idempotency_key.clone(),
-            authored_attempt: Some(AuthoredEventAttempt {
-                intent_digest,
-                envelope,
-                transport_idempotency_key,
-                canonical_body_bytes,
-            }),
-            supersedes_event_id,
-            authoring_generation,
-            post_accept,
-            scheduled_dispatch: None,
-        })
-    }
-
-    fn scheduled_authored(
-        scheduled_send_id: arkret_identifiers::ScheduledSendId,
-        envelope: arkret_sdk::Event,
-        authoring_generation: crate::identity::authoring_generation::AuthoringGeneration,
-    ) -> arkret_sdk::Result<Self> {
-        if envelope.kind.as_str() != arkret_sdk::events::EventKind::MESSAGE_CREATE {
-            return Err(arkret_sdk::Error::Protocol(
-                "scheduled dispatch must contain ak.message.create".to_owned(),
-            ));
-        }
-        if envelope.proofs.is_empty() {
-            return Err(arkret_sdk::Error::Protocol(
-                "scheduled dispatch Event must already be signed".to_owned(),
-            ));
-        }
-        let derived_event_id = envelope.derive_event_id()?;
-        if derived_event_id != envelope.event_id {
-            return Err(arkret_sdk::Error::Protocol(
-                "scheduled dispatch Event id does not match its canonical content".to_owned(),
-            ));
-        }
-        let event_id = envelope.event_id.clone();
-        let message_id = arkret_sdk::MessageId::from_event_id(&event_id);
-        let canonical_signed_event_bytes = arkret_sdk::canonical::canonical_json_bytes(&envelope)?;
-        let intent = EventIntent::from_event(envelope.clone());
-        let intent_digest = intent.digest()?;
-        Ok(Self {
-            intent,
-            intent_digest: intent_digest.clone(),
-            local_operation_id: scheduled_send_id.to_string(),
-            authoring_idempotency_key: event_id.to_string(),
-            authored_attempt: Some(AuthoredEventAttempt {
-                intent_digest,
-                envelope,
-                transport_idempotency_key: event_id.to_string(),
-                canonical_body_bytes: canonical_signed_event_bytes.clone(),
-            }),
-            supersedes_event_id: None,
-            authoring_generation,
-            post_accept: None,
-            scheduled_dispatch: Some(ScheduledSendDispatchRecord {
-                scheduled_send_id,
-                event_id,
-                message_id,
-                canonical_signed_event_bytes,
-                submission_state: ScheduledSendSubmissionState::Ready,
-            }),
-        })
-    }
-
-    fn event_for_authority_context(&self) -> arkret_sdk::Event {
-        self.authored_attempt
-            .as_ref()
-            .map(|attempt| attempt.envelope.clone())
-            .unwrap_or_else(|| self.intent.to_unauthored_event())
-    }
-
-    fn mark_scheduled_submission_uncertain(&mut self) -> bool {
-        let Some(dispatch) = self.scheduled_dispatch.as_mut() else {
-            return false;
-        };
-        if dispatch.submission_state != ScheduledSendSubmissionState::Ready {
-            return false;
-        }
-        dispatch.submission_state = ScheduledSendSubmissionState::SubmissionUncertain;
-        true
-    }
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub(crate) enum PostAcceptAction {
-    MlsSnapshot {
-        realm_id: String,
-        snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
-    },
-    /// Durable admission saga. The Add commit is the queued Event; only after
-    /// that Event is accepted (or confirmed duplicate) may the exact signed
-    /// Welcome(s) be submitted. Keeping the Welcome material inside the same
-    /// durable queue item closes the browser-unload gap between the two writes.
-    MlsAdmission {
-        realm_id: String,
-        actor_id: String,
-        device_id: String,
-        welcomes: Vec<arkret_sdk::Event>,
-        snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
-    },
-}
-
-fn deserialize_required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: serde::Deserialize<'de>,
-{
-    Option::<T>::deserialize(deserializer)
-}
-
-/// Classification of a persisted outbound queue record.
-///
-/// A record's content is immutable, so a decode/validation failure can never
-/// heal on retry ("poisoned" — e.g. persisted by an older build with different
-/// intent semantics). The single policy for poisoned records lives here: they
-/// are cancelled through the consumer's own channel and MUST NOT wedge the
-/// per-actor queue or fail an unrelated submission. Consumers map this to
-/// their mechanism — the outbound submitter returns a `Terminal` outcome, the
-/// generation fence quarantines the record in preflight, and the same-
-/// transaction retry path compacts terminal history before re-enqueueing.
-enum QueuedRecordState {
-    Event(Box<QueuedSdkEvent>),
-    RealmBootstrap(Box<QueuedRealmBootstrap>),
-    Poisoned { reason: String },
-}
-
-fn classify_queued_record(transaction_id: &str, content: Value) -> QueuedRecordState {
-    if let Ok(queued) = decode_queued_sdk_event(content.clone()) {
-        return QueuedRecordState::Event(Box::new(queued));
-    }
-    match decode_queued_realm_bootstrap(content) {
-        Ok(queued) => QueuedRecordState::RealmBootstrap(Box::new(queued)),
-        Err(error) => {
-            tracing::warn!(
-                event_id = %transaction_id,
-                error = %error,
-                "queued outbound record failed decode; poisoned record will be cancelled, not retried"
-            );
-            QueuedRecordState::Poisoned {
-                reason: format!("poisoned queued item cancelled: {error}"),
-            }
-        }
-    }
-}
-
-fn decode_queued_sdk_event(content: Value) -> arkret_sdk::Result<QueuedSdkEvent> {
-    let queued: QueuedSdkEvent = serde_json::from_value(content).map_err(|error| {
-        arkret_sdk::Error::Protocol(format!("decode queued Inkson SDK event: {error}"))
-    })?;
-    let computed_intent_digest = queued.intent.digest()?;
-    if computed_intent_digest != queued.intent_digest {
-        return Err(arkret_sdk::Error::Protocol(
-            "queued Inkson SDK event intent_digest does not match intent".to_owned(),
-        ));
-    }
-    if let Some(attempt) = queued.authored_attempt.as_ref() {
-        if attempt.intent_digest != queued.intent_digest {
-            return Err(arkret_sdk::Error::Protocol(
-                "queued Inkson SDK authored attempt is bound to a different intent".to_owned(),
-            ));
-        }
-        if attempt.transport_idempotency_key.is_empty() || attempt.canonical_body_bytes.is_empty() {
-            return Err(arkret_sdk::Error::Protocol(
-                "queued Inkson SDK authored attempt must carry immutable transport identity and bytes"
-                    .to_owned(),
-            ));
-        }
-        let canonical = arkret_sdk::canonical::canonical_json_bytes(&attempt.envelope)?;
-        if canonical != attempt.canonical_body_bytes {
-            return Err(arkret_sdk::Error::Protocol(
-                "queued Inkson SDK authored attempt canonical bytes do not match envelope"
-                    .to_owned(),
-            ));
-        }
-        if EventIntent::from_event(attempt.envelope.clone()) != queued.intent {
-            return Err(arkret_sdk::Error::Protocol(
-                "queued Inkson SDK authored envelope changes the bound semantic intent".to_owned(),
-            ));
-        }
-    }
-    if let Some(dispatch) = queued.scheduled_dispatch.as_ref() {
-        let attempt = queued.authored_attempt.as_ref().ok_or_else(|| {
-            arkret_sdk::Error::Protocol(
-                "scheduled dispatch record requires a frozen authored attempt".to_owned(),
-            )
-        })?;
-        if queued.local_operation_id != dispatch.scheduled_send_id.as_str()
-            || queued.intent.kind.as_str() != arkret_sdk::events::EventKind::MESSAGE_CREATE
-            || queued.intent.event_id != dispatch.event_id
-            || attempt.envelope.event_id != dispatch.event_id
-            || arkret_sdk::MessageId::from_event_id(&dispatch.event_id) != dispatch.message_id
-            || attempt.canonical_body_bytes != dispatch.canonical_signed_event_bytes
-        {
-            return Err(arkret_sdk::Error::Protocol(
-                "scheduled dispatch record does not match its immutable authored Event".to_owned(),
-            ));
-        }
-    }
-    Ok(queued)
-}
-
 #[derive(Clone, Default)]
 struct InksonPostAcceptHook {
     state_store: Option<crate::runtime::input::StateStoreHandle>,
@@ -589,9 +67,10 @@ impl OutboundPostAcceptHook for InksonPostAcceptHook {
         _duplicate: bool,
     ) -> BoxOutboundFuture<'a, ()> {
         Box::pin(async move {
-            let queued = decode_queued_sdk_event(item.content.clone())
-                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-            let Some(action) = queued.post_accept else {
+            let QueuedRecord::SdkEvent(queued) = &item.record else {
+                return Ok(());
+            };
+            let Some(action) = queued.post_accept.as_ref() else {
                 return Ok(());
             };
             // Admission persistence runs inside the submitter so failures can
@@ -601,7 +80,8 @@ impl OutboundPostAcceptHook for InksonPostAcceptHook {
             if matches!(action, PostAcceptAction::MlsAdmission { .. }) {
                 return Ok(());
             }
-            persist_post_accept_action(self.state_store.as_ref(), action, event_id.clone()).await
+            persist_post_accept_action(self.state_store.as_ref(), action.clone(), event_id.clone())
+                .await
         })
     }
 }
@@ -626,6 +106,7 @@ async fn persist_post_accept_action(
             snapshot,
         } => (realm_id, snapshot, Some((actor_id, device_id))),
     };
+    let snapshot: crate::mls::persistence::MlsSnapshotEnvelope = snapshot.into();
     let snapshot_realm_id = realm_id.clone();
     let barrier = store.write(|store| {
         store
@@ -724,8 +205,7 @@ impl EventOutboundSubmitter<'_> {
                     canonical_signed_unit_bytes,
                 };
                 Ok(OutboundSubmitOutcome::Prepared {
-                    content: serde_json::to_value(prepared)
-                        .map_err(|error| garth::Error::Protocol(error.to_string()))?,
+                    record: QueuedRecord::RealmBootstrap(prepared),
                 })
             }
             QueuedRealmBootstrap::Prepared {
@@ -779,27 +259,19 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
         item: garth::SendQueueItem,
     ) -> BoxOutboundFuture<'a, OutboundSubmitOutcome> {
         Box::pin(async move {
-            let mut queued =
-                match classify_queued_record(&item.transaction_id, item.content.clone()) {
-                    QueuedRecordState::Event(queued) => *queued,
-                    QueuedRecordState::RealmBootstrap(queued) => {
-                        return self.submit_realm_bootstrap(item, *queued).await;
-                    }
-                    QueuedRecordState::Poisoned { reason } => {
-                        return Ok(OutboundSubmitOutcome::Terminal { reason });
-                    }
-                };
+            let mut queued = match item.record.clone() {
+                QueuedRecord::SdkEvent(queued) => queued,
+                QueuedRecord::RealmBootstrap(queued) => {
+                    return self.submit_realm_bootstrap(item, queued).await;
+                }
+            };
             if queued.mark_scheduled_submission_uncertain() {
                 // Persist the uncertainty boundary before the first HTTP write.
                 // A crash after this point can only resume the exact signed
                 // bytes carried by the record; it cannot consult or rebuild the
                 // editable scheduled-send plan.
                 return Ok(OutboundSubmitOutcome::Prepared {
-                    content: serde_json::to_value(queued).map_err(|error| {
-                        garth::Error::Protocol(format!(
-                            "encode frozen scheduled dispatch record: {error}"
-                        ))
-                    })?,
+                    record: QueuedRecord::SdkEvent(queued),
                 });
             }
             if queued.authored_attempt.is_none() {
@@ -822,8 +294,7 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                     canonical_body_bytes,
                 });
                 return Ok(OutboundSubmitOutcome::Prepared {
-                    content: serde_json::to_value(queued)
-                        .map_err(|error| garth::Error::Protocol(error.to_string()))?,
+                    record: QueuedRecord::SdkEvent(queued),
                 });
             }
             let attempt = queued.authored_attempt.as_ref().ok_or_else(|| {
@@ -900,7 +371,7 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                                 "server returned invalid accepted event id: {error}"
                             ))
                         })?;
-                    let duplicate = result.status == "duplicate";
+                    let duplicate = result.status == arkret_sdk::EventsSubmitStatus::Duplicate;
                     // The receipts travel with the outcome, not in the untyped
                     // blob: they are the proof the Event landed inside its
                     // authorization-lease window, and the queue refuses an
@@ -968,12 +439,7 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                         return Ok(OutboundSubmitOutcome::Supersede {
                             transaction_id: replacement.intent.event_id.to_string(),
                             realm_id: replacement.intent.realm_id.clone(),
-                            kind: item.kind,
-                            content: serde_json::to_value(replacement).map_err(|error| {
-                                garth::Error::Protocol(format!(
-                                    "encode semantic Event replacement: {error}"
-                                ))
-                            })?,
+                            record: QueuedRecord::SdkEvent(replacement),
                             depends_on: item.depends_on,
                         });
                     }
@@ -1113,14 +579,14 @@ fn pending_chat_message_ids_from_snapshot(
                 SendQueueStatus::Queued | SendQueueStatus::Sending | SendQueueStatus::Failed
             )
         })
-        .filter(|item| {
-            matches!(
-                &item.kind,
-                garth::SendQueueItemKind::Custom { kind }
-                    if kind == "ak.message.create"
-            )
+        .filter_map(|item| match &item.record {
+            QueuedRecord::SdkEvent(queued)
+                if queued.intent.kind == arkret_sdk::EventKind::MessageCreate =>
+            {
+                Some(queued)
+            }
+            _ => None,
         })
-        .filter_map(|item| decode_queued_sdk_event(item.content.clone()).ok())
         .filter(|queued| {
             queued.intent.realm_id.as_str() == realm_id
                 && queued
@@ -1160,9 +626,8 @@ fn completed_outbound_result(item: &garth::SendQueueItem) -> SubmitEventResult {
             .as_ref()
             .map(ToString::to_string)
             .unwrap_or_default(),
-        status: "accepted".to_owned(),
+        status: arkret_sdk::EventsSubmitStatus::Accepted,
         cursor: String::new(),
-        receipt: Value::Null,
         // The queue is the durable holder of the receipts once an item is
         // Sent; replay them from the item rather than dropping the evidence.
         ingress_receipts: item.ingress_receipts.clone(),
@@ -1241,10 +706,7 @@ impl EventSubmitter {
                 Some(local_operation_id.clone()),
                 draft_realm_id,
                 actor_id,
-                garth::SendQueueItemKind::Custom {
-                    kind: "ak.realm.bootstrap".to_owned(),
-                },
-                serde_json::to_value(queued)?,
+                QueuedRecord::RealmBootstrap(queued),
                 Vec::new(),
             )
             .await?;
@@ -1267,8 +729,10 @@ impl EventSubmitter {
                 OutboundEngineOutcome::Accepted(item) | OutboundEngineOutcome::Duplicate(item)
                     if item.transaction_id == local_operation_id =>
                 {
-                    let queued = decode_queued_realm_bootstrap(item.content)?;
-                    return Ok(queued.authority_context_event().realm_id.clone());
+                    let QueuedRecord::RealmBootstrap(queued) = item.record else {
+                        anyhow::bail!("Realm bootstrap queue item changed record type");
+                    };
+                    return Ok(queued.authority_context_event()?.realm_id.clone());
                 }
                 OutboundEngineOutcome::Rejected { item, reason }
                 | OutboundEngineOutcome::Terminal { item, reason }
@@ -1309,9 +773,9 @@ impl EventSubmitter {
             ) {
                 continue;
             }
-            let queued = match classify_queued_record(&item.transaction_id, item.content.clone()) {
-                QueuedRecordState::Event(queued) => *queued,
-                QueuedRecordState::RealmBootstrap(_) => {
+            let queued = match item.record {
+                QueuedRecord::SdkEvent(queued) => queued,
+                QueuedRecord::RealmBootstrap(_) => {
                     // A Realm bootstrap is an immutable anchor unit. Once its
                     // intent is durable it must either be prepared once or
                     // replay the frozen signed unit; signer-generation changes
@@ -1319,13 +783,6 @@ impl EventSubmitter {
                     decisions.insert(
                         item.transaction_id,
                         OutboundGenerationFenceDecision::Current,
-                    );
-                    continue;
-                }
-                QueuedRecordState::Poisoned { reason } => {
-                    decisions.insert(
-                        item.transaction_id,
-                        OutboundGenerationFenceDecision::Quarantine { reason },
                     );
                     continue;
                 }
@@ -1813,7 +1270,7 @@ impl EventSubmitter {
         // Durable Event envelopes are portable Realm facts. Binding their
         // proof to the authoring Principal Server would make the original
         // signature unverifiable after federation to another Realm host.
-        let digest_suite = if event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE {
+        let digest_suite = if event.kind == arkret_sdk::EventKind::RealmCreate {
             serde_json::from_value::<arkret_sdk::RealmCreatePayload>(serde_json::to_value(
                 &event.payload,
             )?)
@@ -1935,7 +1392,10 @@ impl EventSubmitter {
     ) -> anyhow::Result<SubmitEventResult> {
         self.submit_sdk_event_queued(
             event,
-            Some(PostAcceptAction::MlsSnapshot { realm_id, snapshot }),
+            Some(PostAcceptAction::MlsSnapshot {
+                realm_id,
+                snapshot: snapshot.into_queued(),
+            }),
             Some(state_store),
         )
         .await
@@ -2115,7 +1575,7 @@ impl EventSubmitter {
                     actor_id,
                     device_id,
                     welcomes: prepared,
-                    snapshot,
+                    snapshot: snapshot.into_queued(),
                 }),
             )?,
             Some(state_store),
@@ -2134,7 +1594,6 @@ impl EventSubmitter {
         let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
             &outbound_store_scope(event, durable_post_accept),
         )?);
-        let queued_value = serde_json::to_value(&queued)?;
         let existing = outbound
             .snapshot()
             .await?
@@ -2145,29 +1604,12 @@ impl EventSubmitter {
             if matches!(existing.status, garth::SendQueueStatus::Sent) {
                 return Ok(completed_outbound_result(&existing));
             }
-            let previous = match classify_queued_record(
-                &existing.transaction_id,
-                existing.content.clone(),
-            ) {
-                QueuedRecordState::Event(previous) => Some(*previous),
-                QueuedRecordState::RealmBootstrap(_) => {
+            let previous = match &existing.record {
+                QueuedRecord::SdkEvent(previous) => Some(previous.clone()),
+                QueuedRecord::RealmBootstrap(_) => {
                     anyhow::bail!(
                         "outbound transaction {transaction_id} is already bound to a Realm bootstrap unit"
                     );
-                }
-                QueuedRecordState::Poisoned { reason } => {
-                    if !matches!(
-                        existing.status,
-                        garth::SendQueueStatus::Cancelled | garth::SendQueueStatus::Superseded
-                    ) {
-                        // The generation fence quarantine-cancels it on the
-                        // next queue drive; the retry after that lands in
-                        // the terminal repair branch below.
-                        anyhow::bail!(
-                            "outbound transaction {transaction_id} is blocked by a {reason}"
-                        );
-                    }
-                    None
                 }
             };
             if let Some(previous) = &previous {
@@ -2243,10 +1685,7 @@ impl EventSubmitter {
                             Some(transaction_id.clone()),
                             event.realm_id.clone(),
                             event.actor_id.clone(),
-                            garth::SendQueueItemKind::Custom {
-                                kind: event.kind.to_string(),
-                            },
-                            serde_json::to_value(repaired)?,
+                            QueuedRecord::SdkEvent(repaired),
                             Vec::new(),
                         )
                         .await?;
@@ -2264,10 +1703,7 @@ impl EventSubmitter {
                     Some(transaction_id.clone()),
                     event.realm_id.clone(),
                     event.actor_id.clone(),
-                    garth::SendQueueItemKind::Custom {
-                        kind: event.kind.to_string(),
-                    },
-                    queued_value,
+                    QueuedRecord::SdkEvent(queued),
                     Vec::new(),
                 )
                 .await?;
@@ -2681,7 +2117,7 @@ impl EventSubmitter {
         }
         // `idempotency_key` is not a body field in v1: it travels only in the
         // `Idempotency-Key` header.
-        let anchor_unit = first_event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE;
+        let anchor_unit = first_event.kind == arkret_sdk::EventKind::RealmCreate;
         let mut submissions = Vec::with_capacity(sdk_events.len());
         for event in sdk_events {
             let submission = if uses_bare_online_anchor_submission(anchor_unit, event) {
@@ -2724,10 +2160,10 @@ impl EventSubmitter {
     ) -> anyhow::Result<arkret_sdk::EventsSubmitOutcome> {
         if events
             .first()
-            .is_some_and(|event| event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE)
+            .is_some_and(|event| event.kind == arkret_sdk::EventKind::RealmCreate)
             && events
                 .get(1)
-                .is_some_and(|event| event.kind.as_str() == arkret_sdk::EventKind::CAPABILITY_GRANT)
+                .is_some_and(|event| event.kind == arkret_sdk::EventKind::CapabilityGrant)
         {
             crate::identity::authoring_generation::resolve_event_authoring_generation(
                 &self.http, &events[0],
@@ -2746,12 +2182,12 @@ impl EventSubmitter {
         self.ensure_development_sdk_build_matches().await?;
         let first_is_realm_create = events
             .first()
-            .is_some_and(|event| event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE);
+            .is_some_and(|event| event.kind == arkret_sdk::EventKind::RealmCreate);
         let is_identity_anchor_unit = first_is_realm_create
             && events.len() == 2
-            && events.get(1).is_some_and(|event| {
-                event.kind.as_str() == arkret_sdk::EventKind::DEVICE_AUTHORIZE
-            })
+            && events
+                .get(1)
+                .is_some_and(|event| event.kind == arkret_sdk::EventKind::DeviceAuthorize)
             && arkret_bootstrap::validate_self_principal_pcr_genesis_unit(
                 &events[0],
                 &events[1],
@@ -2780,7 +2216,7 @@ impl EventSubmitter {
         }
         let genesis_digest_suite = events
             .first()
-            .filter(|event| event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE)
+            .filter(|event| event.kind == arkret_sdk::EventKind::RealmCreate)
             .map(|event| {
                 serde_json::from_value::<arkret_sdk::RealmCreatePayload>(serde_json::to_value(
                     &event.payload,
@@ -2954,7 +2390,7 @@ fn account_authority_http_client(
 pub(crate) fn attach_capability_grant_payload_proof(
     event: &mut arkret_sdk::Event,
 ) -> anyhow::Result<()> {
-    if event.kind.as_str() != arkret_sdk::EventKind::CAPABILITY_GRANT {
+    if event.kind != arkret_sdk::EventKind::CapabilityGrant {
         return Ok(());
     }
     validate_capability_grant_payload(event)
@@ -2969,7 +2405,7 @@ pub(crate) fn attach_capability_grant_payload_proof_with_signer(
 }
 
 fn validate_capability_grant_payload(event: &arkret_sdk::Event) -> anyhow::Result<()> {
-    if event.kind.as_str() != arkret_sdk::EventKind::CAPABILITY_GRANT {
+    if event.kind != arkret_sdk::EventKind::CapabilityGrant {
         return Ok(());
     }
     let payload: arkret_sdk::CapabilityGrantPayload = serde_json::from_value(
@@ -3137,8 +2573,7 @@ fn mls_genesis_event_id_from_events(
         .events
         .iter()
         .find(|event| {
-            event.realm_id.as_str() == realm_id
-                && event.kind.as_str() == arkret_sdk::EventKind::MLS_GENESIS
+            event.realm_id.as_str() == realm_id && event.kind == arkret_sdk::EventKind::MlsGenesis
         })
         .map(|event| event.event_id.clone())
 }
@@ -3184,9 +2619,7 @@ fn realm_create_authority_from_events(
     realm_id: &str,
 ) -> Option<RealmCreateAuthority> {
     events.iter().find_map(|event| {
-        if event.realm_id.as_str() != realm_id
-            || event.kind.as_str() != arkret_sdk::EventKind::REALM_CREATE
-        {
+        if event.realm_id.as_str() != realm_id || event.kind != arkret_sdk::EventKind::RealmCreate {
             return None;
         }
         let object = event.payload.get("object")?;
@@ -3352,6 +2785,12 @@ mod tests {
 
     use super::*;
     use crate::operation::EventExt;
+
+    fn decode_queued_sdk_event(value: Value) -> garth::Result<QueuedSdkEvent> {
+        let queued: QueuedSdkEvent = serde_json::from_value(value)?;
+        queued.validate()?;
+        Ok(queued)
+    }
 
     fn test_authoring_generation() -> crate::identity::authoring_generation::AuthoringGeneration {
         crate::identity::authoring_generation::AuthoringGeneration {
@@ -3651,10 +3090,7 @@ mod tests {
             .enqueue(
                 Some(pending.event_id.to_string()),
                 realm.clone(),
-                garth::SendQueueItemKind::Custom {
-                    kind: "ak.message.create".to_owned(),
-                },
-                serde_json::to_value(
+                QueuedRecord::SdkEvent(
                     QueuedSdkEvent::unauthored(
                         pending,
                         "pending-operation".to_owned(),
@@ -3664,8 +3100,7 @@ mod tests {
                         None,
                     )
                     .unwrap(),
-                )
-                .unwrap(),
+                ),
                 Vec::new(),
             )
             .unwrap();
@@ -3685,10 +3120,7 @@ mod tests {
             .enqueue(
                 Some(other_conversation.event_id.to_string()),
                 realm.clone(),
-                garth::SendQueueItemKind::Custom {
-                    kind: "ak.message.create".to_owned(),
-                },
-                serde_json::to_value(
+                QueuedRecord::SdkEvent(
                     QueuedSdkEvent::unauthored(
                         other_conversation,
                         "other-operation".to_owned(),
@@ -3698,8 +3130,7 @@ mod tests {
                         None,
                     )
                     .unwrap(),
-                )
-                .unwrap(),
+                ),
                 Vec::new(),
             )
             .unwrap();
@@ -3715,10 +3146,7 @@ mod tests {
             .enqueue(
                 Some(sent_transaction.clone()),
                 realm.clone(),
-                garth::SendQueueItemKind::Custom {
-                    kind: "ak.message.create".to_owned(),
-                },
-                serde_json::to_value(
+                QueuedRecord::SdkEvent(
                     QueuedSdkEvent::unauthored(
                         sent,
                         "sent-operation".to_owned(),
@@ -3728,8 +3156,7 @@ mod tests {
                         None,
                     )
                     .unwrap(),
-                )
-                .unwrap(),
+                ),
                 Vec::new(),
             )
             .unwrap();
@@ -4458,7 +3885,7 @@ mod tests {
             app_messages_observed: 1,
             aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
         };
-        let content = serde_json::to_value(
+        let record = QueuedRecord::SdkEvent(
             QueuedSdkEvent::unauthored(
                 event,
                 "mls-operation".to_owned(),
@@ -4467,24 +3894,15 @@ mod tests {
                 test_authoring_generation(),
                 Some(PostAcceptAction::MlsSnapshot {
                     realm_id: realm_id.to_owned(),
-                    snapshot,
+                    snapshot: snapshot.into_queued(),
                 }),
             )
             .unwrap(),
-        )
-        .unwrap();
+        );
         let realm = arkret_sdk::RealmId::new(realm_id).unwrap();
         let mut queue = garth::SendQueue::new();
         let item = queue
-            .enqueue(
-                Some("txn-mls-hook".to_owned()),
-                realm,
-                garth::SendQueueItemKind::Custom {
-                    kind: "ak.mls.commit".to_owned(),
-                },
-                content,
-                Vec::new(),
-            )
+            .enqueue(Some("txn-mls-hook".to_owned()), realm, record, Vec::new())
             .unwrap();
         let event_id =
             arkret_sdk::EventId::new("ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
@@ -4550,7 +3968,7 @@ mod tests {
                 actor_id: "did:web:alice.example".to_owned(),
                 device_id: "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
                 welcomes: vec![welcome.clone()],
-                snapshot,
+                snapshot: snapshot.into_queued(),
             }),
         )
         .unwrap();
@@ -4616,7 +4034,7 @@ mod tests {
             actor_id: "did:web:alice.example".to_owned(),
             device_id: "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
             welcomes: vec![welcome],
-            snapshot,
+            snapshot: snapshot.into_queued(),
         };
 
         let error = persist_post_accept_action(

@@ -167,6 +167,9 @@ url = {workspace = true}
 x25519-dalek = {workspace = true,features = ["static_secrets"]}
 zeroize = {workspace = true,features = ["derive"]}
 
+[dev-dependencies]
+arkret-wire = {version = "0.3.0",path = "../arkret-rust-sdk/crates/wire",default-features = false,features = ["test-support"]}
+
 # Build-time only: stamps `INKSON_BUILD_ID` (local build time + git short hash)
 # so the running wasm can print which bundle the browser loaded — the
 # definitive stale-cached-wasm check. Build deps do not affect the wasm binary.

@@ -540,36 +540,25 @@ pub(super) fn dispatch_strand_position_move(
     );
 }
 
-/// Map soland's wire state strings into `SpaceContainerLifecycleState`.
-/// Anything we don't recognise stays `Active`
-/// (the safe default — server can correct on next sync).
-pub(super) fn space_container_state_from_wire(state: &str) -> SpaceContainerLifecycleState {
+/// Map the authoritative SDK projection lifecycle into the UI lifecycle.
+pub(super) fn space_container_state_from_projection(
+    state: &arkret_sdk::ProjectionSpaceState,
+) -> SpaceContainerLifecycleState {
     match state {
-        "archived" => SpaceContainerLifecycleState::Archived,
-        "tombstoned" => SpaceContainerLifecycleState::Tombstoned,
-        _ => SpaceContainerLifecycleState::Active,
+        arkret_sdk::ProjectionSpaceState::Archived => SpaceContainerLifecycleState::Archived,
+        arkret_sdk::ProjectionSpaceState::Tombstoned => SpaceContainerLifecycleState::Tombstoned,
+        arkret_sdk::ProjectionSpaceState::Active => SpaceContainerLifecycleState::Active,
     }
 }
 
-/// Sibling at the Strand object layer. The wire enum is exactly
-/// `{active, archived, redacted}` (`strand.schema.json` state) — `redacted`
-/// is the only irreversible terminal. There is NO `deleted` state in the
-/// spec; if the server ever sends `"deleted"` we log a warning and degrade
-/// to `Active` (the safe non-terminal default — server can correct on next
-/// sync) rather than silently treating it as a terminal.
-pub(super) fn strand_lifecycle_from_wire(state: &str) -> StrandLifecycleState {
+/// Map the authoritative SDK projection lifecycle into the UI lifecycle.
+pub(super) fn strand_lifecycle_from_projection(
+    state: &arkret_sdk::ProjectionObjectState,
+) -> StrandLifecycleState {
     match state {
-        "archived" => StrandLifecycleState::Archived,
-        "redacted" => StrandLifecycleState::Redacted,
-        "deleted" => {
-            tracing::warn!(
-                wire_state = "deleted",
-                "Strand wire state `deleted` is not in the spec enum (active/archived/redacted); \
-                 degrading to Active. Redact, not delete, is the terminal per strand.schema.json."
-            );
-            StrandLifecycleState::Active
-        }
-        _ => StrandLifecycleState::Active,
+        arkret_sdk::ProjectionObjectState::Archived => StrandLifecycleState::Archived,
+        arkret_sdk::ProjectionObjectState::Redacted => StrandLifecycleState::Redacted,
+        arkret_sdk::ProjectionObjectState::Active => StrandLifecycleState::Active,
     }
 }
 
@@ -792,7 +781,7 @@ pub(super) fn dispatch_board_archive_cascade(
         .into_iter()
         .filter(|view| {
             view.board_space_id.as_deref() == Some(board_space_id.as_str())
-                && view.state == "active"
+                && view.state == arkret_sdk::ProjectionObjectState::Active
         })
         .map(|view| view.strand_id)
         .collect();
@@ -801,7 +790,7 @@ pub(super) fn dispatch_board_archive_cascade(
         .filter(|view| {
             view.kind == "list"
                 && view.parent_space_id.as_deref() == Some(board_space_id.as_str())
-                && view.state == "active"
+                && view.state == arkret_sdk::ProjectionObjectState::Active
         })
         .map(|view| view.space_id)
         .collect();

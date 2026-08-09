@@ -1,9 +1,41 @@
 use dioxus::prelude::*;
-use serde_json::json;
 
 use super::signaling::emit_async;
 use super::types::CallParticipant;
 use crate::ui::button::{Button, ButtonVariant};
+
+fn moderator_mute_signal(
+    target_actor_id: String,
+    target_device_id: String,
+) -> Option<arkret_sdk::CallSignalData> {
+    Some(arkret_sdk::CallSignalData::MuteState(
+        arkret_sdk::CallMuteStateSignalData {
+            audio_muted: true,
+            video_muted: false,
+            changed_by: arkret_sdk::MuteChangedBy::Moderator,
+            target_actor_id: Some(arkret_sdk::Did::new(target_actor_id).ok()?),
+            target_device_id: Some(arkret_sdk::DeviceId::new(target_device_id).ok()?),
+        },
+    ))
+}
+
+fn moderation_signal(
+    action: arkret_sdk::CallModerationAction,
+    target_actor_id: Option<String>,
+    target_device_id: Option<String>,
+) -> Option<arkret_sdk::CallSignalData> {
+    Some(arkret_sdk::CallSignalData::Moderation(
+        arkret_sdk::CallModerationSignalData {
+            action,
+            target_actor_id: target_actor_id.map(arkret_sdk::Did::new).transpose().ok()?,
+            target_device_id: target_device_id
+                .map(arkret_sdk::DeviceId::new)
+                .transpose()
+                .ok()?,
+            reason: None,
+        },
+    ))
+}
 
 /// Moderator controls (kick / ban / mute-all / end-for-all). Rendered inside
 /// the active call panel. Per `webrtc-signaling.md` §3a / §6.1: kick / ban /
@@ -56,16 +88,15 @@ pub(super) fn ModeratorControls(
                                 let Some(target_device_id) = p.device_id.clone() else {
                                     continue;
                                 };
+                                let Some(signal) = moderator_mute_signal(
+                                    target_actor_id,
+                                    target_device_id,
+                                ) else {
+                                    continue;
+                                };
                                 emit_async(
                                     &base, &token(), &realm_id, &call_id, &actor, &device,
-                                    "mute_state",
-                                    json!({
-                                        "audio_muted": true,
-                                        "video_muted": false,
-                                        "by": "moderator",
-                                        "target_actor_id": target_actor_id,
-                                        "target_device_id": target_device_id,
-                                    }),
+                                    signal,
                                     call_seq,
                                     signal_store.clone(),
                                 );
@@ -85,10 +116,16 @@ pub(super) fn ModeratorControls(
                         let call_id = call_id.clone();
                         let signal_store = signal_store.clone();
                         move |_| {
+                            let Some(signal) = moderation_signal(
+                                arkret_sdk::CallModerationAction::EndForAll,
+                                None,
+                                None,
+                            ) else {
+                                return;
+                            };
                             emit_async(
                                 &base, &token(), &realm_id, &call_id, &actor, &device,
-                                "moderation",
-                                json!({ "signal_kind": "moderation", "data": { "action": "end_for_all" } }),
+                                signal,
                                 call_seq,
                                 signal_store.clone(),
                             );
@@ -126,17 +163,16 @@ pub(super) fn ModeratorControls(
                                         let Some(target_device_id) = target_device.clone() else {
                                             return;
                                         };
+                                        let Some(signal) = moderation_signal(
+                                            arkret_sdk::CallModerationAction::Kick,
+                                            Some(target.clone()),
+                                            Some(target_device_id),
+                                        ) else {
+                                            return;
+                                        };
                                         emit_async(
                                             &base, &token(), &realm_id, &call_id, &actor, &device,
-                                            "moderation",
-                                            json!({
-                                                "signal_kind": "moderation",
-                                                "data": {
-                                                    "action": "kick",
-                                                    "target_actor_id": target.clone(),
-                                                    "target_device_id": target_device_id,
-                                                },
-                                            }),
+                                            signal,
                                             call_seq,
                                             signal_store.clone(),
                                         );
@@ -154,23 +190,18 @@ pub(super) fn ModeratorControls(
                                     let realm_id = realm_id.clone();
                                     let call_id = call_id.clone();
                                     let target = target.clone();
-                                    let target_device = target_device.clone();
                                     let signal_store = signal_store.clone();
                                     move |_| {
-                                        let Some(target_device_id) = target_device.clone() else {
+                                        let Some(signal) = moderation_signal(
+                                            arkret_sdk::CallModerationAction::Ban,
+                                            Some(target.clone()),
+                                            None,
+                                        ) else {
                                             return;
                                         };
                                         emit_async(
                                             &base, &token(), &realm_id, &call_id, &actor, &device,
-                                            "moderation",
-                                            json!({
-                                                "signal_kind": "moderation",
-                                                "data": {
-                                                    "action": "ban",
-                                                    "target_actor_id": target.clone(),
-                                                    "target_device_id": target_device_id,
-                                                },
-                                            }),
+                                            signal,
                                             call_seq,
                                             signal_store.clone(),
                                         );

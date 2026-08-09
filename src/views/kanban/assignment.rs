@@ -132,6 +132,7 @@ pub(super) fn card_assignment_mutations(
         for relation_id in relation_ids {
             let operation =
                 crate::operation::ak_ops::relation_tombstone(realm_id, actor_id, relation_id)
+                    .map_err(|err| format!("cannot build assigned_to tombstone: {err:#}"))?
                     .build_sdk_event("inkson")
                     .map_err(|err| format!("cannot build assigned_to tombstone event: {err}"))?;
             mutations.push(CardAssignmentMutation::Tombstone {

@@ -13,9 +13,8 @@ use arkret_models_integration::{
     AppletBridgeErrorClass, AppletBridgeErrorPayload, AppletBridgeVisibilityScope,
 };
 use arkret_wire::{AppletId, AppletIdentifier, Did, NonEmptyString, RealmId};
-use serde_json::json;
 
-use super::OperationBuilder;
+use super::TypedOperationBuilder;
 
 /// `ak.applet.discovery` — the network discovery surface that lists
 /// what an applet exposes; emitted by directory crawlers and by the
@@ -25,25 +24,27 @@ pub fn applet_discovery(
     actor: &str,
     service_id: &str,
     manifest: serde_json::Value,
-) -> OperationBuilder {
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::EventKind::AppletDiscovery,
-    )
-    .target_ref(service_id)
+) -> anyhow::Result<TypedOperationBuilder> {
+    let payload = arkret_sdk::ResourceDiscoveryStatePayload {
+        resource_id: NonEmptyString::new(service_id).map_err(anyhow::Error::msg)?,
+        value: Some(serde_json::json!({
+            "service_id": service_id,
+            "manifest": manifest,
+        })),
+        state: None,
+        reason: None,
+    };
     // `resource_discovery_state_payload` is closed over
     // `{resource_id, value, state, reason}`: `resource_id` is the stable cell
     // subject the registered contract derives the
     // `ak.component.applet.discovery.v1` cell from, and the manifest is
     // schema-versioned discovery state inside `value`.
-    .body(json!({
-        "resource_id": service_id,
-        "value": {
-            "service_id": service_id,
-            "manifest": manifest,
-        },
-    }))
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::AppletDiscovery>(
+            realm_id, actor, payload,
+        )
+        .target_ref(service_id),
+    )
 }
 
 /// Validate an `applet_id` against the canonical
@@ -79,7 +80,7 @@ pub fn applet_bridge_error(
     retriable: bool,
     visibility_scope: &str,
     message: &str,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let visibility_scope = match visibility_scope.trim() {
         "realm_admins" => AppletBridgeVisibilityScope::RealmAdmins,
         "applet_controller" => AppletBridgeVisibilityScope::AppletController,
@@ -107,11 +108,10 @@ pub fn applet_bridge_error(
         message: Some(message.to_owned()),
         retry_after_ms: None,
     };
-    let body = serde_json::to_value(payload)
-        .map_err(|err| anyhow::anyhow!("applet_bridge_error_payload serialize: {err}"))?;
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::AppletBridgeError)
-            .target_ref(failed_transaction_ref)
-            .body(body),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::AppletBridgeError>(
+            realm_id, actor, payload,
+        )
+        .target_ref(failed_transaction_ref),
     )
 }

@@ -150,13 +150,14 @@ async fn fetch_active_series_tail(
     if metadata.get("ciphertext").and_then(Value::as_str).is_some() {
         return Ok(Some(metadata.clone()));
     }
-    let signer = crate::event_signer::active_signer();
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow!("active device signer is required"))?;
     crate::key_backup::fetch_key_backup_with_device_unlock_proof(
         api,
         metadata,
         actor_id,
         device_id,
-        signer.as_ref(),
+        Some(&signer),
     )
     .await
     .map(Some)
@@ -200,7 +201,8 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
     let account_backup_id = fresh_backup_id();
 
     let kek = derive_vault_kek(passphrase).map_err(|err| anyhow!("derive KEK: {err}"))?;
-    let signer = crate::event_signer::active_signer();
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow!("active device signer is required"))?;
     let mut account_body = build_mls_account_secret_backup_body_with_kek_and_version(
         &account_backup_id,
         actor_id,
@@ -208,15 +210,10 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
         &kek,
         &stored.secret,
         stored.version,
-        signer.as_ref(),
     )?;
     apply_next_series(previous_account_backup.as_ref(), &mut account_body)?;
-    let account_series_id = account_body
-        .get("series_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("account MLS secret backup omitted series_id"))?
-        .to_owned();
-    api.put_key_backup(&account_backup_id, account_body, signer.as_ref())
+    let account_series_id = account_body.series_id.to_string();
+    api.put_key_backup(&account_backup_id, account_body, &signer)
         .await
         .map_err(|err| anyhow!("upload account MLS secret backup: {err}"))?;
     ensure_initial_active_series(
@@ -296,7 +293,8 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
 
     let account_backup_id = fresh_backup_id();
     let recovery_key_ref = format!("{actor_id}#recovery");
-    let signer = crate::event_signer::active_signer();
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow!("active device signer is required"))?;
     let account_body = build_mls_account_secret_recovery_public_key_backup_in_series(
         &account_backup_id,
         actor_id,
@@ -307,14 +305,9 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
         stored.version,
         recovery_policy_ref,
         previous_account_backup.as_ref(),
-        signer.as_ref(),
     )?;
-    let account_series_id = account_body
-        .get("series_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("recovery-key account backup omitted series_id"))?
-        .to_owned();
-    api.put_key_backup(&account_backup_id, account_body, signer.as_ref())
+    let account_series_id = account_body.series_id.to_string();
+    api.put_key_backup(&account_backup_id, account_body, &signer)
         .await
         .map_err(|err| anyhow!("upload recovery-key account MLS secret backup: {err}"))?;
     ensure_initial_active_series(
@@ -376,13 +369,14 @@ pub async fn fetch_mls_private_plaintext_backup_body(
     let Some(metadata) = select_mls_private_plaintext_backup(&list_payload) else {
         return Ok(None);
     };
-    let signer = crate::event_signer::active_signer();
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow!("active device signer is required"))?;
     let body = crate::key_backup::fetch_key_backup_with_device_unlock_proof(
         api,
         &metadata,
         actor_id,
         device_id,
-        signer.as_ref(),
+        Some(&signer),
     )
     .await
     .map_err(|err| anyhow!("fetch previous private plaintext backup: {err}"))?;
@@ -421,34 +415,31 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
         BackupRotationKind::SecretStorage,
     )
     .await?;
-    let signer = crate::event_signer::active_signer();
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow!("active device signer is required"))?;
     let mut body = build_mls_private_plaintext_backup_body_with_kek(
         &backup_id,
         actor_id,
         device_id,
         &kek,
         sidecar_json,
-        signer.as_ref(),
     )?;
     apply_next_series(previous_backup.as_ref(), &mut body)?;
     let (_, sent_body) = api
-        .put_key_backup_returning_sent_body(&backup_id, body, signer.as_ref())
+        .put_key_backup_returning_sent_body(&backup_id, body, &signer)
         .await
         .map_err(|err| anyhow!("upload private plaintext backup: {err}"))?;
-    let series_id = sent_body
-        .get("series_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("private plaintext backup omitted series_id"))?;
+    let series_id = sent_body.series_id.to_string();
     ensure_initial_active_series(
         api,
         actor_id,
         device_id,
         BackupRotationKind::SecretStorage,
-        series_id,
+        &series_id,
     )
     .await?;
 
-    Ok((backup_id, sent_body))
+    Ok((backup_id, serde_json::to_value(sent_body)?))
 }
 
 /// Fetch the FULL body of the current `mls_history` series tail for `realm_id`
@@ -492,10 +483,9 @@ pub async fn fetch_mls_history_tail_for_realm(
 /// as the read-quota anti-pattern). With `previous == None` this is a series
 /// genesis (first backup for the Realm, or a deliberate post-rotation reset).
 ///
-/// The successor mutation happens BEFORE signing matters: `to_key_backup_body`
-/// signs the genesis shape, so after `apply_next_series` injects
-/// `supersedes`/`supersedes_digest` we re-sign so `auth_data.signed_fields`
-/// covers them (they are signed-when-present fields).
+/// The successor mutation happens before transport closes the unsigned
+/// envelope through the SDK signing typestate, so `supersedes` and
+/// `supersedes_digest` are covered by the canonical signed-fields set.
 ///
 /// Returns `(backup_id, uploaded_body)`; callers should cache the body as the
 /// new series tail for the next chain link.
@@ -515,34 +505,26 @@ pub async fn upload_mls_history_backup_with_previous(
         BackupRotationKind::MlsHistory,
     )
     .await?;
-    let signer = crate::event_signer::active_signer();
-    let (backup_id, mut body) = crate::mls::runtime::build_mls_history_backup_body(
-        snapshot,
-        actor_id,
-        device_id,
-        signer.as_ref(),
-    )
-    .map_err(|error| anyhow!(error.user_message()))?;
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow!("active device signer is required"))?;
+    let (backup_id, mut body) =
+        crate::mls::runtime::build_mls_history_backup_body(snapshot, actor_id, device_id)
+            .map_err(|error| anyhow!(error.user_message()))?;
     if previous.is_some() {
         apply_next_series(previous.as_ref(), &mut body)?;
-        crate::key_backup::sign_key_backup_with_device(&mut body, device_id, signer.as_ref())
-            .map_err(|err| anyhow!("re-sign mls_history successor envelope: {err}"))?;
     }
     let (_, sent_body) = api
-        .put_key_backup_returning_sent_body(&backup_id, body, signer.as_ref())
+        .put_key_backup_returning_sent_body(&backup_id, body, &signer)
         .await
         .map_err(|err| anyhow!("upload mls_history backup: {err}"))?;
-    let series_id = sent_body
-        .get("series_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("mls_history backup omitted series_id"))?;
+    let series_id = sent_body.series_id.to_string();
     ensure_initial_active_series(
         api,
         actor_id,
         device_id,
         BackupRotationKind::MlsHistory,
-        series_id,
+        &series_id,
     )
     .await?;
-    Ok((backup_id, sent_body))
+    Ok((backup_id, serde_json::to_value(sent_body)?))
 }

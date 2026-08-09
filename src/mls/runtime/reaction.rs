@@ -23,7 +23,7 @@ pub struct EncryptedReaction {
     /// `sha256:<hex>` keyed-HMAC routing tag for `reaction_payload.key`.
     pub routing_tag: String,
     /// MLS application-message payload carrying the real emoji JSON.
-    pub encrypted_payload: arkret_sdk::EncryptedPayload,
+    pub encrypted_payload: arkret_sdk::EncryptedEnvelope,
     /// SEC-08 (`encryption-and-audit.md` §2.9) — present ONLY when this
     /// reaction force-advanced the MLS epoch because the
     /// `minimal_metadata_realm` 1h cap was exceeded. The caller MUST submit
@@ -188,6 +188,24 @@ pub fn encrypt_reaction_with_device_snapshot(
     let encrypted_payload = group
         .encrypt_payload_with_aad(REACTION_ENCRYPTED_CONTENT_TYPE, Some(aad), &plaintext)
         .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))?;
+    let aad = encrypted_payload.aad.clone().ok_or_else(|| {
+        MlsRuntimeError::Encrypt("reaction encryption omitted its bound AAD".to_owned())
+    })?;
+    let group_state_ref = encrypted_payload
+        .key_ref
+        .as_ref()
+        .map(|key_ref| key_ref.group_state_ref.clone())
+        .ok_or_else(|| {
+            MlsRuntimeError::Encrypt("reaction encryption omitted its group_state_ref".to_owned())
+        })?;
+    let encrypted_payload = arkret_sdk::mls::encrypted_envelope_from_payload(
+        &encrypted_payload,
+        aad,
+        arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
+        arkret_sdk::AadVisibilityCeiling::from_declared(None),
+        group_state_ref,
+    )
+    .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))?;
 
     let post_state = group
         .export_state_record()

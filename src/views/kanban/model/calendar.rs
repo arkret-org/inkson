@@ -508,36 +508,40 @@ pub(crate) fn calendar_schedule_revision_heads(
 }
 
 fn calendar_event_revises_schedule(event: &arkret_sdk::Event, strand_id: &str) -> bool {
-    match event.kind.as_str() {
-        "ak.strand.create" => {
+    match &event.kind {
+        arkret_sdk::EventKind::StrandCreate => {
             // The create payload carries no object id — a Strand id is
             // `retype(event_id)` of this very Event — so the Strand a create
             // names can only be recovered from the Event's own id.
-            let object = event.payload.get("object");
+            let Ok(payload) = event.typed_payload::<arkret_sdk::event_spec::StrandCreate>() else {
+                return false;
+            };
             arkret_sdk::StrandId::from_event_id(&event.event_id).as_str() == strand_id
-                && object
-                    .and_then(|object| object.get("metadata"))
-                    .and_then(|metadata| metadata.get("fields"))
-                    .and_then(Value::as_object)
-                    .is_some_and(fields_have_calendar_keys)
+                && payload.object.metadata.as_ref().is_some_and(|metadata| {
+                    metadata
+                        .fields
+                        .contains_key(arkret_sdk::CALENDAR_METADATA_FIELDS_NAMESPACE)
+                })
         }
-        "ak.strand.update" => {
-            event.payload.get("target_ref").and_then(Value::as_str) == Some(strand_id)
-                && event
-                    .payload
-                    .get("patch")
-                    .and_then(Value::as_object)
-                    .is_some_and(calendar_patch_revises_schedule)
+        arkret_sdk::EventKind::StrandUpdate => {
+            let Ok(payload) = event.typed_payload::<arkret_sdk::event_spec::StrandUpdate>() else {
+                return false;
+            };
+            payload.target_ref.as_str() == strand_id
+                && calendar_patch_revises_schedule(&payload.patch)
         }
         _ => false,
     }
 }
 
-fn calendar_patch_revises_schedule(patch: &Map<String, Value>) -> bool {
-    patch.iter().any(|(path, value)| {
+fn calendar_patch_revises_schedule(patch: &arkret_wire::patch::Patch) -> bool {
+    patch.iter().any(|(path, operation)| {
         if path == CALENDAR_SUBTREE_PATH || path.starts_with(&format!("{CALENDAR_SUBTREE_PATH}.")) {
             return true;
         }
+        let Some(value) = operation.value() else {
+            return false;
+        };
         if path == "metadata.fields" {
             return value
                 .get("value")

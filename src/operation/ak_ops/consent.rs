@@ -5,7 +5,7 @@
 //! subject, not something derived from an Event), and the or_set add dot falls out
 //! of the Event's own `event_id`, so neither is the server's to pick.
 
-use super::{OperationBuilder, did_id};
+use super::{TypedOperationBuilder, did_id};
 
 /// Build a canonical `ak.consent.grant` Control Move in the holder's principal
 /// control Realm.
@@ -20,24 +20,20 @@ pub fn consent_grant(
     peer: &str,
     consent_scope: &str,
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
-) -> anyhow::Result<OperationBuilder> {
-    let mut payload = serde_json::json!({
-        "consent_id": consent_id.as_str(),
-        "peer": did_id(peer)?,
-        "consent_scope": consent_scope.trim(),
-    });
-    if let Some(expires_at) = expires_at {
-        payload["expires_at"] = serde_json::Value::String(
-            arkret_sdk::canonical::format_timestamp_canonical(expires_at),
-        );
-    }
-    let body = payload;
-    Ok(OperationBuilder::new(
-        holder_pcr_realm_id,
-        holder,
-        arkret_sdk::EventKind::ConsentGrant,
-    )
-    .body(body))
+) -> anyhow::Result<TypedOperationBuilder> {
+    let payload = arkret_sdk::ConsentGrantPayload {
+        consent_id: consent_id.clone(),
+        peer: did_id(peer)?,
+        consent_scope: consent_scope.trim().to_owned(),
+        not_before: None,
+        expires_at,
+        constraints: None,
+        evidence_ref: None,
+        reason: None,
+    };
+    Ok(TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::ConsentGrant,
+    >(holder_pcr_realm_id, holder, payload))
 }
 
 /// Build a canonical `ak.consent.revoke` Control Move.
@@ -51,29 +47,27 @@ pub fn consent_revoke(
     holder_pcr_realm_id: &str,
     holder: &str,
     consent_id: &arkret_sdk::ConsentId,
-    peer: &str,
-    consent_scope: &str,
     observed_dots: &[String],
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     if observed_dots.is_empty() {
         anyhow::bail!(
             "ak.consent.revoke requires at least one observed dot; \
              read them from ConsentCellView::active_grant_dots"
         );
     }
-    let payload = serde_json::json!({
-        "consent_id": consent_id.as_str(),
-        "peer": did_id(peer)?,
-        "consent_scope": consent_scope.trim(),
-        "observed_dots": observed_dots,
-    });
-    let body = payload;
-    Ok(OperationBuilder::new(
-        holder_pcr_realm_id,
-        holder,
-        arkret_sdk::EventKind::ConsentRevoke,
-    )
-    .body(body))
+    let payload = arkret_sdk::ConsentRevokePayload {
+        consent_id: consent_id.clone(),
+        observed_dots: observed_dots
+            .iter()
+            .cloned()
+            .map(arkret_sdk::ConsentObservedDot::new)
+            .collect::<arkret_sdk::Result<Vec<_>>>()?,
+        revoked_at: Some(crate::clock::now_utc_millis()),
+        reason: None,
+    };
+    Ok(TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::ConsentRevoke,
+    >(holder_pcr_realm_id, holder, payload))
 }
 
 /// Recover the `consent_id` a consent cell is keyed on from its `cell_id`.

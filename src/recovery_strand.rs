@@ -12,34 +12,19 @@
 use arkret_models_crypto::{
     KeyBackupContentItem, RecoveryHpkeSuite, RecoveryKeyAgreementAlgorithm,
     RecoveryKeyAgreementEntry, RecoveryKeyAgreementUse, RecoveryKeyEntry,
-    RecoveryKeySignatureAlgorithm, RecoveryPolicy, RecoveryPolicyActiveOutcome,
-    RecoveryPolicyAuthData, RecoveryPolicyRef, RecoveryPolicySummary, RecoveryProofKind,
-    RecoveryPublicationAuthorizationRule, RecoverySessionCreateRequestBody,
-    RecoverySessionProofSubmitRequestBody,
+    RecoveryKeySignatureAlgorithm, RecoveryPolicy, RecoveryPolicyActiveOutcome, RecoveryPolicyRef,
+    RecoveryPolicySummary, RecoveryProofKind, RecoveryPublicationAuthorizationRule,
+    RecoverySessionCreateRequestBody, RecoverySessionProofSubmitRequestBody,
+    UnsignedRecoveryPolicy, UnsignedRecoveryPolicyBody,
 };
 use arkret_sdk::{DeviceId, Did, DidUrl, NonEmptyString, PolicyId, TypedTrustDomainId};
-use arkret_wire::{AuthoritySetIssuer, AuthoritySetIssuerRole, SchemaId};
+use arkret_wire::{AuthoritySetIssuer, AuthoritySetIssuerRole};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::SigningKey;
-use serde_json::{Map, Value, json};
+use serde_json::Value;
 
 use crate::transport::TransportClient;
-
-pub const RECOVERY_POLICY_SIGNED_FIELDS: &[&str] = &[
-    "schema",
-    "policy_id",
-    "principal_id",
-    "version",
-    "trust_domain",
-    "allowed_proof_kinds",
-    "publication_authorization_rules",
-    "recovery_keys",
-    "recovery_key_agreements",
-    "supersedes",
-    "issued_at",
-    "expires_at",
-];
 
 /// 6.1 — parsed active recovery policy summary (the fields a client surfaces).
 pub type ActiveRecoveryPolicy = RecoveryPolicySummary;
@@ -306,8 +291,7 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         .map_err(|error| anyhow::anyhow!(error))?;
     let principal_signing_ref =
         DidUrl::new(verification_method.to_owned()).map_err(|error| anyhow::anyhow!(error))?;
-    let mut typed_policy = RecoveryPolicy {
-        schema: "ak.schema.recovery_policy.v1".to_owned(),
+    let policy_body = UnsignedRecoveryPolicyBody {
         policy_id: PolicyId::new(format!("ak:policy:{}", crate::operation::uuid_v7()))?,
         principal_id: Did::new(principal_id.to_owned())?,
         version: 1,
@@ -372,30 +356,22 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         issued_at,
         not_before: None,
         expires_at: None,
-        auth_data: RecoveryPolicyAuthData {
-            // §2.2: the policy auth_data verification method is a DID URL.
-            verification_method: arkret_sdk::DidUrl::new(verification_method.to_owned()).map_err(
-                |error| anyhow::anyhow!("recovery policy verification method is invalid: {error}"),
-            )?,
-            signature_algorithm: "Ed25519".to_owned(),
-            signature: String::new(),
-            signed_fields: RECOVERY_POLICY_SIGNED_FIELDS
-                .iter()
-                .map(|field| (*field).to_owned())
-                .collect(),
-        },
         extra: Default::default(),
     };
-    typed_policy.validate()?;
-    let mut policy = serde_json::to_value(&typed_policy)?;
-    let transcript = recovery_policy_signature_transcript(&policy, RECOVERY_POLICY_SIGNED_FIELDS);
-    let bytes = crate::canonical::canonical_json_bytes(&transcript)?;
+    let unsigned = UnsignedRecoveryPolicy::new(
+        policy_body,
+        arkret_sdk::DidUrl::new(verification_method.to_owned()).map_err(|error| {
+            anyhow::anyhow!("recovery policy verification method is invalid: {error}")
+        })?,
+        arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
+    )?;
+    let bytes = unsigned.signing_payload_bytes()?;
     let signature =
         sign_raw(&bytes).map_err(|err| anyhow::anyhow!("recovery policy sign: {err:?}"))?;
-    policy["auth_data"]["signature"] = Value::String(B64.encode(signature));
-    typed_policy = serde_json::from_value(policy.clone())?;
+    let typed_policy =
+        unsigned.attach_signature(arkret_sdk::Base64UrlString::new(B64.encode(signature))?)?;
     typed_policy.validate()?;
-    Ok(policy)
+    Ok(serde_json::to_value(typed_policy)?)
 }
 
 fn principal_scoped_recovery_policy_verification_method<'a>(
@@ -424,21 +400,6 @@ fn principal_scoped_recovery_policy_verification_method_id(
         principal_id,
         format_args!("{principal_id}#<device_id>"),
     )
-}
-
-fn recovery_policy_signature_transcript(payload: &Value, signed_fields: &[&str]) -> Value {
-    let mut signed_payload = Map::new();
-    for field in signed_fields {
-        signed_payload.insert(
-            (*field).to_owned(),
-            payload.get(*field).cloned().unwrap_or(Value::Null),
-        );
-    }
-    json!({
-        "type": "ak.identity.recovery_policy.signature.v1",
-        "signed_fields": signed_fields,
-        "payload": Value::Object(signed_payload),
-    })
 }
 
 pub async fn ensure_active_recovery_policy(
@@ -483,17 +444,23 @@ async fn publish_recovery_policy(
     policy.validate()?;
     let principal = arkret_sdk::Did::new(principal_id.to_owned())?;
     let realm_id = arkret_sdk::principal_control_realm_id(&principal);
-    let payload = arkret_sdk::RecoveryPolicySetPayload {
+    let recovery_payload = arkret_sdk::RecoveryPolicySetPayload {
         policy_id: policy.policy_id.clone(),
         value: policy,
     };
-    payload.validate()?;
-    let event = crate::operation::OperationBuilder::new(
+    recovery_payload.validate()?;
+    let payload = arkret_sdk::PolicySetStatePayload {
+        policy_id: arkret_sdk::NonEmptyString::new(recovery_payload.policy_id.as_str().to_owned())
+            .map_err(anyhow::Error::msg)?,
+        value: Some(serde_json::to_value(recovery_payload.value)?),
+        state: None,
+        reason: None,
+    };
+    let event = crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::PolicySet>(
         realm_id,
         principal_id,
-        arkret_sdk::EventKind::PolicySet,
+        payload,
     )
-    .body(serde_json::to_value(payload)?)
     .build_sdk_event("inkson-recovery-policy")?;
     let submitter = api.event_submitter()?;
     let (event, _) = submitter.prepare_sdk_event_for_submit(&event).await?;
@@ -548,7 +515,7 @@ async fn submit_first_recovery_policy_seal(
         .events
         .iter()
         .find(|event| {
-            event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE
+            event.kind == arkret_sdk::EventKind::RealmCreate
                 && event.actor_id.as_str() == principal_id
         })
         .ok_or_else(|| anyhow::anyhow!("self-PCR history omitted its bootstrap create Event"))?;
@@ -556,7 +523,7 @@ async fn submit_first_recovery_policy_seal(
         .events
         .iter()
         .find(|event| {
-            event.kind.as_str() == arkret_sdk::EventKind::DEVICE_AUTHORIZE
+            event.kind == arkret_sdk::EventKind::DeviceAuthorize
                 && event.actor_id.as_str() == principal_id
                 && event.actor_seq == 1
         })
@@ -701,7 +668,8 @@ pub async fn ensure_recovery_policy_and_did_recovery_backup(
     device_id: &str,
     recovery_key: &str,
 ) -> anyhow::Result<String> {
-    let signer = crate::event_signer::active_signer();
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("active device signer is required"))?;
     let key_material = arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
         recovery_key,
         "",
@@ -721,19 +689,37 @@ pub async fn ensure_recovery_policy_and_did_recovery_backup(
     let backup_id = format!("ak:backup:{}", crate::operation::uuid_v7());
     let recovery_key_ref = format!("{}#backup-hpke-0", principal_id.trim());
     let created_at = arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now());
-    let plaintext = crate::canonical::canonical_json_bytes(&json!({
-        "schema": "ak.local.did_recovery_metadata.v1",
-        "principal_id": principal_id,
-        "root_generation": key_material.root_generation,
-        "root_public_key_multibase": key_material.root_public_key_multikey,
-        "next_root_public_key_multibase": key_material.next_root_public_key_multikey,
-        "next_root_key_hash": key_material.next_root_key_hash,
-        "recovery_policy_ref": {
-            "policy_id": policy.policy_id.as_str(),
-            "policy_version": policy.version,
+    #[derive(serde::Serialize)]
+    struct RecoveryPolicyBinding<'a> {
+        policy_id: &'a str,
+        policy_version: u64,
+    }
+
+    #[derive(serde::Serialize)]
+    struct DidRecoveryMetadata<'a> {
+        schema: &'static str,
+        principal_id: &'a str,
+        root_generation: u64,
+        root_public_key_multibase: &'a str,
+        next_root_public_key_multibase: &'a str,
+        next_root_key_hash: &'a str,
+        recovery_policy_ref: RecoveryPolicyBinding<'a>,
+        created_at: &'a str,
+    }
+
+    let plaintext = crate::canonical::canonical_json_bytes(&DidRecoveryMetadata {
+        schema: "ak.local.did_recovery_metadata.v1",
+        principal_id,
+        root_generation: key_material.root_generation,
+        root_public_key_multibase: &key_material.root_public_key_multikey,
+        next_root_public_key_multibase: &key_material.next_root_public_key_multikey,
+        next_root_key_hash: &key_material.next_root_key_hash,
+        recovery_policy_ref: RecoveryPolicyBinding {
+            policy_id: policy.policy_id.as_str(),
+            policy_version: policy.version,
         },
-        "created_at": created_at,
-    }))?;
+        created_at: &created_at,
+    })?;
     let body = crate::key_backup::build_did_recovery_backup_body(
         &backup_id,
         principal_id,
@@ -743,10 +729,8 @@ pub async fn ensure_recovery_policy_and_did_recovery_backup(
         &plaintext,
         policy.policy_id.as_str(),
         policy.version,
-        signer.as_ref(),
     )?;
-    api.put_key_backup(&backup_id, body, signer.as_ref())
-        .await?;
+    api.put_key_backup(&backup_id, body, &signer).await?;
     Ok(backup_id)
 }
 

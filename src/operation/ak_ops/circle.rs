@@ -5,10 +5,7 @@
 //! resulting Circle id falls out of that Event. The server neither names the
 //! Circle nor signs for the user.
 
-use super::{
-    OperationBuilder, circle_id_value, did_id, object_create_payload_value, realm_id_value,
-    trim_realm_id,
-};
+use super::{TypedOperationBuilder, circle_id_value, did_id, realm_id_value, trim_realm_id};
 
 /// Everything the create surface lets a user choose about a new Circle.
 ///
@@ -37,16 +34,18 @@ pub fn circle_member_state(
     circle_id: &str,
     target_actor: &str,
     membership: arkret_sdk::CircleMembership,
-) -> anyhow::Result<OperationBuilder> {
-    let payload = serde_json::json!({
-        "circle_id": circle_id_value(circle_id)?,
-        "actor_id": did_id(target_actor)?,
-        "membership": membership.as_str(),
-    });
-    Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::CircleMemberState)
-            .body(payload),
-    )
+) -> anyhow::Result<TypedOperationBuilder> {
+    let payload = arkret_sdk::CircleMemberStatePayload {
+        circle_id: circle_id_value(circle_id)?,
+        actor_id: did_id(target_actor)?,
+        membership,
+        reason: None,
+        effective_at: None,
+        expected_membership: arkret_wire::WirePresence::Missing,
+    };
+    Ok(TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::CircleMemberState,
+    >(realm_id, actor, payload))
 }
 
 /// Build one of the three canonical Circle lifecycle Control Moves.
@@ -59,14 +58,23 @@ pub fn circle_lifecycle(
     circle_id: &str,
     kind: arkret_sdk::EventKind,
     reason: Option<&str>,
-) -> anyhow::Result<OperationBuilder> {
-    let mut payload = serde_json::json!({
-        "target_ref": circle_id_value(circle_id)?,
-    });
+) -> anyhow::Result<TypedOperationBuilder> {
+    let mut payload = arkret_sdk::ObjectLifecyclePayload::new(circle_id_value(circle_id)?.as_str());
     if let Some(reason) = reason.map(str::trim).filter(|reason| !reason.is_empty()) {
-        payload["reason"] = serde_json::Value::String(reason.to_owned());
+        payload = payload.with_reason(reason);
     }
-    Ok(OperationBuilder::new(realm_id, actor, kind).body(payload))
+    match kind {
+        arkret_sdk::EventKind::CircleArchive => Ok(TypedOperationBuilder::new::<
+            arkret_sdk::event_spec::CircleArchive,
+        >(realm_id, actor, payload)),
+        arkret_sdk::EventKind::CircleRestore => Ok(TypedOperationBuilder::new::<
+            arkret_sdk::event_spec::CircleRestore,
+        >(realm_id, actor, payload)),
+        arkret_sdk::EventKind::CircleTombstone => Ok(TypedOperationBuilder::new::<
+            arkret_sdk::event_spec::CircleTombstone,
+        >(realm_id, actor, payload)),
+        other => anyhow::bail!("unsupported Circle lifecycle kind {}", other.as_str()),
+    }
 }
 
 /// Derive a Circle's `display` from its title.
@@ -107,7 +115,7 @@ pub fn circle_create(
     realm_id: &str,
     actor: &str,
     options: CircleCreateOptions<'_>,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let mut circle = arkret_sdk::Circle::create_object(
         realm_id_value(&trim_realm_id(realm_id))?,
         options.title.trim(),
@@ -123,6 +131,11 @@ pub fn circle_create(
     circle.join_rule = options.join_rule;
     circle.history_visibility = options.history_visibility;
     circle.encryption_profile = options.encryption_profile;
-    let body = object_create_payload_value(circle, "ak.circle.create payload serialize")?;
-    Ok(OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::CircleCreate).body(body))
+    Ok(TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::CircleCreate,
+    >(
+        realm_id,
+        actor,
+        arkret_sdk::CircleCreatePayload { object: circle },
+    ))
 }

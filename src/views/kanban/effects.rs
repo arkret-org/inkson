@@ -285,12 +285,11 @@ pub(super) fn KanbanEffects(
             // switcher. `ingest_kanban_events` handles the backfill event shape
             // (`event_kind`/`kind`, `operation_id`/`event_id`) and dedups by id.
             if let Some(resp) = events_res.as_ref() {
-                let event_values = resp.event_values();
                 let mut guard = state_store.write();
                 crate::sync_engine::ingest_kanban_projection_events(
                     &mut guard,
                     &lifecycle_realm_id,
-                    &event_values,
+                    &resp.events,
                 );
             }
 
@@ -304,7 +303,7 @@ pub(super) fn KanbanEffects(
             }
             let remote_update_operations = events_res
                 .as_ref()
-                .map(|resp| strand_update_operations_from_events(&resp.event_values()))
+                .map(|resp| strand_update_operations_from_events(&resp.events))
                 .unwrap_or_default();
             match with_authed_sdk_client(&base, api_token, |http| async move {
                 crate::transport::realm_read::collection_projection(&http, &view).await
@@ -513,12 +512,11 @@ pub(super) fn KanbanEffects(
                     return;
                 }
                 if let Ok(backfill) = events_res {
-                    let event_values = backfill.event_values();
                     let mut store = state_store.write();
                     crate::sync_engine::ingest_kanban_projection_events(
                         &mut store,
                         &lifecycle_local_realm_id,
-                        &event_values,
+                        &backfill.events,
                     );
                 }
             }
@@ -623,7 +621,7 @@ pub(super) fn KanbanEffects(
                                 .event_submitter()?
                                 .backfill(&realm_for_fetch)
                                 .await
-                                .map(|response| response.event_values())
+                                .map(|response| response.events)
                                 .unwrap_or_default();
                             Ok((payload, events))
                         })
@@ -730,7 +728,6 @@ pub(super) fn KanbanEffects(
                 return;
             }
             if let Ok(backfill) = events_res {
-                let event_values = backfill.event_values();
                 // Event-sourced cold start (spec
                 // `arkret-work/specs/active/2026-06-29-kanban-event-sourced-projection.md`):
                 // fold the durable event log into `raw_operations`. The `columns`
@@ -742,7 +739,7 @@ pub(super) fn KanbanEffects(
                 crate::sync_engine::ingest_kanban_projection_events(
                     &mut store,
                     &lifecycle_local_realm_id,
-                    &event_values,
+                    &backfill.events,
                 );
             }
         });
@@ -851,7 +848,7 @@ fn refresh_projection(
         };
         let remote_update_operations = events_res
             .as_ref()
-            .map(|resp| strand_update_operations_from_events(&resp.event_values()))
+            .map(|resp| strand_update_operations_from_events(&resp.events))
             .unwrap_or_default();
         match with_authed_sdk_client(&base_url, api_token, |http| async move {
             crate::transport::realm_read::collection_projection(&http, &view).await

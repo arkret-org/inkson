@@ -20,8 +20,8 @@ use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
 
-use crate::operation::{OperationBuilder, uuid_v7};
-use crate::payload::{sdk_payload_value, strand_id_value};
+use crate::operation::uuid_v7;
+use crate::payload::strand_id_value;
 
 /// Whether the local UI should expose poll composer / vote controls.
 pub fn polls_enabled() -> bool {
@@ -348,13 +348,11 @@ pub fn build_poll_create_op(
                 .map_err(|err| anyhow::anyhow!("poll create content serialize: {err}"))?,
         )?,
     );
-    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MessageCreate)
-        .target_ref(strand_id)
-        .body(sdk_payload_value(
-            payload.to_value(),
-            "poll ak.message.create payload serialize",
-        )?)
-        .build_sdk_event("inkson")
+    crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageCreate>(
+        realm_id, actor, payload,
+    )
+    .target_ref(strand_id)
+    .build_sdk_event("inkson")
 }
 
 /// Derive the wire message id from a freshly built poll-create Event.
@@ -402,13 +400,11 @@ pub fn build_poll_vote_op(
                 .map_err(|err| anyhow::anyhow!("poll vote content serialize: {err}"))?,
         )?,
     );
-    OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::MessageCreate)
-        .target_ref(strand_id)
-        .body(sdk_payload_value(
-            payload.to_value(),
-            "poll vote ak.message.create payload serialize",
-        )?)
-        .build_sdk_event("inkson")
+    crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageCreate>(
+        realm_id, actor, payload,
+    )
+    .target_ref(strand_id)
+    .build_sdk_event("inkson")
 }
 
 /// Generate a fresh local poll id (`poll-<uuid>`), used only as the

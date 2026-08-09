@@ -143,12 +143,7 @@ fn range_completeness(input: Value) -> Result<Value> {
         },
         proofs: Vec::new(),
     };
-    let mut unsigned_payload = serde_json::to_value(&payload)?;
-    unsigned_payload
-        .as_object_mut()
-        .context("typed completeness payload is not an object")?
-        .remove("proofs");
-    let canonical_payload = arkret_sdk::canonical::canonical_json_bytes(&unsigned_payload)?;
+    let canonical_payload = payload.proof_payload_bytes()?;
     let mut payload_proof = Proof {
         kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
         verification_method: verification_method.clone(),
@@ -283,7 +278,7 @@ fn mls_governance_proof(input: Value) -> Result<Value> {
     let mut frontier_events = input
         .events
         .iter()
-        .filter(|event| event.kind.as_str() == arkret_sdk::EventKind::REALM_CREATE)
+        .filter(|event| event.kind == arkret_sdk::EventKind::RealmCreate)
         .cloned()
         .collect::<Vec<_>>();
     frontier_events.sort_by(|left, right| left.event_id.as_str().cmp(right.event_id.as_str()));

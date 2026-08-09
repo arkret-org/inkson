@@ -5,18 +5,17 @@
 
 use arkret_models_crypto::{
     ClientStepAttestationArtifact, RecoveryBackupClassUnlocked, RecoveryProofSummary,
-    RecoveryReceipt, RecoveryReceiptAuthData, RecoveryReceiptOutcome, RecoveryWelcomeRealmSummary,
-    TypedClientStepAttestation, TypedSecurityTransactionContinueRequest,
+    RecoveryReceiptOutcome, RecoveryWelcomeRealmSummary, TypedSecurityTransactionContinueRequest,
+    UnsignedRecoveryReceipt, UnsignedRecoveryReceiptBody,
 };
 use arkret_wire::{
     BackupObjectRef, BackupRotationBinding, BackupRotationKind, BackupRotationPlan, BackupSeriesId,
-    CLIENT_STEP_ATTESTATION_SIGNED_FIELDS, CanonicalPublicMaterial, ClientStepAttestationAuthData,
-    Did, EventId, EventsSubmitBatchRequestBody, Hash, IssueRecoveryCompletionGrantOutcome,
-    IssueRecoveryCompletionGrantRequest, PreparedEventUnit, RecoveryBinding, RecoveryPreparedPlan,
-    RecoveryTransactionCreateRequest, SecurityRotationTransactionCreateRequest,
-    SecurityTransaction, SecurityTransactionBinding, SecurityTransactionCreateRequest,
-    SecurityTransactionPreparedPlan, SecurityTransactionState, SecurityTransactionStep,
-    TransactionId,
+    CanonicalPublicMaterial, Did, EventId, EventsSubmitBatchRequestBody, Hash,
+    IssueRecoveryCompletionGrantOutcome, IssueRecoveryCompletionGrantRequest, PreparedEventUnit,
+    RecoveryBinding, RecoveryPreparedPlan, RecoveryTransactionCreateRequest,
+    SecurityRotationTransactionCreateRequest, SecurityTransaction, SecurityTransactionBinding,
+    SecurityTransactionCreateRequest, SecurityTransactionPreparedPlan, SecurityTransactionState,
+    SecurityTransactionStep, TransactionId, UnsignedClientStepAttestation,
 };
 use garth::{SecurityTransactionEngine, SecurityTransactionStore, SecurityTransactionTransport};
 use zeroize::{Zeroize, Zeroizing};
@@ -112,110 +111,67 @@ pub fn sign_terminal_receipt_continue(
         .find(|step| step.step == SecurityTransactionStep::SubmitReanchorUnit)
         .ok_or_else(|| anyhow::anyhow!("accepted re-anchor unit is missing"))?;
     let verification_method = signer.verification_method_for_principal(&resource.principal_id)?;
-    let signed_fields = [
-        "schema",
-        "receipt_id",
-        "transaction_id",
-        "transaction_request_digest",
-        "prepared_plan_digest",
-        "principal_id",
-        "recovery_session_id",
-        "policy_id",
-        "policy_version",
-        "trust_domain",
-        "new_device_id",
-        "identity_model",
-        "previous_model_generation_ref",
-        "result_model_generation_ref",
-        "authorization_event_id",
-        "reanchor_event_id",
-        "reanchor_batch_receipt_id",
-        "did_entry_ref",
-        "proof_summary",
-        "backup_classes_unlocked",
-        "welcome_count",
-        "outcome",
-        "started_at",
-        "completed_at",
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .chain(
-        observation
-            .welcome_realm_summary
-            .is_some()
-            .then(|| "welcome_realm_summary".to_owned()),
-    )
-    .collect();
-    let mut receipt = RecoveryReceipt {
-        schema: RecoveryReceipt::SCHEMA.to_owned(),
-        receipt_id: binding.terminal_receipt_id.clone(),
-        transaction_id: resource.transaction_id.clone(),
-        transaction_request_digest: resource.request_digest.clone(),
-        prepared_plan_digest: resource.prepared_plan_digest.clone(),
-        principal_id: resource.principal_id.clone(),
-        recovery_session_id: binding.recovery_session_id.clone(),
-        policy_id: observation.policy_id,
-        policy_version: observation.policy_version,
-        trust_domain: observation.trust_domain,
-        new_device_id: binding.replacement_device_id.clone(),
-        identity_model: arkret_sdk::RecoveryIdentityModel::RootAnchored,
-        previous_model_generation_ref: arkret_models_crypto::RecoveryModelGenerationRef::new(
-            arkret_sdk::NonEmptyString::new(plan.previous_model_generation_ref.clone())
-                .map_err(anyhow::Error::msg)?,
-        )?,
-        result_model_generation_ref: arkret_models_crypto::RecoveryModelGenerationRef::new(
-            arkret_sdk::NonEmptyString::new(plan.result_model_generation_ref.clone())
-                .map_err(anyhow::Error::msg)?,
-        )?,
-        authorization_event_id: binding.authorize_event_id.clone(),
-        device_list_update_event_id: None,
-        reanchor_event_id: Some(binding.reanchor_event_id.clone()),
-        reanchor_batch_receipt_id: Some(arkret_sdk::ReceiptId::new(
-            batch_receipt.output_ref.clone(),
-        )?),
-        did_entry_ref: Some(binding.did_entry_ref.clone()),
-        proof_summary: observation.proof_summary,
-        backup_classes_unlocked: observation.backup_classes_unlocked,
-        welcome_count: observation.welcome_count,
-        welcome_realm_summary: observation.welcome_realm_summary,
-        outcome: RecoveryReceiptOutcome::Completed,
-        outcome_reason_code: None,
-        started_at: observation.started_at,
-        completed_at: observation.completed_at,
-        auth_data: RecoveryReceiptAuthData {
-            verification_method: verification_method.clone(),
-            signature_algorithm: "Ed25519".to_owned(),
-            signature: String::new(),
-            signed_fields,
+    let receipt = UnsignedRecoveryReceipt::new(
+        UnsignedRecoveryReceiptBody {
+            receipt_id: binding.terminal_receipt_id.clone(),
+            transaction_id: resource.transaction_id.clone(),
+            transaction_request_digest: resource.request_digest.clone(),
+            prepared_plan_digest: resource.prepared_plan_digest.clone(),
+            principal_id: resource.principal_id.clone(),
+            recovery_session_id: binding.recovery_session_id.clone(),
+            policy_id: observation.policy_id,
+            policy_version: observation.policy_version,
+            trust_domain: observation.trust_domain,
+            new_device_id: binding.replacement_device_id.clone(),
+            identity_model: arkret_sdk::RecoveryIdentityModel::RootAnchored,
+            previous_model_generation_ref: arkret_models_crypto::RecoveryModelGenerationRef::new(
+                arkret_sdk::NonEmptyString::new(plan.previous_model_generation_ref.clone())
+                    .map_err(anyhow::Error::msg)?,
+            )?,
+            result_model_generation_ref: arkret_models_crypto::RecoveryModelGenerationRef::new(
+                arkret_sdk::NonEmptyString::new(plan.result_model_generation_ref.clone())
+                    .map_err(anyhow::Error::msg)?,
+            )?,
+            authorization_event_id: binding.authorize_event_id.clone(),
+            device_list_update_event_id: None,
+            reanchor_event_id: Some(binding.reanchor_event_id.clone()),
+            reanchor_batch_receipt_id: Some(arkret_sdk::ReceiptId::new(
+                batch_receipt.output_ref.clone(),
+            )?),
+            did_entry_ref: Some(binding.did_entry_ref.clone()),
+            proof_summary: observation.proof_summary,
+            backup_classes_unlocked: observation.backup_classes_unlocked,
+            welcome_count: observation.welcome_count,
+            welcome_realm_summary: observation.welcome_realm_summary,
+            outcome: RecoveryReceiptOutcome::Completed,
+            outcome_reason_code: None,
+            started_at: observation.started_at,
+            completed_at: observation.completed_at,
+            extra: Default::default(),
         },
-        extra: Default::default(),
-    };
-    receipt.auth_data.signature =
-        arkret_sdk::base64url_encode(signer.sign_raw(&receipt.signature_transcript_bytes()?)?);
+        verification_method.clone(),
+    )?;
+    let receipt_signature = arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
+        signer.sign_raw(&receipt.signing_payload_bytes()?)?,
+    ))?;
+    let receipt = receipt.attach_signature(receipt_signature)?;
     receipt.validate()?;
 
     let artifact = ClientStepAttestationArtifact::RecoveryReceipt(receipt);
-    let mut attestation = TypedClientStepAttestation {
-        step: SecurityTransactionStep::IssueTerminalReceipt,
-        output_ref: binding.terminal_receipt_id.as_str().to_owned(),
-        transaction_id: resource.transaction_id.clone(),
-        transaction_request_digest: resource.request_digest.clone(),
-        prepared_plan_digest: resource.prepared_plan_digest.clone(),
-        attestation_digest: Hash::new(arkret_sdk::canonical::canonical_sha256(&artifact)?)?,
+    let attestation = UnsignedClientStepAttestation::new(
+        SecurityTransactionStep::IssueTerminalReceipt,
+        binding.terminal_receipt_id.as_str().to_owned(),
+        resource.transaction_id.clone(),
+        resource.request_digest.clone(),
+        resource.prepared_plan_digest.clone(),
+        Hash::new(arkret_sdk::canonical::canonical_sha256(&artifact)?)?,
         artifact,
-        auth_data: ClientStepAttestationAuthData {
-            verification_method,
-            signature_algorithm: "Ed25519".to_owned(),
-            signature: String::new(),
-            signed_fields: CLIENT_STEP_ATTESTATION_SIGNED_FIELDS
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
-        },
-    };
-    attestation.auth_data.signature =
-        arkret_sdk::base64url_encode(signer.sign_raw(&attestation.signing_bytes()?)?);
+        verification_method,
+    )?;
+    let attestation_signature = arkret_sdk::NonEmptyString::new(arkret_sdk::base64url_encode(
+        signer.sign_raw(&attestation.signing_bytes()?)?,
+    ))?;
+    let attestation = attestation.attach_signature(attestation_signature)?;
     attestation.validate_structural()?;
     Ok(TypedSecurityTransactionContinueRequest {
         request_digest: resource.request_digest.clone(),
@@ -387,7 +343,7 @@ pub struct SecurityRotationBackupDraft {
     pub backup_kind: BackupRotationKind,
     pub previous_series_id: BackupSeriesId,
     pub new_series_id: BackupSeriesId,
-    pub new_backup_bodies: Vec<serde_json::Value>,
+    pub new_backup_bodies: Vec<arkret_sdk::KeyBackup>,
     pub active_series_submission: EventsSubmitBatchRequestBody,
     pub old_backups: Vec<BackupObjectRef>,
 }
@@ -436,7 +392,7 @@ impl SecurityRotationDraft {
                     old_backups,
                 },
                 encrypted_backup_material: CanonicalPublicMaterial::canonical_json(
-                    serde_json::Value::Array(draft.new_backup_bodies),
+                    serde_json::to_value(draft.new_backup_bodies)?,
                 )?,
                 active_series_unit: PreparedEventUnit::new(
                     coordinator_service_id.clone(),
@@ -467,18 +423,10 @@ fn exactly_one_event_id(
     Ok(event.event.event_id.clone())
 }
 
-fn backup_object_ref(value: &serde_json::Value) -> anyhow::Result<BackupObjectRef> {
-    let backup_id = value
-        .get("backup_id")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("prepared backup body omits backup_id"))?;
-    let ciphertext_digest = value
-        .get("ciphertext_digest")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("prepared backup body omits ciphertext_digest"))?;
+fn backup_object_ref(value: &arkret_sdk::KeyBackup) -> anyhow::Result<BackupObjectRef> {
     Ok(BackupObjectRef {
-        backup_id: arkret_sdk::BackupId::new(backup_id.to_owned())?,
-        ciphertext_digest: Hash::new(ciphertext_digest.to_owned())?,
+        backup_id: value.backup_id.clone(),
+        ciphertext_digest: Hash::new(value.ciphertext_digest.clone())?,
     })
 }
 

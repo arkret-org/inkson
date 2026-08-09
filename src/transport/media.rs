@@ -91,7 +91,7 @@ async fn submit_call_capture_start(
         capture_kind,
         mode,
         true,
-    )
+    )?
     .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }

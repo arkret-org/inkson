@@ -1,8 +1,7 @@
 //! Container Space (Board / List) builders.
 
 use super::{
-    OperationBuilder, did_id, object_create_payload_value, patch_from_value, realm_id_value,
-    space_id_value, space_patch_payload_value, space_state_transition_payload_value, trim_realm_id,
+    TypedOperationBuilder, did_id, patch_from_value, realm_id_value, space_id_value, trim_realm_id,
 };
 
 /// Build a `ak.space.create` operation for Board/List container Spaces.
@@ -14,7 +13,7 @@ use super::{
 /// No Space id is taken or minted: `ak.space.create` is
 /// `id_source: event_derived`, so the id is `retype(create.event_id)` and the
 /// payload MUST omit it (spec `zh/models/common-fields.md` section 6.0).
-/// [`OperationBuilder`] stamps the derived id as `unsigned.local_target_ref`
+/// [`TypedOperationBuilder`] stamps the derived id as `unsigned.local_target_ref`
 /// once the envelope exists — callers that need to name the new Space read it
 /// back from there.
 pub fn space_create(
@@ -24,7 +23,7 @@ pub fn space_create(
     title: &str,
     parent_space_id: Option<&str>,
     rank: Option<&str>,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let mut object = arkret_sdk::Space::create_object(
         realm_id_value(&trim_realm_id(realm_id))?,
         kind,
@@ -37,8 +36,13 @@ pub fn space_create(
     if let Some(rank) = rank {
         object.rank = Some(rank.to_owned());
     }
-    let body = object_create_payload_value(object, "ak.space.create payload serialize")?;
-    Ok(OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::SpaceCreate).body(body))
+    Ok(TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::SpaceCreate,
+    >(
+        realm_id,
+        actor,
+        arkret_sdk::SpaceCreatePayload::new(object),
+    ))
 }
 
 /// Build a `ak.space.restore` operation. Reverses `realm_archive`
@@ -49,14 +53,17 @@ pub fn space_restore(
     realm_id: &str,
     actor: &str,
     container_space_id: &str,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
+    let payload = arkret_sdk::SpaceStateTransitionPayload {
+        space_id: space_id_value(container_space_id)?,
+        reason: None,
+        effective_at: None,
+    };
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::SpaceRestore)
-            .target_ref(container_space_id)
-            .body(space_state_transition_payload_value(
-                container_space_id,
-                arkret_sdk::ObjectState::Active,
-            )?),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::SpaceRestore>(
+            realm_id, actor, payload,
+        )
+        .target_ref(container_space_id),
     )
 }
 
@@ -68,11 +75,15 @@ pub fn space_update_patch(
     actor: &str,
     space_id: &str,
     patch: serde_json::Value,
-) -> anyhow::Result<OperationBuilder> {
+) -> anyhow::Result<TypedOperationBuilder> {
     let patch = patch_from_value(patch)?;
+    let payload = arkret_sdk::SpacePatchPayload {
+        space_id: space_id_value(space_id)?,
+        patch,
+        expected_state_digest: None,
+    };
     Ok(
-        OperationBuilder::new(realm_id, actor, arkret_sdk::EventKind::SpaceUpdate)
-            .target_ref(space_id)
-            .body(space_patch_payload_value(space_id, patch)?),
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::SpaceUpdate>(realm_id, actor, payload)
+            .target_ref(space_id),
     )
 }

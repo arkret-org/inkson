@@ -19,36 +19,30 @@ use super::selection::backup_series_seq;
 /// carry these fields. The caller MUST give the successor envelope a *fresh*
 /// `backup_id` (not the predecessor's) so the predecessor stays persisted as a
 /// distinct chain link and `series_predecessor_not_found` is not triggered.
-pub(crate) fn apply_next_series(previous: Option<&Value>, body: &mut Value) -> Result<u64> {
+pub(crate) fn apply_next_series(
+    previous: Option<&Value>,
+    body: &mut arkret_sdk::KeyBackup,
+) -> Result<u64> {
     let Some(prev) = previous else {
-        return Ok(body.get("series_seq").and_then(Value::as_u64).unwrap_or(0));
+        return Ok(body.series_seq);
     };
-    let next_seq = prev.get("series_seq").and_then(Value::as_u64).unwrap_or(0) + 1;
-    if let Some(series_id) = prev.get("series_id").and_then(Value::as_str) {
-        body["series_id"] = Value::String(series_id.to_owned());
-    }
-    body["series_seq"] = Value::Number(serde_json::Number::from(next_seq));
-    if let Some(prev_backup_id) = prev.get("backup_id").and_then(Value::as_str) {
-        body["supersedes"] = Value::String(prev_backup_id.to_owned());
-    }
-    body["supersedes_digest"] = Value::String(series_supersedes_digest(prev)?);
+    let predecessor = serde_json::from_value::<arkret_sdk::KeyBackup>(prev.clone())
+        .map_err(|error| anyhow!("typed key backup predecessor: {error}"))?;
+    let next_seq = predecessor.series_seq + 1;
+    body.series_id = predecessor.series_id;
+    body.series_seq = next_seq;
+    body.supersedes = Some(predecessor.backup_id);
+    body.supersedes_digest = Some(series_supersedes_digest(prev)?);
     Ok(next_seq)
 }
 
 /// `sha256:<hex>` over the canonical bytes of the predecessor backup envelope,
 /// used to bind a series successor's `supersedes_digest`. Any
 /// `auth_data.signature` is stripped first so the digest stays stable across
-/// (re)signing (inkson bodies currently carry no `auth_data`, so this is a
-/// no-op today, but keeps the digest definition spec-aligned).
-pub(super) fn series_supersedes_digest(previous: &Value) -> Result<String> {
-    let mut canonical = previous.clone();
-    if let Some(auth_data) = canonical
-        .get_mut("auth_data")
-        .and_then(Value::as_object_mut)
-    {
-        auth_data.remove("signature");
-    }
-    crate::canonical::canonical_sha256(&canonical)
+/// (re)signing. Uploaded envelopes carry `auth_data`, while fresh authoring
+/// envelopes do not, so the SDK helper deliberately handles both states.
+pub(crate) fn series_supersedes_digest(previous: &Value) -> Result<String> {
+    arkret_sdk::KeyBackup::signature_independent_digest_from_wire(previous)
         .map_err(|err| anyhow!("series supersedes digest canonicalization failed: {err}"))
 }
 

@@ -218,7 +218,7 @@ fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
         created_at: None,
         updated_by: None,
         updated_at: None,
-        state: "active".to_owned(),
+        state: arkret_sdk::ProjectionObjectState::Active,
     };
     let card = card_from_strand_projection(&strand_view, Some(&ctx));
     assert_eq!(card.body, "recovered body");

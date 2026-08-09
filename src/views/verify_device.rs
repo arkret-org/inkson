@@ -527,12 +527,13 @@ pub fn VerifyDevicePanel(
                                                     &base,
                                                     api_token,
                                                     |http| async move {
-                                                        crate::transport::keys::send_device_message_envelope(
+                                                        crate::transport::keys::send_device_message::<
+                                                            arkret_sdk::device_message_spec::KeyVerificationKey,
+                                                        >(
                                                             &http,
                                                             "inkson-sas-key",
                                                             &account,
                                                             &target,
-                                                            "ak.key.verification.key",
                                                             &crate::clock::timestamp_in(10),
                                                             signed_content,
                                                         )

@@ -2216,72 +2216,96 @@ fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
             "event_id": "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z",
             "kind": "ak.moderation.decision",
             "realm_id": realm_id,
-            "payload": {
+            "body": {
                 "target_ref": "ak:message:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
-                "decision": "quarantine"
+                "decision": "quarantine",
+                "issuer": "did:web:moderator.example",
+                "request_canonical_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
             }
         }),
         json!({
             "kind": "ak.moderation.appeal.submit",
             "event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "realm_id": realm_id,
-            "payload": {
+            "body": {
                 "decision_ref": "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z",
                 "target_ref": "ak:message:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
-                "appellant": appellant
+                "appellant": appellant,
+                "realm_id": realm_id,
+                "reason_text_ref": "ak:text:appeal-reason",
+                "created_at": "2026-07-19T00:00:01.000Z"
             }
         }),
         json!({
             "kind": "ak.moderation.appeal.decision",
             "realm_id": realm_id,
-            "payload": {
+            "body": {
                 "appeal_id": "ak:appeal:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-                "verdict": "uphold"
+                "realm_id": realm_id,
+                "reviewer": "did:web:reviewer.example",
+                "verdict": "uphold",
+                "reason_text_ref": "ak:text:decision-reason",
+                "decided_at": "2026-07-19T00:00:02.000Z"
             }
         }),
     ];
 
-    let prompts = moderation_appeal_prompts_from_events(realm_id, &events, appellant);
+    let prompts = moderation_appeal_prompts_from_local_records(realm_id, &events, appellant);
 
     assert_eq!(prompts.len(), 1);
     assert_eq!(
         prompts[0].decision_ref,
         "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z"
     );
-    assert_eq!(prompts[0].state, "decided");
-    assert_eq!(prompts[0].verdict.as_deref(), Some("uphold"));
+    assert_eq!(
+        prompts[0].state,
+        AppealState::Decided {
+            verdict: arkret_sdk::AppealVerdict::Uphold,
+        }
+    );
 
     let lifted = vec![
         events[0].clone(),
         json!({
             "kind": "ak.moderation.decision.lift",
             "realm_id": realm_id,
-            "payload": {
+            "body": {
+                "target_ref": "ak:message:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
                 "decision_ref": "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z"
             }
         }),
     ];
-    assert!(moderation_appeal_prompts_from_events(realm_id, &lifted, appellant).is_empty());
+    assert!(moderation_appeal_prompts_from_local_records(realm_id, &lifted, appellant).is_empty());
 }
 
 #[test]
 fn moderation_appeal_prompts_read_control_plane_sync_state() {
     let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let mut event = arkret_wire::test_support::raw_event(
+        arkret_sdk::EventKind::ModerationDecision,
+        arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(realm_id).unwrap(),
+        },
+        arkret_sdk::Did::new("did:web:moderator.example").unwrap(),
+        1,
+        arkret_sdk::Hlc::new("019f73a34c00-0000-12345678").unwrap(),
+        json!({
+            "target_ref": "ak:message:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
+            "decision": "quarantine",
+            "issuer": "did:web:moderator.example",
+            "request_canonical_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }),
+    )
+    .unwrap();
+    event.event_id =
+        arkret_sdk::EventId::new("ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z").unwrap();
     let mut realms = std::collections::BTreeMap::new();
     realms.insert(
         realm_id.to_owned(),
         json!({
             "timeline": { "events": [] },
             "state": {
-                "events": [{
-                    "event_id": "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z",
-                    "kind": "ak.moderation.decision",
-                    "realm_id": realm_id,
-                    "payload": {
-                        "target_ref": "ak:message:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
-                        "decision": "quarantine"
-                    }
-                }]
+                "events": [serde_json::to_value(event).unwrap()]
             }
         }),
     );
@@ -2320,10 +2344,8 @@ fn moderation_appeal_prompts_survive_sdk_event_round_trip() {
         "proofs": []
     }))
     .unwrap();
-    let wire = serde_json::to_value(event).unwrap();
-
     let prompts =
-        moderation_appeal_prompts_from_events(realm_id, &[wire], "did:web:appellant.example");
+        moderation_appeal_prompts_from_sdk_events(realm_id, &[event], "did:web:appellant.example");
 
     assert_eq!(prompts.len(), 1);
 }
@@ -2334,8 +2356,7 @@ fn timeline_projection_key_tracks_moderation_prompt_lifecycle() {
         realm_id: "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
         decision_ref: "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z".to_owned(),
         target_ref: "ak:message:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0".to_owned(),
-        state: "none".to_owned(),
-        verdict: None,
+        state: AppealState::None,
     };
     let empty_key = timeline_projection_key(&prompt.realm_id, 1, &[], &[], &Default::default());
     let initial_key = timeline_projection_key(
@@ -2346,7 +2367,7 @@ fn timeline_projection_key_tracks_moderation_prompt_lifecycle() {
         &Default::default(),
     );
     let mut submitted = prompt.clone();
-    submitted.state = "submitted".to_owned();
+    submitted.state = AppealState::Submitted;
     let submitted_key = timeline_projection_key(
         &submitted.realm_id,
         1,

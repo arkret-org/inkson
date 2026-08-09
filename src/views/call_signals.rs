@@ -36,22 +36,17 @@ pub struct IncomingCallInfo {
     pub video: bool,
 }
 
-/// A non-invite signal queued for the active `CallPanel` to apply. Carries
-/// the decoded routing fields plus the raw `payload.data` object so the panel
-/// can read SDP / candidate / mute fields with the exact shape the sender
-/// side wrote (`signal::SignalPayload::CallSignal` / `relay_local_signals`).
+/// A non-invite signal queued for the active `CallPanel` to apply.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CallSignalInboxItem {
     pub realm_id: String,
     pub call_id: String,
-    pub signal_kind: String,
     pub seq: u64,
     /// Sender actor DID (`envelope.actor_id`).
     pub sender_actor: String,
     /// Sender device id (`envelope.device_id`).
     pub sender_device: String,
-    /// The `payload.data` object verbatim.
-    pub data: Value,
+    pub signal: arkret_sdk::CallSignalData,
 }
 
 /// Dedup identity for a single inbound signal:
@@ -151,12 +146,10 @@ impl Default for CallSignalHub {
 pub struct DecodedCallSignal {
     pub realm_id: String,
     pub call_id: String,
-    pub signal_kind: String,
     pub seq: u64,
     pub sender_actor: String,
     pub sender_device: String,
-    pub video: bool,
-    pub data: Value,
+    pub signal: arkret_sdk::CallSignalData,
     /// The encrypted envelope this body was decrypted from, retained so the
     /// receive path can verify the device `proof` against the sender's
     /// directory verify key before any UI side effect. `None` only in unit-test
@@ -175,29 +168,15 @@ pub fn decode_call_signal(
     plaintext: &Value,
 ) -> Option<DecodedCallSignal> {
     let body = serde_json::from_value::<arkret_sdk::CallSignalPlaintext>(plaintext.clone()).ok()?;
-    let signal_kind = serde_json::to_value(body.signal_kind)
-        .ok()?
-        .as_str()?
-        .to_owned();
-    let data = Value::Object(body.data.into_iter().collect());
     Some(DecodedCallSignal {
         realm_id: envelope.realm_id.as_str().to_owned(),
         call_id: body.call_id.as_str().to_owned(),
-        signal_kind,
         seq: body.seq,
         sender_actor: envelope.sender_actor_id.as_str().to_owned(),
         sender_device: envelope.sender_device_id.as_str().to_owned(),
-        video: invite_wants_video(&data),
-        data,
+        signal: body.signal,
         envelope: Some(Box::new(envelope.clone())),
     })
-}
-
-fn invite_wants_video(data: &Value) -> bool {
-    data.get("media")
-        .and_then(|m| m.get("video"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
 }
 
 /// Route every decoded call signal from one realm body into the hub:
@@ -295,22 +274,12 @@ async fn moderator_signal_authorized(
     if !requires_call_moderate(decoded) {
         return true;
     }
-    if !moderator_payload_shape_is_valid(decoded) {
-        tracing::warn!(
-            realm_id = %decoded.realm_id,
-            call_id = %decoded.call_id,
-            sender = %decoded.sender_actor,
-            signal_kind = %decoded.signal_kind,
-            "dropping malformed moderator call signal"
-        );
-        return false;
-    }
     let Some(api) = api else {
         tracing::warn!(
             realm_id = %decoded.realm_id,
             call_id = %decoded.call_id,
             sender = %decoded.sender_actor,
-            signal_kind = %decoded.signal_kind,
+            signal_kind = ?decoded.signal.kind(),
             "dropping moderator call signal without authz client"
         );
         return false;
@@ -320,11 +289,9 @@ async fn moderator_signal_authorized(
             &api.sdk_http_client()?,
             &decoded.sender_actor,
             "ak.call.moderate",
-            Some(serde_json::json!({
-                "kind": "call",
-                "realm_id": decoded.realm_id.clone(),
-                "call_id": decoded.call_id.clone(),
-            })),
+            Some(arkret_sdk::WireResourceSelector::realm(
+                arkret_sdk::RealmId::new(decoded.realm_id.clone())?,
+            )),
         )
         .await
     }
@@ -336,7 +303,7 @@ async fn moderator_signal_authorized(
                 realm_id = %decoded.realm_id,
                 call_id = %decoded.call_id,
                 sender = %decoded.sender_actor,
-                signal_kind = %decoded.signal_kind,
+                signal_kind = ?decoded.signal.kind(),
                 ?outcome,
                 "dropping unauthorised moderator call signal"
             );
@@ -347,7 +314,7 @@ async fn moderator_signal_authorized(
                 realm_id = %decoded.realm_id,
                 call_id = %decoded.call_id,
                 sender = %decoded.sender_actor,
-                signal_kind = %decoded.signal_kind,
+                signal_kind = ?decoded.signal.kind(),
                 ?error,
                 "dropping moderator call signal after authz check failure"
             );
@@ -357,65 +324,12 @@ async fn moderator_signal_authorized(
 }
 
 fn requires_call_moderate(decoded: &DecodedCallSignal) -> bool {
-    decoded.signal_kind == "moderation"
-        || (decoded.signal_kind == "mute_state"
-            && decoded.data.get("by").and_then(Value::as_str) == Some("moderator"))
-}
-
-fn moderator_payload_shape_is_valid(decoded: &DecodedCallSignal) -> bool {
-    match decoded.signal_kind.as_str() {
-        "moderation" => match moderation_action(decoded) {
-            Some("kick" | "ban") => {
-                !moderation_target_actor(decoded).unwrap_or("").is_empty()
-                    && !moderation_target_device(decoded).unwrap_or("").is_empty()
-            }
-            Some("end_for_all") => true,
-            _ => false,
-        },
-        "mute_state" => {
-            decoded.data.get("by").and_then(Value::as_str) == Some("moderator")
-                && !decoded
-                    .data
-                    .get("target_actor_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .is_empty()
-                && !decoded
-                    .data
-                    .get("target_device_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .is_empty()
-        }
-        _ => true,
-    }
-}
-
-fn moderation_action(decoded: &DecodedCallSignal) -> Option<&str> {
-    decoded
-        .data
-        .get("data")
-        .and_then(|data| data.get("action"))
-        .or_else(|| decoded.data.get("action"))
-        .and_then(Value::as_str)
-}
-
-fn moderation_target_actor(decoded: &DecodedCallSignal) -> Option<&str> {
-    decoded
-        .data
-        .get("data")
-        .and_then(|data| data.get("target_actor_id"))
-        .or_else(|| decoded.data.get("target_actor_id"))
-        .and_then(Value::as_str)
-}
-
-fn moderation_target_device(decoded: &DecodedCallSignal) -> Option<&str> {
-    decoded
-        .data
-        .get("data")
-        .and_then(|data| data.get("target_device_id"))
-        .or_else(|| decoded.data.get("target_device_id"))
-        .and_then(Value::as_str)
+    matches!(&decoded.signal, arkret_sdk::CallSignalData::Moderation(_))
+        || matches!(
+            &decoded.signal,
+            arkret_sdk::CallSignalData::MuteState(data)
+                if data.changed_by == arkret_sdk::MuteChangedBy::Moderator
+        )
 }
 
 fn authz_check_allows_moderation(outcome: &crate::models::AuthzCheckOutcome) -> bool {
@@ -474,7 +388,7 @@ pub fn decide_route(
         return RouteDecision::Drop;
     }
 
-    if decoded.signal_kind == "invite" {
+    if let arkret_sdk::CallSignalData::Invite(invite) = &decoded.signal {
         let already_ringing = state.ringing_call.as_deref() == Some(decoded.call_id.as_str());
         // `ringing_answered_here` covers the active-session case the caller
         // folds in (a call this device owns is surfaced as answered-here).
@@ -486,7 +400,7 @@ pub fn decide_route(
             call_id: decoded.call_id.clone(),
             peer_actor: decoded.sender_actor.clone(),
             sender_device: decoded.sender_device.clone(),
-            video: decoded.video,
+            video: invite.media.video,
         });
     }
 
@@ -496,15 +410,14 @@ pub fn decide_route(
     let still_ringing_here = state.ringing_call.as_deref() == Some(decoded.call_id.as_str())
         && !state.ringing_answered_here;
     if still_ringing_here {
-        let call_already_answered = decoded.signal_kind == "answer"
-            || decoded.signal_kind == "hangup"
-            || (decoded.signal_kind == "reject"
-                && decoded
-                    .data
-                    .get("reason")
-                    .and_then(Value::as_str)
-                    .map(|r| r == "call_already_answered")
-                    .unwrap_or(false));
+        let call_already_answered = matches!(
+            &decoded.signal,
+            arkret_sdk::CallSignalData::Answer(_) | arkret_sdk::CallSignalData::Hangup(_)
+        ) || matches!(
+            &decoded.signal,
+            arkret_sdk::CallSignalData::Reject(data)
+                if data.reason.as_str() == "call_already_answered"
+        );
         if call_already_answered {
             return RouteDecision::ClearRing;
         }
@@ -513,11 +426,10 @@ pub fn decide_route(
     RouteDecision::Enqueue(CallSignalInboxItem {
         realm_id: decoded.realm_id.clone(),
         call_id: decoded.call_id.clone(),
-        signal_kind: decoded.signal_kind.clone(),
         seq: decoded.seq,
         sender_actor: decoded.sender_actor.clone(),
         sender_device: decoded.sender_device.clone(),
-        data: decoded.data.clone(),
+        signal: decoded.signal.clone(),
     })
 }
 
@@ -622,13 +534,52 @@ mod tests {
     /// exists: `signal.md` §6 makes exactly those fields ciphertext, so the
     /// fixture now goes through the production sender path and the assertions
     /// move to the decrypted body.
+    fn media(video: bool) -> arkret_sdk::CallMediaSelection {
+        arkret_sdk::CallMediaSelection {
+            audio: true,
+            video,
+            screen: Some(false),
+        }
+    }
+
+    fn invite(video: bool) -> arkret_sdk::CallSignalData {
+        arkret_sdk::CallSignalData::Invite(arkret_sdk::CallInviteSignalData {
+            lifetime_ms: 60_000,
+            mode: arkret_sdk::CallMode::P2p,
+            offer: arkret_sdk::SessionDescription {
+                sdp_type: arkret_sdk::SessionDescriptionType::Offer,
+                sdp: "v=0".to_owned(),
+            },
+            media: media(video),
+        })
+    }
+
+    fn candidate() -> arkret_sdk::CallSignalData {
+        arkret_sdk::CallSignalData::Candidate(arkret_sdk::CallCandidateSignalData {
+            candidates: vec![arkret_sdk::IceCandidate {
+                candidate: "candidate:1".to_owned(),
+                sdp_mid: Some("0".to_owned()),
+                sdp_m_line_index: Some(0),
+            }],
+        })
+    }
+
+    fn answer() -> arkret_sdk::CallSignalData {
+        arkret_sdk::CallSignalData::Answer(arkret_sdk::CallAnswerSignalData {
+            answer: arkret_sdk::SessionDescription {
+                sdp_type: arkret_sdk::SessionDescriptionType::Answer,
+                sdp: "v=0".to_owned(),
+            },
+            accepted_media: media(true),
+        })
+    }
+
     fn sealed_call_signal(
         seed: u8,
         actor: &str,
         device: &str,
-        signal_kind: &str,
         seq: u64,
-        data: Value,
+        signal: arkret_sdk::CallSignalData,
     ) -> (arkret_wire::SignalEnvelope, Value) {
         let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
             [seed; 32], actor, device,
@@ -637,9 +588,8 @@ mod tests {
         crate::signal::test_support::sealed_signal(
             &crate::signal::SignalPayload::CallSignal {
                 call_id: arkret_sdk::CallId::new(TEST_CALL).unwrap(),
-                signal_kind: signal_kind.to_owned(),
                 seq,
-                data: Some(data),
+                signal,
             },
             &arkret_sdk::RealmId::new(TEST_REALM).unwrap(),
             &arkret_sdk::Did::new(actor).unwrap(),
@@ -651,26 +601,23 @@ mod tests {
 
     #[test]
     fn decodes_invite_and_video_flag() {
-        let (envelope, plaintext) = sealed_call_signal(
-            41,
-            PEER_ACTOR,
-            PEER_DEVICE,
-            "invite",
-            1,
-            json!({
-                "media": { "audio": true, "video": true, "screen": false },
-                "participants": ["did:web:alice"]
-            }),
-        );
+        let (envelope, plaintext) =
+            sealed_call_signal(41, PEER_ACTOR, PEER_DEVICE, 1, invite(true));
 
         let decoded = decode_call_signal(&envelope, &plaintext).expect("decodes");
 
-        assert_eq!(decoded.signal_kind, "invite");
+        assert!(matches!(
+            decoded.signal,
+            arkret_sdk::CallSignalData::Invite(_)
+        ));
         assert_eq!(decoded.call_id, TEST_CALL);
         assert_eq!(decoded.sender_actor, PEER_ACTOR);
         assert_eq!(decoded.sender_device, PEER_DEVICE);
         assert_eq!(decoded.realm_id, TEST_REALM);
-        assert!(decoded.video);
+        assert!(matches!(
+            decoded.signal,
+            arkret_sdk::CallSignalData::Invite(ref data) if data.media.video
+        ));
     }
 
     /// Restates `decodes_canonical_ephemeral_container`: there is no
@@ -678,18 +625,14 @@ mod tests {
     /// assertion is that the dedupe sequence survives the plaintext boundary.
     #[test]
     fn decoded_signal_carries_the_in_ciphertext_sequence() {
-        let (envelope, plaintext) = sealed_call_signal(
-            42,
-            PEER_ACTOR,
-            PEER_DEVICE,
-            "candidate",
-            2,
-            json!({"candidate": "candidate:1"}),
-        );
+        let (envelope, plaintext) = sealed_call_signal(42, PEER_ACTOR, PEER_DEVICE, 2, candidate());
 
         let decoded = decode_call_signal(&envelope, &plaintext).expect("decodes");
 
-        assert_eq!(decoded.signal_kind, "candidate");
+        assert!(matches!(
+            decoded.signal,
+            arkret_sdk::CallSignalData::Candidate(_)
+        ));
         assert_eq!(decoded.seq, 2);
         // The outer header exposes only the scope and the class — never the
         // call id or the signal kind (`signal.md` §6).
@@ -701,7 +644,7 @@ mod tests {
 
     #[test]
     fn decode_skips_plaintext_that_is_not_a_call_signal() {
-        let (envelope, _) = sealed_call_signal(43, PEER_ACTOR, PEER_DEVICE, "invite", 1, json!({}));
+        let (envelope, _) = sealed_call_signal(43, PEER_ACTOR, PEER_DEVICE, 1, invite(false));
 
         // A typing body decrypted out of the same rail is not a call signal.
         assert!(decode_call_signal(&envelope, &json!({"kind": "ak.typing"})).is_none());
@@ -721,23 +664,21 @@ mod tests {
         );
     }
 
-    fn decoded(signal_kind: &str, seq: u64, data: Value) -> DecodedCallSignal {
+    fn decoded(signal: arkret_sdk::CallSignalData, seq: u64) -> DecodedCallSignal {
         DecodedCallSignal {
             realm_id: "ak:realm:r".into(),
             call_id: "ak:call:1".into(),
-            signal_kind: signal_kind.into(),
             seq,
             sender_actor: "did:web:bob".into(),
             sender_device: "dev-b".into(),
-            video: invite_wants_video(&data),
-            data,
+            signal,
             envelope: None,
         }
     }
 
     #[test]
     fn invite_decides_ring_then_dedup_drops() {
-        let d = decoded("invite", 1, json!({ "media": { "video": true } }));
+        let d = decoded(invite(true), 1);
         let fresh = RouteState::default();
         match decide_route(&d, "did:web:alice", false, &fresh) {
             RouteDecision::Ring(info) => {
@@ -756,10 +697,13 @@ mod tests {
 
     #[test]
     fn non_invite_enqueues() {
-        let d = decoded("candidate", 2, json!({ "candidate": "cand" }));
+        let d = decoded(candidate(), 2);
         match decide_route(&d, "did:web:alice", false, &RouteState::default()) {
             RouteDecision::Enqueue(item) => {
-                assert_eq!(item.signal_kind, "candidate");
+                assert!(matches!(
+                    item.signal,
+                    arkret_sdk::CallSignalData::Candidate(_)
+                ));
                 assert_eq!(item.call_id, "ak:call:1");
             }
             other => panic!("expected Enqueue, got {other:?}"),
@@ -767,56 +711,34 @@ mod tests {
     }
 
     #[test]
-    fn moderator_signal_shape_requires_targets() {
+    fn moderator_signals_require_authz() {
         let kick = decoded(
-            "moderation",
-            3,
-            json!({
-                "data": {
-                    "action": "kick",
-                    "target_actor_id": "did:web:carol",
-                    "target_device_id": "ak:device:01904100-0000-7000-8000-00000000000c"
-                }
+            arkret_sdk::CallSignalData::Moderation(arkret_sdk::CallModerationSignalData {
+                action: arkret_sdk::CallModerationAction::Kick,
+                target_actor_id: Some(arkret_sdk::Did::new("did:web:carol").unwrap()),
+                target_device_id: Some(
+                    arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-00000000000c")
+                        .unwrap(),
+                ),
+                reason: None,
             }),
+            3,
         );
         assert!(requires_call_moderate(&kick));
-        assert!(moderator_payload_shape_is_valid(&kick));
-
-        let kick_without_target = decoded("moderation", 4, json!({ "data": { "action": "kick" } }));
-        assert!(!moderator_payload_shape_is_valid(&kick_without_target));
-
-        let kick_without_device = decoded(
-            "moderation",
-            4,
-            json!({ "data": { "action": "kick", "target_actor_id": "did:web:carol" } }),
-        );
-        assert!(!moderator_payload_shape_is_valid(&kick_without_device));
-
         let force_mute = decoded(
-            "mute_state",
-            5,
-            json!({
-                "audio_muted": true,
-                "by": "moderator",
-                "target_actor_id": "did:web:carol",
-                "target_device_id": "ak:device:01904100-0000-7000-8000-00000000000c"
+            arkret_sdk::CallSignalData::MuteState(arkret_sdk::CallMuteStateSignalData {
+                audio_muted: true,
+                video_muted: false,
+                changed_by: arkret_sdk::MuteChangedBy::Moderator,
+                target_actor_id: Some(arkret_sdk::Did::new("did:web:carol").unwrap()),
+                target_device_id: Some(
+                    arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-00000000000c")
+                        .unwrap(),
+                ),
             }),
+            5,
         );
         assert!(requires_call_moderate(&force_mute));
-        assert!(moderator_payload_shape_is_valid(&force_mute));
-
-        let force_mute_without_device = decoded(
-            "mute_state",
-            6,
-            json!({
-                "audio_muted": true,
-                "by": "moderator",
-                "target_actor_id": "did:web:carol"
-            }),
-        );
-        assert!(!moderator_payload_shape_is_valid(
-            &force_mute_without_device
-        ));
     }
 
     #[test]
@@ -843,7 +765,7 @@ mod tests {
 
     #[test]
     fn self_echo_dropped() {
-        let mut d = decoded("answer", 1, json!({}));
+        let mut d = decoded(answer(), 1);
         d.sender_actor = "did:web:alice".into();
         assert_eq!(
             decide_route(&d, "did:web:alice", false, &RouteState::default()),
@@ -853,7 +775,7 @@ mod tests {
 
     #[test]
     fn invite_for_active_call_does_not_ring() {
-        let d = decoded("invite", 9, json!({}));
+        let d = decoded(invite(false), 9);
         let state = RouteState {
             ringing_call: None,
             ringing_answered_here: true,
@@ -866,7 +788,7 @@ mod tests {
 
     #[test]
     fn answer_while_ringing_clears_ring() {
-        let d = decoded("answer", 5, json!({ "accepted": true }));
+        let d = decoded(answer(), 5);
         let state = RouteState {
             ringing_call: Some("ak:call:1".into()),
             ringing_answered_here: false,
@@ -890,14 +812,7 @@ mod tests {
         let actor = "did:web:caller.example";
         let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
         let seed = 71u8;
-        let (envelope, plaintext) = sealed_call_signal(
-            seed,
-            actor,
-            device,
-            "invite",
-            1,
-            json!({ "media": { "audio": true, "video": true, "screen": false } }),
-        );
+        let (envelope, plaintext) = sealed_call_signal(seed, actor, device, 1, invite(true));
         let key = pubkey_material(seed);
 
         assert!(crate::identity::device_directory::verify_signal_envelope_proof(&envelope, &key));
@@ -915,7 +830,7 @@ mod tests {
     fn call_proof_fails_closed_under_wrong_key() {
         let actor = "did:web:caller.example";
         let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
-        let (envelope, _) = sealed_call_signal(71, actor, device, "invite", 1, json!({}));
+        let (envelope, _) = sealed_call_signal(71, actor, device, 1, invite(false));
         // A different device's key MUST NOT verify the proof.
         let wrong_key = pubkey_material(99);
         assert!(
@@ -928,7 +843,7 @@ mod tests {
         let actor = "did:web:caller.example";
         let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
         let seed = 71u8;
-        let (mut envelope, _) = sealed_call_signal(seed, actor, device, "invite", 1, json!({}));
+        let (mut envelope, _) = sealed_call_signal(seed, actor, device, 1, invite(false));
         // Flip the JWS tail -> signature no longer matches the binding object.
         // Replace the last base64url char with a guaranteed-different one (a bare
         // "always set to 'A'" is a no-op when the signature already ends in 'A',
@@ -955,7 +870,7 @@ mod tests {
         let actor = "did:web:caller.example";
         let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
         let seed = 71u8;
-        let (envelope, _) = sealed_call_signal(seed, actor, device, "invite", 1, json!({}));
+        let (envelope, _) = sealed_call_signal(seed, actor, device, 1, invite(false));
         let key = pubkey_material(seed);
         // `invite` is a setup-class signal: 120 seconds, and no longer.
         assert_eq!(
@@ -987,7 +902,7 @@ mod tests {
         let actor = "did:web:caller.example";
         let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
         let seed = 71u8;
-        let (mut envelope, _) = sealed_call_signal(seed, actor, device, "invite", 1, json!({}));
+        let (mut envelope, _) = sealed_call_signal(seed, actor, device, 1, invite(false));
         envelope.proof.verification_method =
             arkret_sdk::DidUrl::new("did:web:someone-else.example#device").unwrap();
         let key = pubkey_material(seed);
@@ -998,7 +913,7 @@ mod tests {
     fn answer_after_local_accept_enqueues_not_clears() {
         // Once this device answered (`ringing_answered_here`), a peer answer
         // (SDP path) must reach the inbox, not clear a ring.
-        let d = decoded("answer", 5, json!({}));
+        let d = decoded(answer(), 5);
         let state = RouteState {
             ringing_call: Some("ak:call:1".into()),
             ringing_answered_here: true,

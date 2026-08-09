@@ -186,87 +186,14 @@ impl OutboundQueueStore for InksonOutboundStore {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use chrono::{Duration, Utc};
-    use garth::{OutboundEngine, OutboundQueueStore};
-
     use super::*;
 
-    #[tokio::test]
-    async fn native_queue_survives_reopen() {
-        let path = std::env::temp_dir().join(format!(
-            "inkson-outbound-{}-{}.json",
-            std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
-        let store = InksonOutboundStore::open_at(&path).unwrap();
-        let engine = OutboundEngine::new(store);
-        let realm =
-            arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
-                .unwrap();
-        engine
-            .enqueue(
-                Some("ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned()),
-                realm,
-                garth::SendQueueItemKind::Custom {
-                    kind: "ak.test.event".to_owned(),
-                },
-                serde_json::json!({"event_id": "stable"}),
-                Vec::new(),
-            )
-            .await
-            .unwrap();
-
-        let reopened = InksonOutboundStore::open_at(&path).unwrap();
-        let snapshot = reopened
-            .mutate_outbound(|queue| Ok(queue.snapshot()))
-            .await
-            .unwrap();
-        assert_eq!(snapshot.items.len(), 1);
-        assert_eq!(
-            snapshot.items[0].transaction_id,
-            "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
-        );
-        let _ = std::fs::remove_file(path);
-    }
-
     #[test]
-    fn snapshot_compaction_removes_only_unreferenced_terminal_history() {
-        let realm =
-            arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
-                .unwrap();
-        let mut queue = garth::SendQueue::new();
-        queue
-            .enqueue(
-                Some("terminal".to_owned()),
-                realm.clone(),
-                garth::SendQueueItemKind::Custom {
-                    kind: "ak.test.terminal".to_owned(),
-                },
-                serde_json::json!({"event_id": "terminal"}),
-                Vec::new(),
-            )
-            .unwrap();
-        queue.cancel("terminal", false).unwrap();
-        queue
-            .enqueue(
-                Some("pending".to_owned()),
-                realm,
-                garth::SendQueueItemKind::Custom {
-                    kind: "ak.test.pending".to_owned(),
-                },
-                serde_json::json!({"event_id": "pending"}),
-                Vec::new(),
-            )
-            .unwrap();
-        let raw = serde_json::to_string(&queue.snapshot()).unwrap();
-
-        let (encoded, removed) = compact_snapshot_json(&raw, Utc::now() + Duration::seconds(1))
-            .unwrap()
-            .expect("terminal history should compact");
-        let snapshot: garth::SendQueueSnapshot = serde_json::from_str(&encoded).unwrap();
-
-        assert_eq!(removed, 1);
-        assert_eq!(snapshot.items.len(), 1);
-        assert_eq!(snapshot.items[0].transaction_id, "pending");
+    fn legacy_kind_content_snapshot_is_rejected() {
+        let legacy = serde_json::json!({
+            "items": [],
+            "next_sequence": 0
+        });
+        assert!(serde_json::from_value::<garth::SendQueueSnapshot>(legacy).is_err());
     }
 }

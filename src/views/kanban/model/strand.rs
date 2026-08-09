@@ -249,6 +249,6 @@ pub(crate) fn card_from_strand_projection_for_actor(
         history_visibility,
         security_encrypted: strand_projection_security_state(strand),
         state: CardState::Synced,
-        lifecycle: strand_lifecycle_from_wire(&strand.state),
+        lifecycle: strand_lifecycle_from_projection(&strand.state),
     }
 }

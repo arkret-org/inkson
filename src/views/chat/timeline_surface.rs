@@ -147,7 +147,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                     },
                     for prompt in visible_moderation_appeal_prompts {
                         {
-                            let current_state = moderation_prompt_state(&prompt);
+                            let current_state = prompt.state.clone();
                             let api_token = token();
                             rsx! {
                                 AppealEntrypoint {

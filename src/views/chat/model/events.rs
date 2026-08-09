@@ -1790,131 +1790,105 @@ pub(crate) fn chat_messages_from_sync_realms_with_sidecar(
     messages
 }
 
-fn moderation_kind_from_candidates<'a>(candidates: &[&'a Value]) -> Option<&'a str> {
-    candidates
-        .iter()
-        .filter_map(|candidate| {
-            value_string_at(
-                candidate,
-                &["kind", "event_kind", "type", "op_type", "event_type"],
-            )
-        })
-        .find(|kind| kind.starts_with("ak.moderation."))
-}
-
 pub(crate) fn moderation_appeal_prompts_from_events(
     realm_id: &str,
-    events: &[Value],
+    events: &[crate::state::projection::moderation_ops::ModerationEvent],
     appellant: &str,
 ) -> Vec<ModerationAppealPrompt> {
+    use crate::state::projection::moderation_ops::LocalModerationEvent;
+
     let mut decisions = std::collections::BTreeMap::<String, ModerationAppealPrompt>::new();
     let mut appeal_decisions = std::collections::BTreeMap::<String, String>::new();
 
     for event in events {
-        let candidates = message_candidates(event);
-        let Some(kind) = moderation_kind_from_candidates(&candidates) else {
-            continue;
-        };
-        let event_realm =
-            first_string_in_candidates(&candidates, &["realm_id"]).unwrap_or(realm_id);
-        if event_realm != realm_id {
+        if event.realm_id != realm_id {
             continue;
         }
-        match kind {
-            "ak.moderation.decision" => {
-                let Some(decision_ref) = first_string_in_candidates(
-                    &candidates,
-                    &["decision_id", "event_id", "id", "operation_id"],
-                ) else {
-                    continue;
-                };
-                let Some(target_ref) = first_string_in_candidates(&candidates, &["target_ref"])
-                else {
-                    continue;
-                };
+        match &event.payload {
+            LocalModerationEvent::Decision(payload) => {
+                let decision_ref = &event.event_id;
                 decisions.insert(
-                    decision_ref.to_owned(),
+                    decision_ref.clone(),
                     ModerationAppealPrompt {
                         realm_id: realm_id.to_owned(),
-                        decision_ref: decision_ref.to_owned(),
-                        target_ref: target_ref.to_owned(),
-                        state: "none".to_owned(),
-                        verdict: None,
+                        decision_ref: decision_ref.clone(),
+                        target_ref: payload.target_ref.to_string(),
+                        state: AppealState::None,
                     },
                 );
             }
-            "ak.moderation.decision.lift" => {
-                if let Some(decision_ref) =
-                    first_string_in_candidates(&candidates, &["decision_ref"])
-                {
-                    decisions.remove(decision_ref);
-                }
+            LocalModerationEvent::DecisionLift(payload) => {
+                decisions.remove(payload.decision_ref.as_str());
             }
-            "ak.moderation.appeal.submit" => {
-                if first_string_in_candidates(&candidates, &["appellant"]) != Some(appellant) {
+            LocalModerationEvent::AppealSubmit(payload) => {
+                if payload.appellant.as_str() != appellant {
                     continue;
                 }
-                let Some(appeal_id) =
-                    first_string_in_candidates(&candidates, &["event_id", "id", "operation_id"])
-                        .and_then(|value| arkret_sdk::EventId::new(value.to_owned()).ok())
-                        .map(|event_id| {
-                            arkret_sdk::TypedAppealId::from_event_id(&event_id).to_string()
-                        })
-                else {
+                let Ok(event_id) = arkret_sdk::EventId::new(event.event_id.clone()) else {
                     continue;
                 };
-                let Some(decision_ref) = first_string_in_candidates(&candidates, &["decision_ref"])
-                else {
-                    continue;
-                };
+                let appeal_id = arkret_sdk::TypedAppealId::from_event_id(&event_id).to_string();
+                let decision_ref = payload.decision_ref.as_str();
                 appeal_decisions.insert(appeal_id, decision_ref.to_owned());
                 if let Some(prompt) = decisions.get_mut(decision_ref) {
-                    prompt.state = "submitted".to_owned();
-                    prompt.verdict = None;
+                    prompt.state = AppealState::Submitted;
                 }
             }
-            "ak.moderation.appeal.review" => {
-                let Some(appeal_id) = first_string_in_candidates(&candidates, &["appeal_id"])
-                else {
-                    continue;
-                };
-                if let Some(decision_ref) = appeal_decisions.get(appeal_id)
+            LocalModerationEvent::AppealReview(payload) => {
+                if let Some(decision_ref) = appeal_decisions.get(payload.appeal_id.as_str())
                     && let Some(prompt) = decisions.get_mut(decision_ref)
                 {
-                    prompt.state = "under_review".to_owned();
-                    prompt.verdict = None;
+                    prompt.state = AppealState::UnderReview;
                 }
             }
-            "ak.moderation.appeal.decision" => {
-                let Some(appeal_id) = first_string_in_candidates(&candidates, &["appeal_id"])
-                else {
-                    continue;
-                };
-                if let Some(decision_ref) = appeal_decisions.get(appeal_id)
+            LocalModerationEvent::AppealDecision(payload) => {
+                if let Some(decision_ref) = appeal_decisions.get(payload.appeal_id.as_str())
                     && let Some(prompt) = decisions.get_mut(decision_ref)
                 {
-                    prompt.state = "decided".to_owned();
-                    prompt.verdict = first_string_in_candidates(&candidates, &["verdict"])
-                        .map(ToOwned::to_owned);
+                    prompt.state = AppealState::Decided {
+                        verdict: payload.verdict,
+                    };
                 }
             }
-            "ak.moderation.appeal.close" => {
-                let Some(appeal_id) = first_string_in_candidates(&candidates, &["appeal_id"])
-                else {
-                    continue;
-                };
-                if let Some(decision_ref) = appeal_decisions.get(appeal_id)
+            LocalModerationEvent::AppealClose(payload) => {
+                if let Some(decision_ref) = appeal_decisions.get(payload.appeal_id.as_str())
                     && let Some(prompt) = decisions.get_mut(decision_ref)
                 {
-                    prompt.state = "closed".to_owned();
-                    prompt.verdict = None;
+                    prompt.state = AppealState::Closed;
                 }
             }
-            _ => {}
         }
     }
 
     decisions.into_values().collect()
+}
+
+pub(crate) fn moderation_appeal_prompts_from_sdk_events(
+    realm_id: &str,
+    events: &[arkret_sdk::Event],
+    appellant: &str,
+) -> Vec<ModerationAppealPrompt> {
+    let events = events
+        .iter()
+        .filter_map(crate::state::projection::moderation_ops::ModerationEvent::from_sdk_event)
+        .collect::<Vec<_>>();
+    moderation_appeal_prompts_from_events(realm_id, &events, appellant)
+}
+
+pub(crate) fn moderation_appeal_prompts_from_local_records(
+    realm_id: &str,
+    events: &[Value],
+    appellant: &str,
+) -> Vec<ModerationAppealPrompt> {
+    let events = events
+        .iter()
+        .filter_map(|event| {
+            crate::state::projection::moderation_ops::moderation_event_from_local_record(
+                realm_id, event,
+            )
+        })
+        .collect::<Vec<_>>();
+    moderation_appeal_prompts_from_events(realm_id, &events, appellant)
 }
 
 pub(crate) fn moderation_appeal_prompts_from_sync_realms(
@@ -1926,18 +1900,16 @@ pub(crate) fn moderation_appeal_prompts_from_sync_realms(
         // Moderation decisions and appeal lifecycle events are sealed control-plane
         // cells, so the account stream projects them through `state.events`. Keep
         // accepting timeline copies for profiles that also expose the raw event there.
-        let wire_events = ["state", "timeline"]
+        let events = ["state", "timeline"]
             .into_iter()
             .filter_map(|section| body.get(section))
             .filter_map(|projection| projection.get("events"))
             .filter_map(Value::as_array)
             .flatten()
-            .cloned()
+            .filter_map(|event| serde_json::from_value::<arkret_sdk::Event>(event.clone()).ok())
             .collect::<Vec<_>>();
-        prompts.extend(moderation_appeal_prompts_from_events(
-            realm_id,
-            &wire_events,
-            appellant,
+        prompts.extend(moderation_appeal_prompts_from_sdk_events(
+            realm_id, &events, appellant,
         ));
     }
     prompts
