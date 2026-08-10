@@ -92,8 +92,9 @@ pub(super) fn ChatEffects(
             if realm.trim().is_empty() {
                 return;
             }
-            let desired = discussion_channel_for_strand(&realm, &initial_strand);
-            event_sink.emit(ChatProjectionEvent::EnsureChannel(desired));
+            if let Some(desired) = discussion_channel_for_strand(&realm, &initial_strand) {
+                event_sink.emit(ChatProjectionEvent::EnsureChannel(desired));
+            }
         });
     }
 
@@ -199,11 +200,10 @@ pub(super) fn ChatEffects(
             if !chat_visible_read_receipt_should_send(&state_store.read(), &strand, &realm) {
                 return;
             }
-            let strand_id = if strand.trim().is_empty() {
-                default_discussion_strand_id(&realm)
-            } else {
-                strand
-            };
+            if strand.trim().is_empty() {
+                return;
+            }
+            let strand_id = strand;
             let api_token = token();
             let base = base.clone();
             let realm = realm.clone();
@@ -362,16 +362,13 @@ pub(super) fn ChatEffects(
     {
         let base = base_url.clone();
         let realm = selected_realm_id.clone();
-        let strand = if selected_channel_value.trim().is_empty() {
-            default_discussion_strand_id(&realm)
-        } else {
-            selected_channel_value.clone()
-        };
+        let strand = selected_channel_value.clone();
         let circle = selected_scope_circle.clone();
         let agent_ids = readable_participation_agent_ids.clone();
         use_effect(move || {
             if token().trim().is_empty()
                 || realm.trim().is_empty()
+                || strand.trim().is_empty()
                 || agent_participation_sync_key_seen.peek().as_str() == agent_participation_sync_key
             {
                 return;
@@ -428,11 +425,7 @@ pub(super) fn ChatEffects(
     {
         let realm = selected_realm_id.clone();
         let actor = account_did.clone();
-        let strand = if selected_channel_value.trim().is_empty() {
-            default_discussion_strand_id(&realm)
-        } else {
-            selected_channel_value.clone()
-        };
+        let strand = selected_channel_value.clone();
         let participants_for_sync = participant_dids_for_presence.clone();
         let typing_actors_for_sync = typing_actors;
         let typing_next_expires_at_ms_for_sync = typing_next_expires_at_ms;
@@ -441,7 +434,11 @@ pub(super) fn ChatEffects(
         let presence_status_messages_for_sync = presence_status_messages;
         let self_label_for_sync = account_display_label.clone();
         use_effect(move || {
-            if token().trim().is_empty() || realm.trim().is_empty() || !has_remote_presence {
+            if token().trim().is_empty()
+                || realm.trim().is_empty()
+                || strand.trim().is_empty()
+                || !has_remote_presence
+            {
                 return;
             }
             let cursor = sync_cursor();

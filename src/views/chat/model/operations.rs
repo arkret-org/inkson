@@ -41,14 +41,12 @@ pub(crate) fn next_shared_pin_rank() -> String {
     format!("r{}", chrono::Utc::now().timestamp_millis())
 }
 
-pub(crate) fn shared_pin_scope_for_message(realm_id: &str, strand_id: &str) -> SharedPinScope {
-    let realm_id = realm_id.trim();
+pub(crate) fn shared_pin_scope_for_message(_realm_id: &str, strand_id: &str) -> SharedPinScope {
     let strand_id = strand_id.trim();
-    if !realm_id.is_empty() && strand_id == default_discussion_strand_id(realm_id) {
-        SharedPinScope::realm(realm_id.to_owned())
-    } else {
-        SharedPinScope::strand(strand_id.to_owned())
-    }
+    // Default-Strand identity is not derivable from the Realm token. The
+    // caller's exact selected Strand is therefore the only authoritative
+    // scope available here.
+    SharedPinScope::strand(strand_id.to_owned())
 }
 
 fn sdk_pin_scope(pin_scope: &SharedPinScope) -> anyhow::Result<arkret_sdk::PinScope> {

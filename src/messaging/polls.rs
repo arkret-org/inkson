@@ -200,7 +200,7 @@ impl PollCard {
 
     /// Parse a canonical `poll_block`
     /// (`content-block-poll.schema.json#/$defs/poll_block`). `poll_ref` is
-    /// the wire message id (`ak:message:<uuid7>`) carried by the enclosing
+    /// the event-derived wire message id (`ak:message:<event-token>`) carried by the enclosing
     /// `ak.message.create` — it becomes the card's `poll_id` (the identity
     /// `poll_response.poll_ref` points at); `message_id` stays the local
     /// render identity. Non-canonical shapes (missing `poll`, unknown
@@ -303,8 +303,8 @@ fn content_kind(content: &Value) -> Option<&str> {
 
 /// Build the canonical `poll_block` message
 /// (`content-block-poll.schema.json#/$defs/poll_block`) as a
-/// `ak.message.create` event. The poll's wire identity is the Event UUID
-/// retyped as `ak:message:<uuid7>`; it is never duplicated in the create
+/// `ak.message.create` event. The poll's wire identity is the full Event
+/// identity retyped as `ak:message:<event-token>`; it is never duplicated in the create
 /// payload.
 pub fn build_poll_create_op(
     realm_id: &str,
@@ -367,7 +367,7 @@ pub fn poll_message_ref(event: &arkret_sdk::Event) -> Option<String> {
 /// Build the canonical `poll_response_block`
 /// (`content-block-poll.schema.json#/$defs/poll_response_block`) as a
 /// `ak.message.create` event on the poll's own Strand. `poll_ref` MUST be
-/// the poll message's wire id (`ak:message:<uuid7>`) — fail-closed
+/// the poll message's event-derived wire id (`ak:message:<event-token>`) — fail-closed
 /// otherwise (a locally generated optimistic id never reaches the wire).
 pub fn build_poll_vote_op(
     realm_id: &str,
@@ -547,7 +547,7 @@ mod tests {
     #[test]
     fn build_poll_vote_op_rejects_local_poll_ids() {
         // A locally generated optimistic id must never reach the wire as a
-        // poll_ref (schema requires ak:message:<uuid7>).
+        // poll_ref (schema requires a full ak:message:<event-token> identity).
         assert!(
             build_poll_vote_op(
                 "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",

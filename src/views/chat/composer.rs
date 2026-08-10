@@ -502,11 +502,10 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 let realm = realm.clone();
                                 let actor = actor.clone();
                                 let device = typing_device_id.clone();
-                                let strand_id = if selected_strand.trim().is_empty() {
-                                    default_discussion_strand_id(&realm)
-                                } else {
-                                    selected_strand.clone()
-                                };
+                                if selected_strand.trim().is_empty() {
+                                    return;
+                                }
+                                let strand_id = selected_strand.clone();
                                 // Signal key material comes from the scope's
                                 // accepted MLS state. No material means the
                                 // Signal capability is withdrawn for this
@@ -1569,11 +1568,14 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 );
                                 let realm = realm.clone();
                                 let actor = actor.clone();
-                                let strand_id = if selected_strand.trim().is_empty() {
-                                    default_discussion_strand_id(&realm)
-                                } else {
-                                    selected_strand.clone()
-                                };
+                                if selected_strand.trim().is_empty() {
+                                    status_msg.set(
+                                        "Default Strand is unavailable until its accepted projection arrives"
+                                            .to_owned(),
+                                    );
+                                    return;
+                                }
+                                let strand_id = selected_strand.clone();
                                 let local_owned_agent_ids = owned_agent_ids_from_composer(
                                     mentions_enabled,
                                     &body,

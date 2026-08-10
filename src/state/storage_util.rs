@@ -39,25 +39,18 @@ pub(crate) fn to_device_message_expiry(message: &Value) -> Option<DateTime<Utc>>
         .map(|expires_at| expires_at.with_timezone(&Utc))
 }
 
-pub(crate) fn read_scope_for_cursor(realm_id: &str, topic_id: Option<&str>) -> ReadScope {
+pub(crate) fn read_scope_for_cursor(_realm_id: &str, topic_id: Option<&str>) -> ReadScope {
     match topic_id.map(str::trim).filter(|topic| !topic.is_empty()) {
         Some(topic) if topic.starts_with("ak:thread:") => ReadScope::thread(topic),
         Some(topic) if topic.starts_with("ak:strand:") => {
             ReadScope::strand(topic, Some("discussion"))
         }
-        _ => ReadScope::strand(default_strand_id_for_realm(realm_id), Some("discussion")),
+        // A Realm id and its default Strand id are independently derived from
+        // different accepted Events. When no authoritative topic coordinate is
+        // available, retain the Realm scope instead of fabricating a Strand by
+        // retyping the Realm token.
+        _ => ReadScope::realm(),
     }
-}
-
-/// YOU-05-009: the `ak:realm:<suffix>` → `ak:strand:<suffix>` main-strand id
-/// derivation is a protocol mapping rule that affects event addressing.
-/// This is the crate's single authoritative copy — do NOT re-derive it
-/// locally; a divergent copy writes events to the wrong strand.
-pub(crate) fn default_strand_id_for_realm(realm_id: &str) -> String {
-    realm_id
-        .strip_prefix("ak:realm:")
-        .map(|suffix| format!("ak:strand:{suffix}"))
-        .unwrap_or_else(|| realm_id.to_owned())
 }
 
 /// YOU-05-010: shared test fixture — build a `LocalStateStore` rooted at a

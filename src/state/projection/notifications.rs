@@ -394,11 +394,19 @@ pub(crate) fn test_invite(
     if let Some(token) = invite_token {
         join_rule_snapshot.insert("invite_token".to_owned(), Value::String(token.to_owned()));
     }
-    let mut event_token = [0_u8; 33];
-    event_token[0] = 0x01;
-    event_token[25..].copy_from_slice(&ordinal.to_be_bytes());
+    // Frozen accepted Event identities keep this projection helper honest:
+    // tests must not manufacture Event tokens by mutating bytes or truncating
+    // an ordinal into a digest-shaped buffer.
+    let invite_event_id = match ordinal {
+        1 => "ak:event:AVcXEfJCoV9ydvyShgTJWTjBgeMxd7RTn-vxyjJj70BD",
+        0x10 => "ak:event:AYYa5sMg42gq2sCKD5eAndBtYb2F6W4k_AK-c5l_KDWF",
+        0x11 => "ak:event:Afab7TswzXygzB72iKHz5hHvOQNcFdGZSuVfr1sdl2HA",
+        99 => "ak:event:ASis-E9AaWZ7FbUsZJMfg3XeRgIqBNYupIr3JDSTcvtM",
+        0xbb => "ak:event:AXVaAVgJFKciaxCSX0EDb06FldpREjeSNx3e2AAsxwsL",
+        other => panic!("missing frozen invite Event fixture for ordinal {other}"),
+    };
     let invite_event_id =
-        arkret_sdk::EventId::from_token_bytes(event_token).expect("valid test Event token");
+        arkret_sdk::EventId::new(invite_event_id.to_owned()).expect("valid test Event token");
     Invite {
         id: arkret_sdk::InviteId::from_event_id(&invite_event_id),
         schema: "ak.schema.invite.v1".to_owned(),

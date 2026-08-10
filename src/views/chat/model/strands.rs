@@ -1,14 +1,19 @@
 use super::*;
 
-pub(crate) fn default_discussion_strand_id(realm_id: &str) -> String {
-    let trimmed = realm_id.trim();
-    if trimmed.starts_with("ak:strand:") {
-        trimmed.to_owned()
-    } else if let Some(suffix) = trimmed.strip_prefix("ak:realm:") {
-        format!("ak:strand:{suffix}")
-    } else {
-        format!("ak:strand:{}", trimmed.trim_start_matches("ak:"))
-    }
+pub(crate) fn default_discussion_strand_id(realm_body: &Value) -> Option<String> {
+    let strand_id = realm_body
+        .get("default_strand_id")
+        .or_else(|| {
+            realm_body
+                .get("summary")
+                .and_then(|summary| summary.get("strand"))
+                .and_then(|strand| strand.get("strand_id").or_else(|| strand.get("id")))
+        })
+        .and_then(Value::as_str)?
+        .trim();
+    arkret_sdk::StrandId::new(strand_id.to_owned())
+        .ok()
+        .map(|id| id.to_string())
 }
 
 pub(crate) fn candidate_has_track(candidate: &Value, track: &str) -> bool {
@@ -61,8 +66,8 @@ pub(crate) fn channel_from_strand_projection(
     let strand_id = first_string_in_candidate_paths(&[strand], &[&["strand_id"], &["id"]])
         .map(str::trim)
         .filter(|id| id.starts_with("ak:strand:"))
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| default_discussion_strand_id(realm_id));
+        .and_then(|id| arkret_sdk::StrandId::new(id.to_owned()).ok())
+        .map(|id| id.to_string())?;
     let name = first_string_in_candidate_paths(
         &[strand],
         &[
@@ -202,17 +207,19 @@ pub(crate) fn u32_at_path(value: &Value, path: &[&str]) -> Option<u32> {
 pub(crate) fn default_discussion_channel(
     realm_id: &str,
     realm_body: Option<&Value>,
-) -> ChannelEntity {
+) -> Option<ChannelEntity> {
     if let Some(strand) = realm_body
         .and_then(|body| body.get("summary"))
         .and_then(|summary| summary.get("strand"))
         && let Some(channel) = channel_from_strand_projection(realm_id, strand, true)
     {
-        return channel;
+        return Some(channel);
     }
 
-    ChannelEntity {
-        strand_id: default_discussion_strand_id(realm_id),
+    let realm_body = realm_body?;
+    let strand_id = default_discussion_strand_id(realm_body)?;
+    Some(ChannelEntity {
+        strand_id,
         name: "Discussion".to_owned(),
         kind: "discussion".to_owned(),
         category: "default strand".to_owned(),
@@ -220,32 +227,38 @@ pub(crate) fn default_discussion_channel(
         unread: 0,
         is_default: true,
         is_private_sidecar: false,
-        security_encrypted: realm_body.map(crate::security_state::realm_projection_is_encrypted),
+        security_encrypted: Some(crate::security_state::realm_projection_is_encrypted(
+            realm_body,
+        )),
         scope_circle: None,
-    }
+    })
 }
 
-pub(crate) fn discussion_channel_for_strand(realm_id: &str, strand_id: &str) -> ChannelEntity {
+pub(crate) fn discussion_channel_for_strand(
+    _realm_id: &str,
+    strand_id: &str,
+) -> Option<ChannelEntity> {
     let trimmed_strand_id = strand_id.trim();
     if trimmed_strand_id.is_empty() {
-        return default_discussion_channel(realm_id, None);
+        return None;
     }
+    let strand_id = arkret_sdk::StrandId::new(trimmed_strand_id.to_owned()).ok()?;
 
-    ChannelEntity {
-        strand_id: trimmed_strand_id.to_owned(),
+    Some(ChannelEntity {
+        strand_id: strand_id.to_string(),
         name: "Discussion".to_owned(),
         kind: "discussion".to_owned(),
         category: "discussion".to_owned(),
         topic: None,
         unread: 0,
-        is_default: trimmed_strand_id == default_discussion_strand_id(realm_id),
+        is_default: false,
         is_private_sidecar: false,
         security_encrypted: None,
         scope_circle: None,
-    }
+    })
 }
 
-pub(crate) fn channel_from_strand_event(realm_id: &str, event: &Value) -> Option<ChannelEntity> {
+pub(crate) fn channel_from_strand_event(_realm_id: &str, event: &Value) -> Option<ChannelEntity> {
     let candidates = message_candidates(event);
     if !candidates
         .iter()
@@ -348,7 +361,7 @@ pub(crate) fn channel_from_strand_event(realm_id: &str, event: &Value) -> Option
         category,
         topic,
         unread: 0,
-        is_default: strand_id == default_discussion_strand_id(realm_id),
+        is_default: false,
         is_private_sidecar: false,
         security_encrypted,
         scope_circle,
@@ -369,7 +382,7 @@ pub(crate) fn channels_from_sync_realms(
     let mut channels = Vec::new();
     for (realm_id, body) in realms {
         if default_realm_ids.iter().any(|id| id == realm_id) {
-            channels.push(default_discussion_channel(realm_id, Some(body)));
+            channels.extend(default_discussion_channel(realm_id, Some(body)));
         }
         let Some(wire_events) = body
             .get("timeline")

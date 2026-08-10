@@ -37,7 +37,7 @@ struct ReadPositionKey {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ReadPosition {
-    /// `ak:message:<uuidv7>` — the receipt's `event_id` retyped, so the chat
+    /// `ak:message:<event-token>` — the receipt's full `event_id` retyped, so the chat
     /// timeline can compare it to `protocol_message_id` directly.
     message_id: String,
     payload_sequence: u64,
@@ -215,7 +215,7 @@ fn strand_read_position(
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
     // The receipt names the Event id it read up to; the timeline is keyed by
-    // the Message id, which is the same UUIDv7 retyped. Doing that conversion
+    // the Message id, which is the same full Event identity retyped. Doing that conversion
     // through the SDK keeps the retyping rule in one place instead of letting
     // this view rewrite an id prefix by hand.
     Some((
@@ -390,7 +390,7 @@ mod tests {
             "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
         );
         // The receipt names an Event id; the timeline is keyed by the same
-        // UUIDv7 retyped as a Message id.
+        // full Event identity retyped as a Message id.
         assert_eq!(message_id, MESSAGE_ID);
     }
 }

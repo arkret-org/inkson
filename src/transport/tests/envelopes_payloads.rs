@@ -505,8 +505,8 @@ fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
 #[test]
 fn space_create_payload_matches_spec_schema() {
     // Spec requires payload.object.realm_id to match the
-    // `^ak:realm:UUID7` pattern; the Space's own id is absent from a create
-    // payload and derived from this Event.
+    // full event-derived `ak:realm:<event-token>` pattern; the Space's own id is absent from a
+    // create payload and derived from this Event.
     let event = build_space_create_event(
         "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice.example",

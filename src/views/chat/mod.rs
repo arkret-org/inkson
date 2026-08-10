@@ -65,10 +65,10 @@ use controller::{
     use_chat_controller,
 };
 use effects::ChatEffects;
-pub(crate) use model::confirmed_sidecar_publish_message_operation;
 #[cfg(test)]
 pub(crate) use model::message_operations_from_events;
 use model::*;
+pub(crate) use model::{confirmed_sidecar_publish_message_operation, default_discussion_strand_id};
 use timeline::*;
 use timeline_surface::{ChatTimeline, ChatTimelineContext};
 

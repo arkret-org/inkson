@@ -839,7 +839,7 @@ fn seed_strand_ids_are_valid_object_patch_targets() {
         DEMO_STRAND_ONBOARDING_COPY_ID,
         DEMO_STRAND_SECURITY_SIGNOFF_ID,
     ] {
-        // SDK RealmId is strictly `ak:realm:<uuid7>` now; the realm arg can
+        // SDK RealmId is strictly a full event-derived `ak:realm:<event-token>`; the realm arg can
         // no longer be the demo Space id.
         let event = crate::operation::ak_ops::strand_update_patch(
             "ak:realm:AY61QviMxoJ0ALEn5U39bA7Qbi1BxHCrOq4950m2JRjM",

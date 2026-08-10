@@ -973,10 +973,10 @@ fn shared_pin_operations_use_pin_events_not_account_data() {
 }
 
 #[test]
-fn default_discussion_shared_pin_uses_realm_scope() {
+fn selected_discussion_shared_pin_uses_exact_strand_scope() {
     let realm_id = "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h";
-    let strand_id = default_discussion_strand_id(realm_id);
-    let pin_scope = shared_pin_scope_for_message(realm_id, &strand_id);
+    let strand_id = "ak:strand:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
+    let pin_scope = shared_pin_scope_for_message(realm_id, strand_id);
     let target_ref = "ak:message:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";
     let add = shared_message_pin_add_operation(
         realm_id,
@@ -988,8 +988,8 @@ fn default_discussion_shared_pin_uses_realm_scope() {
     .expect("shared pin add builds");
 
     assert_eq!(add.kind.as_str(), "ak.pin.add");
-    assert_eq!(add.payload["pin_scope"]["kind"], "realm");
-    assert_eq!(add.payload["pin_scope"]["id"], realm_id);
+    assert_eq!(add.payload["pin_scope"]["kind"], "strand");
+    assert_eq!(add.payload["pin_scope"]["id"], strand_id);
     assert_eq!(add.payload["target_ref"], target_ref);
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
@@ -3277,13 +3277,13 @@ fn participation_visibility_uses_most_specific_effective_scope() {
 }
 
 #[test]
-fn participation_visibility_can_target_the_synthesized_default_discussion_strand() {
+fn participation_visibility_can_target_an_authoritative_discussion_strand() {
     use arkret_models_collaboration::governance::agent_participation::{
         AgentParticipationEntry, ParticipationBits, ParticipationScope,
     };
 
     let realm = "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo";
-    let strand = default_discussion_strand_id(realm);
+    let strand = "ak:strand:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL".to_owned();
     let entry = AgentParticipationEntry {
         scope: ParticipationScope::Strand {
             realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
@@ -4008,7 +4008,7 @@ fn default_discussion_channel_uses_realm_default_strand_projection() {
         "summary": {
             "title": "Demo Realm",
             "strand": {
-                "strand_id": "ak:strand:demo",
+                "strand_id": "ak:strand:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL",
                 "title": "General",
                 "summary": "Realm-wide conversation",
                 "tracks": {
@@ -4019,9 +4019,16 @@ fn default_discussion_channel_uses_realm_default_strand_projection() {
         }
     });
 
-    let channel = default_discussion_channel("ak:realm:demo", Some(&body));
+    let channel = default_discussion_channel(
+        "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
+        Some(&body),
+    )
+    .expect("accepted projection exposes its default Strand");
 
-    assert_eq!(channel.strand_id, "ak:strand:demo");
+    assert_eq!(
+        channel.strand_id,
+        "ak:strand:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL"
+    );
     assert_eq!(channel.name, "General");
     assert_eq!(channel.kind, "discussion");
     assert_eq!(channel.topic.as_deref(), Some("Realm-wide conversation"));
@@ -4029,13 +4036,14 @@ fn default_discussion_channel_uses_realm_default_strand_projection() {
 }
 
 #[test]
-fn default_discussion_channel_synthesizes_default_strand_when_projection_is_absent() {
-    let channel = default_discussion_channel("ak:realm:demo", None);
-
-    assert_eq!(channel.strand_id, "ak:strand:demo");
-    assert_eq!(channel.name, "Discussion");
-    assert_eq!(channel.category, "default strand");
-    assert!(channel.is_default);
+fn default_discussion_channel_fails_closed_when_projection_is_absent() {
+    assert!(
+        default_discussion_channel(
+            "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
+            None,
+        )
+        .is_none()
+    );
 }
 
 #[test]

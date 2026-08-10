@@ -446,10 +446,10 @@ fn message_revision_target_ref_from_candidates(candidates: &[&Value]) -> Option<
 
 fn message_ref_equivalents(value: &str) -> [String; 2] {
     let trimmed = value.trim();
-    let alternate = if let Some(suffix) = trimmed.strip_prefix("ak:event:") {
-        format!("ak:message:{suffix}")
-    } else if let Some(suffix) = trimmed.strip_prefix("ak:message:") {
-        format!("ak:event:{suffix}")
+    let alternate = if let Ok(event_id) = arkret_sdk::EventId::new(trimmed.to_owned()) {
+        arkret_sdk::MessageId::from_event_id(&event_id).to_string()
+    } else if let Ok(message_id) = arkret_sdk::MessageId::new(trimmed.to_owned()) {
+        message_id.event_id().to_string()
     } else {
         trimmed.to_owned()
     };

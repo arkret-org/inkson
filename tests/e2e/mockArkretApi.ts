@@ -8,8 +8,8 @@ import { mockArkretContract } from "./mockArkretContract";
 const DEMO_REALM = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
 const STRAND_POSITION_CELL_FAMILY = "ak.component.strand.position.v1";
 const DEMO_FRONTIER_EVENT = "ak:event:Ad0EZUHcfLJv92Of4w-RJec6fkNlWP11fsQAQ4dqUOHS";
-const SETUP_REALM = "ak:realm:01js0setupflow000000000000";
-const LOW_FLOOR_REALM = "ak:realm:01lowfloor0000000000000000";
+const SETUP_REALM = "ak:realm:AfoRpfP-sl-s9gK_9-GfLiYW9eincnIfCJF8xRcVowkj";
+const LOW_FLOOR_REALM = "ak:realm:Ad-rGYKVGY9i32DG2R9ZwMezGzT5g2rmdYjrifmGO6Fe";
 const CHILD_REALM = "ak:realm:AajANEG2ah2GJghhdat8rziaz1qjK25iQAYUUR6kcIeW";
 const GRANDCHILD_REALM = "ak:realm:AY4xhb3ZNeBXAhtM2T1YS3-9sqDdRdVeL3cVRBQ9LTAt";
 const DIRECT_BOB_REALM = "ak:realm:AUEAoXMJeJWBETvkqm7gk4imduk7g-l8bim19OPFQDaO";
@@ -32,6 +32,37 @@ const DEMO_STRAND_SECURITY_SIGNOFF =
   "ak:strand:AQmnyvvBmKOWOEOSD2rAYsVBQn6vJ_wdbdUY8CKUGB5c";
 const DEMO_STRAND_SECONDARY_CARD =
   "ak:strand:AeuYGIMbDLHP-zzs9g6vzWrgtPNhcol9h_doKgtHxKqd";
+const MOCK_CREATED_CIRCLE_IDS = [
+  "ak:circle:AQUeFABQK9MQb8JmkZyP7wD2QfYOSDaCH1LDepfyMD-G",
+  "ak:circle:AX-AFSYZHl0U2MQP-Ng7mU-aOm_Flhf0pVBoHYUK6Shg",
+] as const;
+const SHARED_HISTORY_EVENT_IDS = [
+  "ak:event:AU2FuIl7Kq70taw5RT2eOqgjJZDbJIZs_nCtuwEaOLTH",
+  "ak:event:AeoIMm0SoT07OMMZlyYNG7b9bvXo9Dj-aK28dRBThbn7",
+  "ak:event:AXq-oIVc1SRZN2QL4OshztYeHsBdhyNP9Ey-woBOM-rA",
+  "ak:event:AWYXuCeQHgICwuMZIQeiGFJs-iobrydkmHwzVk97yS0o",
+  "ak:event:AXsCA6nEOsdEkGKDfCZUgHOZBrrucAEECJX8z-YYuSjg",
+  "ak:event:AQyRA2Og2fqxKoiFY5eimXqjsC1LUBNKxaXOApKo0dLm",
+  "ak:event:AY8npMVotttHsqqs-A32QLYXDMkxKmzlpaLfV-HX5r2x",
+  "ak:event:AbZmQsDj2irWyXzl6ZEgIvDtiGkWVNQIJ4UyR9rdIXa1",
+  "ak:event:AbHEyu5qjH8P0y2Ghh30GS_iIUFFh2vBEHtLOwdBGX0B",
+  "ak:event:AfM8gY23Fd0hMzg84BIvbRlFcxsppVO_7TyvwOXYSGe9",
+  "ak:event:AbUBt14eTAa23Zes6F4U1N8fe4-lAe7liOCDyBjiIOc2",
+  "ak:event:AWgKStnIblPeUSGFhaNBErAu-OXFsqw0-5lPfgBEeE6v",
+  "ak:event:AavTcg01MpP3zEQMgR1oA2_VG1IQHiN2sPmAxeeNYE80",
+  "ak:event:AZZZ4r6XfvZYxqsOkiKVwyaI8pE5N6aZU8saBAJeoOZ7",
+  "ak:event:AZl4x5iQWBxpc1bQpT5qMEwbQ9wzeyPFIbRHZR-d7fFq",
+  "ak:event:AaTyloXYyzX01m5U1UBzAI7pmFbMMTlaB76WTjC0w0dV",
+  "ak:event:AR_QvaIW62yjB1FEWGZDniVTrp8Kkunlb0E-uIEZ_iqO",
+  "ak:event:Aba9U6GbgCNrPeGSCYNBAHGXBGuUVivICNAzLjJhsC22",
+] as const;
+
+const eventIdForDerivedId = (id: string, prefix: string): string => {
+  if (!id.startsWith(prefix)) {
+    throw new Error(`expected ${prefix} Event-derived id, got ${id}`);
+  }
+  return `ak:event:${id.slice(prefix.length)}`;
+};
 const DEMO_BLOB_REF =
   "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460";
 const DEMO_AVATAR_PNG_BASE64 =
@@ -347,7 +378,7 @@ export async function mockArkretApi(
   const circleMembers = new Map<string, string[]>([
     [DEMO_CIRCLE, [accountPrincipalId]],
   ]);
-  let circleCounter = 2;
+  let circleCounter = 0;
   const circleView = (circleId = DEMO_CIRCLE) => ({
     circle_id: circleId,
     realm_id: DEMO_REALM,
@@ -919,7 +950,7 @@ export async function mockArkretApi(
   projectionEvents.push(
     ...boardSpaceContainers.map((space, index) =>
       canonicalProjectionEvent(
-        `ak:event:0196419b-0000-8000-8000-00000000b0${String(index + 1).padStart(2, "0")}`,
+        eventIdForDerivedId(space.container_space_id, "ak:space:"),
         "ak.space.create",
         200 + index,
         {
@@ -939,7 +970,7 @@ export async function mockArkretApi(
     ),
     ...boardStrandProjections.map((strand, index) =>
       canonicalProjectionEvent(
-        `ak:event:0196419b-0000-8000-8000-00000000c0${String(index + 1).padStart(2, "0")}`,
+        eventIdForDerivedId(strand.strand_id, "ak:strand:"),
         "ak.strand.create",
         210 + index,
         {
@@ -967,15 +998,19 @@ export async function mockArkretApi(
   );
   const seedSharedHistoryCount = options.seedSharedHistoryCount ?? 0;
   for (let index = 0; index < seedSharedHistoryCount; index += 1) {
-    const suffix = (0xd000 + index).toString(16).padStart(12, "0");
+    const eventId = SHARED_HISTORY_EVENT_IDS[index];
+    if (!eventId) {
+      throw new Error(`shared-history fixture exhausted at index ${index}`);
+    }
+    const messageId = eventId.replace(/^ak:event:/, "ak:message:");
     const historyActor = "did:web:history.example";
     projectionEvents.push({
       ...canonicalProjectionEvent(
-        `ak:event:0196419b-0000-8000-8000-${suffix}`,
+        eventId,
         "ak.message.create",
         230 + index,
         {
-          message_id: `ak:message:0196419b-0000-8000-8000-${suffix}`,
+          message_id: messageId,
           strand_id: DEMO_STRAND_LEGAL_REVIEW,
           track_name: "discussion",
           content: {
@@ -1290,7 +1325,10 @@ export async function mockArkretApi(
         encryption_profile?: string;
         join_rule?: string;
       };
-      const circleId = `ak:circle:0196419b-0000-8000-8000-${String(circleCounter).padStart(12, "0")}`;
+      const circleId = MOCK_CREATED_CIRCLE_IDS[circleCounter];
+      if (!circleId) {
+        throw new Error(`mock Circle fixture exhausted at index ${circleCounter}`);
+      }
       circleCounter += 1;
       circleStates.set(circleId, "active");
       circleMetadata.set(circleId, {

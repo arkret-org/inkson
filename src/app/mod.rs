@@ -27,9 +27,7 @@ pub(crate) use crate::realm_tree::{
 };
 use crate::routes::Route;
 use crate::state::projection::ProjectionEvent;
-use crate::state::{
-    ClientLocalState, LocalStateStore, PersistedSessionGrant, default_strand_id_for_realm,
-};
+use crate::state::{ClientLocalState, LocalStateStore, PersistedSessionGrant};
 use crate::transport::TransportClient;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;

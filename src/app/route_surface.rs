@@ -132,6 +132,15 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
         Route::CircleDetail { circle_id, .. } => Some(circle_id.clone()),
         _ => None,
     };
+    let active_default_strand_id = {
+        let state_store = SessionContext::get().state_store;
+        state_store
+            .read()
+            .load()
+            .realm_tree_projections
+            .get(&active_realm_id)
+            .and_then(crate::views::chat::default_discussion_strand_id)
+    };
 
     rsx! {
                 div { class: "workspace-body",
@@ -253,7 +262,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         {
                             selected_realm_id.set(sid.to_owned());
                         }
-                        if minimal_ready {
+                        if minimal_ready && let Some(initial_strand_id) = active_default_strand_id.clone() {
                             rsx! {
                                 crate::views::chat::ChatPanel {
                                     plaintext_service_id: active_service_id.clone(),
@@ -265,14 +274,21 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                     sync_cursor,
                                     realm_live_epoch,
                                     frontier_state,
-                                    initial_strand_id: default_strand_id_for_realm(&active_realm_id),
+                                    initial_strand_id,
                                     embedded: false,
                                     direct_mode: false,
                                     focus_message_id: message.clone(),
                                 }
                             }
-                        } else {
+                        } else if !minimal_ready {
                             rsx! { ProfileGateNotice { profile: "minimal_client" } }
+                        } else {
+                            rsx! {
+                                div {
+                                    class: "panel-notice panel-notice-error",
+                                    "Default Strand is unavailable until its accepted projection arrives."
+                                }
+                            }
                         }
                     },
                     Route::Directory => rsx! {

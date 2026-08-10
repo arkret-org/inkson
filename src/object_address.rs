@@ -49,8 +49,9 @@ use arkret_wire::{
 use crate::routes::Route;
 
 /// The local object a user is sharing. Mirrors the SDK address hierarchy
-/// `realm ⊃ strand ⊃ message`. `realm` is a bare uuid or a domain-style alias
-/// (the `ak:realm:` sigil is stripped); `strand`/`message` are bare uuids.
+/// `realm ⊃ strand ⊃ message`. `realm` is a bare event-derived identity
+/// token or a domain-style alias (the `ak:realm:` sigil is stripped);
+/// `strand`/`message` are bare typed-token bodies.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShareTarget {
     Realm {
@@ -196,7 +197,7 @@ impl ShareTarget {
     ///
     /// Fails closed when the realm segment is an alias (the digest is
     /// meaningless over an alias — the caller must resolve the alias to a
-    /// canonical `ak:realm:<uuid>` first).
+    /// canonical `ak:realm:<event-token>` first).
     // TODO(R3.3.1): once an alias-bearing share is supported, resolve the alias
     // via the directory before digesting (TargetDescriptor::set_realm_id).
     pub fn invite_target_digest(&self) -> anyhow::Result<String> {
@@ -264,7 +265,7 @@ impl OpenedLink {
     }
 
     /// Map a resolved [`TargetKind`] onto the local [`Route`]. The realm path
-    /// segment must already be a canonical `realm_id` (uuid form) for the
+    /// segment must already be a canonical event-derived `realm_id` for the
     /// route to be navigable; an alias-only address routes to the directory so
     /// the user can resolve it there.
     ///
@@ -298,11 +299,11 @@ impl OpenedLink {
 }
 
 /// Strip a leading `ak:<kind>:` sigil so the SDK grammar receives the bare
-/// path segment (uuid or alias). Idempotent on already-bare input.
+/// path segment (typed-token body or alias). Idempotent on already-bare input.
 fn strip_sigil(id: &str) -> String {
     let id = id.trim();
     if let Some(rest) = id.strip_prefix("ak:") {
-        // `ak:realm:<uuid>` → `<uuid>`; alias strings have no `ak:` prefix.
+        // `ak:realm:<event-token>` → `<event-token>`; aliases have no `ak:` prefix.
         rest.split_once(':')
             .map(|(_, v)| v.to_owned())
             .unwrap_or_else(|| id.to_owned())
@@ -321,7 +322,7 @@ fn typed_realm(bare: &str) -> String {
 
 fn typed_realm_route_id(realm: &RealmRef) -> Option<String> {
     match realm {
-        RealmRef::RealmId(uuid) => Some(typed_realm(uuid)),
+        RealmRef::RealmId(token) => Some(typed_realm(token)),
         RealmRef::Alias(_) => None,
     }
 }
@@ -378,7 +379,7 @@ mod tests {
     fn strip_sigil_handles_typed_and_bare_ids() {
         assert_eq!(strip_sigil("ak:realm:abc"), "abc");
         assert_eq!(strip_sigil("ak:strand:def"), "def");
-        assert_eq!(strip_sigil("bare-uuid"), "bare-uuid");
+        assert_eq!(strip_sigil("bare-token"), "bare-token");
         assert_eq!(strip_sigil("team.example.com"), "team.example.com");
     }
 
