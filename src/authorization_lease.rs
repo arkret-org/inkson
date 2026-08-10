@@ -876,21 +876,16 @@ mod tests {
     }
 
     #[test]
-    fn managed_agent_authority_lookup_fails_before_exact_pcr_create_exists() {
-        let error = crate::event_builders::build_managed_agent_pcr_bootstrap_events(
+    fn managed_agent_pcr_create_is_frozen_before_provision_commit() {
+        let events = crate::event_builders::build_managed_agent_pcr_bootstrap_events(
             "did:web:agent.example",
             "did:web:alice.example",
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
-            arkret_sdk::EventId::new("ak:event:AStKv4uwui9iKv7StOHRotQgjBDBvjla-y05nQAwQaJf")
-                .unwrap(),
         )
-        .expect_err("authority lookup must wait for an exact PCR create");
-        assert!(
-            error
-                .to_string()
-                .contains("authoritative event-derived PCR id")
-        );
+        .expect("controller can freeze the exact PCR create locally");
+        assert_eq!(events.len(), 1);
+        assert!(events[0].refs.is_empty());
     }
 
     fn rebind_and_resign(lease: &mut AuthorizationLease, basis_ref: arkret_wire::LeaseBasisRef) {

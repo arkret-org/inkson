@@ -122,7 +122,25 @@ fn run_local_mls_encrypt_for_event(
             "invalid Realm id for encrypted AAD: {error:?}"
         ))
     })?;
-    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(aad_realm_id, event_kind);
+    let aad_scope = if let Some(binding) = sidecar_binding {
+        arkret_sdk::ScopeRef::Sidecar {
+            realm_id: aad_realm_id,
+            sidecar_id: binding.sidecar_id.clone(),
+        }
+    } else if let Some(circle_id) = circle_id {
+        circle_effective_scope(realm_id, circle_id)
+            .map_err(crate::mls::runtime::MlsRuntimeError::Serialize)?
+    } else {
+        arkret_sdk::ScopeRef::Realm {
+            realm_id: aad_realm_id,
+        }
+    };
+    let aad =
+        arkret_sdk::EncryptedEnvelopeAad::hidden(&aad_scope, event_kind).map_err(|error| {
+            crate::mls::runtime::MlsRuntimeError::Serialize(format!(
+                "invalid encrypted AAD scope: {error}"
+            ))
+        })?;
     let (
         schedule_hash,
         member_dids,
@@ -226,6 +244,15 @@ pub(crate) fn build_secure_send(
     circle_id: Option<&str>,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<SecureSendBuild, String> {
+    if state_store
+        .read()
+        .realm_projection_is_minimal_metadata(realm_id)
+    {
+        return Err(
+            "minimal_metadata_pairwise_author_unavailable: authoring requires a Realm-scoped pairwise Core ActorId, its did:key proof FullId, and the exact accepted MLS LeafNode signing key"
+                .to_owned(),
+        );
+    }
     let typed_realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
         .map_err(|error| format!("invalid MLS Realm id: {error}"))?;
     let effective_scope = if let Some(binding) = sidecar_binding.as_ref() {

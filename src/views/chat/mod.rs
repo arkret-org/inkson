@@ -1010,7 +1010,11 @@ async fn reconcile_sidecar_mls_access(
                 )
                 .await?;
             if let Some(claim) = outcome.claims.into_iter().next() {
-                claims.push((claim, claim_nonce));
+                claims.push((
+                    claim,
+                    claim_nonce,
+                    arkret_sdk::MlsWelcomeClaimReceipt::SelfClaim(outcome.claim_receipt),
+                ));
             }
         }
         if claims.is_empty() {
@@ -1028,7 +1032,7 @@ async fn reconcile_sidecar_mls_access(
                 &device_id,
             )
             .map_err(anyhow::Error::msg)?;
-        let added_claims = claims.iter().map(|(claim, _)| claim).collect::<Vec<_>>();
+        let added_claims = claims.iter().map(|(claim, _, _)| claim).collect::<Vec<_>>();
         let proof_leaves = crate::mls::governance_proof::security_frontier_with_added_claims(
             current_leaves,
             &added_claims,
@@ -1044,12 +1048,20 @@ async fn reconcile_sidecar_mls_access(
         .await
         .map_err(anyhow::Error::msg)?;
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        let requester_device_authorize_event_id =
+            crate::mls::admission::current_requester_device_authorize_event_id(
+                &api.sdk_http_client()?,
+                &device_id,
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
         let admission = crate::mls::admission::build_sidecar_mls_admission_events_from_claims(
             &state_store.read(),
             secure_store.as_ref(),
             &realm_id,
             &controller_id,
             &device_id,
+            &requester_device_authorize_event_id,
             &claims,
             sidecar_binding,
         )

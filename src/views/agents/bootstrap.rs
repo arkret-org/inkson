@@ -1047,50 +1047,14 @@ pub(crate) async fn bootstrap_provisioned_agent(
         return Ok(());
     }
 
-    let mut accepted_events = submitter
+    let accepted_events = submitter
         .backfill(realm_id)
         .await?
         .complete_events("managed Agent PCR bootstrap")?;
     if !has_managed_agent_pcr_create(&accepted_events) {
-        let controller_realm_id =
-            crate::identity::principal_control::resolve_accepted(&http, &controller_did).await?;
-        let provision_rows = http
-            .events_read_all_pages(controller_realm_id.as_str())
-            .await?
-            .events;
-        let provision_event_id = crate::models::require_complete_event_rows(
-            &provision_rows,
-            "managed Agent PCR provision binding",
-        )?
-        .into_iter()
-        .find_map(|event| {
-            (event.kind == arkret_sdk::EventKind::AgentProvision)
-                .then(|| {
-                    arkret_sdk::AgentProvisionPayload::try_from(&event)
-                        .ok()
-                        .filter(|payload| payload.agent_id.as_str() == agent_id)
-                        .map(|_| event.event_id)
-                })
-                .flatten()
-        })
-        .ok_or_else(|| {
-            anyhow::anyhow!("accepted Agent provision Event is missing from the controller PCR")
-        })?;
-        let describe = submitter.events_describe().await?;
-        let bootstrap = crate::event_builders::build_managed_agent_pcr_bootstrap_events(
-            agent_id,
-            &controller_id,
-            controller_authorization_ref,
-            describe.trust_domain.as_str(),
-            provision_event_id,
-        )?;
-        submitter
-            .submit_sdk_events_batch(realm_id, bootstrap, None)
-            .await?;
-        accepted_events = submitter
-            .backfill(realm_id)
-            .await?
-            .complete_events("managed Agent PCR bootstrap verification")?;
+        anyhow::bail!(
+            "managed Agent PCR genesis is not accepted; provisioning must submit the exact locally frozen create Event before recovery bootstrap"
+        );
     }
     if !has_managed_agent_pcr_create(&accepted_events) {
         anyhow::bail!("Principal Server did not expose the accepted managed Agent PCR genesis");

@@ -884,10 +884,6 @@ fn decrypt_chat_encrypted_content_value(
 ) -> Option<Value> {
     let envelope =
         serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(encrypted_content.clone()).ok()?;
-    let payload_value =
-        serde_json::to_value(arkret_sdk::mls::encrypted_envelope_to_payload(&envelope).ok()?)
-            .ok()?;
-    let payload: arkret_sdk::EncryptedPayload = serde_json::from_value(payload_value).ok()?;
     let realm_scope;
     let effective_scope = match effective_scope {
         Some(scope) => scope,
@@ -898,6 +894,11 @@ fn decrypt_chat_encrypted_content_value(
             &realm_scope
         }
     };
+    envelope.validate_for_scope(effective_scope).ok()?;
+    let payload_value =
+        serde_json::to_value(arkret_sdk::mls::encrypted_envelope_to_payload(&envelope).ok()?)
+            .ok()?;
+    let payload: arkret_sdk::EncryptedPayload = serde_json::from_value(payload_value).ok()?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let plaintext = crate::mls::runtime::decrypt_application_payload_for_scope(
         state_store,
@@ -1162,9 +1163,9 @@ fn verify_minimal_metadata_chat_author(
         .get("actor_id")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if actor.is_empty() || !persistent_proof_controllers_match(envelope, actor) {
+    let Ok(actor_id) = arkret_sdk::ActorId::new(actor.to_owned()) else {
         return ChatProofVerdict::Rejected;
-    }
+    };
     // The envelope's encrypted-content coordinates are the trust-anchor
     // selector; a proof-bearing minimal-metadata content row without them has
     // no leaf to bind to.
@@ -1175,7 +1176,7 @@ fn verify_minimal_metadata_chat_author(
     };
     // The proof key comes purely from the pairwise verification-method
     // multibase fragment — never a directory value.
-    let Some(proof_key_bytes) = envelope
+    let Some((proof_verification_method, proof_key_bytes)) = envelope
         .get("proofs")
         .and_then(Value::as_array)
         .into_iter()
@@ -1186,15 +1187,14 @@ fn verify_minimal_metadata_chat_author(
                 .split_once('?')
                 .map(|(head, _)| head)
                 .unwrap_or(method);
-            let (controller, fragment) = no_query.split_once('#')?;
-            if controller != actor {
-                return None;
-            }
-            arkret_sdk::signatures::PublicKeyMaterial::Ed25519Multibase {
+            let (_, fragment) = no_query.split_once('#')?;
+            let verification_method = arkret_sdk::DidUrl::new(no_query.to_owned()).ok()?;
+            let key = arkret_sdk::signatures::PublicKeyMaterial::Ed25519Multibase {
                 value: fragment.to_owned(),
             }
             .ed25519_bytes()
-            .ok()
+            .ok()?;
+            Some((verification_method, key))
         })
     else {
         return ChatProofVerdict::Rejected;
@@ -1217,14 +1217,12 @@ fn verify_minimal_metadata_chat_author(
         // not trust, do not query a directory.
         return ChatProofVerdict::Unresolved;
     };
-    let Ok(actor_did) = arkret_sdk::Did::new(actor.to_owned()) else {
-        return ChatProofVerdict::Rejected;
-    };
     let claim = arkret_sdk::mls::MinimalMetadataAuthorClaim {
         group_id: &group_id,
         epoch,
         group_state_ref: &group_state_ref,
-        actor_id: &actor_did,
+        actor_id: &actor_id,
+        proof_verification_method: &proof_verification_method,
         proof_public_key: &proof_key_bytes,
     };
     if arkret_sdk::mls::verify_minimal_metadata_author(&view, &claim).is_err() {

@@ -36,6 +36,7 @@ const MAX_CACHE_ENTRIES: usize = 4096;
 #[derive(Clone)]
 struct CacheEntry {
     key: Option<PublicKeyMaterial>,
+    authorize_event_id: Option<arkret_sdk::EventId>,
     expires_at_ms: u64,
     last_accessed_ms: u64,
 }
@@ -75,7 +76,21 @@ pub fn cached_device_signing_key(actor: &str, device: &str) -> CacheLookup {
     }
 }
 
-fn store_entry(actor: &str, device: &str, key: Option<PublicKeyMaterial>) {
+pub fn cached_device_authorize_event_id(actor: &str, device: &str) -> Option<arkret_sdk::EventId> {
+    let now = crate::clock::now_unix_ms();
+    let guard = CACHE.read().unwrap_or_else(|poison| poison.into_inner());
+    guard
+        .get(&cache_key(actor, device))
+        .filter(|entry| entry.expires_at_ms > now && entry.key.is_some())
+        .and_then(|entry| entry.authorize_event_id.clone())
+}
+
+fn store_entry(
+    actor: &str,
+    device: &str,
+    key: Option<PublicKeyMaterial>,
+    authorize_event_id: Option<arkret_sdk::EventId>,
+) {
     let now = crate::clock::now_unix_ms();
     let ttl = if key.is_some() {
         POSITIVE_TTL_MS
@@ -89,6 +104,7 @@ fn store_entry(actor: &str, device: &str, key: Option<PublicKeyMaterial>) {
         inserted.clone(),
         CacheEntry {
             key,
+            authorize_event_id,
             expires_at_ms: now.saturating_add(ttl),
             last_accessed_ms: now,
         },
@@ -124,7 +140,7 @@ fn accepted_device_key(
     outcome: &arkret_models_crypto::KeysQueryOutcome,
     actor: &str,
     device: &str,
-) -> Option<PublicKeyMaterial> {
+) -> Option<(PublicKeyMaterial, arkret_sdk::EventId)> {
     let actor = arkret_sdk::Did::new(actor.to_owned()).ok()?;
     let device = arkret_sdk::DeviceId::new(device.to_owned()).ok()?;
     let record = outcome.device_keys.get(&actor)?.get(&device)?;
@@ -132,10 +148,11 @@ fn accepted_device_key(
     if !record.is_usable_in_generation(Some(generation)) {
         return None;
     }
-    record
+    let key = record
         .device_signing_key
         .as_deref()
-        .and_then(public_key_from_directory_value)
+        .and_then(public_key_from_directory_value)?;
+    Some((key, record.device_authorize_event_id.clone()?))
 }
 
 pub async fn resolve_device_signing_key(
@@ -154,8 +171,10 @@ pub async fn resolve_device_signing_key_with_http(
     device: &str,
 ) -> anyhow::Result<Option<PublicKeyMaterial>> {
     let outcome = crate::transport::keys::query_keys(sdk_http, actor, device).await?;
-    let key = accepted_device_key(&outcome, actor, device);
-    store_entry(actor, device, key.clone());
+    let resolved = accepted_device_key(&outcome, actor, device);
+    let key = resolved.as_ref().map(|(key, _)| key.clone());
+    let authorize_event_id = resolved.map(|(_, event_id)| event_id);
+    store_entry(actor, device, key.clone(), authorize_event_id);
     Ok(key)
 }
 
@@ -330,10 +349,10 @@ pub fn invalidate_actor(actor: &str) -> usize {
 
 #[cfg(test)]
 pub(crate) fn seed_positive_for_test(actor: &str, device: &str, key: PublicKeyMaterial) {
-    store_entry(actor, device, Some(key));
+    store_entry(actor, device, Some(key), None);
 }
 
 #[cfg(test)]
 pub(crate) fn seed_negative_for_test(actor: &str, device: &str) {
-    store_entry(actor, device, None);
+    store_entry(actor, device, None, None);
 }

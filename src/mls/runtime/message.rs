@@ -86,6 +86,10 @@ pub(crate) struct WelcomeConsumeCandidate {
     pub(crate) strand_id: Option<String>,
     pub(crate) mls_group_id: String,
     pub(crate) epoch: u64,
+    pub(crate) welcome_digest: arkret_sdk::Hash,
+    /// Present only for a peer claim whose purpose is the replacement-repair
+    /// profile and whose exact target ref matches the Welcome payload.
+    pub(crate) repair_target_keypackage_ref: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1074,11 +1078,28 @@ fn welcome_consume_candidate(
 ) -> Option<WelcomeConsumeCandidate> {
     let payload =
         serde_json::from_value::<arkret_sdk::MlsWelcomePayload>(entry.content.clone()).ok()?;
-    let strand_id = payload
-        .peer_claim_receipt
-        .as_ref()
-        .and_then(|receipt| receipt.request.strand_id.as_ref())
-        .map(ToString::to_string);
+    let (strand_id, repair_target_keypackage_ref) = match &payload.claim_receipt {
+        arkret_sdk::MlsWelcomeClaimReceipt::SelfClaim(receipt) => {
+            (receipt.request.strand_id.as_ref().map(ToString::to_string), None)
+        }
+        arkret_sdk::MlsWelcomeClaimReceipt::PeerClaim(receipt) => {
+            let repair_target = if receipt.request.claim_purpose
+                == arkret_sdk::PeerKeyPackageClaimPurpose::DirectConversationRepair
+            {
+                let target = receipt.request.target_keypackage_ref.as_ref()?;
+                if target.as_str() != payload.keypackage_ref.as_str() {
+                    return None;
+                }
+                Some(target.as_str().to_owned())
+            } else {
+                None
+            };
+            (
+                receipt.request.strand_id.as_ref().map(ToString::to_string),
+                repair_target,
+            )
+        }
+    };
     Some(WelcomeConsumeCandidate {
         key_package_id: entry.key_package_id.clone()?,
         claim_id: payload.claim_id.as_str().to_owned(),
@@ -1087,6 +1108,8 @@ fn welcome_consume_candidate(
         strand_id,
         mls_group_id: payload.mls_group_id.as_str().to_owned(),
         epoch: payload.epoch,
+        welcome_digest: payload.claim_envelope.welcome_digest,
+        repair_target_keypackage_ref,
     })
 }
 
@@ -1221,11 +1244,22 @@ fn decode_welcome_envelope(
             "durable Welcome ciphertext differs from claim_envelope.welcome_digest".to_owned(),
         );
     }
+    let recipient_device_id = match durable.recipient {
+        arkret_sdk::MlsWelcomeRecipient::Device {
+            recipient_device_id,
+        } => recipient_device_id,
+        arkret_sdk::MlsWelcomeRecipient::NativeAgent { .. } => {
+            return Err(
+                "Native Agent Welcome cannot be mapped to an ak:device recipient; the Agent runtime endpoint must consume it through the Native Agent branch"
+                    .to_owned(),
+            );
+        }
+    };
     Ok(arkret_sdk::MlsWelcomeEnvelope {
         group_id: durable.mls_group_id.as_str().to_owned(),
         epoch: durable.epoch,
         recipient_principal_id: durable.recipient_principal_id,
-        recipient_device_id: durable.recipient_device_id,
+        recipient_device_id,
         welcome: ciphertext,
         welcome_hash,
         ratchet_tree: None,
@@ -1265,31 +1299,79 @@ fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Re
         .validate_signature_shape()
         .map_err(|reason| format!("claim_envelope signature shape: {reason}"))?;
 
-    let arkret_sdk::MlsRequesterTrustBinding::RequesterDeviceId(requester_device_id) =
-        &envelope.trust_binding;
+    let (requester_full_id, requester_device_id, requester_authorize_event_id) = match &envelope
+        .trust_binding
+    {
+        arkret_sdk::MlsRequesterTrustBinding::RequesterDevice {
+            requester_device_id,
+            requester_device_authorize_event_id,
+        } => {
+            let controller = envelope
+                .signature
+                .kid
+                .as_str()
+                .split_once('#')
+                .map(|(controller, _)| controller)
+                .ok_or_else(|| {
+                    "claim_envelope device signature kid has no DID URL fragment".to_owned()
+                })?;
+            let full_id = arkret_sdk::FullId::new(controller.to_owned())
+                .map_err(|error| format!("claim_envelope requester FullId: {error}"))?;
+            let projected = arkret_sdk::project_full_id_to_core_id(&full_id)
+                .map_err(|error| format!("claim_envelope requester CoreId projection: {error}"))?;
+            if projected != envelope.requester_did {
+                return Err(
+                    "claim_envelope signature controller does not project to requester core id"
+                        .to_owned(),
+                );
+            }
+            (
+                full_id,
+                requester_device_id,
+                requester_device_authorize_event_id,
+            )
+        }
+        arkret_sdk::MlsRequesterTrustBinding::RequesterNativeAgent { .. } => {
+            return Err(
+                    "Native Agent claim_envelope verification is unavailable until current AgentSignerEvidence observation is normatively bound to this Welcome"
+                        .to_owned(),
+                );
+        }
+    };
+    let requester_full_id = requester_full_id.as_str();
     let requester_device_id = requester_device_id.as_str();
-    let requester_did = envelope.requester_did.as_str();
+    if crate::identity::device_directory::cached_device_authorize_event_id(
+        requester_full_id,
+        requester_device_id,
+    )
+    .as_ref()
+        != Some(requester_authorize_event_id)
+    {
+        return Err(format!(
+            "claim_envelope device authorization is not the current accepted Event for {requester_full_id}/{requester_device_id}"
+        ));
+    }
     let verifying_key = match crate::identity::device_directory::cached_device_signing_key(
-        requester_did,
+        requester_full_id,
         requester_device_id,
     ) {
         crate::identity::device_directory::CacheLookup::Hit(material) => {
             let bytes = material.ed25519_bytes().map_err(|err| {
-                format!("claim_envelope signer key decode ({requester_did}/{requester_device_id}): {err}")
+                format!("claim_envelope signer key decode ({requester_full_id}/{requester_device_id}): {err}")
             })?;
             VerifyingKey::from_bytes(&bytes).map_err(|err| {
-                format!("claim_envelope signer key invalid ({requester_did}/{requester_device_id}): {err}")
+                format!("claim_envelope signer key invalid ({requester_full_id}/{requester_device_id}): {err}")
             })?
         }
         crate::identity::device_directory::CacheLookup::NegativeHit => {
             return Err(format!(
-                "claim_envelope signer {requester_did}/{requester_device_id} is revoked / \
+                "claim_envelope signer {requester_full_id}/{requester_device_id} is revoked / \
                  absent in directory (negative verdict); Welcome rejected (YGN-SEC-01)"
             ));
         }
         crate::identity::device_directory::CacheLookup::Miss => {
             return Err(format!(
-                "claim_envelope signer key for {requester_did}/{requester_device_id} not in \
+                "claim_envelope signer key for {requester_full_id}/{requester_device_id} not in \
                  device-directory cache; fail-closed (YGN-SEC-01)"
             ));
         }
@@ -1692,7 +1774,12 @@ pub(crate) fn encrypt_values_with_device_snapshot(
     let aad_realm_id = arkret_sdk::RealmId::new(realm_id.to_owned()).map_err(|error| {
         MlsRuntimeError::Serialize(format!("invalid Realm id for encrypted AAD: {error:?}"))
     })?;
-    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(aad_realm_id, "ak.strand.update");
+    let aad_scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: aad_realm_id,
+    };
+    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(&aad_scope, "ak.strand.update").map_err(
+        |error| MlsRuntimeError::Serialize(format!("invalid scope for encrypted AAD: {error:?}")),
+    )?;
     encrypt_values_with_device_snapshot_for_effective_scope(
         state_store,
         secure_store,

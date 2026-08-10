@@ -875,6 +875,28 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
                 key_package_id, consume.failures
             ));
         }
+        if let Some(target_keypackage_ref) = candidate.repair_target_keypackage_ref.as_deref() {
+            let advanced = state_store
+                .write()
+                .record_consumed_direct_conversation_repair_welcome(
+                    &candidate.realm_id,
+                    target_keypackage_ref,
+                    candidate.welcome_digest.clone(),
+                )
+                .map_err(|error| format!("persist consumed repair Welcome: {error}"))?;
+            if advanced.is_some() {
+                // The replacement-generation activation gate opens only after
+                // both the local MLS snapshot and this exact consume result
+                // have crossed the durable account-state boundary.
+                state_store
+                    .read()
+                    .begin_durable_flush()
+                    .map_err(|error| format!("begin durable repair Welcome persist: {error}"))?
+                    .wait()
+                    .await
+                    .map_err(|error| format!("persist repair Welcome state: {error}"))?;
+            }
+        }
     }
 
     if applied > 0 {

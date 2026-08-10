@@ -1095,19 +1095,22 @@ fn spawn_provision_agent(
         {
             Ok(AgentProvisionOutcome::AwaitingControllerEvent {
                 agent_id,
-                principal_control_realm_id,
                 controller_realm_id,
                 allocation_handle,
                 controller_authorization_ref,
                 requested_scope_digest,
             }) => (
                 agent_id,
-                principal_control_realm_id,
                 controller_realm_id,
                 allocation_handle,
                 controller_authorization_ref,
                 requested_scope_digest,
             ),
+            Ok(AgentProvisionOutcome::AwaitingPcrGenesis { .. }) => {
+                last_op_status
+                    .set("Create failed: prepare returned a committed allocation".to_owned());
+                return;
+            }
             Ok(AgentProvisionOutcome::Complete { .. }) => {
                 last_op_status
                     .set("Create failed: prepare returned a completed allocation".to_owned());
@@ -1120,7 +1123,6 @@ fn spawn_provision_agent(
         };
         let (
             agent_id,
-            principal_control_realm_id,
             controller_realm_id,
             allocation_handle,
             controller_authorization_ref,
@@ -1141,6 +1143,45 @@ fn spawn_provision_agent(
             last_op_status.set("Create failed: server allocation scope digest mismatch".to_owned());
             return;
         }
+        // Freeze and sign the exact managed-Agent PCR create before authoring
+        // the provision Event.  Its content-derived EventId is the only source
+        // of the PCR Realm id carried by that provision declaration.
+        let frozen_genesis = match with_event_submitter(
+            &base,
+            api_token.clone(),
+            {
+                let agent_id = agent_id.clone();
+                let controller_id = controller_id.clone();
+                let controller_authorization_ref = controller_authorization_ref.clone();
+                move |submitter| async move {
+                    let describe = submitter.events_describe().await?;
+                    let draft = crate::event_builders::build_managed_agent_pcr_create_event(
+                        agent_id.as_str(),
+                        controller_id.as_str(),
+                        controller_authorization_ref.as_str(),
+                        describe.trust_domain.as_str(),
+                    )?;
+                    submitter
+                        .prepare_sdk_events_batch(vec![draft])
+                        .await?
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| anyhow::anyhow!("prepared managed Agent PCR genesis is missing"))
+                }
+            },
+        )
+        .await
+        {
+            Ok(value) => value,
+            Err(error) => {
+                last_op_status.set(format!(
+                    "Create failed: freeze managed Agent PCR genesis: {}",
+                    error.display()
+                ));
+                return;
+            }
+        };
+        let principal_control_realm_id = frozen_genesis.realm_id.clone();
         let draft = match build_agent_provision_event_draft(
             &controller_id,
             &controller_realm_id,
@@ -1181,12 +1222,80 @@ fn spawn_provision_agent(
             idempotency_key,
             agent_id: agent_id.clone(),
             principal_control_realm_id: principal_control_realm_id.clone(),
-            allocation_handle,
+            allocation_handle: allocation_handle.clone(),
             slug: slug.clone(),
             requested_scope,
             provision_event: Box::new(provision_event),
             pairing_ttl_ms: None,
         };
+        let commit_for_first_request = commit.clone();
+        let awaiting =
+            match with_authed_sdk_client(&base, api_token.clone(), move |http| async move {
+                http.agent_provision(&commit_for_first_request)
+                    .await
+                    .map_err(anyhow::Error::from)
+            })
+            .await
+            {
+                Ok(AgentProvisionOutcome::AwaitingPcrGenesis {
+                    agent_id: returned_agent_id,
+                    principal_control_realm_id: returned_realm_id,
+                    allocation_handle: returned_allocation,
+                    controller_authorization_ref: returned_authorization,
+                    requested_scope_digest: returned_digest,
+                }) if returned_agent_id == agent_id
+                    && returned_realm_id == principal_control_realm_id
+                    && returned_allocation == allocation_handle
+                    && returned_authorization == controller_authorization_ref
+                    && returned_digest == expected_digest => (),
+                Ok(AgentProvisionOutcome::AwaitingPcrGenesis { .. }) => {
+                    last_op_status.set(
+                        "Create failed: commit returned mismatched PCR authoring coordinates"
+                            .to_owned(),
+                    );
+                    return;
+                }
+                Ok(AgentProvisionOutcome::Complete { .. }) => {
+                    last_op_status.set(
+                        "Create failed: commit completed before the declared PCR genesis was submitted"
+                            .to_owned(),
+                    );
+                    return;
+                }
+                Ok(AgentProvisionOutcome::AwaitingControllerEvent { .. }) => {
+                    last_op_status
+                        .set("Create failed: commit returned another preparation".to_owned());
+                    return;
+                }
+                Err(error) => {
+                    last_op_status.set(format!("Create failed: {}", error.display()));
+                    return;
+                }
+            };
+        let _ = awaiting;
+        let genesis_idempotency_key = frozen_genesis.event_id.to_string();
+        let genesis_for_submit = frozen_genesis.clone();
+        if let Err(error) = with_event_submitter(
+            &base,
+            api_token.clone(),
+            move |submitter| async move {
+                submitter
+                    .submit_signed_sdk_events_batch(
+                        std::slice::from_ref(&genesis_for_submit),
+                        Some(&genesis_idempotency_key),
+                    )
+                    .await
+                    .map(|_| ())
+            },
+        )
+        .await
+        {
+            last_op_status.set(format!(
+                "Agent provision accepted, but PCR genesis submission failed: {}",
+                error.display()
+            ));
+            return;
+        }
         let outcome =
             match with_authed_sdk_client(&base, api_token.clone(), move |http| async move {
                 http.agent_provision(&commit)
@@ -1196,9 +1305,16 @@ fn spawn_provision_agent(
             .await
             {
                 Ok(AgentProvisionOutcome::Complete { outcome }) => outcome,
+                Ok(AgentProvisionOutcome::AwaitingPcrGenesis { .. }) => {
+                    last_op_status.set(
+                        "Create failed: PCR genesis was accepted but provisioning did not finalize"
+                            .to_owned(),
+                    );
+                    return;
+                }
                 Ok(AgentProvisionOutcome::AwaitingControllerEvent { .. }) => {
                     last_op_status
-                        .set("Create failed: commit returned another preparation".to_owned());
+                        .set("Create failed: final commit returned another preparation".to_owned());
                     return;
                 }
                 Err(error) => {

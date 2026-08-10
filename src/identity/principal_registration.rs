@@ -4,6 +4,7 @@ use anyhow::{Context as _, anyhow};
 use arkret_sdk::EventPayloadExt as _;
 use chrono::{Timelike as _, Utc};
 use dioxus::prelude::WritableExt as _;
+use sha2::{Digest as _, Sha256};
 use url::Url;
 
 use crate::state::{
@@ -86,6 +87,7 @@ pub fn prepare_registration_checkpoint(
         genesis_hlc,
         genesis_salt: arkret_sdk::GenesisSalt::generate()?.into_string(),
         binding_receipt: None,
+        principal_service_binding: None,
         stage: PendingPrincipalRegistrationStage::CustodyConfirmed,
     })
 }
@@ -203,6 +205,7 @@ pub fn recover_registration_checkpoint_from_reservation(
         genesis_hlc,
         genesis_salt: arkret_sdk::GenesisSalt::generate()?.into_string(),
         binding_receipt: None,
+        principal_service_binding: None,
         stage: PendingPrincipalRegistrationStage::CustodyConfirmed,
     })
 }
@@ -351,6 +354,63 @@ pub struct IdentityBindingCompletion {
     pub session_grant: garth::SessionGrantState,
     pub session_private_key_pem: String,
     pub dpop_device_key: crate::state::DpopDeviceKeyRecord,
+}
+
+/// Install the immutable principal-to-Principal-Server binding immediately
+/// after registration.  The request id is deterministic for this principal
+/// and service, so prepare/commit response loss reuses the frozen challenge and
+/// the byte-identical Ed25519 signature instead of creating another history
+/// generation.
+pub async fn ensure_principal_service_binding(
+    http: &arkret_sdk::http_client::Client,
+    principal_id: &arkret_sdk::Did,
+    signer: &crate::event_signer::InksonEventSigner,
+) -> anyhow::Result<arkret_sdk::AcceptedAtServiceBinding> {
+    let request_seed = format!(
+        "arkret.principal-service-binding.v1\0{}\0{}",
+        principal_id,
+        http.base_url()
+    );
+    let request_id = arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
+        Sha256::digest(request_seed.as_bytes()),
+    ))?;
+    let prepare_request = arkret_sdk::PrincipalServiceBindingPrepareRequestBody {
+        request_id: request_id.clone(),
+        expected_current_binding_digest: None,
+    };
+    let prepared = http
+        .principal_service_binding_prepare(&prepare_request)
+        .await?;
+    prepared.validate_shape()?;
+    if prepared.request_id != request_id
+        || prepared.binding_draft.principal_id != *principal_id
+    {
+        anyhow::bail!("principal service binding prepare returned foreign authoring material");
+    }
+    let verification_method = signer.verification_method_for_principal(principal_id)?;
+    let signing_input = prepared.binding_draft.proof_signing_input_bytes(
+        arkret_sdk::PrincipalServiceBindingProofPurpose::PrincipalAuthorization,
+        &verification_method,
+    )?;
+    let signature = arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
+        signer.sign_raw(&signing_input)?,
+    ))?;
+    let commit = arkret_sdk::PrincipalServiceBindingCommitRequestBody {
+        request_id,
+        challenge_id: prepared.challenge_id,
+        binding_digest: prepared.binding_draft.binding_digest.clone(),
+        principal_authorization_proof: arkret_sdk::ProtocolSignature {
+            verification_method,
+            created_at: prepared.binding_draft.accepted_at,
+            jws: signature,
+        },
+    };
+    let outcome = http.principal_service_binding_commit(&commit).await?;
+    outcome.binding.validate_shape()?;
+    if outcome.binding.core() != prepared.binding_draft {
+        anyhow::bail!("principal service binding commit changed the frozen binding core");
+    }
+    Ok(outcome.binding)
 }
 
 pub async fn complete_account_handoff_binding(

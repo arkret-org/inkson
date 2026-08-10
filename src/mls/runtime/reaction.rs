@@ -187,7 +187,11 @@ pub fn encrypt_reaction_with_device_snapshot(
         .map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
     let aad_realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
         .map_err(|err| MlsRuntimeError::Serialize(format!("invalid AAD realm id: {err}")))?;
-    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(aad_realm_id, "ak.reaction.add");
+    let aad_scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: aad_realm_id,
+    };
+    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(&aad_scope, "ak.reaction.add")
+        .map_err(|err| MlsRuntimeError::Serialize(format!("invalid AAD scope: {err}")))?;
     let encrypted_payload = group
         .encrypt_payload_with_aad(REACTION_ENCRYPTED_CONTENT_TYPE, Some(aad), &plaintext)
         .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))?;

@@ -243,9 +243,9 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
             fresh_summary.as_ref(),
         )?
     };
-    let aad_realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
-        .map_err(|error| format!("invalid Realm id for encrypted AAD: {error:?}"))?;
-    let envelope_aad = arkret_sdk::EncryptedEnvelopeAad::hidden(aad_realm_id, "ak.strand.update");
+    let envelope_aad =
+        arkret_sdk::EncryptedEnvelopeAad::hidden(&effective_scope, "ak.strand.update")
+            .map_err(|error| format!("invalid scope for encrypted AAD: {error:?}"))?;
     let (
         schedule_hash,
         _member_dids,

@@ -1413,6 +1413,36 @@ async fn finish_principal_setup(
         );
     }
 
+    if registration.principal_service_binding.is_none() {
+        let principal_id = arkret_sdk::Did::new(actor.to_owned())?;
+        let signer = crate::event_signer::active_signer()
+            .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
+        if signer.device_id() != Some(device) {
+            anyhow::bail!("active signer does not match the founding PCR device");
+        }
+        let binding = crate::transport::auth::with_authed_sdk_client(
+            base_url,
+            active_session.clone(),
+            move |http| async move {
+                crate::identity::principal_registration::ensure_principal_service_binding(
+                    &http,
+                    &principal_id,
+                    signer.as_ref(),
+                )
+                .await
+            },
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!(error.display()))?;
+        registration.principal_service_binding = Some(binding);
+        let barrier = {
+            let mut store = state_store.write();
+            store.set_pending_principal_registration(Some(registration.clone()))?;
+            store.begin_durable_flush()?
+        };
+        barrier.wait().await?;
+    }
+
     let bootstrap_seal: arkret_sdk::Seal = match registration.pcr_bootstrap_seal.clone() {
         Some(seal) => seal,
         None => {

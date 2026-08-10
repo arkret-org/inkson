@@ -2618,16 +2618,27 @@ impl EventSubmitter {
                 &crate::operation::cell_write_projector,
             )
             .is_ok();
-        let is_ordinary_realm_bootstrap =
-            if first_is_realm_create && !is_identity_anchor_unit && !is_managed_agent_pcr_create {
+        let is_direct_conversation_founding = first_is_realm_create
+            && events.len() == 3
+            && arkret_sdk::DirectConversationFoundingPlan::from_events([
+                &events[0], &events[1], &events[2],
+            ])
+            .is_ok();
+        let is_ordinary_realm_bootstrap = if first_is_realm_create
+            && !is_identity_anchor_unit
+            && !is_managed_agent_pcr_create
+            && !is_direct_conversation_founding
+        {
                 arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(&events)
                     .map_err(|error| anyhow::anyhow!(error.reason_code()))?;
                 true
             } else {
                 false
             };
-        let is_genesis_unit =
-            is_ordinary_realm_bootstrap || is_identity_anchor_unit || is_managed_agent_pcr_create;
+        let is_genesis_unit = is_ordinary_realm_bootstrap
+            || is_identity_anchor_unit
+            || is_managed_agent_pcr_create
+            || is_direct_conversation_founding;
         for event in &mut events {
             attach_capability_grant_payload_proof(event)?;
         }
@@ -2707,6 +2718,12 @@ impl EventSubmitter {
         if is_ordinary_realm_bootstrap {
             arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(&events)
                 .map_err(|error| anyhow::anyhow!(error.reason_code()))?;
+        }
+        if is_direct_conversation_founding {
+            arkret_sdk::DirectConversationFoundingPlan::from_events([
+                &events[0], &events[1], &events[2],
+            ])
+            .map_err(|error| anyhow::anyhow!("prepared Direct Conversation founding unit: {error}"))?;
         }
         for (index, event) in events.iter_mut().enumerate() {
             if event.proofs.is_empty() {

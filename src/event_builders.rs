@@ -555,40 +555,130 @@ pub fn build_realm_create_event(
 /// controller only executes the Event under the DID delegation returned by
 /// provisioning.
 pub fn build_managed_agent_pcr_create_event(
-    _agent_id: &str,
-    _controller_id: &str,
-    _controller_authorization_ref: &str,
-    _trust_domain: &str,
-) -> anyhow::Result<arkret_sdk::Event> {
-    Err(crate::identity::principal_control::unavailable(
-        "managed Agent provision prepare",
-    ))
-}
-
-pub fn build_managed_agent_pcr_bootstrap_events(
-    // The committed provision DTO does not carry an exact create draft/Event,
-    // so this remains fail-closed until an event-derived id carrier exists.
     agent_id: &str,
     controller_id: &str,
     controller_authorization_ref: &str,
     trust_domain: &str,
-    provision_event_id: arkret_sdk::EventId,
+) -> anyhow::Result<arkret_sdk::Event> {
+    let created_at = event_timestamp();
+    let payload = arkret_bootstrap::build_managed_agent_pcr_create_payload(
+        arkret_bootstrap::ManagedAgentPcrCreatePayloadInput {
+            agent_id: arkret_sdk::Did::new(agent_id.to_owned())?,
+            controller_id: arkret_sdk::Did::new(controller_id.to_owned())?,
+            genesis_salt: arkret_sdk::GenesisSalt::generate()?,
+            trust_domain: arkret_sdk::TypedTrustDomainId::new(trust_domain.to_owned())?,
+            capability_action_registry_digest:
+                arkret_sdk::current_capability_action_registry_digest()?,
+            created_at,
+        },
+    )?;
+    let cell = arkret_wire::null_subject_cell(arkret_wire::CellFamilyId::REALM_CREATE_V1);
+    TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmCreate>(
+        // `RealmCreate` serializes `realm_genesis`; this placeholder is never
+        // carried and is replaced by retype(the finalized EventId).
+        "ak:realm:ASyOHakrqmsRPkLKvhTD20V-YWCl-X7zYrlca5tdQLaR",
+        agent_id,
+        payload,
+    )
+    .executed_by(controller_id)
+    .authorization_ref(controller_authorization_ref)
+    .preconditions(vec![head_eq_precondition(&cell, Value::Null)?])
+    .requirements(event_requirements_with_schema("ak.schema.realm_genesis.v1"))
+    .created_at(created_at)
+    .build_sdk_event("inkson")
+}
+
+pub fn build_managed_agent_pcr_bootstrap_events(
+    agent_id: &str,
+    controller_id: &str,
+    controller_authorization_ref: &str,
+    trust_domain: &str,
 ) -> anyhow::Result<Vec<arkret_sdk::Event>> {
-    let mut create = build_managed_agent_pcr_create_event(
+    let create = build_managed_agent_pcr_create_event(
         agent_id,
         controller_id,
         controller_authorization_ref,
         trust_domain,
     )?;
-    create.refs = vec![arkret_bootstrap::managed_agent_provision_ref(
-        provision_event_id,
-    )];
     let events = vec![create];
     arkret_bootstrap::materialize_managed_agent_pcr_control(
         &events,
         &crate::operation::cell_write_projector,
     )
     .map_err(|error| anyhow::anyhow!("managed Agent PCR bootstrap is invalid: {error}"))?;
+    Ok(events)
+}
+
+/// Build the closed three-Event Direct Conversation founding unit from the
+/// resolver's verbatim authoring material.  All identifiers are derived from
+/// the finalized Event bytes; no service allocation or local UUID participates.
+pub fn build_direct_conversation_founding_events(
+    founder_id: &arkret_sdk::Did,
+    peer_id: &arkret_sdk::Did,
+    input: &arkret_sdk::DirectConversationFoundingInput,
+) -> anyhow::Result<Vec<arkret_sdk::Event>> {
+    let created_at = event_timestamp();
+    let create_payload = arkret_sdk::direct_conversation_realm_create_payload(
+        arkret_sdk::GenesisSalt::generate()?,
+        arkret_sdk::TypedTrustDomainId::new(input.source_service_binding.trust_domain.clone())?,
+        arkret_sdk::NotaryProfile::SingleDid,
+        arkret_sdk::NotaryValue::single_did(founder_id.clone()),
+        arkret_sdk::current_capability_action_registry_digest()?,
+        created_at,
+    )?;
+    let create_cell = arkret_wire::null_subject_cell(arkret_wire::CellFamilyId::REALM_CREATE_V1);
+    let create = TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmCreate>(
+        "ak:realm:ASyOHakrqmsRPkLKvhTD20V-YWCl-X7zYrlca5tdQLaR",
+        founder_id.as_str(),
+        create_payload,
+    )
+    .preconditions(vec![head_eq_precondition(&create_cell, Value::Null)?])
+    .requirements(event_requirements_with_schema("ak.schema.realm_genesis.v1"))
+    .created_at(created_at)
+    .build_sdk_event("inkson")?;
+
+    let realm_id = create.realm_id.clone();
+    let membership = arkret_sdk::direct_conversation_peer_membership_bootstrap(
+        realm_id.clone(),
+        founder_id,
+        [founder_id.clone(), peer_id.clone()],
+        arkret_sdk::DeliveryStatus::Unroutable,
+    )?;
+    let member_cell = format!(
+        "ak:cell:ak.component.member.state.v1:{}",
+        peer_id.as_str()
+    );
+    let mut member = TypedOperationBuilder::new::<arkret_sdk::event_spec::MemberState>(
+        realm_id.to_string(),
+        founder_id.as_str(),
+        membership,
+    )
+    .target_ref(peer_id.as_str())
+    .preconditions(vec![head_eq_precondition(&member_cell, Value::Null)?])
+    .created_at(created_at)
+    .build_sdk_event("inkson")?;
+    member.prev_refs = vec![create.event_id.clone()];
+    crate::operation::rederive_event_identity(&mut member)?;
+
+    let strand_payload = arkret_sdk::direct_conversation_main_strand_create_payload(
+        realm_id,
+        founder_id.clone(),
+        created_at,
+    );
+    let mut strand = TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandCreate>(
+        create.realm_id.to_string(),
+        founder_id.as_str(),
+        strand_payload,
+    )
+    .created_at(created_at)
+    .build_sdk_event("inkson")?;
+    strand.prev_refs = vec![member.event_id.clone()];
+    crate::operation::rederive_event_identity(&mut strand)?;
+
+    let events = vec![create, member, strand];
+    arkret_sdk::DirectConversationFoundingPlan::from_events([
+        &events[0], &events[1], &events[2],
+    ])?;
     Ok(events)
 }
 
@@ -1541,39 +1631,29 @@ mod notary_derivation_tests {
     use super::*;
 
     #[test]
-    fn managed_agent_pcr_prepare_fails_without_an_exact_create_draft() {
-        let error = build_managed_agent_pcr_create_event(
+    fn managed_agent_pcr_prepare_freezes_an_exact_create_draft() {
+        let event = build_managed_agent_pcr_create_event(
             "did:web:agent.example",
             "did:web:alice.example",
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
         )
-        .expect_err("provision prepare cannot predict an event-derived PCR id");
-
-        assert!(
-            error
-                .to_string()
-                .contains("authoritative event-derived PCR id")
-        );
+        .expect("controller must freeze an exact event-derived PCR create");
+        assert_eq!(event.kind, arkret_sdk::EventKind::RealmCreate);
+        assert!(event.refs.is_empty());
     }
 
     #[test]
-    fn managed_agent_pcr_bootstrap_fails_closed_without_an_exact_create_draft() {
-        let error = build_managed_agent_pcr_bootstrap_events(
+    fn managed_agent_pcr_bootstrap_contains_only_the_ref_free_create() {
+        let events = build_managed_agent_pcr_bootstrap_events(
             "did:web:agent.example",
             "did:web:alice.example",
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
-            arkret_sdk::EventId::new("ak:event:AStKv4uwui9iKv7StOHRotQgjBDBvjla-y05nQAwQaJf")
-                .unwrap(),
         )
-        .expect_err("bootstrap cannot predict an event-derived PCR id");
-
-        assert!(
-            error
-                .to_string()
-                .contains("authoritative event-derived PCR id")
-        );
+        .expect("bootstrap create is locally authorable before provision commit");
+        assert_eq!(events.len(), 1);
+        assert!(events[0].refs.is_empty());
     }
 
     #[test]
@@ -1731,19 +1811,16 @@ mod notary_derivation_tests {
     }
 
     #[test]
-    fn managed_agent_pcr_create_candidate_is_unavailable_without_registered_carrier() {
-        let error = build_managed_agent_pcr_create_event(
+    fn managed_agent_pcr_create_candidate_is_event_derived_and_ref_free() {
+        let event = build_managed_agent_pcr_create_event(
             "did:web:agent.example",
             "did:web:alice.example",
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
         )
-        .expect_err("managed Agent create must remain unavailable");
-        assert!(
-            error
-                .to_string()
-                .contains("authoritative event-derived PCR id")
-        );
+        .expect("managed Agent create is authorable from closed protocol inputs");
+        assert_eq!(event.realm_id, arkret_sdk::derive_genesis_realm_id(&event.event_id));
+        assert!(event.refs.is_empty());
     }
 
     #[test]

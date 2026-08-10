@@ -925,14 +925,15 @@ fn decrypt_sidecar_scoped_envelope(
 ) -> Option<Vec<u8>> {
     let envelope =
         serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(envelope_value.clone()).ok()?;
-    let payload_value =
-        serde_json::to_value(arkret_sdk::mls::encrypted_envelope_to_payload(&envelope).ok()?)
-            .ok()?;
-    let payload: arkret_sdk::EncryptedPayload = serde_json::from_value(payload_value).ok()?;
     let effective_scope = arkret_sdk::ScopeRef::Sidecar {
         realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?,
         sidecar_id: arkret_sdk::SidecarId::new(sidecar_id.to_owned()).ok()?,
     };
+    envelope.validate_for_scope(&effective_scope).ok()?;
+    let payload_value =
+        serde_json::to_value(arkret_sdk::mls::encrypted_envelope_to_payload(&envelope).ok()?)
+            .ok()?;
+    let payload: arkret_sdk::EncryptedPayload = serde_json::from_value(payload_value).ok()?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     crate::mls::runtime::decrypt_application_payload_for_scope(
         store,

@@ -1,7 +1,7 @@
 use serde_json::Value;
 use yoface::utils::text::short_protocol_id;
 
-use super::decrypt::try_local_mls_decrypt_core;
+use super::decrypt::try_local_mls_decrypt_core_for_scope;
 use super::model::ProjectionEvent;
 
 /// Read the sender identity from an account event projection envelope.
@@ -169,25 +169,27 @@ pub fn projection_events_from_sync_realms(
                 // canonical Content Block JSON → display text.
                 let decrypted_body = if sidecar_body.is_none() {
                     if let (Some((actor_id, device_id)), Some(store)) = (decrypt_identity, store) {
-                        serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(
-                            encrypted_content.clone(),
-                        )
-                        .ok()
-                        .and_then(|env| arkret_sdk::mls::encrypted_envelope_to_payload(&env).ok())
-                        .and_then(|payload| serde_json::to_value(payload).ok())
-                        .and_then(|payload_value| {
-                            try_local_mls_decrypt_core(
-                                store,
-                                message_realm,
-                                actor_id,
-                                device_id,
-                                &payload_value,
-                            )
-                        })
-                        .and_then(|plaintext| serde_json::from_slice::<Value>(&plaintext).ok())
-                        .and_then(|value| {
-                            projection_text_from_content_value(&value).map(ToOwned::to_owned)
-                        })
+                        event
+                            .get("scope_ref")
+                            .or_else(|| event.get("effective_scope"))
+                            .cloned()
+                            .and_then(|scope| {
+                                serde_json::from_value::<arkret_sdk::ScopeRef>(scope).ok()
+                            })
+                            .and_then(|effective_scope| {
+                                try_local_mls_decrypt_core_for_scope(
+                                    store,
+                                    message_realm,
+                                    actor_id,
+                                    device_id,
+                                    encrypted_content,
+                                    &effective_scope,
+                                )
+                            })
+                            .and_then(|plaintext| serde_json::from_slice::<Value>(&plaintext).ok())
+                            .and_then(|value| {
+                                projection_text_from_content_value(&value).map(ToOwned::to_owned)
+                            })
                     } else {
                         None
                     }

@@ -1549,6 +1549,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         )
         .await?;
     let failures = claim_outcome.failures;
+    let claim_receipt = arkret_sdk::MlsWelcomeClaimReceipt::SelfClaim(claim_outcome.claim_receipt);
     let claim = claim_outcome.claims.into_iter().next().ok_or_else(|| {
         let reason = failures
             .first()
@@ -1583,6 +1584,13 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         &device_id,
     )
     .await?;
+    let requester_device_authorize_event_id =
+        crate::mls::admission::current_requester_device_authorize_event_id(
+            &api.sdk_http_client()?,
+            &device_id,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
     let admission = {
         let store = state_store.read();
         crate::mls::admission::build_realm_mls_admission_events_from_claim(
@@ -1591,9 +1599,10 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             &realm_id,
             &actor_id,
             &device_id,
+            &requester_device_authorize_event_id,
             &claim,
             &claim_nonce,
-            None,
+            &claim_receipt,
         )
         .map_err(|err| anyhow::anyhow!(err))?
     };
@@ -2981,7 +2990,11 @@ pub(crate) async fn submit_mls_admission_for_invitees(
     )
     .await?;
 
-    let mut claims = Vec::<(arkret_sdk::KeyPackageClaimRecord, String)>::new();
+    let mut claims = Vec::<(
+        arkret_sdk::KeyPackageClaimRecord,
+        String,
+        arkret_sdk::MlsWelcomeClaimReceipt,
+    )>::new();
     let mls_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
     for invitee_did in invitees {
         let claim_nonce = crate::mls_api_helpers::generate_mls_claim_nonce()?;
@@ -3004,11 +3017,15 @@ pub(crate) async fn submit_mls_admission_for_invitees(
                 .unwrap_or_else(|| "no MLS KeyPackage was available for the invitee".to_owned());
             anyhow::anyhow!("{reason}")
         })?;
-        claims.push((claim, claim_nonce));
+        claims.push((
+            claim,
+            claim_nonce,
+            arkret_sdk::MlsWelcomeClaimReceipt::SelfClaim(claim_outcome.claim_receipt),
+        ));
     }
     // Refresh after the batch of claims to bind the Commit to the latest
     // accepted frontier observed after those network round trips.
-    let added_claims = claims.iter().map(|(claim, _)| claim).collect::<Vec<_>>();
+    let added_claims = claims.iter().map(|(claim, _, _)| claim).collect::<Vec<_>>();
     ensure_mls_governance_proof_for_next_commit(
         api,
         state_store,
@@ -3018,6 +3035,13 @@ pub(crate) async fn submit_mls_admission_for_invitees(
         &added_claims,
     )
     .await?;
+    let requester_device_authorize_event_id =
+        crate::mls::admission::current_requester_device_authorize_event_id(
+            &api.sdk_http_client()?,
+            &device_id,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
     let admission = {
         let store = state_store.read();
         crate::mls::admission::build_realm_mls_admission_events_from_claims(
@@ -3026,6 +3050,7 @@ pub(crate) async fn submit_mls_admission_for_invitees(
             &realm_id,
             &actor_id,
             &device_id,
+            &requester_device_authorize_event_id,
             &claims,
         )
         .map_err(|err| anyhow::anyhow!(err))?

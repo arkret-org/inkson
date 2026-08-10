@@ -147,10 +147,10 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
         .unwrap()
         .expect("creator snapshot");
 
-    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(
-        arkret_sdk::RealmId::new(realm).unwrap(),
-        "ak.message.create",
-    );
+    let aad_scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+    };
+    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(&aad_scope, "ak.message.create").unwrap();
     let (_, _, content_payload, metadata_payload, commit, snapshot, _, mention_routing_key) =
         encrypt_message_with_device_snapshot(
             &mut state,
@@ -1481,10 +1481,10 @@ async fn tier3_history_decrypt_reads_provider_exporter_aead_content() {
     // Provider encrypts content via exporter-aead, binding the typed routing
     // AAD, key reference and epoch in the immutable header, then exports the
     // epoch's history secret.
-    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(
-        arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
-        "ak.strand.update",
-    );
+    let aad_scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+    };
+    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(&aad_scope, "ak.strand.update").unwrap();
     let key_ref = arkret_sdk::KeyRefObject::mls_exporter_aead(alice_group.group_id(), epoch);
     let plaintext = br#"{"body":"pre-join history"}"#;
     let payload = alice_group
@@ -1557,10 +1557,10 @@ async fn tier3_history_decrypt_works_without_local_snapshot() {
     let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
     let epoch = alice_group.epoch();
 
-    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(
-        arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
-        "ak.strand.update",
-    );
+    let aad_scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+    };
+    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(&aad_scope, "ak.strand.update").unwrap();
     let key_ref = arkret_sdk::KeyRefObject::mls_exporter_aead(alice_group.group_id(), epoch);
     let plaintext = br#"{"body":"no-snapshot history"}"#;
     let payload = alice_group

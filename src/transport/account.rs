@@ -487,6 +487,85 @@ pub async fn direct_conversation_found(
     }
 }
 
+/// Dispatch one already-frozen requester-authorized repair trigger through
+/// the authenticated Principal Server. Remote service resolution, routing and
+/// target-device fan-out remain server responsibilities; Inkson retains only
+/// the exact request and the returned durable-enqueue receipt.
+pub async fn direct_conversation_repair_dispatch(
+    http: &arkret_sdk::http_client::Client,
+    request: &arkret_sdk::DirectConversationRepairDispatchRequest,
+) -> anyhow::Result<arkret_sdk::DirectConversationRepairEnqueueOutcome> {
+    request.validate_shape()?;
+    let outcome = http.direct_conversation_repair_dispatch(request).await?;
+    outcome.validate_shape()?;
+    Ok(outcome)
+}
+
+/// Extract the resolver's digest of the complete current active-generation
+/// cell value. Event ids and locally reconstructed payload digests are not
+/// substitutes for this CAS predecessor.
+pub(crate) fn direct_conversation_current_generation_value_digest(
+    outcome: &arkret_sdk::DirectConversationResolveOutcome,
+) -> anyhow::Result<arkret_sdk::Hash> {
+    outcome.validate_shape()?;
+    match outcome {
+        arkret_sdk::DirectConversationResolveOutcome::Found {
+            active_mls_generation_value_digest,
+            ..
+        }
+        | arkret_sdk::DirectConversationResolveOutcome::Provisional {
+            active_mls_generation_value_digest: Some(active_mls_generation_value_digest),
+            ..
+        }
+        | arkret_sdk::DirectConversationResolveOutcome::Suspended {
+            active_mls_generation_value_digest: Some(active_mls_generation_value_digest),
+            ..
+        } => Ok(active_mls_generation_value_digest.clone()),
+        _ => anyhow::bail!(
+            "Direct Conversation resolver omitted the current whole-value digest required for repair"
+        ),
+    }
+}
+
+/// Author, sign and durably submit the resolver-authorized closed founding
+/// unit.  The resolver material is copied verbatim; Garth persists the exact
+/// signed carrier before its first network attempt.
+pub async fn create_direct_conversation_from_resolve(
+    submitter: &crate::event_submit::EventSubmitter,
+    resolve: &arkret_sdk::DirectConversationResolveOutcome,
+    founder_id: &arkret_sdk::Did,
+    peer_id: &arkret_sdk::Did,
+) -> anyhow::Result<arkret_sdk::DirectConversationFoundingAcceptanceOutcome> {
+    let arkret_sdk::DirectConversationResolveOutcome::CreationRequired {
+        next_founding_input,
+    } = resolve
+    else {
+        anyhow::bail!("Direct Conversation resolver did not grant founding authority");
+    };
+    let events = crate::event_builders::build_direct_conversation_founding_events(
+        founder_id,
+        peer_id,
+        next_founding_input,
+    )?;
+    let signed = submitter.prepare_sdk_events_batch(events).await?;
+    let events: [arkret_sdk::EventInitialSubmission; 3] = signed
+        .into_iter()
+        .map(arkret_sdk::EventInitialSubmission::online)
+        .collect::<Vec<_>>()
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Direct Conversation founding unit lost its closed length"))?;
+    let prepared = arkret_sdk::DirectConversationFoundingUnitSubmission {
+        unit_kind: arkret_sdk::DirectConversationFoundingUnitKind::DirectConversationFounding,
+        idempotency_key: arkret_sdk::IdempotencyKey::new(crate::operation::uuid_v7())
+            .map_err(anyhow::Error::msg)?,
+        events,
+        founder_basis_evidence: next_founding_input.founder_basis_evidence.clone(),
+        source_service_binding: next_founding_input.source_service_binding.clone(),
+        cba_proof_bundles: Vec::new(),
+    };
+    direct_conversation_found(submitter, resolve, prepared).await
+}
+
 fn direct_conversation_peer_descriptor(
     peer: &str,
     peer_controller: Option<&str>,
@@ -533,7 +612,7 @@ pub(crate) fn direct_conversation_entry(
 ) -> DirectConversationEntry {
     use arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome as Outcome;
     match outcome {
-        Outcome::CreationRequired => DirectConversationEntry::ReadyToCreate,
+        Outcome::CreationRequired { .. } => DirectConversationEntry::ReadyToCreate,
         Outcome::AwaitingFounder { .. } => DirectConversationEntry::AwaitingFounder,
         Outcome::Provisional { .. } | Outcome::Found { .. } => DirectConversationEntry::Openable,
         Outcome::Suspended { .. } => DirectConversationEntry::Suspended,
@@ -1435,6 +1514,7 @@ mod tests {
                     "binding_event_ref": "ak:event:AZ6GqZWWvnQ2KFwbBD-MenomzWNz-31MUAuKzBXIP0zv"
                 },
                 "active_mls_generation_ref": "ak:event:AYzJYUhgTz2x0CgaGJf0NxMJJVlUkwYIF8Q-9PGE-gXn",
+                "active_mls_generation_value_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "send_blockers": []
             }))
             .expect("found Direct Conversation outcome");

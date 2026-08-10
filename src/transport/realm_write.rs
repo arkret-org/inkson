@@ -554,6 +554,9 @@ pub async fn repair_direct_conversation_self_rejoin(
     realm_id: &arkret_sdk::RealmId,
     actor_id: &arkret_sdk::Did,
 ) -> anyhow::Result<SubmitEventResult> {
+    // This low-level compatibility helper performs only the durable membership
+    // half. New callers should use `dispatch_direct_conversation_repair`, which
+    // freezes the resolver-provided whole-value digest and exact KeyPackage.
     // Resolve the fixed profile baseline up front. Repair must not manufacture
     // a policy Event and must not release old generation keys.
     crate::transport::account::direct_conversation_history_sharing_policy()?;
@@ -576,6 +579,246 @@ pub async fn repair_direct_conversation_self_rejoin(
             .map_err(anyhow::Error::msg)?,
     );
     submitter.submit_sdk_event(&event).await
+}
+
+/// Run the requester side of replacement repair through durable target
+/// enqueue. The accepted self-rejoin Event and the resolver's current
+/// whole-value digest author the exact request; every ambiguous retry reuses
+/// the Garth-retained canonical bytes. No remote endpoint or resolution record
+/// is persisted by the client.
+#[allow(clippy::too_many_arguments)]
+pub async fn dispatch_direct_conversation_repair(
+    submitter: &EventSubmitter,
+    http: &arkret_sdk::http_client::Client,
+    state_store: &mut crate::state::LocalStateStore,
+    resolve: &arkret_sdk::DirectConversationResolveOutcome,
+    requester_principal_id: arkret_sdk::CoreId,
+    requester_full_id: &arkret_sdk::Did,
+    requester_device_id: arkret_sdk::DeviceId,
+    source_service_id: arkret_sdk::CoreId,
+    target_service_id: arkret_sdk::CoreId,
+    target_keypackage_ref: arkret_sdk::NonEmptyString,
+) -> anyhow::Result<String> {
+    let requester_full = arkret_sdk::FullId::new(requester_full_id.as_str().to_owned())?;
+    if arkret_sdk::project_full_id_to_core_id(&requester_full)? != requester_principal_id {
+        anyhow::bail!("repair requester full_id does not project to requester principal core_id");
+    }
+    let coordinates = resolve
+        .coordinates()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("Direct Conversation repair requires resolved coordinates"))?;
+    if coordinates.binding_event_ref.is_none() {
+        anyhow::bail!("Direct Conversation repair requires an accepted binding coordinate");
+    }
+    let active_value_digest =
+        crate::transport::account::direct_conversation_current_generation_value_digest(resolve)?;
+    crate::transport::account::direct_conversation_history_sharing_policy()?;
+
+    let mut rejoin = build_member_state_transition_event(
+        coordinates.realm_id.as_str(),
+        requester_principal_id.as_str(),
+        requester_principal_id.as_str(),
+        Some("leave"),
+        "join",
+        "direct_conversation_self_rejoin",
+    )?;
+    rejoin.authorization_ref = Some(
+        arkret_sdk::AuthorizationRef::new(
+            "ak.authority.direct_conversation_repair.v1".to_owned(),
+        )
+        .map_err(anyhow::Error::msg)?,
+    );
+    // Resolve every fallible/remote signing prerequisite before authoring the
+    // self-rejoin. Once that Event is accepted, freezing and persisting the
+    // request is a synchronous local critical section with no network await.
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("Direct Conversation repair requires an active signer"))?;
+    if signer.device_id() != Some(requester_device_id.as_str()) {
+        anyhow::bail!("active signer is not bound to the repair requester device");
+    }
+    let verification_method = signer.verification_method_for_principal(requester_full_id)?;
+    let device_authorize_event_id =
+        crate::mls::admission::current_requester_device_authorize_event_id(
+            http,
+            requester_device_id.as_str(),
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let request_id = arkret_sdk::Base64UrlString::new(crate::random::base64url_token(
+        32,
+        "generate Direct Conversation repair request id",
+    )?)?;
+    let accepted = submitter.submit_sdk_event(&rejoin).await?;
+    let rejoin_event_id = arkret_sdk::EventId::new(accepted.event_id)?;
+    let created_at = crate::clock::now_utc_canonical();
+    let acceptance = garth::SelfRejoinAcceptance {
+        realm_id: coordinates.realm_id.clone(),
+        requester_principal_id: requester_principal_id.clone(),
+        rejoin_event_id: rejoin_event_id.clone(),
+        accepted_at: created_at,
+    };
+    let content = arkret_sdk::MemberRepairRequestPayload {
+        realm_id: coordinates.realm_id.clone(),
+        requester_principal_id: requester_principal_id.clone(),
+        requester: arkret_sdk::MemberRepairRequester::Device {
+            requester_device_id: requester_device_id.clone(),
+        },
+        requester_keypackage_ref: target_keypackage_ref.clone(),
+        observed_active_generation_value_digest: active_value_digest,
+        rejoin_event_id,
+        created_at,
+    };
+    let route = garth::DirectConversationRepairRoute {
+        source_service_id,
+        target_service_id,
+        coordinates,
+        target_keypackage_ref,
+    };
+    let mut planner = garth::DirectConversationRepairPlanner::new(route)?;
+    planner.observe_self_rejoin_accepted(acceptance, content.clone())?;
+
+    let signed_at = crate::clock::now_utc_canonical();
+    let mut request = arkret_sdk::DirectConversationRepairDispatchRequest {
+        request_id,
+        content,
+        requester_authorization: arkret_sdk::DirectConversationRepairAuthorization::Device {
+            requester_device_id,
+            verification_method: verification_method.clone(),
+            device_authorize_event_id,
+            signed_at,
+            signature: arkret_sdk::ProtocolSignature {
+                verification_method: verification_method.clone(),
+                created_at: signed_at,
+                jws: arkret_sdk::Base64UrlString::new("AA")?,
+            },
+        },
+    };
+    let signing_input = request.signing_input()?;
+    let signature = arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
+        signer.sign_raw(&signing_input)?,
+    ))?;
+    if let arkret_sdk::DirectConversationRepairAuthorization::Device {
+        signature: proof, ..
+    } = &mut request.requester_authorization
+    {
+        proof.jws = signature;
+    }
+    planner.freeze_signed_request(request.clone())?;
+    let request_id = state_store.save_direct_conversation_repair(&planner)?;
+    state_store.begin_durable_flush()?.wait().await?;
+
+    let outcome = match crate::transport::account::direct_conversation_repair_dispatch(http, &request).await {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            planner.record_dispatch_failure(error.to_string())?;
+            state_store.save_direct_conversation_repair(&planner)?;
+            state_store.begin_durable_flush()?.wait().await?;
+            return Err(error);
+        }
+    };
+    planner.record_enqueue_outcome(outcome)?;
+    state_store.save_direct_conversation_repair(&planner)?;
+    state_store.begin_durable_flush()?.wait().await?;
+    planner.confirm_enqueue_outcome_durable()?;
+    state_store.save_direct_conversation_repair(&planner)?;
+    state_store.begin_durable_flush()?.wait().await?;
+    Ok(request_id)
+}
+
+/// Resume a frozen dispatch after restart or an ambiguous transport failure.
+/// The request is loaded from durable state; callers cannot supply rebuilt
+/// fields, and the planner rechecks the retained canonical bytes before send.
+pub async fn retry_direct_conversation_repair_dispatch(
+    http: &arkret_sdk::http_client::Client,
+    state_store: &mut crate::state::LocalStateStore,
+    request_id: &str,
+) -> anyhow::Result<()> {
+    let mut planner = state_store
+        .direct_conversation_repair(request_id)?
+        .ok_or_else(|| anyhow::anyhow!("unknown Direct Conversation repair request"))?;
+    if !matches!(
+        planner.stage(),
+        garth::DirectConversationRepairStage::DispatchFrozen
+            | garth::DirectConversationRepairStage::DispatchRetryable
+    ) {
+        anyhow::bail!("Direct Conversation repair is not awaiting dispatch retry");
+    }
+    let request = planner
+        .snapshot()
+        .frozen_dispatch
+        .ok_or_else(|| anyhow::anyhow!("repair retry has no frozen dispatch"))?
+        .request;
+    planner.exact_retry_bytes(&request)?;
+    let outcome = match crate::transport::account::direct_conversation_repair_dispatch(
+        http, &request,
+    )
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            planner.record_dispatch_failure(error.to_string())?;
+            state_store.save_direct_conversation_repair(&planner)?;
+            state_store.begin_durable_flush()?.wait().await?;
+            return Err(error);
+        }
+    };
+    planner.record_enqueue_outcome(outcome)?;
+    state_store.save_direct_conversation_repair(&planner)?;
+    state_store.begin_durable_flush()?.wait().await?;
+    planner.confirm_enqueue_outcome_durable()?;
+    state_store.save_direct_conversation_repair(&planner)?;
+    state_store.begin_durable_flush()?.wait().await?;
+    Ok(())
+}
+
+/// Author replacement-generation activation only after the exact repair
+/// Welcome was consumed and durably recorded. The predecessor remains the
+/// resolver-provided whole current-cell value digest frozen in the request.
+pub async fn activate_direct_conversation_repair(
+    submitter: &EventSubmitter,
+    state_store: &mut crate::state::LocalStateStore,
+    request_id: &str,
+    actor_id: &arkret_sdk::CoreId,
+    payload: arkret_sdk::DirectConversationMlsGenerationActivatePayload,
+) -> anyhow::Result<SubmitEventResult> {
+    let planner = state_store
+        .direct_conversation_repair(request_id)?
+        .ok_or_else(|| anyhow::anyhow!("unknown Direct Conversation repair request"))?;
+    if planner.stage() != garth::DirectConversationRepairStage::WelcomeDurable {
+        anyhow::bail!("replacement generation cannot activate before exact Welcome consumption");
+    }
+    let snapshot = planner.snapshot();
+    let expected = snapshot
+        .expected_content
+        .as_ref()
+        .map(|content| &content.observed_active_generation_value_digest);
+    if payload.pair_key != snapshot.route.coordinates.pair_key
+        || payload.main_strand_id != snapshot.route.coordinates.main_strand_id
+        || payload.predecessor_active_value_digest.as_ref() != expected
+    {
+        anyhow::bail!("replacement activation differs from frozen repair coordinates or CAS digest");
+    }
+    payload.validate()?;
+    let mut event = build_realm_state_event::<
+        arkret_sdk::event_spec::DirectConversationMlsGenerationActivate,
+    >(
+        snapshot.route.coordinates.realm_id.as_str(),
+        actor_id.as_str(),
+        payload,
+    )?;
+    event.authorization_ref = Some(
+        arkret_sdk::AuthorizationRef::new(
+            "ak.authority.direct_conversation_repair.v1".to_owned(),
+        )
+        .map_err(anyhow::Error::msg)?,
+    );
+    let result = submitter.submit_sdk_event(&event).await?;
+    state_store.record_direct_conversation_repair_activation(
+        request_id,
+        arkret_sdk::EventId::new(result.event_id.clone())?,
+    )?;
+    state_store.begin_durable_flush()?.wait().await?;
+    Ok(result)
 }
 
 /// Archive a Realm via the reversible `ak.realm.archive` lifecycle facet.

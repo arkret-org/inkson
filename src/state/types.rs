@@ -707,6 +707,11 @@ pub struct PendingPrincipalRegistration {
     pub genesis_salt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binding_receipt: Option<Value>,
+    /// Principal-authored, service-accepted post-registration binding.  Kept
+    /// with the setup checkpoint until the entire recovery gate is durable so
+    /// response-loss replay never authors a second binding generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub principal_service_binding: Option<arkret_sdk::AcceptedAtServiceBinding>,
     pub stage: PendingPrincipalRegistrationStage,
 }
 
@@ -820,6 +825,14 @@ pub struct CachedAgentSignerEvidence {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
+    /// Crash-safe requester-side Direct Conversation replacement repairs,
+    /// keyed by the frozen dispatch `request_id`. The SDK/Garth snapshot owns
+    /// the canonical request bytes, digest, exact KeyPackage ref and stage.
+    /// It intentionally contains stable service core ids only: endpoint and
+    /// remote service-resolution authority remain Principal Server concerns.
+    #[serde(default)]
+    pub direct_conversation_repairs:
+        BTreeMap<String, garth::DirectConversationRepairSnapshot>,
     /// Highest verified `ak.key_backup.active_series` pointer observed per
     /// `(actor_id, backup_kind)`. This is rollback protection, not a cache:
     /// a complete server response below this floor must fail closed.
@@ -1364,6 +1377,7 @@ impl Default for ClientLocalState {
     fn default() -> Self {
         Self {
             sync_cursor: None,
+            direct_conversation_repairs: BTreeMap::new(),
             key_backup_active_series_highest_seen: BTreeMap::new(),
             realm_events_cursors: BTreeMap::new(),
             realm_scan_cursors: BTreeMap::new(),

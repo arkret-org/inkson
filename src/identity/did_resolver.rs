@@ -27,12 +27,12 @@ use arkret_sdk::identity::{
 use arkret_sdk::{Did, DidDocument};
 use chrono::{DateTime, Duration, Utc};
 
-/// Deployment profile drives which DID methods are accepted as principal.
+/// Deployment profile drives resolver policy for long-lived principals.
 ///
-/// Mirrors `spec/v1/zh/identity/identity-did.md` §3.3 / §3.4:
-/// - `PersonalNode`: `did:web` allowed as principal fallback.
-/// - `SmallTeam` / `Organization` / higher: principal MUST be `did:webvh`.
-/// - `Sovereign`: principal limited to a deployment-specific method list.
+/// Every deployment profile accepts only `did:webvh` for a durable principal.
+/// `did:web` is service-only, while an ephemeral pairwise `did:key` actor is
+/// verified against the exact accepted MLS LeafNode and never enters this
+/// principal resolver.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[expect(
     dead_code,
@@ -48,16 +48,8 @@ pub enum DeploymentProfile {
 
 impl DeploymentProfile {
     fn allowed_principal_methods(self) -> Vec<String> {
-        match self {
-            // did:key remains valid for device / bootstrap on every tier.
-            Self::PersonalNode => vec!["did:webvh:".into(), "did:web:".into(), "did:key:".into()],
-            Self::SmallTeam | Self::Organization | Self::HighSecurity => {
-                vec!["did:webvh:".into(), "did:key:".into()]
-            }
-            // Sovereign deployments configure their own method list; default to
-            // webvh + key and let callers extend via `policy_for()`.
-            Self::Sovereign => vec!["did:webvh:".into(), "did:key:".into()],
-        }
+        let _ = self;
+        vec!["did:webvh:".into()]
     }
 
     fn default_principal_method(self) -> &'static str {
@@ -80,8 +72,8 @@ pub fn policy_for(profile: DeploymentProfile) -> ResolverPolicy {
     }
 }
 
-/// Build a composite resolver chain with `did:web` + `did:webvh` + `did:key`
-/// adapters and the given policy. Documents must be ingested via the SDK
+/// Build a composite resolver chain with all method adapters and the strict
+/// long-lived-principal policy. Documents must be ingested via the SDK
 /// resolver APIs (`insert_from_https_response`, `ingest_log`, etc.) before
 /// `resolve()` will succeed for that DID.
 #[cfg(test)]
@@ -153,7 +145,8 @@ pub fn verify_principal(
 /// [`reqwest::Client`] (cross-platform — native + the wasm browser-fetch
 /// backend) and ingests it into the mutable resolvers via the SDK's offline
 /// helpers, fail-closed on any fetch / size / content-type / chain failure.
-/// `did:key` actors self-resolve and need no fetch.
+/// Ephemeral pairwise `did:key` actors never enter this resolver: their only
+/// valid trust anchor is the exact accepted Realm MLS LeafNode.
 ///
 /// The mutable resolvers + cache live behind [`std::sync::Mutex`] so the `&self`
 /// [`crate::identity::device_directory::DidAnchor`] trait can still back-fill resolved
@@ -335,16 +328,17 @@ impl ResolverDidAnchor {
     /// Inner async body for
     /// [`crate::identity::device_directory::DidAnchor::ensure_actor_document`].
     /// Fetches + ingests `actor`'s DID document via the SDK offline helpers,
-    /// fail-closed on any failure. `did:key` self-resolves (no fetch). A method
-    /// not allowed by the active policy is a no-op `false` — the synchronous
+    /// fail-closed on any failure. A method not allowed by the active policy
+    /// (including `did:key`) is a no-op `false` — the synchronous
     /// trait method then fails the policy gate too.
     async fn ingest_actor_document(&self, http: &reqwest::Client, actor: &Did) -> bool {
         if !policy_for(self.profile).permits(actor) {
             return false;
         }
         match actor.method() {
-            // did:key self-resolves via DidKeyResolver; no document to fetch.
-            "key" => true,
+            // Pairwise did:key is admitted only by exact accepted MLS leaf
+            // verification, never as a long-lived principal.
+            "key" => false,
             "web" => {
                 // P3.2c peek: if this actor's did.json is already ingested (a
                 // prior ensure already fetched it, or the cache was seeded),
@@ -986,18 +980,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ensure_actor_document_skips_fetch_for_did_key() {
-        // did:key self-resolves; ensure returns true without any network. We
-        // pass a default client that is never actually used for did:key.
+    async fn ensure_actor_document_rejects_pairwise_did_key() {
+        // Pairwise did:key is Realm/leaf-scoped and may not be promoted into
+        // the durable principal directory.
         let anchor = ResolverDidAnchor::from_profile(
             DeploymentProfile::PersonalNode,
             DidResolutionCache::new(8),
         );
         let did = parse("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK");
         let http = reqwest::Client::new();
-        assert!(anchor.ensure_actor_document(&http, &did).await);
-        // And the did:key document resolves through the composite chain.
-        assert!(anchor.resolve_did_document(&did).is_some());
+        assert!(!anchor.ensure_actor_document(&http, &did).await);
+        assert!(anchor.resolve_did_document(&did).is_none());
     }
 
     #[tokio::test]

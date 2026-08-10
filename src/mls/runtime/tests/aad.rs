@@ -25,13 +25,13 @@ fn minimal_metadata_aad_enforcement_is_fail_closed() {
 fn aad_visibility_inferred_from_canonical_aad_shape() {
     use arkret_sdk::EncryptedEnvelopeAadVisibility;
     // hidden() omits both event-id fields ⇒ Hidden.
-    let hidden = arkret_sdk::EncryptedEnvelopeAad::hidden(
-        arkret_sdk::RealmId::new(
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(
             "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-".to_owned(),
         )
         .unwrap(),
-        "ak.message.create",
-    );
+    };
+    let hidden = arkret_sdk::EncryptedEnvelopeAad::hidden(&scope, "ak.message.create").unwrap();
     assert_eq!(
         aad_visibility_of(&hidden),
         EncryptedEnvelopeAadVisibility::Hidden

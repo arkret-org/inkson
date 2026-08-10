@@ -443,7 +443,7 @@ fn ContactRow(
                                                                         ).await
                                                                     },
                                                                 ).await {
-                                                                    Ok(_) => row_status.set("Direct Conversation self-rejoin repair submitted; waiting for the replacement MLS generation.".to_owned()),
+                                                                    Ok(_) => row_status.set("Direct Conversation self-rejoin accepted. Replacement repair is paused because the resolver does not expose the active-generation cell digest required by ak.member.repair.request.".to_owned()),
                                                                     Err(error) => row_status.set(format!("Direct Conversation repair unavailable: {}", error.display())),
                                                                 },
                                                                 None => row_status.set(tr("contacts.dm.not_ready")),
@@ -465,7 +465,44 @@ fn ContactRow(
                                                 // This user is the founder: the conversation is
                                                 // theirs to create.
                                                 DirectConversationEntry::ReadyToCreate => {
-                                                    row_status.set(tr("contacts.dm.creating"));
+                                                    let actor = crate::secure_key_store::active_device_seed_scope()
+                                                        .filter(|value| !value.trim().is_empty())
+                                                        .and_then(|value| arkret_sdk::Did::new(value).ok());
+                                                    let peer_id = arkret_sdk::Did::new(peer.clone()).ok();
+                                                    match (actor, peer_id) {
+                                                        (Some(actor), Some(peer_id)) => {
+                                                            row_status.set(tr("contacts.dm.creating"));
+                                                            let resolve_for_create = outcome.clone();
+                                                            match with_authed_api(
+                                                                &base,
+                                                                api_token.clone(),
+                                                                |api| async move {
+                                                                    crate::transport::account::create_direct_conversation_from_resolve(
+                                                                        &api.event_submitter()?,
+                                                                        &resolve_for_create,
+                                                                        &actor,
+                                                                        &peer_id,
+                                                                    )
+                                                                    .await
+                                                                },
+                                                            )
+                                                            .await
+                                                            {
+                                                                Ok(accepted) => {
+                                                                    row_status.set(String::new());
+                                                                    nav.push(Route::DirectConversation {
+                                                                        realm_id: accepted.receipt.realm_id.to_string(),
+                                                                        strand_id: accepted.receipt.main_strand_id.to_string(),
+                                                                    });
+                                                                }
+                                                                Err(error) => row_status.set(format!(
+                                                                    "Direct Conversation creation failed: {}",
+                                                                    error.display()
+                                                                )),
+                                                            }
+                                                        }
+                                                        _ => row_status.set(tr("contacts.dm.not_ready")),
+                                                    }
                                                 }
                                                 // The other participant is the founder. Waiting never
                                                 // grants create authority, so we show a waiting state

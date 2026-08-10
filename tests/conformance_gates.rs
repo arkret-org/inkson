@@ -879,26 +879,19 @@ fn realm_bootstrap_carries_alias_as_a_facet_event_not_on_the_closed_realm_object
     assert_envelope_matches_schema("build_realm_bootstrap_events[alias facet]", alias_event);
 }
 
-/// The committed provision prepare response asks for a PCR id before it carries
-/// the exact create draft whose Event id defines that PCR. The client must not
-/// guess a realm id from the Agent DID or from a provisional payload.
+/// The controller freezes the exact PCR create locally and derives the Realm
+/// id from it before authoring the provision declaration.
 #[test]
-fn managed_agent_pcr_prepare_fails_closed_without_an_exact_create_draft() {
-    let error = event_builders::build_managed_agent_pcr_bootstrap_events(
+fn managed_agent_pcr_prepare_builds_an_exact_ref_free_create() {
+    let events = event_builders::build_managed_agent_pcr_bootstrap_events(
         "did:web:agent.example",
         TEST_ACTOR_ID,
         "did:web:alice.example#delegation-0",
         "ak:trust_domain:server.example",
-        arkret_sdk::EventId::new("ak:event:AStKv4uwui9iKv7StOHRotQgjBDBvjla-y05nQAwQaJf")
-            .expect("fixture provision Event id"),
     )
-    .expect_err("managed Agent provision must not predict an event-derived PCR id");
-
-    assert!(
-        error
-            .to_string()
-            .contains("authoritative event-derived PCR id")
-    );
+    .expect("managed Agent provision can freeze an event-derived PCR create");
+    assert_eq!(events.len(), 1);
+    assert!(events[0].refs.is_empty());
 }
 
 /// A6 — the SAS public-key exchange sends `ak.key.verification.key`, whose

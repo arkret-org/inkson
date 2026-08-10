@@ -14,23 +14,6 @@ use crate::state::LocalStateStore;
 /// wrong/absent device secret, payload that doesn't deserialize or
 /// decrypt — including the author's own ciphertext, which OpenMLS rejects)
 /// returns `None`.
-pub(crate) fn try_local_mls_decrypt_core(
-    state_store: &LocalStateStore,
-    realm_id: &str,
-    actor_id: &str,
-    device_id: &str,
-    payload_value: &Value,
-) -> Option<Vec<u8>> {
-    try_local_mls_decrypt_core_for_effective_scope(
-        state_store,
-        realm_id,
-        actor_id,
-        device_id,
-        payload_value,
-        None,
-    )
-}
-
 pub(crate) fn try_local_mls_decrypt_core_for_effective_scope(
     state_store: &LocalStateStore,
     realm_id: &str,
@@ -39,24 +22,50 @@ pub(crate) fn try_local_mls_decrypt_core_for_effective_scope(
     payload_value: &Value,
     circle_id: Option<&str>,
 ) -> Option<Vec<u8>> {
-    // New writes use the canonical EncryptedEnvelope so the ciphertext binds
-    // to an exact accepted MLS group state. Keep raw EncryptedPayload parsing
-    // as a read-only compatibility fallback for locally cached legacy Strand
-    // patches authored before that envelope requirement was enforced.
-    let payload = serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(payload_value.clone())
-        .ok()
-        .and_then(|envelope| arkret_sdk::mls::encrypted_envelope_to_payload(&envelope).ok())
-        .or_else(|| {
-            serde_json::from_value::<arkret_sdk::EncryptedPayload>(payload_value.clone()).ok()
-        })?;
+    let realm_id_typed = arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?;
+    let effective_scope = match circle_id {
+        Some(circle_id) => arkret_sdk::ScopeRef::Circle {
+            realm_id: realm_id_typed,
+            circle_id: arkret_sdk::CircleId::new(circle_id.to_owned()).ok()?,
+        },
+        None => arkret_sdk::ScopeRef::Realm {
+            realm_id: realm_id_typed,
+        },
+    };
+    try_local_mls_decrypt_core_for_scope(
+        state_store,
+        realm_id,
+        actor_id,
+        device_id,
+        payload_value,
+        &effective_scope,
+    )
+}
+
+pub(crate) fn try_local_mls_decrypt_core_for_scope(
+    state_store: &LocalStateStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    payload_value: &Value,
+    effective_scope: &arkret_sdk::ScopeRef,
+) -> Option<Vec<u8>> {
+    // Network Events must use the canonical EncryptedEnvelope. Falling back to
+    // a raw EncryptedPayload would turn a missing/invalid scope_digest into an
+    // authentication bypass, so malformed or pre-contract envelopes stay
+    // opaque and require an explicit migration outside the receive path.
+    let envelope =
+        serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(payload_value.clone()).ok()?;
+    envelope.validate_for_scope(effective_scope).ok()?;
+    let payload = arkret_sdk::mls::encrypted_envelope_to_payload(&envelope).ok()?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    crate::mls::runtime::decrypt_application_payload_for_effective_scope(
+    crate::mls::runtime::decrypt_application_payload_for_scope(
         state_store,
         secure_store.as_ref(),
         realm_id,
         actor_id,
         device_id,
         &payload,
-        circle_id,
+        effective_scope,
     )
 }
