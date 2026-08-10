@@ -467,6 +467,11 @@ mod personal_agent_tests {
         let scope = requested_scope_for_presets(&[], &AgentServiceScopePreset::DEFAULTS).unwrap();
         let agent_did = arkret_sdk::Did::new(agent.to_owned()).unwrap();
         let controller_did = arkret_sdk::Did::new(controller.to_owned()).unwrap();
+        let agent_actor_id =
+            arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&agent_did).unwrap());
+        let controller_actor_id = arkret_sdk::ActorId::from(
+            arkret_sdk::project_full_id_to_core_id(&controller_did).unwrap(),
+        );
         let scope_digest = arkret_signatures::agent::agent_requested_scope_digest(
             &agent_did,
             &controller_did,
@@ -479,8 +484,8 @@ mod personal_agent_tests {
         .unwrap();
         let expires_at = created_at + chrono::Duration::minutes(5);
         let key_state: arkret_sdk::KeyState = serde_json::from_value(serde_json::json!({
-            "agent_id": agent,
-            "controller_id": controller,
+            "agent_id": agent_actor_id,
+            "controller_id": controller_actor_id,
             "principal_control_realm_id": "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
             "controller_authorization_ref": "did:web:controller.example#controller-authorization",
             "pcr_recovery": {"status": "pending"},
@@ -697,9 +702,21 @@ mod personal_agent_tests {
         ));
         let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
         let scope = requested_scope_for_presets(&[], &AgentServiceScopePreset::DEFAULTS).unwrap();
+        let agent_actor_id = arkret_sdk::ActorId::from(
+            arkret_sdk::project_full_id_to_core_id(
+                &arkret_sdk::FullId::new(agent.to_owned()).unwrap(),
+            )
+            .unwrap(),
+        );
+        let controller_actor_id = arkret_sdk::ActorId::from(
+            arkret_sdk::project_full_id_to_core_id(
+                &arkret_sdk::FullId::new(controller.to_owned()).unwrap(),
+            )
+            .unwrap(),
+        );
         let key_state: arkret_sdk::KeyState = serde_json::from_value(serde_json::json!({
-            "agent_id": agent,
-            "controller_id": controller,
+            "agent_id": agent_actor_id,
+            "controller_id": controller_actor_id,
             "principal_control_realm_id": "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
             "controller_authorization_ref": "did:web:controller.example#controller-authorization",
             "pcr_recovery": {"status": "pending"},
