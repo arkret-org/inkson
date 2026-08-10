@@ -653,6 +653,9 @@ async fn collect_current_managed_pcr_backup_items(
     device_id: &str,
     current: ManagedPcrBackupItem,
 ) -> anyhow::Result<Vec<ManagedPcrBackupItem>> {
+    let controller_full_id = arkret_sdk::FullId::new(controller_id.to_owned())?;
+    let controller_actor_id =
+        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&controller_full_id)?);
     let current_binding = current
         .binding
         .as_ref()
@@ -685,13 +688,21 @@ async fn collect_current_managed_pcr_backup_items(
                 agent.agent_id.as_str()
             ));
         };
+        let agent_actor_id =
+            arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&agent.agent_id)?);
+        if key_state.agent_id != agent_actor_id {
+            anyhow::bail!(
+                "Agent {} full_id does not project to its key-state agent_id",
+                agent.agent_id.as_str()
+            );
+        }
         agent_realm_ids.insert(key_state.principal_control_realm_id.as_str().to_owned());
         if agent.lifecycle
             == arkret_models_collaboration::agent_operations::AgentLifecycleState::Deactivated
         {
             continue;
         }
-        if key_state.controller_id.as_str() != controller_id {
+        if key_state.controller_id != controller_actor_id {
             anyhow::bail!(
                 "Agent {} belongs to a different controller",
                 key_state.agent_id.as_str()
@@ -754,8 +765,8 @@ async fn collect_current_managed_pcr_backup_items(
                 )
             })?;
         let binding = ManagedPrincipalBinding {
-            managed_principal_id: key_state.agent_id.clone(),
-            controller_id: key_state.controller_id,
+            managed_principal_id: agent.agent_id,
+            controller_id: controller_full_id.clone(),
             principal_control_realm_id: key_state.principal_control_realm_id,
             authorization_ref: key_state.controller_authorization_ref.to_string(),
             managed_frontier_ref: ManagedFrontierRef {

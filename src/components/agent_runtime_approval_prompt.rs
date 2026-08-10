@@ -374,6 +374,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                                 &key_state,
                                                 &body,
                                             )?;
+                                        let agent_full_id = body.agent_id.clone();
                                         let submitter = api.event_submitter()?;
                                         let authorize_submission = submitter
                                             .prepare_initial_submissions(vec![
@@ -413,7 +414,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                         let recovery_refresh_error = bootstrap_provisioned_agent(
                                             &api,
                                             state_store,
-                                            &key_state.agent_id,
+                                            &agent_full_id,
                                             &key_state.principal_control_realm_id,
                                             key_state.controller_authorization_ref.as_str(),
                                             previous_seal_id.as_deref(),

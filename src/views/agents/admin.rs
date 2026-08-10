@@ -348,8 +348,18 @@ mod directory_refresh_tests {
         status: AgentLifecycleState,
         runtime_state: AgentRuntimeState,
     ) -> AgentView {
-        let agent_id = arkret_sdk::Did::new("did:web:agents.example:summary").unwrap();
-        let controller_id = arkret_sdk::Did::new("did:web:alice.example").unwrap();
+        let agent_id = arkret_sdk::ActorId::from(
+            arkret_sdk::project_full_id_to_core_id(
+                &arkret_sdk::FullId::new("did:web:agents.example:summary").unwrap(),
+            )
+            .unwrap(),
+        );
+        let controller_id = arkret_sdk::ActorId::from(
+            arkret_sdk::project_full_id_to_core_id(
+                &arkret_sdk::FullId::new("did:web:alice.example").unwrap(),
+            )
+            .unwrap(),
+        );
         let scope = requested_scope_for_presets(
             &[AgentGrantPreset::Read],
             &AgentServiceScopePreset::DEFAULTS,
@@ -421,9 +431,10 @@ mod directory_refresh_tests {
                 test_pairing_view(AgentLifecycleState::Paused, AgentRuntimeState::Ready)
             }
         };
+        let agent_full_id = row.agent.agent_id;
         let key_state = row.key_state.unwrap();
         AgentRenewPairingOutcome {
-            agent_id: key_state.agent_id,
+            agent_id: agent_full_id,
             principal_control_realm_id: key_state.principal_control_realm_id,
             controller_authorization_ref: key_state.controller_authorization_ref,
             requested_scope_digest: key_state.requested_scope_digest,
@@ -558,7 +569,11 @@ fn apply_renewed_pairing(
         .key_state
         .as_mut()
         .ok_or("renewed Agent details are not loaded")?;
-    if key_state.agent_id != outcome.agent_id
+    let outcome_agent_actor_id = arkret_sdk::ActorId::from(
+        arkret_sdk::project_full_id_to_core_id(&outcome.agent_id)
+            .map_err(|_| "renewed pairing response carried an invalid Agent full_id")?,
+    );
+    if key_state.agent_id != outcome_agent_actor_id
         || key_state.principal_control_realm_id != outcome.principal_control_realm_id
         || key_state.controller_authorization_ref != outcome.controller_authorization_ref
         || key_state.requested_scope_digest != outcome.requested_scope_digest
@@ -752,7 +767,15 @@ fn spawn_set_agent_enabled(
             );
             return;
         };
-        if key_state.agent_id.as_str() != id || key_state.controller_id.as_str() != controller_id {
+        let selected_agent_actor_id = arkret_sdk::FullId::new(id.clone())
+            .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id))
+            .map(arkret_sdk::ActorId::from);
+        let selected_controller_actor_id = arkret_sdk::FullId::new(controller_id.clone())
+            .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id))
+            .map(arkret_sdk::ActorId::from);
+        if selected_agent_actor_id.as_ref().ok() != Some(&key_state.agent_id)
+            || selected_controller_actor_id.as_ref().ok() != Some(&key_state.controller_id)
+        {
             last_op_status.set(
                 "Agent key binding does not match the selected Agent and controller; refresh and retry."
                     .to_owned(),
@@ -768,21 +791,8 @@ fn spawn_set_agent_enabled(
                 return;
             }
         };
-        let (agent_actor_id, controller_actor_id) = match (
-            arkret_sdk::project_full_id_to_core_id(&key_state.agent_id),
-            arkret_sdk::project_full_id_to_core_id(&key_state.controller_id),
-        ) {
-            (Ok(agent), Ok(controller)) => (
-                arkret_sdk::ActorId::from(agent),
-                arkret_sdk::ActorId::from(controller),
-            ),
-            (Err(error), _) | (_, Err(error)) => {
-                last_op_status.set(format!(
-                    "Agent lifecycle identity projection failed: {error}"
-                ));
-                return;
-            }
-        };
+        let agent_actor_id = key_state.agent_id.clone();
+        let controller_actor_id = key_state.controller_id.clone();
         let draft = if enabled {
             arkret_event_draft::build_agent_resume_event(
                 agent_actor_id.clone(),
@@ -947,7 +957,15 @@ fn spawn_deactivate_agent(
             );
             return;
         };
-        if key_state.agent_id.as_str() != id || key_state.controller_id.as_str() != controller_id {
+        let selected_agent_actor_id = arkret_sdk::FullId::new(id.clone())
+            .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id))
+            .map(arkret_sdk::ActorId::from);
+        let selected_controller_actor_id = arkret_sdk::FullId::new(controller_id.clone())
+            .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id))
+            .map(arkret_sdk::ActorId::from);
+        if selected_agent_actor_id.as_ref().ok() != Some(&key_state.agent_id)
+            || selected_controller_actor_id.as_ref().ok() != Some(&key_state.controller_id)
+        {
             last_op_status.set(
                 "Agent key binding does not match the selected Agent and controller; refresh and retry."
                     .to_owned(),
@@ -968,21 +986,8 @@ fn spawn_deactivate_agent(
                 return;
             }
         };
-        let (agent_actor_id, controller_actor_id) = match (
-            arkret_sdk::project_full_id_to_core_id(&key_state.agent_id),
-            arkret_sdk::project_full_id_to_core_id(&key_state.controller_id),
-        ) {
-            (Ok(agent), Ok(controller)) => (
-                arkret_sdk::ActorId::from(agent),
-                arkret_sdk::ActorId::from(controller),
-            ),
-            (Err(error), _) | (_, Err(error)) => {
-                last_op_status.set(format!(
-                    "Agent deactivation identity projection failed: {error}"
-                ));
-                return;
-            }
-        };
+        let agent_actor_id = key_state.agent_id.clone();
+        let controller_actor_id = key_state.controller_id.clone();
         let lifecycle_event = match arkret_event_draft::build_agent_deactivate_event(
             agent_actor_id,
             controller_actor_id,
@@ -1574,12 +1579,19 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
     let selected_pcr_recovery_ready = pairing_material_can_be_exposed(
         selected_key_state.map(|key_state| &key_state.pcr_recovery),
     );
-    let selected_pcr_bootstrap_target = selected_key_state.map(|key_state: &KeyState| {
-        (
-            key_state.agent_id.clone(),
-            key_state.principal_control_realm_id.clone(),
-            key_state.controller_authorization_ref.clone(),
-        )
+    let selected_pcr_bootstrap_target = selected_agent.as_ref().and_then(|agent| {
+        let key_state = agent.key_state.as_ref()?;
+        let full_id = agent.agent.agent_id.clone();
+        let projected = arkret_sdk::project_full_id_to_core_id(&full_id)
+            .ok()
+            .map(arkret_sdk::ActorId::from)?;
+        (projected == key_state.agent_id).then(|| {
+            (
+                full_id,
+                key_state.principal_control_realm_id.clone(),
+                key_state.controller_authorization_ref.clone(),
+            )
+        })
     });
     let selected_should_offer_security_refresh =
         should_offer_security_refresh(selected_key_state.is_some(), &selected_status);

@@ -455,10 +455,14 @@ pub fn build_requested_scope_disclosure_for_pairing(
 ) -> anyhow::Result<AgentRequestedScopeDisclosure> {
     let controller_id = Did::new(controller_id.trim().to_owned())?;
     let agent_id = request.agent_id.clone();
-    if key_state.controller_id != controller_id {
+    let controller_actor_id =
+        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&controller_id)?);
+    let agent_actor_id =
+        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&agent_id)?);
+    if key_state.controller_id != controller_actor_id {
         anyhow::bail!("agent key_state.controller_id does not match the signed-in controller");
     }
-    if key_state.agent_id != agent_id {
+    if key_state.agent_id != agent_actor_id {
         anyhow::bail!("runtime request agent_id does not match this agent key state");
     }
     let pairing_request_id = key_state
@@ -614,10 +618,12 @@ pub fn build_agent_key_authorization_for_pairing(
     let controller = Did::new(controller_id.trim().to_owned())?;
     let controller_actor_id =
         arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&controller)?);
-    if key_state.controller_id != controller {
+    if key_state.controller_id != controller_actor_id {
         anyhow::bail!("agent key_state.controller_id does not match the signed-in controller");
     }
-    if request.agent_id != key_state.agent_id {
+    let request_agent_actor_id =
+        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&request.agent_id)?);
+    if request_agent_actor_id != key_state.agent_id {
         anyhow::bail!("runtime request agent_id does not match this agent key state");
     }
     if key_state.pairing_request_id.as_ref() != Some(&request.pairing_request_id) {
