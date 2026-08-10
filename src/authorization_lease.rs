@@ -137,7 +137,8 @@ pub fn lease_for_event(
                 && lease_scope == &scope
                 && (expected_basis.is_empty() || basis == &expected_basis)
                 && lease_covers_event_kind(action, event.kind.as_str())
-                && lease.actor_id == event.actor_id
+                && arkret_sdk::project_full_id_to_core_id(&lease.actor_id)
+                    .is_ok_and(|core| arkret_sdk::ActorId::from(core) == event.actor_id)
                 && lease.scope_ref == event.scope_ref
         })
         .map(|(_, lease)| lease)
@@ -206,7 +207,8 @@ pub async fn acquire_for_events(
         "publication leases issued"
     );
     for (event, lease) in events.iter().zip(&outcome.authorization_leases) {
-        if lease.actor_id != event.actor_id
+        if !arkret_sdk::project_full_id_to_core_id(&lease.actor_id)
+            .is_ok_and(|core| arkret_sdk::ActorId::from(core) == event.actor_id)
             || lease.scope_ref != event.scope_ref
             || !lease_covers_event_kind(&lease.action, event.kind.as_str())
         {
@@ -411,7 +413,7 @@ pub(crate) enum ProposalAuthorityRoute {
 /// the principal whose device key must sign under it.
 pub(crate) struct LocalPrincipalAuthority {
     authority_set_ref: arkret_sdk::Hash,
-    signer_principal: arkret_sdk::Did,
+    signer_actor_id: arkret_sdk::ActorId,
 }
 
 impl LocalPrincipalAuthority {
@@ -424,7 +426,9 @@ impl LocalPrincipalAuthority {
             authority_set_ref: arkret_sdk::Hash::new(arkret_sdk::canonical::canonical_sha256(
                 &arkret_wire::notary::NotaryValue::single_did(principal_id.clone()),
             )?)?,
-            signer_principal: principal_id.clone(),
+            signer_actor_id: arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(
+                principal_id,
+            )?),
         })
     }
 
@@ -434,8 +438,13 @@ impl LocalPrincipalAuthority {
         event: &arkret_sdk::Event,
         signer: &crate::event_signer::InksonEventSigner,
     ) -> anyhow::Result<ControlProposalAuthorityAck> {
-        let verification_method =
-            signer.verification_method_for_principal(&self.signer_principal)?;
+        let signer_principal = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
+        if arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&signer_principal)?)
+            != self.signer_actor_id
+        {
+            anyhow::bail!("active signer does not project to the proposal authority actor");
+        }
+        let verification_method = signer.verification_method_for_principal(&signer_principal)?;
         let proposal_digest = arkret_sdk::Hash::new(event.event_digest()?)?;
         let cache_key = (
             proposal_digest.to_string(),
@@ -451,7 +460,7 @@ impl LocalPrincipalAuthority {
             return Ok(ack);
         }
 
-        let adapter = signer.payload_signer_adapter_for_principal(&self.signer_principal)?;
+        let adapter = signer.payload_signer_adapter_for_principal(&signer_principal)?;
         let member = ControlProposalAuthorityAck::issue_with_signer(
             event.realm_id.clone(),
             proposal_digest,
@@ -517,8 +526,20 @@ async fn resolve_proposal_authority_route(
             Ok(ProposalAuthorityRoute::RemoteCurrentAuthority)
         }
         ProposalAuthorityRouteKind::SelfPrincipalControlRealm => {
+            let signer = crate::event_signer::active_signer().ok_or_else(|| {
+                anyhow::anyhow!("self-principal proposal authority requires an active signer")
+            })?;
+            let principal_full_id = arkret_sdk::FullId::new(signer.signer_did().to_owned())?;
+            if arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(
+                &principal_full_id,
+            )?) != event.actor_id
+            {
+                anyhow::bail!(
+                    "active signer full_id does not project to the self-principal proposal actor"
+                );
+            }
             Ok(ProposalAuthorityRoute::LocalPrincipal(
-                LocalPrincipalAuthority::self_principal_control_realm(&event.actor_id)?,
+                LocalPrincipalAuthority::self_principal_control_realm(&principal_full_id)?,
             ))
         }
         ProposalAuthorityRouteKind::ManagedAgentPcr => {
@@ -559,7 +580,7 @@ async fn resolve_proposal_authority_route(
             Ok(ProposalAuthorityRoute::LocalPrincipal(
                 LocalPrincipalAuthority {
                     authority_set_ref,
-                    signer_principal,
+                    signer_actor_id: signer_principal,
                 },
             ))
         }
@@ -758,7 +779,7 @@ mod tests {
         arkret_wire::test_support::raw_event(
             "ak.member.state",
             scope(),
-            arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+            arkret_sdk::ActorId::new("ak:did_core:web:alice.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("000000000000-0000-00000000").unwrap(),
             serde_json::json!({}),
@@ -782,9 +803,11 @@ mod tests {
     #[test]
     fn managed_agent_pcr_control_uses_the_delegated_local_authority() {
         let mut managed = event();
-        managed.actor_id = arkret_sdk::Did::new("did:web:agent.example").unwrap();
+        managed.actor_id = arkret_sdk::ActorId::new("ak:did_core:web:agent.example").unwrap();
         let controller = arkret_sdk::Did::new("did:web:alice.example").unwrap();
-        managed.executed_by = Some(controller.clone());
+        managed.executed_by = Some(arkret_sdk::ActorId::from(
+            arkret_sdk::project_full_id_to_core_id(&controller).unwrap(),
+        ));
         managed.authorization_ref = Some(
             arkret_sdk::AuthorizationRef::new("did:web:agent.example#managed-controller").unwrap(),
         );
@@ -827,8 +850,9 @@ mod tests {
         );
 
         let mut managed = event();
-        managed.actor_id = arkret_sdk::Did::new("did:web:agent.example").unwrap();
-        managed.executed_by = Some(arkret_sdk::Did::new("did:web:alice.example").unwrap());
+        managed.actor_id = arkret_sdk::ActorId::new("ak:did_core:web:agent.example").unwrap();
+        managed.executed_by =
+            Some(arkret_sdk::ActorId::new("ak:did_core:web:alice.example").unwrap());
         managed.authorization_ref = Some(
             arkret_sdk::AuthorizationRef::new("did:web:agent.example#managed-controller").unwrap(),
         );
@@ -872,7 +896,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(authority.authority_set_ref, expected);
-        assert_eq!(authority.signer_principal, principal);
+        assert_eq!(
+            authority.signer_actor_id,
+            arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&principal).unwrap())
+        );
     }
 
     #[test]

@@ -1,7 +1,8 @@
 //! Container Space (Board / List) builders.
 
 use super::{
-    TypedOperationBuilder, did_id, patch_from_value, realm_id_value, space_id_value, trim_realm_id,
+    TypedOperationBuilder, actor_id, patch_from_value, realm_id_value, space_id_value,
+    trim_realm_id,
 };
 
 /// Build a `ak.space.create` operation for Board/List container Spaces.
@@ -28,7 +29,7 @@ pub fn space_create(
         realm_id_value(&trim_realm_id(realm_id))?,
         kind,
         title,
-        did_id(actor)?,
+        actor_id(actor)?,
     );
     if let Some(parent_space_id) = parent_space_id {
         object.parent_space_id = Some(space_id_value(parent_space_id)?);

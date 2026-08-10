@@ -167,8 +167,16 @@ where
         )
     })?;
     let proof = manifest.signature_as_proof();
+    let created_by_actor = arkret_sdk::ActorId::from(
+        arkret_sdk::project_full_id_to_core_id(&manifest.created_by).map_err(|error| {
+            SnapshotFallbackReason::new(
+                arkret_sdk::SnapshotValidationCode::SnapshotAuthorityUnverified.as_str(),
+                format!("snapshot created_by full_id is invalid: {error}"),
+            )
+        })?,
+    );
     let mut context = arkret_sdk::signatures::ProofVerificationContext::new(
-        manifest.created_by.clone(),
+        created_by_actor.clone(),
         expected_digest,
     );
     context.now = now;
@@ -176,7 +184,7 @@ where
     let verification = arkret_sdk::verify_canonical_proof_with_did_resolver(
         &canonical_bytes,
         &proof,
-        &manifest.created_by,
+        &created_by_actor,
         &context,
         resolver,
     )

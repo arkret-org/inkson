@@ -54,10 +54,26 @@ pub(crate) fn generate_mls_claim_nonce() -> anyhow::Result<String> {
 pub(crate) fn keypackage_claim_record_to_mls_record(
     claim: &arkret_sdk::KeyPackageClaimRecord,
 ) -> anyhow::Result<arkret_sdk::MlsKeyPackageRecord> {
+    let signer_full_id = arkret_sdk::FullId::new(
+        claim
+            .device_signature
+            .kid
+            .as_str()
+            .split_once('#')
+            .ok_or_else(|| anyhow::anyhow!("KeyPackage claim signature kid omits DID fragment"))?
+            .0
+            .to_owned(),
+    )?;
+    if arkret_sdk::project_full_id_to_core_id(&signer_full_id)? != claim.principal_id {
+        anyhow::bail!("KeyPackage claim signer does not project to principal_id");
+    }
     Ok(arkret_sdk::MlsKeyPackageRecord {
         keypackage_id: claim.keypackage_ref.as_str().to_owned(),
-        principal_id: claim.principal_id.clone(),
-        device_id: arkret_sdk::DeviceId::new(claim.device_id.clone())?,
+        principal_id: signer_full_id,
+        device_id: claim
+            .device_id
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("device KeyPackage claim omits device_id"))?,
         key_package: claim.key_package.clone(),
         keypackage_ref: claim.keypackage_digest.clone(),
         cipher_suites: Vec::new(),

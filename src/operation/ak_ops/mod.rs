@@ -58,6 +58,11 @@ pub(super) fn did_id(value: &str) -> anyhow::Result<arkret_sdk::Did> {
         .map_err(|err| anyhow::anyhow!("invalid DID {value:?}: {err:?}"))
 }
 
+pub(super) fn actor_id(value: &str) -> anyhow::Result<arkret_sdk::ActorId> {
+    arkret_sdk::ActorId::new(value.to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid actor core_id {value:?}: {err:?}"))
+}
+
 pub(super) fn realm_id_value(value: &str) -> anyhow::Result<arkret_sdk::RealmId> {
     arkret_sdk::RealmId::new(value.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid realm id {value:?}: {err:?}"))
@@ -80,8 +85,8 @@ pub(super) fn morph_id_value(value: &str) -> anyhow::Result<arkret_sdk::MorphId>
 
 pub(crate) fn strand_create_payload(
     object: arkret_sdk::StrandCreateObject,
-) -> arkret_sdk::StrandCreatePayload {
-    arkret_sdk::StrandCreatePayload {
+) -> anyhow::Result<arkret_sdk::StrandCreatePayload> {
+    Ok(arkret_sdk::StrandCreatePayload {
         object: arkret_sdk::Strand {
             id: object.id,
             schema: object.schema,
@@ -98,13 +103,20 @@ pub(crate) fn strand_create_payload(
             state_changed_at: None,
             stage: Some(object.stage),
             stage_changed_at: None,
-            created_by: object.created_by,
+            created_by: arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(
+                &object.created_by,
+            )?),
             created_at: object.created_at,
-            updated_by: object.updated_by,
+            updated_by: object
+                .updated_by
+                .as_ref()
+                .map(arkret_sdk::project_full_id_to_core_id)
+                .transpose()?
+                .map(arkret_sdk::ActorId::from),
             updated_at: object.updated_at,
         },
         initial_relations: None,
-    }
+    })
 }
 
 pub(super) fn strand_object_patch_payload(
@@ -155,13 +167,13 @@ pub(super) fn strand_watch_set_payload(
     let payload = match level {
         Some(level) => arkret_sdk::StrandWatchSetPayload::set(
             strand_id_value(strand_id)?,
-            did_id(watcher_actor_id)?,
+            actor_id(watcher_actor_id)?,
             strand_watch_level_value(level)?,
             level_public,
         ),
         None => arkret_sdk::StrandWatchSetPayload::clear(
             strand_id_value(strand_id)?,
-            did_id(watcher_actor_id)?,
+            actor_id(watcher_actor_id)?,
         ),
     };
     Ok(payload)

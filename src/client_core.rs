@@ -764,7 +764,7 @@ mod tests {
             arkret_sdk::ScopeRef::Realm {
                 realm_id: realm_id.clone(),
             },
-            arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
+            arkret_sdk::ActorId::new("ak:did_core:webvh:z6mkfixture:alice.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             serde_json::json!({

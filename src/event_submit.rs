@@ -1632,7 +1632,7 @@ impl EventSubmitter {
         realm_id: &str,
     ) -> anyhow::Result<arkret_sdk::RealmActorFrontierView> {
         let selector = arkret_sdk::EventsFrontierSelector::RealmActor {
-            actor_id: arkret_sdk::Did::new(actor_id.to_owned())?,
+            actor_id: arkret_sdk::ActorId::new(actor_id.to_owned())?,
             realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
         };
         let state = self
@@ -2629,12 +2629,12 @@ impl EventSubmitter {
             && !is_managed_agent_pcr_create
             && !is_direct_conversation_founding
         {
-                arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(&events)
-                    .map_err(|error| anyhow::anyhow!(error.reason_code()))?;
-                true
-            } else {
-                false
-            };
+            arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(&events)
+                .map_err(|error| anyhow::anyhow!(error.reason_code()))?;
+            true
+        } else {
+            false
+        };
         let is_genesis_unit = is_ordinary_realm_bootstrap
             || is_identity_anchor_unit
             || is_managed_agent_pcr_create
@@ -2653,8 +2653,10 @@ impl EventSubmitter {
                 .map_err(|error| anyhow::anyhow!("decode Realm genesis digest suite: {error}"))
             })
             .transpose()?;
-        let mut batch_frontiers =
-            BTreeMap::<(arkret_sdk::RealmId, arkret_sdk::Did), (u64, arkret_sdk::EventId)>::new();
+        let mut batch_frontiers = BTreeMap::<
+            (arkret_sdk::RealmId, arkret_sdk::ActorId),
+            (u64, arkret_sdk::EventId),
+        >::new();
         let mut rewritten_event_ids = BTreeMap::<arkret_sdk::EventId, arkret_sdk::EventId>::new();
         let mut genesis_realm_rebind = None::<(arkret_sdk::RealmId, arkret_sdk::RealmId)>;
         let mut proof_contexts = Vec::with_capacity(events.len());
@@ -2723,7 +2725,9 @@ impl EventSubmitter {
             arkret_sdk::DirectConversationFoundingPlan::from_events([
                 &events[0], &events[1], &events[2],
             ])
-            .map_err(|error| anyhow::anyhow!("prepared Direct Conversation founding unit: {error}"))?;
+            .map_err(|error| {
+                anyhow::anyhow!("prepared Direct Conversation founding unit: {error}")
+            })?;
         }
         for (index, event) in events.iter_mut().enumerate() {
             if event.proofs.is_empty() {
@@ -2847,7 +2851,10 @@ fn validate_capability_grant_payload(event: &arkret_sdk::Event) -> anyhow::Resul
             .map_err(|error| anyhow::anyhow!("encode capability grant payload: {error}"))?,
     )
     .map_err(|error| anyhow::anyhow!("decode capability grant payload: {error}"))?;
-    if payload.grant.issuer != event.actor_id {
+    if arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(
+        &payload.grant.issuer,
+    )?) != event.actor_id
+    {
         anyhow::bail!("capability grant issuer must equal the Event actor");
     }
     Ok(())
@@ -3173,10 +3180,13 @@ fn cba_effect_plane_for_event(event: &arkret_sdk::Event) -> anyhow::Result<Optio
 /// that listed its own grants would be selecting the authorization it is
 /// supposed to be constrained by.
 fn data_event_auth_context(event: &arkret_sdk::Event) -> anyhow::Result<arkret_sdk::AuthContext> {
-    let did = event
-        .executed_by
-        .clone()
-        .unwrap_or_else(|| event.actor_id.clone());
+    let actor_id = event.executed_by.as_ref().unwrap_or(&event.actor_id);
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("active signer is required for AuthContext"))?;
+    let did = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
+    if arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&did)?) != *actor_id {
+        anyhow::bail!("active signer full_id does not project to AuthContext actor");
+    }
     let key_id = data_event_key_id_for(event);
     Ok(arkret_sdk::AuthContext {
         did,
@@ -3253,7 +3263,8 @@ mod tests {
             "did:web:agent.example",
             None,
         );
-        managed.executed_by = Some(arkret_sdk::Did::new("did:web:alice.example").unwrap());
+        managed.executed_by =
+            Some(arkret_sdk::ActorId::new("ak:did_core:web:alice.example").unwrap());
         managed.authorization_ref = Some(
             arkret_sdk::AuthorizationRef::new("did:web:agent.example#managed-controller").unwrap(),
         );
@@ -3845,7 +3856,7 @@ mod tests {
             AUTHORITY_CONTROLLER,
         );
         executed_by_service.executed_by =
-            Some(arkret_sdk::Did::new("did:web:service.example".to_owned()).unwrap());
+            Some(arkret_sdk::ActorId::new("ak:did_core:web:service.example").unwrap());
         assert_eq!(
             realm_authority_root_claim(&executed_by_service, Some(&root)),
             None
@@ -4031,7 +4042,7 @@ mod tests {
             .unwrap(),
         );
         authored.auth_context = Some(arkret_sdk::AuthContext {
-            did: authored.actor_id.clone(),
+            did: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
             key_id: "device".to_owned(),
             key_epoch: 0,
             credential_epoch: None,
@@ -4499,7 +4510,7 @@ mod tests {
                 .unwrap();
         let frontier = arkret_sdk::RealmActorFrontierView::new(
             event.realm_id.clone(),
-            arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+            arkret_sdk::ActorId::new("ak:did_core:web:alice.example").unwrap(),
             8,
             vec![frontier_event_id.clone()],
             arkret_sdk::canonical::DigestSuite::Sha256,
@@ -4573,7 +4584,7 @@ mod tests {
         let mut event = sdk_event_without_proof("did:web:alice.example");
         let frontier = arkret_sdk::RealmActorFrontierView::new(
             event.realm_id.clone(),
-            arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+            arkret_sdk::ActorId::new("ak:did_core:web:alice.example").unwrap(),
             0,
             vec![],
             arkret_sdk::canonical::DigestSuite::Sha256,
@@ -4675,7 +4686,7 @@ mod tests {
         let mut event = sdk_event_without_proof("did:web:alice.example");
         let frontier = arkret_sdk::RealmActorFrontierView::new(
             event.realm_id.clone(),
-            arkret_sdk::Did::new("did:web:bob.example").unwrap(),
+            arkret_sdk::ActorId::new("ak:did_core:web:bob.example").unwrap(),
             8,
             vec![
                 arkret_sdk::EventId::new("ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1")
@@ -4697,7 +4708,7 @@ mod tests {
         let current_frontier = arkret_sdk::RealmActorFrontierView::new(
             arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
                 .unwrap(),
-            arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+            arkret_sdk::ActorId::new("ak:did_core:web:alice.example").unwrap(),
             0,
             vec![],
             arkret_sdk::canonical::DigestSuite::Sha256,

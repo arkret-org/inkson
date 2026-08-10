@@ -354,8 +354,10 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                                 None
                                             }
                                         };
-                                        let service_id =
-                                            api.describe_cached().await?.service_id.to_string();
+                                        let description = api.describe_cached().await?;
+                                        let service_id = description.service_id.to_string();
+                                        let service_full_id =
+                                            description.service_resolution.full_id.to_string();
                                         let authorization =
                                             build_agent_key_authorization_for_pairing(
                                                 &controller,
@@ -368,7 +370,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                         let requested_scope_disclosure =
                                             build_requested_scope_disclosure_for_pairing(
                                                 &controller,
-                                                &service_id,
+                                                &service_full_id,
                                                 &key_state,
                                                 &body,
                                             )?;

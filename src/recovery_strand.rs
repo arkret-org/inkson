@@ -115,7 +115,10 @@ pub async fn verify_recovery_material_evidence(
     evidence: &crate::state::RecoveryMaterialEvidence,
 ) -> anyhow::Result<()> {
     evidence.pcr_genesis_unit.validate_ordered_envelopes()?;
-    if evidence.pcr_genesis_unit.create().actor_id != evidence.principal_id
+    if evidence.pcr_genesis_unit.create().actor_id
+        != arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(
+            &evidence.principal_id,
+        )?)
         || evidence.pcr_genesis_unit.create().realm_id != evidence.principal_control_realm_id
         || evidence.pcr_genesis_unit.founding_authorize().realm_id
             != evidence.principal_control_realm_id

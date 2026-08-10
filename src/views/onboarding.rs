@@ -435,7 +435,7 @@ async fn issue_recovery_completion_grant(
             let initial_session = arkret_sdk::InitialSessionGrantRequest {
                 device_id: arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
                 session_public_key: holder.canonical_session_public_jwk()?,
-                audience: arkret_sdk::Did::new(handoff.audience.clone())?,
+                audience: arkret_sdk::ServiceId::new(handoff.audience.clone())?,
                 requested_scope: vec!["ak.self.account.read.viewer".to_owned()],
             };
             initial_session.validate()?;
@@ -1149,7 +1149,7 @@ async fn create_and_bind_identity(
             hpke_key,
             signer.as_ref(),
             &dpop,
-            arkret_sdk::Did::new(handoff.audience.clone())?,
+            arkret_sdk::ServiceId::new(handoff.audience.clone())?,
         )?;
         let barrier = {
             let mut store = state_store.write();

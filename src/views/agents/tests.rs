@@ -407,7 +407,7 @@ mod personal_agent_tests {
                 "verification_method": verification_method,
                 "signature_algorithm": "Ed25519",
                 "challenge": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
-                "audience": "did:web:arkret.example",
+                "audience": "ak:did_core:web:arkret.example",
                 "created_at": "2026-07-06T00:10:00.000Z",
                 "expires_at": "2026-07-06T00:15:00.000Z",
                 "runtime_key_binding_digest": format!("sha256:{}", "0".repeat(64)),
@@ -453,7 +453,8 @@ mod personal_agent_tests {
     #[test]
     fn runtime_key_authorize_event_binds_request_and_scope() {
         let controller = "did:web:controller.example";
-        let service_id = "did:web:arkret.example";
+        let service_full_id = "did:web:arkret.example";
+        let service_id = "ak:did_core:web:arkret.example";
         let agent = "did:web:agents.example:summary";
         let verification_method =
             "did:web:agents.example:summary#ak:device:01964137-0000-7000-8000-000000000008";
@@ -525,7 +526,7 @@ mod personal_agent_tests {
                         verification_method: verification_method.clone(),
                         signature_algorithm: arkret_models_collaboration::agent_operations::AgentRuntimeKeyAlgorithm::Ed25519,
                         challenge: pairing_request_id,
-                        audience: arkret_sdk::Did::new(service_id.to_owned()).unwrap(),
+                        audience: arkret_sdk::ServiceId::new(service_id.to_owned()).unwrap(),
                         created_at,
                         expires_at,
                         runtime_key_binding_digest,
@@ -539,7 +540,10 @@ mod personal_agent_tests {
             };
 
         let disclosure = build_requested_scope_disclosure_for_pairing(
-            controller, service_id, &key_state, &request,
+            controller,
+            service_full_id,
+            &key_state,
+            &request,
         )
         .unwrap();
 
@@ -561,7 +565,7 @@ mod personal_agent_tests {
                 &request.pairing_request_id,
                 "12345678",
                 expires_at,
-                &arkret_sdk::Did::new(service_id.to_owned()).unwrap(),
+                &arkret_sdk::ServiceId::new(service_id.to_owned()).unwrap(),
                 &request.proof_of_possession.runtime_key_binding_digest,
                 &request.proof_of_possession,
             )
@@ -605,7 +609,9 @@ mod personal_agent_tests {
         );
         arkret_signatures::agent_evidence::verify_agent_signing_key_binding(
             &signing_key_binding,
-            &request.agent_id,
+            &arkret_sdk::ActorId::from(
+                arkret_sdk::project_full_id_to_core_id(&request.agent_id).unwrap(),
+            ),
             &signing_key_binding.agent_key_id,
             &signing_key_binding.controller_id,
             &request.verification_method,
@@ -679,7 +685,7 @@ mod personal_agent_tests {
         // yielding an empty `supersedes` that failed coauth's exact-match check
         // with a CONFLICT surfaced as "Server rejected the runtime key approval".
         let controller = "did:web:controller.example";
-        let service_id = "did:web:arkret.example";
+        let service_id = "ak:did_core:web:arkret.example";
         let agent = "did:web:agents.example:summary";
         let verification_method =
             "did:web:agents.example:summary#ak:device:01964137-0000-7000-8000-000000000008";

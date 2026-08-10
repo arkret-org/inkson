@@ -99,28 +99,32 @@ impl LocalStateStore {
         welcome_digest: arkret_sdk::Hash,
     ) -> anyhow::Result<Option<String>> {
         self.ensure_cached_loaded();
-        let mut candidates = self
-            .cached
-            .direct_conversation_repairs
-            .iter()
-            .filter(|(_, snapshot)| {
-                snapshot.route.coordinates.realm_id.as_str() == realm_id
-                    && snapshot.route.target_keypackage_ref.as_str() == requester_keypackage_ref
-                    && snapshot.stage == garth::DirectConversationRepairStage::Enqueued
-            })
-            .map(|(request_id, snapshot)| (request_id.clone(), snapshot.clone()));
-        let Some((request_id, snapshot)) = candidates.next() else {
+        let mut candidates = Vec::new();
+        for (request_id, snapshot) in &self.cached.direct_conversation_repairs {
+            if snapshot.route.coordinates.realm_id.as_str() != realm_id
+                || snapshot.route.target_keypackage_ref.as_str() != requester_keypackage_ref
+            {
+                continue;
+            }
+            // A crash after the enqueue outcome crossed the durable barrier but
+            // before the convenience `Enqueued` rewrite leaves the committed
+            // snapshot at `EnqueueOutcomePendingDurability`. Restoring is the
+            // authority for that boundary; checking the raw enum would strand
+            // the exact repair Welcome after restart.
+            let planner =
+                garth::DirectConversationRepairPlanner::restore_durable(snapshot.clone())?;
+            if planner.stage() == garth::DirectConversationRepairStage::Enqueued {
+                candidates.push((request_id.clone(), planner));
+            }
+        }
+        let Some((request_id, mut planner)) = candidates.pop() else {
             return Ok(None);
         };
-        if candidates.next().is_some() {
+        if !candidates.is_empty() {
             anyhow::bail!("multiple repairs await the same exact KeyPackage Welcome");
         }
-        let mut planner = garth::DirectConversationRepairPlanner::restore_durable(snapshot)?;
         planner.record_welcome_durable(welcome_digest)?;
-        self.cached
-            .direct_conversation_repairs
-            .insert(request_id.clone(), planner.snapshot());
-        self.flush()?;
+        self.save_direct_conversation_repair(&planner)?;
         Ok(Some(request_id))
     }
 
@@ -320,6 +324,58 @@ mod tests {
     }
 
     #[test]
+    fn persisted_exact_keypackage_route_tamper_fails_closed() {
+        let path = temp_path("keypackage-tamper");
+        let planner = ready();
+        let mut store = LocalStateStore::with_path(&path);
+        let request_id = store.save_direct_conversation_repair(&planner).unwrap();
+        let mut state = store.load();
+        state
+            .direct_conversation_repairs
+            .get_mut(&request_id)
+            .unwrap()
+            .route
+            .target_keypackage_ref =
+            arkret_sdk::NonEmptyString::new("kp-attacker-substitute").unwrap();
+        store.save(state);
+
+        assert!(
+            LocalStateStore::with_path(path)
+                .direct_conversation_repair(&request_id)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn pending_enqueue_restart_still_accepts_the_exact_welcome() {
+        let path = temp_path("pending-restart-welcome");
+        let mut planner = ready();
+        planner.record_enqueue_outcome(enqueue(&planner)).unwrap();
+        let mut store = LocalStateStore::with_path(&path);
+        let request_id = store.save_direct_conversation_repair(&planner).unwrap();
+
+        let mut restarted = LocalStateStore::with_path(path);
+        assert_eq!(
+            restarted
+                .record_consumed_direct_conversation_repair_welcome(
+                    REALM,
+                    "kp-exact-repair-target",
+                    hash('d'),
+                )
+                .unwrap(),
+            Some(request_id.clone())
+        );
+        assert_eq!(
+            restarted
+                .direct_conversation_repair(&request_id)
+                .unwrap()
+                .unwrap()
+                .stage(),
+            garth::DirectConversationRepairStage::WelcomeDurable
+        );
+    }
+
+    #[test]
     fn exact_keypackage_and_consumed_welcome_gate_activation_stage() {
         let mut planner = ready();
         planner.record_enqueue_outcome(enqueue(&planner)).unwrap();
@@ -327,6 +383,15 @@ mod tests {
         let path = temp_path("exact-kp");
         let mut store = LocalStateStore::with_path(path);
         let request_id = store.save_direct_conversation_repair(&planner).unwrap();
+
+        assert!(
+            store
+                .record_direct_conversation_repair_activation(
+                    &request_id,
+                    arkret_sdk::EventId::new(AUTHORIZE).unwrap(),
+                )
+                .is_err()
+        );
 
         assert!(
             store
@@ -363,6 +428,20 @@ mod tests {
                 .unwrap()
                 .stage(),
             garth::DirectConversationRepairStage::WelcomeDurable
+        );
+        store
+            .record_direct_conversation_repair_activation(
+                &request_id,
+                arkret_sdk::EventId::new(AUTHORIZE).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .direct_conversation_repair(&request_id)
+                .unwrap()
+                .unwrap()
+                .stage(),
+            garth::DirectConversationRepairStage::Activated
         );
     }
 }

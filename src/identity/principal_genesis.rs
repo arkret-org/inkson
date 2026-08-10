@@ -150,7 +150,7 @@ pub fn build_genesis_unit(
     let mut authorize =
         arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::DeviceAuthorize>::new(
             arkret_sdk::ScopeRef::Realm { realm_id },
-            principal_id,
+            arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&principal_id)?),
             payload,
         )?
         .with_prev_refs(vec![create.event_id.clone()])

@@ -175,8 +175,8 @@ impl TypedOperationBuilder {
                     realm_id: realm_id.clone(),
                 }
             };
-            let actor_id = arkret_sdk::Did::new(actor.into())
-                .map_err(|err| anyhow::anyhow!("invalid actor_id DID: {err}"))?;
+            let actor_id = arkret_sdk::ActorId::new(actor.into())
+                .map_err(|err| anyhow::anyhow!("invalid actor_id core_id: {err}"))?;
             let hlc = arkret_sdk::Hlc::new("000000000000-0000-00000000")
                 .map_err(|err| anyhow::anyhow!("placeholder HLC is invalid: {err}"))?;
             arkret_sdk::TypedEventDraft::<K>::new(scope_ref, actor_id, payload)
@@ -207,8 +207,8 @@ impl TypedOperationBuilder {
     pub fn executed_by(self, executed_by: impl Into<String>) -> Self {
         self.map_event(|event| {
             event.executed_by = Some(
-                arkret_sdk::Did::new(executed_by.into())
-                    .map_err(|err| anyhow::anyhow!("invalid executed_by DID: {err}"))?,
+                arkret_sdk::ActorId::new(executed_by.into())
+                    .map_err(|err| anyhow::anyhow!("invalid executed_by core_id: {err}"))?,
             );
             Ok(())
         })

@@ -667,7 +667,11 @@ fn event_device_proof_pair(
     let signer = verification_method_did(&proof.verification_method)
         .map_err(|error| format!("invalid Event verification method: {error}"))?;
     let signing_actor = event.executed_by.as_ref().unwrap_or(&event.actor_id);
-    if &signer != signing_actor {
+    if arkret_sdk::ActorId::from(
+        arkret_sdk::project_full_id_to_core_id(&signer)
+            .map_err(|error| format!("project Event proof signer: {error}"))?,
+    ) != *signing_actor
+    {
         return Err(format!(
             "MLS governance frontier Event signer {signer} does not match actor/executor {signing_actor}"
         ));
@@ -1089,12 +1093,26 @@ pub(crate) fn security_frontier_with_added_claims(
         .max()
         .map_or(0, |index| index.saturating_add(1));
     for record in records {
+        let claim_method = arkret_sdk::DidUrl::new(record.device_signature.kid.as_str().to_owned())
+            .map_err(|error| format!("claimed KeyPackage signer kid is invalid: {error}"))?;
+        let signer_full_id = verification_method_did(&claim_method)
+            .map_err(|error| format!("claimed KeyPackage signer is invalid: {error}"))?;
+        if arkret_sdk::project_full_id_to_core_id(&signer_full_id)
+            .map_err(|error| format!("project claimed KeyPackage signer: {error}"))?
+            != record.principal_id
+        {
+            return Err("claimed KeyPackage signer does not project to principal_id".to_owned());
+        }
+        let device_id = record
+            .device_id
+            .as_ref()
+            .ok_or_else(|| "device KeyPackage claim omits device_id".to_owned())?;
         leaves.push(arkret_sdk::MlsSecurityFrontierLeaf {
             leaf_index: next_index,
-            principal_id: record.principal_id.clone(),
+            principal_id: signer_full_id,
             credential_ref: arkret_sdk::NonEmptyString::new(format!(
                 "{}#{}",
-                record.principal_id, record.device_id
+                record.principal_id, device_id
             ))
             .map_err(|error| format!("claimed MLS credential ref is invalid: {error}"))?,
         });
@@ -1320,7 +1338,7 @@ fn managed_agent_pcr_delegated_controller(
             .and_then(|fields| fields.get("purpose"))
             .and_then(serde_json::Value::as_str)
             != Some(arkret_bootstrap::PRINCIPAL_CONTROL_PURPOSE)
-        || !notary.includes_signer_as_primary(&create.actor_id)
+        || !notary_primary_projects_to_actor(notary, &create.actor_id)
     {
         return Err(
             "managed Agent PCR genesis does not bind its Agent actor, Realm, and notary".to_owned(),
@@ -1340,7 +1358,40 @@ fn managed_agent_pcr_delegated_controller(
             "managed Agent PCR genesis has an invalid controller delegation binding".to_owned(),
         );
     }
-    Ok(Some(controller))
+    let controller_full_id = create
+        .proofs
+        .iter()
+        .filter_map(|proof| verification_method_did(&proof.verification_method).ok())
+        .find(|full_id| {
+            arkret_sdk::project_full_id_to_core_id(full_id)
+                .ok()
+                .map(arkret_sdk::ActorId::from)
+                .as_ref()
+                == Some(&controller)
+        })
+        .ok_or_else(|| {
+            "managed Agent PCR genesis has no proof controller matching executed_by".to_owned()
+        })?;
+    Ok(Some(controller_full_id))
+}
+
+fn notary_primary_projects_to_actor(
+    notary: &arkret_sdk::NotaryValue,
+    actor_id: &arkret_sdk::ActorId,
+) -> bool {
+    let projects = |full_id: &arkret_sdk::Did| {
+        arkret_sdk::project_full_id_to_core_id(full_id)
+            .ok()
+            .map(arkret_sdk::ActorId::from)
+            .as_ref()
+            == Some(actor_id)
+    };
+    match notary {
+        arkret_sdk::NotaryValue::SingleDid { did, .. }
+        | arkret_sdk::NotaryValue::Mixed { did, .. } => projects(did),
+        arkret_sdk::NotaryValue::Threshold { members, .. }
+        | arkret_sdk::NotaryValue::OpenSet { members } => members.iter().any(projects),
+    }
 }
 
 fn verify_seal<R>(
@@ -1487,7 +1538,12 @@ mod tests {
                 )
                 .unwrap(),
             },
-            arkret_sdk::Did::new(actor.to_owned()).unwrap(),
+            arkret_sdk::ActorId::from(
+                arkret_sdk::project_full_id_to_core_id(
+                    &arkret_sdk::Did::new(actor.to_owned()).unwrap(),
+                )
+                .unwrap(),
+            ),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e".to_owned()).unwrap(),
             serde_json::json!({}),
@@ -1555,7 +1611,12 @@ mod tests {
         let controller = "did:webvh:zfixture:controller.example";
         let device = "ak:device:01904100-0000-7000-8000-0000000000a1";
         let mut event = frontier_event(actor);
-        event.executed_by = Some(arkret_sdk::Did::new(controller.to_owned()).unwrap());
+        event.executed_by = Some(arkret_sdk::ActorId::from(
+            arkret_sdk::project_full_id_to_core_id(
+                &arkret_sdk::Did::new(controller.to_owned()).unwrap(),
+            )
+            .unwrap(),
+        ));
 
         assert_eq!(
             event_device_proof_pair(&event, &proof(&format!("{controller}#{device}")),).unwrap(),

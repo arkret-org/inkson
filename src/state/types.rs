@@ -800,8 +800,8 @@ pub enum CachedAgentSignerEvidenceContext {
     CurrentSignal {
         operation_id: arkret_sdk::ProtocolOperationId,
         request_digest: arkret_sdk::Hash,
-        verifier_id: arkret_sdk::Did,
-        audience: arkret_sdk::Did,
+        verifier_id: arkret_sdk::ServiceId,
+        audience: arkret_sdk::ServiceId,
         challenge: arkret_sdk::NonEmptyString,
     },
     HistoricalEvent {
@@ -809,7 +809,7 @@ pub enum CachedAgentSignerEvidenceContext {
         event_id: arkret_sdk::EventId,
         event_digest: arkret_sdk::Hash,
         event_admitted_seal_id: arkret_sdk::SealId,
-        receiver_service_id: arkret_sdk::Did,
+        receiver_service_id: arkret_sdk::ServiceId,
     },
 }
 
@@ -831,8 +831,7 @@ pub struct ClientLocalState {
     /// It intentionally contains stable service core ids only: endpoint and
     /// remote service-resolution authority remain Principal Server concerns.
     #[serde(default)]
-    pub direct_conversation_repairs:
-        BTreeMap<String, garth::DirectConversationRepairSnapshot>,
+    pub direct_conversation_repairs: BTreeMap<String, garth::DirectConversationRepairSnapshot>,
     /// Highest verified `ak.key_backup.active_series` pointer observed per
     /// `(actor_id, backup_kind)`. This is rollback protection, not a cache:
     /// a complete server response below this floor must fail closed.

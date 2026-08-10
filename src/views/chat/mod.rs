@@ -473,9 +473,11 @@ fn validate_native_prepared_sidecar_binding(
     controller_id: &arkret_sdk::Did,
     source_realm_id: &arkret_sdk::RealmId,
 ) -> anyhow::Result<()> {
+    let controller_actor =
+        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(controller_id)?);
     if let Some(create) = create_event {
         if create.kind != arkret_sdk::EventKind::SidecarCreate
-            || create.actor_id != *controller_id
+            || create.actor_id != controller_actor
             || create.realm_id != *source_realm_id
             || create.scope_ref
                 != (arkret_sdk::ScopeRef::Realm {
@@ -493,7 +495,7 @@ fn validate_native_prepared_sidecar_binding(
         }
     }
     if context_attach_event.kind != arkret_sdk::EventKind::SidecarContextAttach
-        || context_attach_event.actor_id != *controller_id
+        || context_attach_event.actor_id != controller_actor
         || context_attach_event.realm_id != *source_realm_id
         || context_attach_event.scope_ref
             != (arkret_sdk::ScopeRef::Sidecar {
@@ -572,6 +574,8 @@ fn sign_prepared_sidecar_event(
     device_id: &str,
     source_realm_id: &arkret_sdk::RealmId,
 ) -> anyhow::Result<arkret_sdk::Event> {
+    let controller_actor =
+        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(controller_id)?);
     if draft.kind.as_str() != expected_kind {
         anyhow::bail!(
             "prepared Sidecar Event kind mismatch: expected {expected_kind}, got {}",
@@ -603,7 +607,7 @@ fn sign_prepared_sidecar_event(
     if event.event_id != draft.event_id
         || event.kind != draft.kind
         || event.realm_id != *source_realm_id
-        || event.actor_id != *controller_id
+        || event.actor_id != controller_actor
         || digest != draft.event_digest
         || !event.proofs.is_empty()
         || !event.unsigned.is_empty()
@@ -1032,7 +1036,7 @@ async fn reconcile_sidecar_mls_access(
                 &device_id,
             )
             .map_err(anyhow::Error::msg)?;
-        let added_claims = claims.iter().map(|(claim, _, _)| claim).collect::<Vec<_>>();
+        let added_claims = claims.iter().map(|(claim, ..)| claim).collect::<Vec<_>>();
         let proof_leaves = crate::mls::governance_proof::security_frontier_with_added_claims(
             current_leaves,
             &added_claims,

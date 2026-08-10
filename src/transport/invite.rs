@@ -61,16 +61,17 @@ fn invite_address(
     subject_id: &str,
     recipient_service_id: &str,
 ) -> anyhow::Result<arkret_sdk::InviteAddress> {
-    let subject = arkret_sdk::Did::new(subject_id.trim().to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid invite subject DID `{subject_id}`: {err}"))?;
-    let recipient_service =
-        arkret_sdk::Did::new(recipient_service_id.trim().to_owned()).map_err(|err| {
-            anyhow::anyhow!("invalid invite recipient service DID `{recipient_service_id}`: {err}")
+    let _subject = arkret_sdk::CoreId::new(subject_id.trim().to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid invite subject core_id `{subject_id}`: {err}"))?;
+    let _recipient_service = arkret_sdk::ServiceId::new(recipient_service_id.trim().to_owned())
+        .map_err(|err| {
+            anyhow::anyhow!(
+                "invalid invite recipient service core_id `{recipient_service_id}`: {err}"
+            )
         })?;
-    Ok(arkret_sdk::InviteAddress::principal_server(
-        subject,
-        recipient_service,
-    ))
+    anyhow::bail!(
+        "DID + server invite addressing omits service_resolution; use a principal locator or invite address carrying current resolution evidence"
+    )
 }
 
 /// A Contact scope is not a Consent grant. The direct-DID contact path uses
@@ -192,17 +193,18 @@ fn parse_explicit_invite_target(target: &str) -> anyhow::Result<Option<InviteeRe
     if let (Some(subject), Some(server)) = (subject, server) {
         return explicit_invitee_resolution(invite_address(subject, server)?, None).map(Some);
     }
-    let dids: Vec<&str> = tokens
+    let core_ids: Vec<&str> = tokens
         .iter()
         .copied()
-        .filter(|token| arkret_sdk::Did::new((*token).to_owned()).is_ok())
+        .filter(|token| arkret_sdk::CoreId::new((*token).to_owned()).is_ok())
         .collect();
-    if dids.len() == 2 {
-        let (subject, server) = if dids[1].contains(":users:") && !dids[0].contains(":users:") {
-            (dids[1], dids[0])
-        } else {
-            (dids[0], dids[1])
-        };
+    if core_ids.len() == 2 {
+        let (subject, server) =
+            if core_ids[1].contains(":users:") && !core_ids[0].contains(":users:") {
+                (core_ids[1], core_ids[0])
+            } else {
+                (core_ids[0], core_ids[1])
+            };
         return explicit_invitee_resolution(invite_address(subject, server)?, None).map(Some);
     }
     Ok(None)
@@ -327,12 +329,7 @@ impl crate::transport::TransportClient {
         let address = invite_address(subject, recipient_service.as_str())?;
         let handle = arkret_models_identity::Handle::parse(&resolved.handle)
             .map_err(|err| anyhow::anyhow!("directory returned invalid handle: {err}"))?;
-        let fallback_resolved_by = self
-            .describe_cached()
-            .await
-            .ok()
-            .map(|description| description.service_id.clone());
-        let resolved_by = resolved_by_did(&resolved).or(fallback_resolved_by);
+        let resolved_by = resolved_by_did(&resolved);
         let evidence = match resolved_handle_claim(&resolved)? {
             Some(handle_claim) => arkret_sdk::IntroductionEvidence::HandleClaim {
                 handle: handle.clone(),
@@ -377,12 +374,7 @@ impl crate::transport::TransportClient {
             })?;
             let handle = arkret_models_identity::Handle::parse(&resolved.handle)
                 .map_err(|err| anyhow::anyhow!("directory returned invalid handle: {err}"))?;
-            let fallback_resolved_by = self
-                .describe_cached()
-                .await
-                .ok()
-                .map(|description| description.service_id.clone());
-            let resolved_by = resolved_by_did(&resolved).or(fallback_resolved_by);
+            let resolved_by = resolved_by_did(&resolved);
             let introduction_evidence = match resolved_handle_claim(&resolved)? {
                 Some(handle_claim) => arkret_sdk::ContactIntroductionEvidence::HandleClaim {
                     handle,
@@ -429,28 +421,18 @@ impl crate::transport::TransportClient {
                     "contact `{contact_did}` has no attested recipient service; use the invite link path instead"
                 )
             })?;
-        let recipient_did =
-            arkret_sdk::Did::new(recipient_service_id.to_owned()).map_err(|err| {
+        let _recipient_service = arkret_sdk::ServiceId::new(recipient_service_id.to_owned())
+            .map_err(|err| {
                 anyhow::anyhow!("invalid contact recipient service `{recipient_service_id}`: {err}")
             })?;
-        let invite_delivery_target =
-            arkret_sdk::InviteDeliveryTarget::principal_server(recipient_did);
-        invite_delivery_target
-            .validate()
-            .map_err(|err| anyhow::anyhow!("invalid invite_delivery_target: {err}"))?;
-        let introduction_evidence_digest = contact_explicit_address_evidence_digest()?;
-        let event = crate::operation::ak_ops::invite_create_structured(
+        let _ = (
             realm_id,
             actor_id,
-            contact_did,
-            None,
-            invite_delivery_target,
-            &introduction_evidence_digest,
-        )?
-        .build_sdk_event("inkson")?;
-        let invite_id = arkret_sdk::InviteId::from_event_id(&event.event_id).to_string();
-        let submitted = self.event_submitter()?.submit_sdk_event(&event).await?;
-        Ok((submitted.event_id, invite_id))
+            contact_explicit_address_evidence_digest()?,
+        );
+        anyhow::bail!(
+            "contact delivery binding omits service_resolution; refresh the contact through a principal locator before inviting"
+        )
     }
 
     pub async fn resolve_invitee_for_invite(
@@ -531,8 +513,11 @@ mod invite_addressing_tests {
     fn principal_locator_builds_locator_ref_evidence() {
         let locator = json!({
             "schema": arkret_sdk::SchemaId::PRINCIPAL_LOCATOR_V1,
-            "subject_id": "did:web:bob.example",
-            "recipient_service_id": "did:web:ps.bob.example",
+            "subject_id": "ak:did_core:web:bob.example",
+            "recipient_service_id": "ak:did_core:web:ps.bob.example",
+            "service_resolution": {
+                "current_record_url": "https://ps.bob.example/_arkret/open/services/ak%3Adid_core%3Aweb%3Aps.bob.example/resolution"
+            },
             "issued_at": "2026-06-07T00:00:00.000Z",
             "expires_at": "2026-06-07T00:15:00.000Z",
             "locator_ref_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
@@ -549,10 +534,10 @@ mod invite_addressing_tests {
         });
         let locator = serde_json::from_value(locator).expect("typed principal locator");
         let invitee = invitee_from_principal_locator(locator).expect("principal locator");
-        assert_eq!(invitee.did, "did:web:bob.example");
+        assert_eq!(invitee.did, "ak:did_core:web:bob.example");
         assert_eq!(
             invitee.invite_delivery_target.recipient_service_id.as_str(),
-            "did:web:ps.bob.example"
+            "ak:did_core:web:ps.bob.example"
         );
         assert_eq!(invitee.introduction_evidence.kind(), "locator_ref");
     }
@@ -560,27 +545,26 @@ mod invite_addressing_tests {
     #[test]
     fn invite_target_json_accepts_invite_address_as_explicit() {
         let raw_invite_address = json!({
-            "subject_id": "did:web:bob.example",
-            "recipient_service_id": "did:web:ps.bob.example",
+            "subject_id": "ak:did_core:web:bob.example",
+            "recipient_service_id": "ak:did_core:web:ps.bob.example",
+            "service_resolution": {
+                "current_record_url": "https://ps.bob.example/_arkret/open/services/ak%3Adid_core%3Aweb%3Aps.bob.example/resolution"
+            },
         })
         .to_string();
         let invitee = invitee_from_target_json(&raw_invite_address)
             .expect("json target parsed")
             .expect("invite address target");
-        assert_eq!(invitee.did, "did:web:bob.example");
+        assert_eq!(invitee.did, "ak:did_core:web:bob.example");
         assert_eq!(invitee.introduction_evidence.kind(), "explicit_address");
     }
 
     #[test]
-    fn explicit_invite_target_accepts_did_plus_server() {
-        let invitee = parse_explicit_invite_target("did:web:bob.example did:web:ps.bob.example")
-            .expect("explicit target parsed")
-            .expect("did plus server target");
-        assert_eq!(invitee.did, "did:web:bob.example");
-        assert_eq!(
-            invitee.invite_delivery_target.recipient_service_id.as_str(),
-            "did:web:ps.bob.example"
-        );
-        assert_eq!(invitee.introduction_evidence.kind(), "explicit_address");
+    fn explicit_invite_target_without_resolution_fails_closed() {
+        let error = parse_explicit_invite_target(
+            "ak:did_core:web:bob.example ak:did_core:web:ps.bob.example",
+        )
+        .expect_err("DID + server without resolution carrier must fail closed");
+        assert!(error.to_string().contains("omits service_resolution"));
     }
 }

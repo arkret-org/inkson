@@ -13,7 +13,7 @@ fn create_object_field<'a>(
 
 pub fn realm_from_create(
     create: &arkret_sdk::Event,
-    expected_principal: &arkret_sdk::Did,
+    expected_principal: &arkret_sdk::ActorId,
 ) -> anyhow::Result<arkret_sdk::RealmId> {
     if create.kind != arkret_sdk::EventKind::RealmCreate
         || &create.actor_id != expected_principal
@@ -37,7 +37,9 @@ pub fn realm_from_registration(
     )?;
     realm_from_create(
         unit.create(),
-        &arkret_sdk::Did::new(registration.did.clone())?,
+        &arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(
+            &arkret_sdk::Did::new(registration.did.clone())?,
+        )?),
     )
 }
 
@@ -51,6 +53,8 @@ pub async fn resolve_accepted(
     http: &arkret_sdk::http_client::Client,
     principal: &arkret_sdk::Did,
 ) -> anyhow::Result<arkret_sdk::RealmId> {
+    let principal_actor =
+        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(principal)?);
     let page = http
         .events_read(&arkret_sdk::EventsQueryPostRequestBody {
             realms: Vec::new(),
@@ -82,7 +86,7 @@ pub async fn resolve_accepted(
         .into_iter()
         .filter(|event| {
             event.kind == arkret_sdk::EventKind::RealmCreate
-                && event.actor_id == *principal
+                && event.actor_id == principal_actor
                 && create_object_field(event, "purpose").and_then(serde_json::Value::as_str)
                     == Some("principal_control")
         })
@@ -95,7 +99,7 @@ pub async fn resolve_accepted(
         );
     }
     let create = creates.remove(0);
-    let realm_id = realm_from_create(&create, principal)?;
+    let realm_id = realm_from_create(&create, &principal_actor)?;
     let digest = arkret_sdk::Hash::new(create.event_digest()?)?;
     let resolved = http
         .events_resolve(&arkret_sdk::EventsResolveRequestBody {

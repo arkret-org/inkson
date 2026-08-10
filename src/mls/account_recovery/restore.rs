@@ -681,7 +681,8 @@ async fn fetch_authoritative_active_series(
             serde_json::to_value(&event.payload)?,
         )
         .map_err(|error| anyhow!("accepted active-series Event is invalid: {error}"))?;
-        if record.actor_id != actor || event.actor_id != actor {
+        let actor_core = arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&actor)?);
+        if record.actor_id != actor || event.actor_id != actor_core {
             return Err(anyhow!(
                 "accepted active-series Event actor does not match its principal control realm"
             ));
@@ -770,8 +771,18 @@ async fn verify_active_series_range_completeness(
                 continue;
             }
         };
-        if payload.issuer != describe.service_id
-            || attestation_event.actor_id != describe.service_id
+        let issuer_core = match arkret_sdk::project_full_id_to_core_id(&payload.issuer) {
+            Ok(core) => core,
+            Err(error) => {
+                first_error.get_or_insert_with(|| {
+                    format!("range-completeness issuer full_id is invalid: {error}")
+                });
+                continue;
+            }
+        };
+        let issuer_actor = arkret_sdk::ActorId::from(issuer_core.clone());
+        if arkret_sdk::ServiceId::from(issuer_core) != describe.service_id
+            || attestation_event.actor_id != issuer_actor
         {
             first_error.get_or_insert_with(|| {
                 "active-series completeness issuer does not match the described service".to_owned()
@@ -811,14 +822,14 @@ async fn verify_active_series_range_completeness(
         let canonical_payload = payload.proof_payload_bytes()?;
         let payload_verified = payload.proofs.iter().all(|proof| {
             let mut context = arkret_sdk::signatures::ProofVerificationContext::new(
-                payload.issuer.clone(),
+                issuer_actor.clone(),
                 proof.event_digest.clone(),
             );
             context.replay_window = chrono::Duration::MAX;
             arkret_sdk::verify_canonical_proof_with_did_resolver(
                 &canonical_payload,
                 proof,
-                &payload.issuer,
+                &issuer_actor,
                 &context,
                 &resolver,
             )

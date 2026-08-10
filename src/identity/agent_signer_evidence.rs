@@ -9,8 +9,9 @@ use arkret_sdk::signatures::agent_evidence::{
 };
 use arkret_sdk::signatures::{Ed25519DetachedJwsVerifier, PublicKeyMaterial};
 use arkret_sdk::{
-    AgentSignerEvidence, AgentSignerEvidenceQueryRequestBodyBody, AgentSignerEvidenceQuerySelector,
-    Did, DidUrl, Hash, NonEmptyString, NotarySig, ProtocolOperationId, RealmId,
+    ActorId, AgentSignerEvidence, AgentSignerEvidenceQueryRequestBodyBody,
+    AgentSignerEvidenceQuerySelector, Did, DidUrl, Hash, NonEmptyString, NotarySig,
+    ProtocolOperationId, RealmId, ServiceId,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -24,12 +25,12 @@ const MAX_SCAN_DEPTH: usize = 32;
 #[derive(Clone)]
 struct EventAgentSelector {
     realm_id: RealmId,
-    agent_id: Did,
+    agent_id: ActorId,
     verification_method: DidUrl,
     event_id: arkret_sdk::EventId,
     event_digest: Hash,
     event_admitted_seal_id: arkret_sdk::SealId,
-    receiver_service_id: Did,
+    receiver_service_id: ServiceId,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -273,11 +274,17 @@ pub(crate) fn verify_cached_event(
         };
         let binding = signing_key_binding(&entry.evidence);
         if let Some(mls_binding) = &mls_binding {
+            let Some(signer_full_id) =
+                full_id_from_method_for_actor(&selector.verification_method, &selector.agent_id)
+            else {
+                saw_rejected = true;
+                continue;
+            };
             let claim = arkret_sdk::mls::AgentMlsSignerClaim {
                 group_id: mls_binding.group_id,
                 epoch: mls_binding.epoch,
                 group_state_ref: mls_binding.group_state_ref,
-                signer_id: &selector.agent_id,
+                signer_id: &signer_full_id,
                 signing_key: &key,
                 agent_key_authorize_event_id: &binding.agent_key_authorize_event_id,
             };
@@ -342,32 +349,23 @@ async fn materialize_verified_cache_entry(
         } => outer_attestation,
     };
     let mut verification_method_public_keys = BTreeMap::new();
-    for (authority, method) in [
+    let controller_method = &binding.controller_proof.verification_method;
+    verification_method_public_keys.insert(
+        controller_method.as_str().to_owned(),
+        resolve_method_key(http, anchor, controller_method).await?,
+    );
+    for (service_id, method) in [
         (
-            binding.controller_id.clone(),
-            binding.controller_proof.verification_method.clone(),
+            &snapshot.lease.authority_service_id,
+            &snapshot.lease.verification_method,
         ),
-        (
-            snapshot.lease.authority_service_id.clone(),
-            snapshot.lease.verification_method.clone(),
-        ),
-        (
-            gate.authority_service_id.clone(),
-            gate.verification_method.clone(),
-        ),
-        (
-            outer.source_service_id.clone(),
-            outer.verification_method.clone(),
-        ),
+        (&gate.authority_service_id, &gate.verification_method),
+        (&outer.source_service_id, &outer.verification_method),
     ] {
         if verification_method_public_keys.contains_key(method.as_str()) {
             continue;
         }
-        let key = if authority == binding.controller_id {
-            resolve_method_key(http, anchor, &method).await?
-        } else {
-            resolve_source_service_method_key(http, anchor, &authority, &method).await?
-        };
+        let key = resolve_source_service_method_key(http, anchor, service_id, method).await?;
         verification_method_public_keys.insert(method.as_str().to_owned(), key);
     }
     for seal in seal_lineage(&evidence) {
@@ -420,7 +418,9 @@ pub(crate) async fn prefetch_for_signal(
     let Some(context) = current_signal_context(envelope, service_id) else {
         return false;
     };
-    let request = signal_evidence_query(envelope, &context);
+    let Some(request) = signal_evidence_query(envelope, &context) else {
+        return false;
+    };
     let outcome = match http.agent_signer_evidence_query(&request).await {
         Ok(outcome) => outcome,
         Err(error) => {
@@ -449,7 +449,10 @@ pub(crate) async fn prefetch_for_signal(
     );
     for evidence in outcome.evidence {
         let binding = signing_key_binding(&evidence);
-        if binding.agent_id != envelope.sender_actor_id
+        let Some(sender_actor_id) = actor_id_from_full(&envelope.sender_actor_id) else {
+            continue;
+        };
+        if binding.agent_id != sender_actor_id
             || binding.verification_method != envelope.proof.verification_method
             || !current_evidence_matches_context(&evidence, &context)
         {
@@ -491,7 +494,7 @@ pub(crate) async fn prefetch_for_signal(
 
 fn current_signal_context(
     envelope: &arkret_wire::SignalEnvelope,
-    service_id: Did,
+    service_id: ServiceId,
 ) -> Option<CachedAgentSignerEvidenceContext> {
     let mut random = [0_u8; 24];
     getrandom::fill(&mut random).ok()?;
@@ -536,7 +539,7 @@ fn current_evidence_matches_context(
 fn signal_evidence_query(
     envelope: &arkret_wire::SignalEnvelope,
     context: &CachedAgentSignerEvidenceContext,
-) -> AgentSignerEvidenceQueryRequestBodyBody {
+) -> Option<AgentSignerEvidenceQueryRequestBodyBody> {
     let CachedAgentSignerEvidenceContext::CurrentSignal {
         operation_id,
         request_digest,
@@ -547,10 +550,10 @@ fn signal_evidence_query(
     else {
         unreachable!("Signal evidence query requires current Signal context")
     };
-    AgentSignerEvidenceQueryRequestBodyBody {
+    Some(AgentSignerEvidenceQueryRequestBodyBody {
         realm_id: envelope.realm_id.clone(),
         queries: vec![AgentSignerEvidenceQuerySelector::CurrentAdmission {
-            agent_id: envelope.sender_actor_id.clone(),
+            agent_id: actor_id_from_full(&envelope.sender_actor_id)?,
             verification_method: envelope.proof.verification_method.clone(),
             operation_id: operation_id.clone(),
             request_digest: request_digest.clone(),
@@ -558,7 +561,7 @@ fn signal_evidence_query(
             audience: audience.clone(),
             challenge: challenge.clone(),
         }],
-    }
+    })
 }
 
 /// Resolve a live Signal signer through the same verified Native Agent
@@ -571,7 +574,7 @@ pub(crate) fn resolve_cached_signal_key(
     envelope: &arkret_wire::SignalEnvelope,
 ) -> Option<PublicKeyMaterial> {
     for entry in store.cached_agent_signer_evidence(
-        &envelope.sender_actor_id,
+        &actor_id_from_full(&envelope.sender_actor_id)?,
         &envelope.proof.verification_method,
     ) {
         let CachedAgentSignerEvidenceContext::CurrentSignal { request_digest, .. } =
@@ -831,7 +834,8 @@ fn validate_cached_current(
     else {
         return None;
     };
-    if envelope.sender_actor_id != signing_key_binding(&entry.evidence).agent_id
+    if actor_id_from_full(&envelope.sender_actor_id)?
+        != signing_key_binding(&entry.evidence).agent_id
         || envelope.proof.verification_method
             != signing_key_binding(&entry.evidence).verification_method
     {
@@ -934,22 +938,27 @@ async fn resolve_method_key(
 async fn resolve_source_service_method_key(
     http: &arkret_sdk::http_client::Client,
     anchor: &crate::identity::did_resolver::ResolverDidAnchor,
-    source_service_id: &Did,
+    source_service_id: &ServiceId,
     method: &DidUrl,
 ) -> Option<PublicKeyMaterial> {
     if method
         .as_str()
         .split_once('#')
         .map(|(controller, _)| controller)
-        != Some(source_service_id.as_str())
+        .and_then(|controller| Did::new(controller.to_owned()).ok())
+        .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id).ok())
+        .map(ServiceId::from)
+        .as_ref()
+        != Some(source_service_id)
     {
         return None;
     }
+    let source_full_id = Did::new(method.as_str().split_once('#')?.0.to_owned()).ok()?;
     if let Some(key) = resolve_method_key(http, anchor, method).await {
         return Some(key);
     }
     let description = http.describe().await.ok()?;
-    if description.service_id != *source_service_id {
+    if source_service_id != &description.service_id {
         return None;
     }
     let fetch_client = reqwest::Client::new();
@@ -957,13 +966,13 @@ async fn resolve_source_service_method_key(
         .ensure_trusted_same_origin_service_document(
             &fetch_client,
             http.base_url(),
-            source_service_id,
+            &source_full_id,
         )
         .await
     {
         return None;
     }
-    let document = anchor.resolve_did_document(source_service_id)?;
+    let document = anchor.resolve_did_document(&source_full_id)?;
     let fragment = method.as_str().split_once('#')?.1;
     let fragment = fragment.split_once('?').map_or(fragment, |(head, _)| head);
     let value = document
@@ -1030,7 +1039,7 @@ fn historical_receipt_matches_selector(
         && receipt.receiver_service_id == selector.receiver_service_id
 }
 
-fn event_agent_identity(envelope: &Value) -> Option<(arkret_sdk::Event, Did, DidUrl)> {
+fn event_agent_identity(envelope: &Value) -> Option<(arkret_sdk::Event, ActorId, DidUrl)> {
     let event: arkret_sdk::Event = serde_json::from_value(envelope.clone()).ok()?;
     if event.actor_kind != Some(arkret_sdk::EnvelopeActorKind::Agent) || event.applet_id.is_some() {
         return None;
@@ -1051,9 +1060,20 @@ fn event_agent_identity(envelope: &Value) -> Option<(arkret_sdk::Event, Did, Did
     Some((event, agent_id, verification_method))
 }
 
+fn actor_id_from_full(full_id: &Did) -> Option<ActorId> {
+    arkret_sdk::project_full_id_to_core_id(full_id)
+        .ok()
+        .map(ActorId::from)
+}
+
+fn full_id_from_method_for_actor(method: &DidUrl, actor_id: &ActorId) -> Option<Did> {
+    let full_id = Did::new(method.as_str().split_once('#')?.0.to_owned()).ok()?;
+    (actor_id_from_full(&full_id).as_ref() == Some(actor_id)).then_some(full_id)
+}
+
 fn collect_selectors(
     value: &Value,
-    receiver_service_id: &Did,
+    receiver_service_id: &ServiceId,
     depth: usize,
     out: &mut BTreeSet<EventAgentSelector>,
 ) {
@@ -1080,7 +1100,7 @@ fn collect_selectors(
 
 fn selector_from_object(
     object: &serde_json::Map<String, Value>,
-    receiver_service_id: &Did,
+    receiver_service_id: &ServiceId,
 ) -> Option<EventAgentSelector> {
     if object.get("applet_id").is_some() {
         return None;

@@ -480,7 +480,8 @@ mod tests {
             arkret_sdk::EventKind::StrandCreate.as_str(),
             2,
             created_at,
-            serde_json::to_value(crate::operation::ak_ops::strand_create_payload(object)).unwrap(),
+            serde_json::to_value(crate::operation::ak_ops::strand_create_payload(object).unwrap())
+                .unwrap(),
         )
     }
 
@@ -530,8 +531,8 @@ mod tests {
         arkret_sdk::RealmId::new(REALM).unwrap()
     }
 
-    fn sdk_actor_id() -> arkret_sdk::Did {
-        arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap()
+    fn sdk_actor_id() -> arkret_sdk::ActorId {
+        arkret_sdk::ActorId::new("ak:did_core:webvh:z6mkfixture:alice.example").unwrap()
     }
 
     fn sdk_event(

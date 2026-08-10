@@ -1657,7 +1657,10 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     // resolvable at admission time.
     tracing::debug!(
         realm = %short_protocol_id(&realm_id),
-        invitee_device = %short_protocol_id(&invitee_device_id),
+        invitee_device = %invitee_device_id
+            .as_ref()
+            .map(|device| short_protocol_id(device.as_str()))
+            .unwrap_or_else(|| "agent".to_owned()),
         "retained history_secret for late-joiner sharing; awaiting ak.realm_key.request"
     );
     Ok(Some(next_epoch))
@@ -2121,10 +2124,18 @@ pub(crate) async fn share_history_to_requester(
         .fold((u64::MAX, 0_u64), |(lo, hi), (epoch, _)| {
             (lo.min(*epoch), hi.max(*epoch))
         });
+    let requester_device_authorize_event_id =
+        crate::mls::admission::current_requester_device_authorize_event_id(
+            &api.sdk_http_client()?,
+            &device_id,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
     let share = crate::mls::admission::build_realm_key_share_event(
         &realm_id,
         &actor_id,
         &device_id,
+        &requester_device_authorize_event_id,
         request.recipient_principal_id.as_str(),
         request.recipient_device_id.as_str(),
         min_epoch,
@@ -3025,7 +3036,7 @@ pub(crate) async fn submit_mls_admission_for_invitees(
     }
     // Refresh after the batch of claims to bind the Commit to the latest
     // accepted frontier observed after those network round trips.
-    let added_claims = claims.iter().map(|(claim, _, _)| claim).collect::<Vec<_>>();
+    let added_claims = claims.iter().map(|(claim, ..)| claim).collect::<Vec<_>>();
     ensure_mls_governance_proof_for_next_commit(
         api,
         state_store,

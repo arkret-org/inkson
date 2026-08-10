@@ -68,8 +68,8 @@ pub fn build_session_grant_introspection_proof(
     if audience.trim().is_empty() {
         anyhow::bail!("audience is required");
     }
-    let audience = arkret_sdk::Did::new(audience.trim().to_owned())
-        .map_err(|error| anyhow::anyhow!("audience must be a service DID: {error}"))?;
+    let audience = arkret_sdk::ServiceId::new(audience.trim().to_owned())
+        .map_err(|error| anyhow::anyhow!("audience must be a service core_id: {error}"))?;
     if challenge.trim().is_empty() {
         anyhow::bail!("challenge is required");
     }

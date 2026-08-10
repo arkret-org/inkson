@@ -76,6 +76,14 @@ pub async fn create_realm(
     let join_rule = validate_join_rule_v1(join_rule)?;
     let notary_did = submitter.service_id().await?;
     let resolved_invitees = parse_realm_bootstrap_members(&invitees)?;
+    if resolved_invitees
+        .iter()
+        .any(|invitee| invitee.actor_id != actor_id)
+    {
+        anyhow::bail!(
+            "Realm bootstrap invitees omit service_resolution; create the Realm first, then invite with a principal locator"
+        );
+    }
     // One CSPRNG salt belongs to this creation intent. The complete unsigned
     // unit is durably queued before prepare/sign; Garth then persists the
     // exact signed unit before the first HTTP write.
@@ -111,28 +119,6 @@ pub async fn create_realm(
         .submit_realm_bootstrap_durable(events, idempotency_key)
         .await?
         .to_string();
-
-    let introduction_evidence_digest =
-        crate::canonical::canonical_sha256(&json!({"kind": "explicit_address"}))?;
-    for invitee in &resolved_invitees {
-        if invitee.actor_id == actor_id {
-            continue;
-        }
-        let delivery_target = arkret_sdk::InviteDeliveryTarget::principal_server(
-            arkret_sdk::Did::new(notary_did.clone())
-                .map_err(|error| anyhow::anyhow!("invalid notary service DID: {error}"))?,
-        );
-        let event = ak_ops::invite_create_structured(
-            &realm_id,
-            actor_id,
-            &invitee.actor_id,
-            None,
-            delivery_target,
-            &introduction_evidence_digest,
-        )?
-        .build_sdk_event("inkson")?;
-        submitter.submit_sdk_event(&event).await?;
-    }
 
     let mut members = Vec::new();
     members.push(actor_id.to_owned());
@@ -603,10 +589,9 @@ pub async fn dispatch_direct_conversation_repair(
     if arkret_sdk::project_full_id_to_core_id(&requester_full)? != requester_principal_id {
         anyhow::bail!("repair requester full_id does not project to requester principal core_id");
     }
-    let coordinates = resolve
-        .coordinates()
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("Direct Conversation repair requires resolved coordinates"))?;
+    let coordinates = resolve.coordinates().cloned().ok_or_else(|| {
+        anyhow::anyhow!("Direct Conversation repair requires resolved coordinates")
+    })?;
     if coordinates.binding_event_ref.is_none() {
         anyhow::bail!("Direct Conversation repair requires an accepted binding coordinate");
     }
@@ -623,10 +608,8 @@ pub async fn dispatch_direct_conversation_repair(
         "direct_conversation_self_rejoin",
     )?;
     rejoin.authorization_ref = Some(
-        arkret_sdk::AuthorizationRef::new(
-            "ak.authority.direct_conversation_repair.v1".to_owned(),
-        )
-        .map_err(anyhow::Error::msg)?,
+        arkret_sdk::AuthorizationRef::new("ak.authority.direct_conversation_repair.v1".to_owned())
+            .map_err(anyhow::Error::msg)?,
     );
     // Resolve every fallible/remote signing prerequisite before authoring the
     // self-rejoin. Once that Event is accepted, freezing and persisting the
@@ -647,7 +630,8 @@ pub async fn dispatch_direct_conversation_repair(
     let request_id = arkret_sdk::Base64UrlString::new(crate::random::base64url_token(
         32,
         "generate Direct Conversation repair request id",
-    )?)?;
+    )?)
+    .map_err(anyhow::Error::msg)?;
     let accepted = submitter.submit_sdk_event(&rejoin).await?;
     let rejoin_event_id = arkret_sdk::EventId::new(accepted.event_id)?;
     let created_at = crate::clock::now_utc_canonical();
@@ -689,14 +673,15 @@ pub async fn dispatch_direct_conversation_repair(
             signature: arkret_sdk::ProtocolSignature {
                 verification_method: verification_method.clone(),
                 created_at: signed_at,
-                jws: arkret_sdk::Base64UrlString::new("AA")?,
+                jws: arkret_sdk::Base64UrlString::new("AA").map_err(anyhow::Error::msg)?,
             },
         },
     };
     let signing_input = request.signing_input()?;
     let signature = arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
         signer.sign_raw(&signing_input)?,
-    ))?;
+    ))
+    .map_err(anyhow::Error::msg)?;
     if let arkret_sdk::DirectConversationRepairAuthorization::Device {
         signature: proof, ..
     } = &mut request.requester_authorization
@@ -707,7 +692,11 @@ pub async fn dispatch_direct_conversation_repair(
     let request_id = state_store.save_direct_conversation_repair(&planner)?;
     state_store.begin_durable_flush()?.wait().await?;
 
-    let outcome = match crate::transport::account::direct_conversation_repair_dispatch(http, &request).await {
+    let outcome = match crate::transport::account::direct_conversation_repair_dispatch(
+        http, &request,
+    )
+    .await
+    {
         Ok(outcome) => outcome,
         Err(error) => {
             planner.record_dispatch_failure(error.to_string())?;
@@ -788,6 +777,13 @@ pub async fn activate_direct_conversation_repair(
         anyhow::bail!("replacement generation cannot activate before exact Welcome consumption");
     }
     let snapshot = planner.snapshot();
+    if snapshot
+        .expected_content
+        .as_ref()
+        .is_none_or(|content| &content.requester_principal_id != actor_id)
+    {
+        anyhow::bail!("replacement activation actor differs from the frozen repair requester");
+    }
     let expected = snapshot
         .expected_content
         .as_ref()
@@ -796,21 +792,20 @@ pub async fn activate_direct_conversation_repair(
         || payload.main_strand_id != snapshot.route.coordinates.main_strand_id
         || payload.predecessor_active_value_digest.as_ref() != expected
     {
-        anyhow::bail!("replacement activation differs from frozen repair coordinates or CAS digest");
+        anyhow::bail!(
+            "replacement activation differs from frozen repair coordinates or CAS digest"
+        );
     }
     payload.validate()?;
-    let mut event = build_realm_state_event::<
-        arkret_sdk::event_spec::DirectConversationMlsGenerationActivate,
-    >(
-        snapshot.route.coordinates.realm_id.as_str(),
-        actor_id.as_str(),
-        payload,
-    )?;
+    let mut event =
+        build_realm_state_event::<arkret_sdk::event_spec::DirectConversationMlsGenerationActivate>(
+            snapshot.route.coordinates.realm_id.as_str(),
+            actor_id.as_str(),
+            payload,
+        )?;
     event.authorization_ref = Some(
-        arkret_sdk::AuthorizationRef::new(
-            "ak.authority.direct_conversation_repair.v1".to_owned(),
-        )
-        .map_err(anyhow::Error::msg)?,
+        arkret_sdk::AuthorizationRef::new("ak.authority.direct_conversation_repair.v1".to_owned())
+            .map_err(anyhow::Error::msg)?,
     );
     let result = submitter.submit_sdk_event(&event).await?;
     state_store.record_direct_conversation_repair_activation(

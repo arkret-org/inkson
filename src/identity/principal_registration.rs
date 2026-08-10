@@ -120,7 +120,9 @@ pub fn recover_registration_checkpoint_from_reservation(
         &reserved.did_operation,
     )
     .map_err(|error| anyhow!("reserved DID inception operation is invalid: {error}"))?;
-    if validated.principal_id != reserved.principal_id
+    if arkret_sdk::CoreId::from(arkret_sdk::project_full_id_to_core_id(
+        &validated.principal_id,
+    )?) != reserved.principal_id
         || validated.operation_digest != reserved.operation_digest
     {
         anyhow::bail!("reserved DID operation digest or principal does not match its checkpoint");
@@ -277,7 +279,7 @@ pub fn prepare_genesis_draft(
     hpke_key: String,
     device_signer: &crate::event_signer::InksonEventSigner,
     dpop: &crate::identity::account_auth::grant_dpop::DpopHandle,
-    audience: arkret_sdk::Did,
+    audience: arkret_sdk::ServiceId,
 ) -> anyhow::Result<PendingPrincipalRegistration> {
     let key_material = validate_checkpoint_recovery_key(checkpoint, recovery_key)?;
     if checkpoint.stage != PendingPrincipalRegistrationStage::CustodyConfirmed {
@@ -373,7 +375,10 @@ pub async fn ensure_principal_service_binding(
     );
     let request_id = arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
         Sha256::digest(request_seed.as_bytes()),
-    ))?;
+    ))
+    .map_err(anyhow::Error::msg)?;
+    let principal_core =
+        arkret_sdk::PrincipalId::from(arkret_sdk::project_full_id_to_core_id(principal_id)?);
     let prepare_request = arkret_sdk::PrincipalServiceBindingPrepareRequestBody {
         request_id: request_id.clone(),
         expected_current_binding_digest: None,
@@ -382,9 +387,7 @@ pub async fn ensure_principal_service_binding(
         .principal_service_binding_prepare(&prepare_request)
         .await?;
     prepared.validate_shape()?;
-    if prepared.request_id != request_id
-        || prepared.binding_draft.principal_id != *principal_id
-    {
+    if prepared.request_id != request_id || prepared.binding_draft.principal_id != principal_core {
         anyhow::bail!("principal service binding prepare returned foreign authoring material");
     }
     let verification_method = signer.verification_method_for_principal(principal_id)?;
@@ -394,7 +397,8 @@ pub async fn ensure_principal_service_binding(
     )?;
     let signature = arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
         signer.sign_raw(&signing_input)?,
-    ))?;
+    ))
+    .map_err(anyhow::Error::msg)?;
     let commit = arkret_sdk::PrincipalServiceBindingCommitRequestBody {
         request_id,
         challenge_id: prepared.challenge_id,
@@ -516,12 +520,11 @@ pub async fn complete_account_handoff_binding(
     };
     let register_outcome = account_client.account_register(&register_request).await?;
     garth::validate_identity_creation_outcome(&register_outcome, &register_request)?;
-    let binding_receipt = register_outcome
-        .binding_receipt
-        .clone()
-        .context("Account Authority omitted identity-creation binding receipt")?;
+    let binding_receipt = register_outcome.binding_receipt.clone();
+    let checkpoint_full_id = arkret_sdk::FullId::new(checkpoint.did.clone())?;
     if &binding_receipt.account_subject != expected_account_subject
-        || binding_receipt.principal_id.as_str() != checkpoint.did
+        || binding_receipt.principal_id
+            != arkret_sdk::project_full_id_to_core_id(&checkpoint_full_id)?
     {
         anyhow::bail!("Account Authority binding receipt does not match the frozen account or DID");
     }
@@ -624,7 +627,7 @@ async fn verify_registration_terminal_evidence(
         .identity_creation
         .as_ref()
         .context("identity-creation request lost its frozen registration")?;
-    if validated.principal_id != receipt.principal_id
+    if arkret_sdk::project_full_id_to_core_id(&validated.principal_id)? != receipt.principal_id
         || validated.operation_digest != receipt.operation_digest
         || validated.log_head_digest != receipt.head_event_digest
         || validated.did_version_id != registration.control_proof.did_version_id

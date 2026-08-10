@@ -1163,7 +1163,9 @@ pub(crate) async fn bootstrap_provisioned_agent(
             .map_err(anyhow::Error::msg)?
         }
         .ok_or_else(|| anyhow::anyhow!("Agent PCR MLS genesis was not built"))?;
-        genesis.executed_by = Some(arkret_sdk::Did::new(controller_id.clone())?);
+        genesis.executed_by = Some(arkret_sdk::ActorId::from(
+            arkret_sdk::project_full_id_to_core_id(&arkret_sdk::Did::new(controller_id.clone())?)?,
+        ));
         genesis.authorization_ref = Some(
             arkret_sdk::AuthorizationRef::new(controller_authorization_ref.to_owned())
                 .map_err(anyhow::Error::msg)?,

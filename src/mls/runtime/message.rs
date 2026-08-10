@@ -434,7 +434,11 @@ pub fn ordinary_agent_mls_author_view(
         let Ok(signer_id) = arkret_sdk::Did::new(identity.to_owned()) else {
             continue;
         };
-        for entry in state_store.cached_agent_signer_evidence_for_agent(&signer_id) {
+        let Ok(signer_core) = arkret_sdk::project_full_id_to_core_id(&signer_id) else {
+            continue;
+        };
+        let signer_actor = arkret_sdk::ActorId::from(signer_core);
+        for entry in state_store.cached_agent_signer_evidence_for_agent(&signer_actor) {
             let binding = match &entry.evidence {
                 arkret_sdk::AgentSignerEvidence::CurrentAdmission {
                     admission_evidence, ..
@@ -1079,9 +1083,10 @@ fn welcome_consume_candidate(
     let payload =
         serde_json::from_value::<arkret_sdk::MlsWelcomePayload>(entry.content.clone()).ok()?;
     let (strand_id, repair_target_keypackage_ref) = match &payload.claim_receipt {
-        arkret_sdk::MlsWelcomeClaimReceipt::SelfClaim(receipt) => {
-            (receipt.request.strand_id.as_ref().map(ToString::to_string), None)
-        }
+        arkret_sdk::MlsWelcomeClaimReceipt::SelfClaim(receipt) => (
+            receipt.request.strand_id.as_ref().map(ToString::to_string),
+            None,
+        ),
         arkret_sdk::MlsWelcomeClaimReceipt::PeerClaim(receipt) => {
             let repair_target = if receipt.request.claim_purpose
                 == arkret_sdk::PeerKeyPackageClaimPurpose::DirectConversationRepair
@@ -1255,10 +1260,23 @@ fn decode_welcome_envelope(
             );
         }
     };
+    let recipient_full_id = arkret_sdk::FullId::new(
+        crate::event_signer::active_signer()
+            .ok_or_else(|| "active recipient signer is unavailable".to_owned())?
+            .signer_did()
+            .to_owned(),
+    )
+    .map_err(|error| format!("active recipient full_id is invalid: {error}"))?;
+    if arkret_sdk::project_full_id_to_core_id(&recipient_full_id)
+        .map_err(|error| format!("project active recipient full_id: {error}"))?
+        != durable.recipient_principal_id
+    {
+        return Err("active recipient full_id does not match durable Welcome recipient".to_owned());
+    }
     Ok(arkret_sdk::MlsWelcomeEnvelope {
         group_id: durable.mls_group_id.as_str().to_owned(),
         epoch: durable.epoch,
-        recipient_principal_id: durable.recipient_principal_id,
+        recipient_principal_id: recipient_full_id,
         recipient_device_id,
         welcome: ciphertext,
         welcome_hash,

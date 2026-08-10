@@ -849,6 +849,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
 
     for candidate in &welcome_outcome.consumable_claims {
         let candidate = candidate.clone();
+        let candidate_for_consume = candidate.clone();
         let key_package_id = candidate.key_package_id.clone();
         let consumer_device_id = device_id.clone();
         let consume = crate::transport::auth::with_endpoint_clients(
@@ -858,7 +859,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
             |clients| async move {
                 clients
                     .mls()
-                    .consume_key_package(&candidate, &consumer_device_id)
+                    .consume_key_package(&candidate_for_consume, &consumer_device_id)
                     .await
             },
         )

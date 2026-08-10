@@ -435,7 +435,9 @@ pub async fn verify_authorized_pairing_event(
         .find(|event| &event.event_id == event_ref)
         .ok_or_else(|| anyhow::anyhow!("authorized device Event is not accepted"))?;
     event.verify_event_id_matches_content()?;
-    if event.kind != arkret_sdk::EventKind::DeviceAuthorize || event.actor_id != *principal {
+    let principal_actor =
+        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(principal)?);
+    if event.kind != arkret_sdk::EventKind::DeviceAuthorize || event.actor_id != principal_actor {
         anyhow::bail!(
             "authorized pairing status does not reference this principal's authorize Event"
         );

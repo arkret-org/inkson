@@ -273,8 +273,10 @@ pub fn build_realm_bootstrap_events(
         BindingScope, BindingSource, DeliveryMode, MemberDeliveryBinding, RecipientServiceKind,
     };
     let creator_delivery_binding = MemberDeliveryBinding {
-        recipient_service_id: arkret_sdk::Did::new(notary_did.to_owned())
-            .map_err(|err| anyhow::anyhow!("invalid creator service DID: {err}"))?,
+        recipient_service_id: arkret_sdk::ServiceId::from(arkret_sdk::project_full_id_to_core_id(
+            &arkret_sdk::Did::new(notary_did.to_owned())
+                .map_err(|err| anyhow::anyhow!("invalid creator service DID: {err}"))?,
+        )?),
         recipient_service_kind: RecipientServiceKind::PrincipalServer,
         binding_scope: BindingScope::Realm,
         binding_source: BindingSource::RealmPolicy,
@@ -638,16 +640,16 @@ pub fn build_direct_conversation_founding_events(
     .build_sdk_event("inkson")?;
 
     let realm_id = create.realm_id.clone();
+    let founder_actor =
+        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(founder_id)?);
+    let peer_actor = arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(peer_id)?);
     let membership = arkret_sdk::direct_conversation_peer_membership_bootstrap(
         realm_id.clone(),
-        founder_id,
-        [founder_id.clone(), peer_id.clone()],
+        &founder_actor,
+        [founder_actor.clone(), peer_actor],
         arkret_sdk::DeliveryStatus::Unroutable,
     )?;
-    let member_cell = format!(
-        "ak:cell:ak.component.member.state.v1:{}",
-        peer_id.as_str()
-    );
+    let member_cell = format!("ak:cell:ak.component.member.state.v1:{}", peer_id.as_str());
     let mut member = TypedOperationBuilder::new::<arkret_sdk::event_spec::MemberState>(
         realm_id.to_string(),
         founder_id.as_str(),
@@ -662,7 +664,7 @@ pub fn build_direct_conversation_founding_events(
 
     let strand_payload = arkret_sdk::direct_conversation_main_strand_create_payload(
         realm_id,
-        founder_id.clone(),
+        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(founder_id)?),
         created_at,
     );
     let mut strand = TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandCreate>(
@@ -676,9 +678,7 @@ pub fn build_direct_conversation_founding_events(
     crate::operation::rederive_event_identity(&mut strand)?;
 
     let events = vec![create, member, strand];
-    arkret_sdk::DirectConversationFoundingPlan::from_events([
-        &events[0], &events[1], &events[2],
-    ])?;
+    arkret_sdk::DirectConversationFoundingPlan::from_events([&events[0], &events[1], &events[2]])?;
     Ok(events)
 }
 
@@ -912,8 +912,8 @@ pub fn build_space_create_event(
     // effects copy.
     let space_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|e| anyhow::anyhow!("invalid realm_id for space.create: {e:?}"))?;
-    let space_created_by = arkret_sdk::Did::new(actor_id.to_owned())
-        .map_err(|e| anyhow::anyhow!("invalid created_by DID for space.create: {e:?}"))?;
+    let space_created_by = arkret_sdk::ActorId::new(actor_id.to_owned())
+        .map_err(|e| anyhow::anyhow!("invalid created_by core_id for space.create: {e:?}"))?;
     let mut space_object =
         arkret_sdk::Space::create_object(space_realm_id, kind, title, space_created_by);
     space_object.state = Some(arkret_sdk::SpaceState::Active);
@@ -1048,7 +1048,7 @@ pub fn build_realm_state_event<K: arkret_sdk::EventSpec>(
     let scope_ref = arkret_sdk::ScopeRef::Realm {
         realm_id: realm_id.clone(),
     };
-    let actor_id = arkret_sdk::Did::new(actor_id.trim().to_owned())?;
+    let actor_id = arkret_sdk::ActorId::new(actor_id.trim().to_owned())?;
     let hlc = arkret_sdk::Hlc::new("000000000000-0000-00000000")?;
     let mut event = arkret_sdk::TypedEventDraft::<K>::new(scope_ref, actor_id, payload)?
         .author(0, hlc, created_at)?;
@@ -1392,8 +1392,8 @@ fn build_member_state_transition_event_with_binding(
         "ban" => MembershipPayloadState::Ban,
         other => return Err(anyhow::anyhow!("unknown membership state {other}")),
     };
-    let member_did = arkret_sdk::Did::new(member_actor_id.to_owned())
-        .map_err(|err| anyhow::anyhow!("member actor_id not a valid DID: {err}"))?;
+    let member_did = arkret_sdk::ActorId::new(member_actor_id.to_owned())
+        .map_err(|err| anyhow::anyhow!("member actor_id not a valid core_id: {err}"))?;
     // Strong `membership_payload` (`event-payload.schema.json`). The schema's
     // `allOf` if/then makes `realm_id` + `actor_id` + `delivery_status`
     // REQUIRED whenever `membership == "join"`; we carry `realm_id` for every
@@ -1819,7 +1819,10 @@ mod notary_derivation_tests {
             "ak:trust_domain:did.web.example",
         )
         .expect("managed Agent create is authorable from closed protocol inputs");
-        assert_eq!(event.realm_id, arkret_sdk::derive_genesis_realm_id(&event.event_id));
+        assert_eq!(
+            event.realm_id,
+            arkret_sdk::derive_genesis_realm_id(&event.event_id)
+        );
         assert!(event.refs.is_empty());
     }
 

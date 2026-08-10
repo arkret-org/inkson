@@ -261,14 +261,14 @@ pub fn verify_proof_value_for_signer_result_with_digest_suite(
     if verification_method_controller(&proof.verification_method) != signer_id {
         return Err("Event proof verification-method controller differs from signer".to_owned());
     }
-    let did = arkret_sdk::Did::new(binding_actor_id.to_owned())
-        .map_err(|error| format!("invalid Event binding actor DID: {error}"))?;
+    let actor_id = arkret_sdk::ActorId::new(binding_actor_id.to_owned())
+        .map_err(|error| format!("invalid Event binding actor core_id: {error}"))?;
     let canonical_bytes = crate::canonical::canonical_json_bytes(envelope_without_proof)
         .map_err(|error| format!("canonicalize Event proof envelope: {error}"))?;
     arkret_sdk::signatures::verify_ed25519_detached_jws_proof_with_digest_suite(
         &proof,
         &canonical_bytes,
-        &did,
+        &actor_id,
         public_key,
         digest_suite,
     )

@@ -94,7 +94,7 @@ pub(crate) fn issue_protocol_hlc_with_secret(
 ) -> anyhow::Result<arkret_sdk::Hlc> {
     let scope = StampScope {
         service_id: None,
-        actor_id: arkret_sdk::Did::new(actor_id.to_owned())?,
+        actor_id: arkret_sdk::ActorId::new(actor_id.to_owned())?,
         device_id: arkret_sdk::DeviceId::new(device_id.to_owned())?,
         realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
     };

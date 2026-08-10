@@ -32,8 +32,10 @@ pub fn build_agent_provision_event_draft(
     requested_scope_digest: &Hash,
 ) -> anyhow::Result<Event> {
     let created_at = crate::clock::now_utc();
+    let controller_actor_id =
+        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(controller_id)?);
     let hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
-        controller_id.as_str(),
+        controller_actor_id.as_str(),
         controller_realm_id.as_str(),
     )?;
     Ok(arkret_bootstrap::build_agent_provision_event_draft(
@@ -447,7 +449,7 @@ pub fn into_agent_key_pair_request(
 
 pub fn build_requested_scope_disclosure_for_pairing(
     controller_id: &str,
-    service_id: &str,
+    service_full_id: &str,
     key_state: &KeyState,
     request: &AgentRuntimeApprovalControllerProjection,
 ) -> anyhow::Result<AgentRequestedScopeDisclosure> {
@@ -479,8 +481,10 @@ pub fn build_requested_scope_disclosure_for_pairing(
     if requested_scope_digest != key_state.requested_scope_digest {
         anyhow::bail!("agent key_state requested_scope digest does not match its trusted scope");
     }
-    let verifier_did = Did::new(service_id.trim().to_owned())?;
-    if request.proof_of_possession.audience != verifier_did {
+    let verifier_did = arkret_sdk::FullId::new(service_full_id.trim().to_owned())?;
+    let verifier_service_id =
+        arkret_sdk::ServiceId::from(arkret_sdk::project_full_id_to_core_id(&verifier_did)?);
+    if request.proof_of_possession.audience != verifier_service_id {
         anyhow::bail!("runtime request audience does not match the current service");
     }
     let signer = crate::event_signer::active_signer()
@@ -608,6 +612,8 @@ pub fn build_agent_key_authorization_for_pairing(
     request: &AgentRuntimeApprovalControllerProjection,
 ) -> anyhow::Result<AgentKeyAuthorizationForPairing> {
     let controller = Did::new(controller_id.trim().to_owned())?;
+    let controller_actor_id =
+        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&controller)?);
     if key_state.controller_id != controller {
         anyhow::bail!("agent key_state.controller_id does not match the signed-in controller");
     }
@@ -648,7 +654,7 @@ pub fn build_agent_key_authorization_for_pairing(
             &request.pairing_request_id,
             pairing_code,
             pairing_expires_at,
-            &Did::new(service_id.trim().to_owned())?,
+            &arkret_sdk::ServiceId::new(service_id.trim().to_owned())?,
             &request.proof_of_possession.runtime_key_binding_digest,
             &request.proof_of_possession,
         )?;
@@ -702,13 +708,13 @@ pub fn build_agent_key_authorization_for_pairing(
         .map_err(anyhow::Error::msg)?;
     let signing_key_binding_core =
         arkret_signatures::agent_evidence::prepare_agent_signing_key_binding_core(
-            request.agent_id.clone(),
+            arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&request.agent_id)?),
             agent_key_id.clone(),
             request.verification_method.clone(),
             &request.public_key,
             issued_at,
             None,
-            controller.clone(),
+            controller_actor_id.clone(),
         )
         .map_err(|reason| anyhow::anyhow!(reason.as_str()))?;
     let signing_key_binding_digest =
@@ -743,14 +749,14 @@ pub fn build_agent_key_authorization_for_pairing(
     let realm_id = key_state.principal_control_realm_id.clone();
     let authorization_ref = key_state.controller_authorization_ref.clone();
     let hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
-        controller.as_str(),
+        controller_actor_id.as_str(),
         realm_id.as_str(),
     )?;
     let mut event = arkret_event_draft::build_agent_key_authorize_event(
         &payload,
         arkret_sdk::ScopeRef::Realm { realm_id },
-        request.agent_id.clone(),
-        controller.clone(),
+        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&request.agent_id)?),
+        controller_actor_id,
         authorization_ref,
         1,
         hlc,

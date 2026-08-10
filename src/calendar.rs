@@ -49,7 +49,7 @@ pub fn build_calendar_rsvp_event(
         arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
         },
-        arkret_sdk::Did::new(actor_id.to_owned())?,
+        arkret_sdk::ActorId::new(actor_id.to_owned())?,
         actor_seq,
         hlc,
         schedule_basis_refs,

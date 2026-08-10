@@ -32,7 +32,7 @@ pub fn discussion_strand_create(
         );
     Ok(TypedOperationBuilder::new::<
         arkret_sdk::event_spec::StrandCreate,
-    >(realm_id, actor, strand_create_payload(strand)))
+    >(realm_id, actor, strand_create_payload(strand)?))
 }
 
 /// Build a canonical `ak.circle.create` operation for a private
@@ -87,7 +87,7 @@ pub fn scoped_discussion_strand_create(
         TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandCreate>(
             realm_id,
             actor,
-            strand_create_payload(strand),
+            strand_create_payload(strand)?,
         )
         .circle_id(circle_id),
     )

@@ -553,7 +553,7 @@ fn session_grant_state_from_persisted(
         .grant_expires_at
         .unwrap_or_else(|| now + chrono::Duration::seconds(REFRESH_SKEW_SECS));
     Ok(SessionGrantState {
-        principal_id: arkret_sdk::Did::new(grant.principal_id.trim().to_owned())
+        principal_id: arkret_sdk::CoreId::new(grant.principal_id.trim().to_owned())
             .map_err(|error| anyhow::anyhow!("invalid refresh principal_id: {error}"))?,
         device_id: Some(
             arkret_sdk::DeviceId::new(grant.device_id.trim().to_owned())
@@ -622,9 +622,19 @@ fn mint_session_grant_refresh_proof(
     let principal_id = required_trimmed(&grant.principal_id, "principal_id")?;
     let device_id = required_trimmed(&grant.device_id, "device_id")?;
     let audience = required_trimmed(&grant.audience, "audience")?;
-    // §2.2: the refresh proof's verification method is a DID URL.
-    let verification_method = arkret_sdk::DidUrl::new(format!("{principal_id}#{device_id}"))
-        .map_err(|error| anyhow::anyhow!("soft logout restore verification method: {error}"))?;
+    let principal_core = arkret_sdk::CoreId::new(principal_id.to_owned())
+        .map_err(|error| anyhow::anyhow!("soft logout restore principal_id: {error}"))?;
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("active device identity signer is not installed"))?;
+    let principal_full_id = arkret_sdk::FullId::new(signer.signer_did().to_owned())
+        .map_err(|error| anyhow::anyhow!("soft logout restore signer full_id: {error}"))?;
+    if arkret_sdk::project_full_id_to_core_id(&principal_full_id)? != principal_core {
+        anyhow::bail!("active signer full_id does not project to the refresh principal_id");
+    }
+    // §2.2: only the proof verification method carries the signer full_id.
+    let verification_method =
+        arkret_sdk::DidUrl::new(format!("{principal_full_id}#{device_id}"))
+            .map_err(|error| anyhow::anyhow!("soft logout restore verification method: {error}"))?;
     let request_canonical_digest = soft_logout_restore_request_canonical_digest(
         &grant.grant_jwt,
         principal_id,
@@ -648,8 +658,6 @@ fn mint_session_grant_refresh_proof(
     };
     let payload = crate::canonical::canonical_json_bytes(&claims)
         .map_err(|error| anyhow::anyhow!("soft logout restore proof payload: {error}"))?;
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("active device identity signer is not installed"))?;
     let signature = signer
         .detached_jws_over_payload_with_kid(&verification_method, &payload)
         .map_err(|error| anyhow::anyhow!("sign soft logout restore proof: {error}"))?;
@@ -673,10 +681,10 @@ fn required_trimmed<'a>(value: &'a str, field: &str) -> anyhow::Result<&'a str> 
     Ok(value)
 }
 
-fn session_audience(value: &str) -> anyhow::Result<arkret_sdk::Did> {
+fn session_audience(value: &str) -> anyhow::Result<arkret_sdk::ServiceId> {
     let value = required_trimmed(value, "audience")?;
-    arkret_sdk::Did::new(value.to_owned())
-        .map_err(|error| anyhow::anyhow!("invalid session audience DID: {error}"))
+    arkret_sdk::ServiceId::new(value.to_owned())
+        .map_err(|error| anyhow::anyhow!("invalid session audience service core_id: {error}"))
 }
 
 fn soft_logout_restore_request_canonical_digest(
@@ -726,8 +734,10 @@ mod tests {
 
     fn test_grant_state() -> SessionGrantState {
         SessionGrantState {
-            principal_id: arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example".to_owned())
-                .unwrap(),
+            principal_id: arkret_sdk::CoreId::new(
+                "ak:did_core:webvh:z6mkfixture:alice.example".to_owned(),
+            )
+            .unwrap(),
             device_id: Some(
                 arkret_sdk::DeviceId::new(
                     "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
@@ -740,8 +750,10 @@ mod tests {
             .unwrap(),
             grant_jwt: "grant.jwt.signature".to_owned(),
             expires_at: Utc::now() + chrono::Duration::hours(1),
-            audience: arkret_sdk::Did::new("did:webvh:z6mkfixture:soland.example".to_owned())
-                .unwrap(),
+            audience: arkret_sdk::ServiceId::new(
+                "ak:did_core:webvh:z6mkfixture:soland.example".to_owned(),
+            )
+            .unwrap(),
             granted_scope: Vec::new(),
             session_public_key: None,
             dpop_jkt: None,

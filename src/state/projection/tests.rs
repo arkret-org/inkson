@@ -46,8 +46,8 @@ fn golden_realm_id() -> arkret_sdk::RealmId {
     arkret_sdk::RealmId::new(GOLDEN_REALM).unwrap()
 }
 
-fn golden_actor() -> arkret_sdk::Did {
-    arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap()
+fn golden_actor() -> arkret_sdk::ActorId {
+    arkret_sdk::ActorId::new("ak:did_core:webvh:z6mkfixture:alice.example").unwrap()
 }
 
 fn golden_event(

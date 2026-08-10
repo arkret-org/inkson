@@ -189,7 +189,7 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
     }
     let member_key_packages = claims
         .iter()
-        .map(|(claim, _, _)| {
+        .map(|(claim, ..)| {
             crate::mls_api_helpers::keypackage_claim_record_to_mls_record(claim)
                 .map_err(|err| format!("MLS KeyPackage claim decode failed: {err}"))
         })
@@ -715,10 +715,9 @@ mod tests {
                 jws: "eyJhbGciOiJFZDI1NTE5In0..YQ".to_owned(),
             },
         };
-        let request_digest = arkret_sdk::Hash::new(
-            arkret_sdk::canonical::canonical_sha256(&request).unwrap(),
-        )
-        .unwrap();
+        let request_digest =
+            arkret_sdk::Hash::new(arkret_sdk::canonical::canonical_sha256(&request).unwrap())
+                .unwrap();
         let claims_digest = arkret_sdk::Hash::new(
             arkret_sdk::canonical::canonical_sha256(&vec![claim.clone()]).unwrap(),
         )
@@ -820,6 +819,8 @@ mod tests {
             realm,
             "did:web:alice.example",
             "ak:device:01904100-0000-7000-8000-0000000000a1",
+            &arkret_sdk::EventId::new("ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc")
+                .unwrap(),
             "did:web:bob.example",
             "ak:device:01904100-0000-7000-8000-0000000000b1",
             0,

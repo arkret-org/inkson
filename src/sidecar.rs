@@ -992,6 +992,19 @@ fn event_refs_after(event: &arkret_sdk::Event) -> Vec<arkret_sdk::EventId> {
         .collect()
 }
 
+fn event_actor_full_id(event: &arkret_sdk::Event) -> Option<arkret_sdk::FullId> {
+    event.proofs.iter().find_map(|proof| {
+        let controller = proof.verification_method.as_str().split_once('#')?.0;
+        let full_id = arkret_sdk::FullId::new(controller.to_owned()).ok()?;
+        (arkret_sdk::project_full_id_to_core_id(&full_id)
+            .ok()
+            .map(arkret_sdk::ActorId::from)
+            .as_ref()
+            == Some(&event.actor_id))
+        .then_some(full_id)
+    })
+}
+
 /// Refold every locally known exchange of `controller_id` in `realm_id` from
 /// Event truth and refresh the local fold cache. The outcome also reports an
 /// incomparable cached frontier so the caller can fetch complete accepted
@@ -1348,6 +1361,9 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 let Some(hlc) = event.hlc.clone() else {
                     continue;
                 };
+                let Some(actor_full_id) = event_actor_full_id(&event) else {
+                    continue;
+                };
                 let exchange_key = (strand_id.clone(), binding.exchange_id.as_str().to_owned());
                 match binding.role {
                     arkret_sdk::AgentSidecarExchangeBindingRole::Request => {
@@ -1362,7 +1378,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                             garth::projection::SidecarExchangeRequestFact {
                                 event_id: event.event_id.clone(),
                                 hlc,
-                                actor_id: event.actor_id.clone(),
+                                actor_id: actor_full_id.clone(),
                                 actor_seq: event.actor_seq,
                                 event_digest: event_digest.clone(),
                                 exchange_id: binding.exchange_id.clone(),
@@ -1376,7 +1392,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                             garth::projection::SidecarExchangeAgentFact {
                                 event_id: event.event_id.clone(),
                                 hlc,
-                                actor_id: event.actor_id.clone(),
+                                actor_id: actor_full_id,
                                 binding,
                                 refs_after: event_refs_after(&event),
                             },
@@ -1401,12 +1417,15 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 let Some(hlc) = event.hlc.clone() else {
                     continue;
                 };
+                let Some(actor_full_id) = event_actor_full_id(&event) else {
+                    continue;
+                };
                 let exchange_key = (strand_id, control.exchange_id.as_str().to_owned());
                 controls.entry(exchange_key).or_default().push(
                     garth::projection::SidecarExchangeControlFact {
                         event_id: event.event_id.clone(),
                         hlc,
-                        actor_id: event.actor_id.clone(),
+                        actor_id: actor_full_id,
                         actor_seq: event.actor_seq,
                         event_digest,
                         // §7.2.3: the outer refs MUST cover the plaintext
@@ -2191,7 +2210,7 @@ mod tests {
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
-            arkret_sdk::Did::new(EXCHANGE_ACCOUNT).unwrap(),
+            arkret_sdk::ActorId::new("ak:did_core:web:alice.example").unwrap(),
             7,
             arkret_sdk::Hlc::new("01970e589d21-0005-a13f9c2e").unwrap(),
             serde_json::json!({
@@ -2380,7 +2399,7 @@ mod tests {
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
-            arkret_sdk::Did::new(EXCHANGE_AGENT).unwrap(),
+            arkret_sdk::ActorId::new("ak:did_core:web:agent.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0002-a13f9c2e").unwrap(),
             serde_json::json!({
@@ -2493,7 +2512,7 @@ mod tests {
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
-            arkret_sdk::Did::new(EXCHANGE_ACCOUNT).unwrap(),
+            arkret_sdk::ActorId::new("ak:did_core:web:alice.example").unwrap(),
             2,
             arkret_sdk::Hlc::new("01970e589d21-0003-a13f9c2e").unwrap(),
             serde_json::json!({
@@ -2584,7 +2603,7 @@ mod tests {
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
-            arkret_sdk::Did::new(EXCHANGE_AGENT).unwrap(),
+            arkret_sdk::ActorId::new("ak:did_core:web:agent.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0002-a13f9c2e").unwrap(),
             serde_json::json!({
@@ -2650,7 +2669,7 @@ mod tests {
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
-            arkret_sdk::Did::new(EXCHANGE_ACCOUNT).unwrap(),
+            arkret_sdk::ActorId::new("ak:did_core:web:alice.example").unwrap(),
             7,
             arkret_sdk::Hlc::new("01970e589d21-0005-a13f9c2e").unwrap(),
             serde_json::json!({

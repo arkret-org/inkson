@@ -283,7 +283,11 @@ fn sign_chat_fixture(value: &mut Value) {
                 jws: String::new(),
             };
             let actor = arkret_sdk::Did::new(actor_id.clone()).unwrap();
-            let binding = proof.canonical_binding_bytes(&actor).unwrap();
+            let binding = proof
+                .canonical_binding_bytes(&arkret_sdk::ActorId::from(
+                    arkret_sdk::project_full_id_to_core_id(&actor).unwrap(),
+                ))
+                .unwrap();
             proof.jws = signer.detached_jws_over(&binding).unwrap();
             value
                 .as_object_mut()
@@ -2235,7 +2239,7 @@ fn moderation_appeal_prompts_read_control_plane_sync_state() {
         arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(realm_id).unwrap(),
         },
-        arkret_sdk::Did::new("did:web:moderator.example").unwrap(),
+        arkret_sdk::ActorId::new("ak:did_core:web:moderator.example").unwrap(),
         1,
         arkret_sdk::Hlc::new("019f73a34c00-0000-12345678").unwrap(),
         json!({

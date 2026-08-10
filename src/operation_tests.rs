@@ -762,15 +762,19 @@ fn require_proof_fails_when_unsigned() {
 fn invite_helpers_emit_canonical_kinds() {
     let invite_id = "ak:invite:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7";
     let invite_delivery_target = arkret_sdk::InviteDeliveryTarget {
-        recipient_service_id: arkret_sdk::Did::new("did:web:server.example").unwrap(),
+        recipient_service_id: arkret_sdk::ServiceId::new("ak:did_core:web:server.example").unwrap(),
+        service_resolution: arkret_sdk::ServiceResolutionCarrier::CurrentRecordUrl {
+            current_record_url: "https://server.example/_arkret/open/services/ak%3Adid_core%3Aweb%3Aserver.example/resolution".to_owned(),
+            pinned_record_digest: None,
+        },
         recipient_service_kind: Some("principal_server".to_owned()),
     };
     let introduction_evidence_digest =
         crate::canonical::canonical_sha256(&json!({"kind": "explicit_address"})).unwrap();
     let create = ak_ops::invite_create_structured(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        "did:web:alice.example",
-        "did:web:bob.example",
+        "ak:did_core:web:alice.example",
+        "ak:did_core:web:bob.example",
         Some("member"),
         invite_delivery_target.clone(),
         &introduction_evidence_digest,
@@ -780,7 +784,7 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(create.kind.as_str(), "ak.invite.create");
     let derived_invite_id = arkret_sdk::InviteId::from_event_id(&create.event_id).to_string();
     assert!(!create.payload.contains_key("invite_id"));
-    assert_eq!(create.payload["invitee"], "did:web:bob.example");
+    assert_eq!(create.payload["invitee"], "ak:did_core:web:bob.example");
     assert_eq!(
         create.payload["invite_delivery_target"],
         serde_json::to_value(invite_delivery_target).unwrap()
@@ -821,13 +825,13 @@ fn invite_helpers_emit_canonical_kinds() {
             .collect::<Vec<_>>(),
         vec![
             format!("ak:cell:ak.component.invite.lifecycle.v1:{derived_invite_id}").as_str(),
-            "ak:cell:ak.component.member.state.v1:did:web:bob.example",
+            "ak:cell:ak.component.member.state.v1:ak:did_core:web:bob.example",
         ]
     );
 
     let accept = ak_ops::invite_accept(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        "did:web:bob.example",
+        "ak:did_core:web:bob.example",
         invite_id,
     )
     .expect("builds")
@@ -842,9 +846,9 @@ fn invite_helpers_emit_canonical_kinds() {
 
     let cancel = ak_ops::invite_cancel(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         invite_id,
-        "did:web:bob.example",
+        "ak:did_core:web:bob.example",
         "revoked",
         Some("expired"),
     )
@@ -853,7 +857,7 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(cancel.kind.as_str(), "ak.invite.cancel");
     assert_eq!(cancel.payload["invite_id"], invite_id);
     assert_eq!(cancel.payload["reason"], "expired");
-    assert_eq!(cancel.payload["invitee"], "did:web:bob.example");
+    assert_eq!(cancel.payload["invitee"], "ak:did_core:web:bob.example");
     // `target_state` is the signed operand of the lifecycle `transition_to`
     // projection; without it the cancel has no derivable cell write.
     assert_eq!(cancel.payload["target_state"], "revoked");
@@ -868,7 +872,7 @@ fn invite_helpers_emit_canonical_kinds() {
     .unwrap();
     let frozen_pre_state = arkret_sdk::schema::FrozenPreState::from([(
         lifecycle_cell,
-        serde_json::json!({"invitee": "did:web:bob.example"}),
+        serde_json::json!({"invitee": "ak:did_core:web:bob.example"}),
     )]);
     let cancel_writes = arkret_sdk::schema::project_registered_cell_writes_with_pre_state(
         &cancel,
@@ -884,7 +888,7 @@ fn invite_helpers_emit_canonical_kinds() {
             .collect::<Vec<_>>(),
         vec![
             format!("ak:cell:ak.component.invite.lifecycle.v1:{invite_id}").as_str(),
-            "ak:cell:ak.component.member.state.v1:did:web:bob.example",
+            "ak:cell:ak.component.member.state.v1:ak:did_core:web:bob.example",
         ]
     );
     // `event-envelope.schema.json` restricts the enum to rejected / revoked on
@@ -893,9 +897,9 @@ fn invite_helpers_emit_canonical_kinds() {
     assert!(
         ak_ops::invite_cancel(
             "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-            "did:web:alice.example",
+            "ak:did_core:web:alice.example",
             invite_id,
-            "did:web:bob.example",
+            "ak:did_core:web:bob.example",
             "expired",
             None,
         )
@@ -904,7 +908,7 @@ fn invite_helpers_emit_canonical_kinds() {
 
     let revoke = ak_ops::invite_revoke(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         invite_id,
         None,
         "revoked",

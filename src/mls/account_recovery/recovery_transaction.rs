@@ -212,7 +212,9 @@ pub(crate) async fn prepare_root_anchored_recovery(
     )?;
     let mut reanchor = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::DeviceReanchor>::new(
         scope_ref.clone(),
-        verified_session.principal_id.clone(),
+        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(
+            &verified_session.principal_id,
+        )?),
         reanchor_payload,
     )?
     .with_prev_refs(frontier.frontier_event_ids)
@@ -250,7 +252,9 @@ pub(crate) async fn prepare_root_anchored_recovery(
     let mut authorize =
         arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::DeviceAuthorize>::new(
             scope_ref,
-            verified_session.principal_id.clone(),
+            arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(
+                &verified_session.principal_id,
+            )?),
             authorize_payload,
         )?
         .with_prev_refs(vec![reanchor_event_id.clone()])

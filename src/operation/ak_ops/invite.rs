@@ -16,8 +16,8 @@ pub fn invite_create_structured(
     // digest strings are parsed into SDK newtypes so malformed wire is a
     // build-time error, and `x_role` is carried via the typed extension
     // map (re-prefixed on serialize).
-    let invitee_did = arkret_sdk::Did::new(invitee.to_owned())
-        .map_err(|err| anyhow::anyhow!("invitee not a DID {invitee:?}: {err}"))?;
+    let invitee_did = arkret_sdk::CoreId::new(invitee.to_owned())
+        .map_err(|err| anyhow::anyhow!("invitee not a core_id {invitee:?}: {err}"))?;
     let digest = arkret_sdk::Hash::new(introduction_evidence_digest.to_owned())
         .map_err(|err| anyhow::anyhow!("introduction_evidence_digest invalid: {err}"))?;
     let mut payload =
@@ -83,8 +83,8 @@ pub fn invite_cancel(
     let invite_id = arkret_sdk::InviteId::new(invite_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invite_id not canonical: {err}"))?;
     let invite_id_ref = invite_id.to_string();
-    let invitee = arkret_sdk::Did::new(invitee.to_owned())
-        .map_err(|err| anyhow::anyhow!("invitee not a DID {invitee:?}: {err}"))?;
+    let invitee = arkret_sdk::CoreId::new(invitee.to_owned())
+        .map_err(|err| anyhow::anyhow!("invitee not a core_id {invitee:?}: {err}"))?;
     let target_state = match target_state {
         "rejected" => arkret_sdk::InviteCancelTargetState::Rejected,
         "revoked" => arkret_sdk::InviteCancelTargetState::Revoked,
@@ -130,9 +130,9 @@ pub fn invite_revoke(
         .map_err(|err| anyhow::anyhow!("invite_id not canonical: {err}"))?;
     let invite_id_ref = invite_id.to_string();
     let invitee = invitee
-        .map(|value| arkret_sdk::Did::new(value.to_owned()))
+        .map(|value| arkret_sdk::CoreId::new(value.to_owned()))
         .transpose()
-        .map_err(|err| anyhow::anyhow!("invitee is not a DID: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invitee is not a core_id: {err}"))?;
     let target_state = match target_state {
         "revoked" => arkret_sdk::InviteRevokeTargetState::Revoked,
         "expired" => arkret_sdk::InviteRevokeTargetState::Expired,

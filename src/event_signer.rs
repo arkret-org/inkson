@@ -231,6 +231,21 @@ impl std::fmt::Debug for InksonEventSigner {
 }
 
 impl InksonEventSigner {
+    fn full_id_for_actor(&self, actor_id: &arkret_sdk::ActorId) -> Result<Did, EventSignerError> {
+        let full_id = Did::new(self.signer_did.clone())
+            .map_err(|error| EventSignerError::Encoding(error.to_string()))?;
+        let projected = arkret_sdk::ActorId::from(
+            arkret_sdk::project_full_id_to_core_id(&full_id)
+                .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
+        );
+        if &projected != actor_id {
+            return Err(EventSignerError::Encoding(
+                "active signer full_id does not project to Event actor_id".to_owned(),
+            ));
+        }
+        Ok(full_id)
+    }
+
     /// Wrap an arbitrary SDK [`SdkEventSigner`] (HSM, WebAuthn,
     /// external host-bridge). `signer_did` is the DID receivers will
     /// resolve to fetch the verifying key. The verification method
@@ -463,8 +478,8 @@ impl InksonEventSigner {
         })?;
         let signer = InksonPayloadSignerAdapter {
             owner: self,
-            did: create.actor_id.clone(),
-            verification_method: DidUrl::new(format!("{}#{device_id}", create.actor_id))
+            did: self.full_id_for_actor(&create.actor_id)?,
+            verification_method: DidUrl::new(format!("{}#{device_id}", self.signer_did))
                 .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
         };
         arkret_bootstrap::build_self_principal_bootstrap_seal(
@@ -495,8 +510,8 @@ impl InksonEventSigner {
         })?;
         let signer = InksonPayloadSignerAdapter {
             owner: self,
-            did: create.actor_id.clone(),
-            verification_method: DidUrl::new(format!("{}#{device_id}", create.actor_id))
+            did: self.full_id_for_actor(&create.actor_id)?,
+            verification_method: DidUrl::new(format!("{}#{device_id}", self.signer_did))
                 .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
         };
         arkret_bootstrap::build_self_principal_first_successor_seal(
@@ -529,8 +544,8 @@ impl InksonEventSigner {
         })?;
         let signer = InksonPayloadSignerAdapter {
             owner: self,
-            did: principal.actor_id.clone(),
-            verification_method: DidUrl::new(format!("{}#{device_id}", principal.actor_id))
+            did: self.full_id_for_actor(&principal.actor_id)?,
+            verification_method: DidUrl::new(format!("{}#{device_id}", self.signer_did))
                 .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
         };
         arkret_bootstrap::build_self_principal_linear_successor_seal(
@@ -1367,7 +1382,11 @@ mod tests {
         // (folds in the `context = "ak.event-proof-v1"` domain tag), matching the
         // production signer.
         let did = arkret_sdk::Did::new(event.actor_id.as_str().to_owned()).unwrap();
-        let proof_binding_bytes = proof.canonical_binding_bytes(&did).unwrap();
+        let proof_binding_bytes = proof
+            .canonical_binding_bytes(&arkret_sdk::ActorId::from(
+                arkret_sdk::project_full_id_to_core_id(&did).unwrap(),
+            ))
+            .unwrap();
 
         use base64::Engine;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -1430,7 +1449,11 @@ mod tests {
         // Binding transcript via the SDK's authoritative `canonical_binding_bytes`
         // (context tag + domain + audience folded in), matching the production signer.
         let did = arkret_sdk::Did::new(event.actor_id.as_str().to_owned()).unwrap();
-        let proof_binding_bytes = proof.canonical_binding_bytes(&did).unwrap();
+        let proof_binding_bytes = proof
+            .canonical_binding_bytes(&arkret_sdk::ActorId::from(
+                arkret_sdk::project_full_id_to_core_id(&did).unwrap(),
+            ))
+            .unwrap();
 
         use base64::Engine;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;

@@ -34,5 +34,5 @@ pub fn kanban_card_strand_create(
         .with_track("discussion", arkret_sdk::StrandTrackConfig::discussion());
     Ok(TypedOperationBuilder::new::<
         arkret_sdk::event_spec::StrandCreate,
-    >(&realm_id, actor, strand_create_payload(object)))
+    >(&realm_id, actor, strand_create_payload(object)?))
 }

@@ -828,8 +828,9 @@ async fn finish_oidc_callback(
     if scaffold.issuer.trim().is_empty() {
         return Err("Sign-in state is missing the OIDC issuer.".to_owned());
     }
-    let principal_audience = arkret_sdk::Did::new(scaffold.principal_audience.trim().to_owned())
-        .map_err(|error| format!("invalid Principal Server audience DID: {error}"))?;
+    let principal_audience =
+        arkret_sdk::ServiceId::new(scaffold.principal_audience.trim().to_owned())
+            .map_err(|error| format!("invalid Principal Server audience core_id: {error}"))?;
     let http = ClientBuilder::new(sdk_base_url)
         .allow_insecure_localhost()
         .auth(Auth::Dpop(dpop_handle.sdk_dpop_proof_only_auth()))
@@ -937,7 +938,7 @@ async fn finish_oidc_callback(
             preferred_locale: handoff.preferred_locale,
         });
     }
-    let AccountHandoffDisposition::Bound { principal_id } = disposition else {
+    let AccountHandoffDisposition::Bound { principal_id, .. } = disposition else {
         unreachable!("active and busy handoff outcomes returned above")
     };
     crate::identity::account_auth::persist_account_handoff_grant(&handoff.account_handoff_grant)
@@ -1284,12 +1285,13 @@ mod tests {
         let device_id = "ak:device:01964137-0000-7000-8000-000000000001";
         let grant_id = "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7";
         let grant = SessionGrantState {
-            principal_id: arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+            principal_id: arkret_sdk::CoreId::new("ak:did_core:web:alice.example".to_owned())
+                .unwrap(),
             device_id: Some(arkret_sdk::DeviceId::new(device_id.to_owned()).unwrap()),
             grant_id: arkret_wire::SessionGrantId::new(grant_id.to_owned()).unwrap(),
             grant_jwt: "grant.jwt".to_owned(),
             expires_at: "2026-05-29T12:00:00.000Z".parse().unwrap(),
-            audience: arkret_sdk::Did::new("did:web:local.host".to_owned()).unwrap(),
+            audience: arkret_sdk::ServiceId::new("ak:did_core:web:local.host".to_owned()).unwrap(),
             granted_scope: vec!["urn:arkret:principal-server:session.bind".to_owned()],
             session_public_key: Some("public-key".to_owned()),
             dpop_jkt: Some("dpop-jkt".to_owned()),

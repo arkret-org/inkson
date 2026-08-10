@@ -3408,8 +3408,8 @@ mod tests {
         arkret_sdk::RealmId::new("ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j").unwrap()
     }
 
-    fn sdk_actor_id() -> arkret_sdk::Did {
-        arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap()
+    fn sdk_actor_id() -> arkret_sdk::ActorId {
+        arkret_sdk::ActorId::new("ak:did_core:webvh:z6mkfixture:alice.example").unwrap()
     }
 
     fn sdk_event(kind: &str, payload: Value) -> arkret_sdk::Event {
@@ -3716,7 +3716,7 @@ mod tests {
                 }
             }),
         );
-        event.actor_id = arkret_sdk::Did::new("did:web:bob.example").unwrap();
+        event.actor_id = arkret_sdk::ActorId::new("ak:did_core:web:bob.example").unwrap();
 
         let changed =
             ingest_kanban_projection_events(&mut store, sdk_realm_id().as_str(), &[event]);

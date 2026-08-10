@@ -254,7 +254,7 @@ mod tests {
         let mut decision = arkret_wire::test_support::raw_event(
             arkret_sdk::EventKind::ModerationDecision.as_str(),
             realm_scope(),
-            arkret_sdk::Did::new("did:web:moderator.example").unwrap(),
+            arkret_sdk::ActorId::new("ak:did_core:web:moderator.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("019f73a34c00-0000-12345678").unwrap(),
             json!({
@@ -271,7 +271,7 @@ mod tests {
         let message = arkret_wire::test_support::raw_event(
             arkret_sdk::EventKind::MessageCreate.as_str(),
             realm_scope(),
-            arkret_sdk::Did::new("did:web:moderator.example").unwrap(),
+            arkret_sdk::ActorId::new("ak:did_core:web:moderator.example").unwrap(),
             2,
             arkret_sdk::Hlc::new("019f73a34c00-0001-12345678").unwrap(),
             json!({}),

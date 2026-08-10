@@ -768,10 +768,25 @@ fn spawn_set_agent_enabled(
                 return;
             }
         };
+        let (agent_actor_id, controller_actor_id) = match (
+            arkret_sdk::project_full_id_to_core_id(&key_state.agent_id),
+            arkret_sdk::project_full_id_to_core_id(&key_state.controller_id),
+        ) {
+            (Ok(agent), Ok(controller)) => (
+                arkret_sdk::ActorId::from(agent),
+                arkret_sdk::ActorId::from(controller),
+            ),
+            (Err(error), _) | (_, Err(error)) => {
+                last_op_status.set(format!(
+                    "Agent lifecycle identity projection failed: {error}"
+                ));
+                return;
+            }
+        };
         let draft = if enabled {
             arkret_event_draft::build_agent_resume_event(
-                key_state.agent_id.clone(),
-                key_state.controller_id.clone(),
+                agent_actor_id.clone(),
+                controller_actor_id.clone(),
                 arkret_sdk::ScopeRef::Realm {
                     realm_id: key_state.principal_control_realm_id.clone(),
                 },
@@ -783,8 +798,8 @@ fn spawn_set_agent_enabled(
             )
         } else {
             arkret_event_draft::build_agent_pause_event(
-                key_state.agent_id.clone(),
-                key_state.controller_id.clone(),
+                agent_actor_id,
+                controller_actor_id,
                 arkret_sdk::ScopeRef::Realm {
                     realm_id: key_state.principal_control_realm_id.clone(),
                 },
@@ -953,9 +968,24 @@ fn spawn_deactivate_agent(
                 return;
             }
         };
+        let (agent_actor_id, controller_actor_id) = match (
+            arkret_sdk::project_full_id_to_core_id(&key_state.agent_id),
+            arkret_sdk::project_full_id_to_core_id(&key_state.controller_id),
+        ) {
+            (Ok(agent), Ok(controller)) => (
+                arkret_sdk::ActorId::from(agent),
+                arkret_sdk::ActorId::from(controller),
+            ),
+            (Err(error), _) | (_, Err(error)) => {
+                last_op_status.set(format!(
+                    "Agent deactivation identity projection failed: {error}"
+                ));
+                return;
+            }
+        };
         let lifecycle_event = match arkret_event_draft::build_agent_deactivate_event(
-            key_state.agent_id.clone(),
-            key_state.controller_id.clone(),
+            agent_actor_id,
+            controller_actor_id,
             arkret_sdk::ScopeRef::Realm {
                 realm_id: key_state.principal_control_realm_id.clone(),
             },
@@ -1146,30 +1176,26 @@ fn spawn_provision_agent(
         // Freeze and sign the exact managed-Agent PCR create before authoring
         // the provision Event.  Its content-derived EventId is the only source
         // of the PCR Realm id carried by that provision declaration.
-        let frozen_genesis = match with_event_submitter(
-            &base,
-            api_token.clone(),
-            {
-                let agent_id = agent_id.clone();
-                let controller_id = controller_id.clone();
-                let controller_authorization_ref = controller_authorization_ref.clone();
-                move |submitter| async move {
-                    let describe = submitter.events_describe().await?;
-                    let draft = crate::event_builders::build_managed_agent_pcr_create_event(
-                        agent_id.as_str(),
-                        controller_id.as_str(),
-                        controller_authorization_ref.as_str(),
-                        describe.trust_domain.as_str(),
-                    )?;
-                    submitter
-                        .prepare_sdk_events_batch(vec![draft])
-                        .await?
-                        .into_iter()
-                        .next()
-                        .ok_or_else(|| anyhow::anyhow!("prepared managed Agent PCR genesis is missing"))
-                }
-            },
-        )
+        let frozen_genesis = match with_event_submitter(&base, api_token.clone(), {
+            let agent_id = agent_id.clone();
+            let controller_id = controller_id.clone();
+            let controller_authorization_ref = controller_authorization_ref.clone();
+            move |submitter| async move {
+                let describe = submitter.events_describe().await?;
+                let draft = crate::event_builders::build_managed_agent_pcr_create_event(
+                    agent_id.as_str(),
+                    controller_id.as_str(),
+                    controller_authorization_ref.as_str(),
+                    describe.trust_domain.as_str(),
+                )?;
+                submitter
+                    .prepare_sdk_events_batch(vec![draft])
+                    .await?
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("prepared managed Agent PCR genesis is missing"))
+            }
+        })
         .await
         {
             Ok(value) => value,
@@ -1247,7 +1273,10 @@ fn spawn_provision_agent(
                     && returned_realm_id == principal_control_realm_id
                     && returned_allocation == allocation_handle
                     && returned_authorization == controller_authorization_ref
-                    && returned_digest == expected_digest => (),
+                    && returned_digest == expected_digest =>
+                {
+                    ()
+                }
                 Ok(AgentProvisionOutcome::AwaitingPcrGenesis { .. }) => {
                     last_op_status.set(
                         "Create failed: commit returned mismatched PCR authoring coordinates"
@@ -1257,9 +1286,9 @@ fn spawn_provision_agent(
                 }
                 Ok(AgentProvisionOutcome::Complete { .. }) => {
                     last_op_status.set(
-                        "Create failed: commit completed before the declared PCR genesis was submitted"
-                            .to_owned(),
-                    );
+                    "Create failed: commit completed before the declared PCR genesis was submitted"
+                        .to_owned(),
+                );
                     return;
                 }
                 Ok(AgentProvisionOutcome::AwaitingControllerEvent { .. }) => {
@@ -1275,10 +1304,8 @@ fn spawn_provision_agent(
         let _ = awaiting;
         let genesis_idempotency_key = frozen_genesis.event_id.to_string();
         let genesis_for_submit = frozen_genesis.clone();
-        if let Err(error) = with_event_submitter(
-            &base,
-            api_token.clone(),
-            move |submitter| async move {
+        if let Err(error) =
+            with_event_submitter(&base, api_token.clone(), move |submitter| async move {
                 submitter
                     .submit_signed_sdk_events_batch(
                         std::slice::from_ref(&genesis_for_submit),
@@ -1286,9 +1313,8 @@ fn spawn_provision_agent(
                     )
                     .await
                     .map(|_| ())
-            },
-        )
-        .await
+            })
+            .await
         {
             last_op_status.set(format!(
                 "Agent provision accepted, but PCR genesis submission failed: {}",
